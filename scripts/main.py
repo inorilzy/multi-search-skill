@@ -24,8 +24,10 @@ def main():
     if not args:
         print("Usage: python search.py <query> [--type all|web|code|repos|...] [--count N]")
         print("       [--brave-count N] [--tavily-count N] [--exa-count N] [--github-count N]")
-        print("       [--sg-count N] [--hn-count N] [--so-count N] [--baidu-count N]")
+        print("       [--serpapi-count N] [--hn-count N] [--so-count N]")
+        print("       [--firecrawl-count N] [--twitter-count N]")
         print("       [--timeout N] [--scrape-top N] [--no-scrape] [--scrape-chars N]")
+        print("       [--scrape-per-source N] [--jina-first N | --no-jina]")
         sys.exit(1)
 
     query_parts: list = []
@@ -45,6 +47,7 @@ def main():
     scrape_top = 30
     scrape_chars = 2000
     scrape_per_source = 6
+    jina_first = None  # None = all-Jina (= scrape_top); int = first N via Jina, rest via tavily/exa/firecrawl round-robin
     expand_queries: list = []
     brief = False
 
@@ -120,6 +123,13 @@ def main():
             try: scrape_per_source = int(args[i + 1])
             except ValueError: pass
             i += 2
+        elif args[i] == "--jina-first" and i + 1 < len(args):
+            try: jina_first = int(args[i + 1])
+            except ValueError: pass
+            i += 2
+        elif args[i] == "--no-jina":
+            jina_first = 0
+            i += 1
         elif args[i] == "--expand":
             i += 1
             while i < len(args) and not args[i].startswith("--"):
@@ -263,7 +273,8 @@ def main():
         )
         # Allocation: first JINA_FIRST_N URLs -> Jina (free 20 RPM w/o key, higher w/ key);
         # remainder round-robin across tavily / exa / firecrawl.
-        JINA_FIRST_N = 20
+        # Default = scrape_top (all-Jina). Override with --jina-first N or --no-jina.
+        JINA_FIRST_N = jina_first if jina_first is not None else scrape_top
         SECONDARIES = ["tavily", "exa", "firecrawl"]
         tavily_scrape_key = pick_key(keys.get("tavily", ""))
         exa_scrape_key = pick_key(keys.get("exa", ""))
