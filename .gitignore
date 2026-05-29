@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local key files (NEVER commit API keys)
+.search-keys.json
+*.key
+.env
+.env.local

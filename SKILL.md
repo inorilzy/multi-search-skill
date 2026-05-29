@@ -1,0 +1,231 @@
+---
+name: multi-search
+description: >
+  Aggregated search across 9 sources: Brave, Tavily, Exa, Firecrawl, SerpAPI,
+  Baidu (千帆), GitHub Repos, HackerNews, Stack Overflow, Twitter/X. Combines web
+  results, AI answers, repo discovery and community Q&A in one
+  parallel request, with optional Jina / Firecrawl scraping of top URLs.
+  Activate when user says: search, find, look up, multi-search, search everywhere,
+  搜索, 查找, 查一下, 聚合搜索, 多源搜索.
+argument-hint: "<query> [--type all|web|code|repos|community|...] [--count N] [--scrape-top N] [--timeout N]"
+---
+
+# Multi-Search
+
+Parallel aggregated search across **9 sources** in a single command, with optional
+full-page scraping of top result URLs (Jina Reader → Firecrawl fallback).
+
+## Sources Overview
+
+| Icon | Source | Type | Key | In `--type all` | 详情自带? | 免费上限 |
+|------|--------|------|-----|:-:|:-:|:-:|
+| 🔍 | Brave | Web | `brave` | ✅ | ⚠️ +extra_snippets | 20/req |
+| 🌐 | Tavily | Web (AI) + Answer | `tavily` | ✅ | ✅ raw_content (markdown) | 20/req |
+| ✨ | Exa | Neural + Answer | `exa` | ✅ if key | ✅ summary + highlights | 100/req |
+| 🔥 | Firecrawl | Web + 内联抓取 | `firecrawl` | ✅ if key | ✅ markdown + summary | 1 credit/result |
+| 🔎 | SerpAPI | Google (`google_light`) | `serpapi` | ✅ if key | ❌ snippet | 250/月（free） |
+| 🐾 | Baidu (千帆) | Chinese web + AI Answer | `baidu` | ✅ if key | ❌ snippet（+独立 AI 答案） | 50/req，AI 100/天 |
+| 📦 | GitHub Repos | 仓库元数据 + README | `github` or `gh` CLI | ✅ | ✅ 抽 README (Jina) | 100/req |
+| 🟠 | HackerNews | 技术社区 | None | ✅ | ❌ 标题 | Algolia 1000/req |
+| 🏆 | Stack Overflow | Q&A | None | ✅ | ❌ 问题标题 | 100/req |
+| 🐦 | Twitter / X | 社交实时 | cookies (twikit-ng) | ✅ if cookies | ✅ 推文全文 + 剧评论 | 免费无额度（限 IP）|
+
+### 聚合策略
+
+| 类 | 信源 | scrape 行为 |
+|---|---|---|
+| 🟢 **A. 自带全文** | Tavily / Exa / Firecrawl | 搜索时已带 `scraped_content`，不再二次抓取 |
+| 🟠 **B. 仅 snippet，按权重 Jina 抓** | Brave / SerpAPI / Baidu / HackerNews / StackOverflow / **GitHub Repos（抽 README）** | `--scrape-top` 优先抓这一层 |
+| 🐦 **Twitter·独立详情** | Twitter / X | 每条推文拉取全文 + 翻页评论，作为详情独立块与 A/B 同场合并 |
+
+## API Key Setup
+
+Keys are loaded in priority order:
+1. Env vars: `BRAVE_SEARCH_API_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY`, `FIRECRAWL_API_KEY`, `SERPAPI_KEY`, `BAIDU_API_KEY`, `GITHUB_TOKEN`, `JINA_API_KEY`
+2. `~/.search-keys.json`:
+   ```json
+   {
+     "brave": "BSAxxxx",
+     "tavily": "tvly-xxxx",
+     "exa": "xxxx",
+     "firecrawl": "fc-xxxx",
+     "serpapi": "xxxx",
+     "baidu": "bce-v3/ALTAK-xxxx/xxxx",
+     "github": "ghp_xxxx",
+     "jina": "jina_xxxx"
+   }
+   ```
+
+GitHub token is **optional** — falls back to `gh` CLI if absent (must be `gh auth login`'d).
+Sources without their required key are silently skipped in `--type all` mode.
+
+Free key sources:
+- **Brave**: https://brave.com/search/api/ (2000 queries/month)
+- **Tavily**: https://tavily.com (1000 queries/month)
+- **Exa**: https://exa.ai (free tier)
+- **Firecrawl**: https://firecrawl.dev (free credits)
+- **SerpAPI**: https://serpapi.com (250 queries/month with `google_light`)
+- **Baidu 千帆**: https://qianfan.cloud.baidu.com
+- **Twitter / X**: 需要登录后导出浏览器 cookies。默认复用 `~/.mcp-twikit/cookies.json`（跟 mcp-twikit 共享会话），或在 `~/.search-keys.json` 里加 `"twitter_cookies": "路径"` 覆盖。cookies 文件格式：`{"auth_token": "...", "ct0": "..."}`。需 `pip install twikit-ng`。
+
+## Count & Timeout Control
+
+各源有独立的默认值（基于免费版实测上限调优）。`--count N` 覆盖所有源；`--xxx-count N` 单独覆盖。
+
+| Parameter | 默认 | 说明 |
+|-----------|------|------|
+| `--count N` | 不传则用各源独立默认 | 全局覆盖，brave/baidu/serpapi 自动 clamp |
+| `--brave-count N` | **10** (上限 20) | Brave |
+| `--tavily-count N` | **10** (上限 20) | Tavily |
+| `--exa-count N` | **10** (上限 100) | Exa |
+| `--serpapi-count N` | **10** (上限 20) | SerpAPI |
+| `--serpapi-engine` | `google_light` | 也可用 `google`（含 Knowledge Graph，更慢/更贵） |
+| `--firecrawl-count N` | **5** (上限 10，每条 1 credit) | Firecrawl |
+| `--baidu-count N` | **10** (上限 50) | Baidu 千帆 |
+| `--github-count N` | **10** (上限 100) | GitHub repos / code |
+| `--hn-count N` | **10** | HackerNews |
+| `--so-count N` | **10** (上限 100) | Stack Overflow |
+| `--twitter-count N` | **10** (上限 20) | Twitter / X（需 `~/.mcp-twikit/cookies.json`） |
+| `--timeout N` | `60` | 每源超时秒数 |
+| `--scrape-top N` | `10` | 默认开：按共识权重拹取前 N 条 URL 全文（上限 30）。传 `0` 或 `--no-scrape` 关闭 |
+| `--no-scrape` | — | 快捷关闭 scrape（等价于 `--scrape-top 0`） |
+| `--scrape-chars N` | `2000` | 每页最大字符数 |
+| `--scrape-per-source N` | `2` | 每个来源最多抓几条（防霸屏） |
+| `--expand "q2" "q3"` | — | 额外并行查询（lite 模式只跑 brave+tavily，省 quota） |
+| `--brief` | — | 仅输出标题+URL，省 token |
+
+## Search Types
+
+| Flag | Sources Used |
+|------|-------------|
+| `--type all` (default) | Brave + Tavily + Exa + Firecrawl + SerpAPI + Baidu + GitHub Repos + HackerNews + Stack Overflow |
+| `--type web` | Brave + Tavily + Exa + Firecrawl + SerpAPI + Baidu |
+| `--type repos` / `github` | GitHub Repos only |
+| `--type community` | HackerNews + Stack Overflow + Twitter |
+| `--type twitter` / `x` | Twitter / X only |
+| `--type brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `baidu` / `hn` / `so` | Single source only |
+
+\* Sources whose key is missing are silently skipped.
+
+## Scraping (默认开启)
+
+默认 `--scrape-top 10`：搜索完成后自动按**共识权重**拹 10 条 URL 调 Jina Reader 拿全文 markdown（Firecrawl 兑底）：
+
+```
+python search.py "rust async runtime"           # 默认已含 scrape
+python search.py "react hooks" --scrape-top 5    # 只拼 5 条
+python search.py "news today" --no-scrape        # 时效查询，关闭 scrape
+```
+
+Output adds a `## 🔥 Scraped Content` section with a **关键信息速览** summary table, then full per-page sections.
+
+**Smart routing**:
+- A 类（Tavily / Exa / Firecrawl）已自带 `scraped_content`，直接注入，**零 Jina 调用**
+- B 类（Brave / SerpAPI / Baidu / HN / SO / GitHub Repos）按共识权重抓取，每源上限 `--scrape-per-source` (默认 2)
+- GitHub Repos 被抓时自动重写到 `raw.githubusercontent.com/.../README.md`，远比 description 富信息
+- **Twitter** 作为独立一类：推文全文 + 翻页评论进 `scraped_content`，最后与 A/B 同场输出
+
+Hard cap: 30 URLs/run（Jina 免费版 20 RPM）。Firecrawl 兑底每条 1 credit。
+
+### 整体流程
+
+```mermaid
+flowchart TD
+    U[用户查询] --> K[加载 keys]
+    K --> FAN[并行 fan-out · 12 workers]
+
+    FAN --> A[A类·自带全文<br/>Tavily / Exa / Firecrawl]
+    FAN --> B[B类·仅 snippet<br/>Brave / SerpAPI / Baidu<br/>HN / SO / GitHub Repos]
+    FAN --> TW[Twitter·独立详情<br/>get_tweet_by_id<br/>翻页 replies.next 拿 N 条评论<br/>sleep 0.4s 节流]
+
+    TW --> RT{遇到 404/429?}
+    RT -->|是| RTY[等 5s · 整次 search 重试 1 次]
+    RT -->|否| TWE[推文 + 评论 → scraped_content]
+    RTY --> TWE
+
+    A --> INJ[直接 inject scraped_content]
+    TWE --> INJ
+
+    INJ --> M[URL 去重 · 共识权重打分]
+    B --> M
+
+    M --> SCR{需要 scrape?}
+    SCR -->|是| SCR1[B 类按权重抓 Jina Reader<br/>GitHub Repos → README markdown<br/>Firecrawl 兑底]
+    SCR -->|否| OUT
+    SCR1 --> OUT
+
+    OUT[渲染 Markdown<br/>AI Answers + 共识列表<br/>+ Scraped Content + Top replies]
+    OUT --> SUM[Agent 总结回复]
+```
+
+## Expand Queries (`--expand`)
+
+并行跑多个查询，自动合并去重：
+
+```
+python search.py "agent 编排 不同模型" \
+  --expand "multi-agent model routing different LLM per agent" \
+  --type web
+```
+
+**中英混语最佳实践**：中文短语作主查询 + 英文技术词作 `--expand`：
+- 中文结果来自 Baidu、Tavily CN、Brave 中文页
+- 英文结果来自 Brave、Tavily、Exa、Firecrawl、SerpAPI、HackerNews、Stack Overflow、GitHub
+- 同一共识排序池，去重后呈现
+
+Expand 查询使用 **lite 模式**（只跑 brave + tavily），不会 N 倍消耗 API 配额。
+
+## Workflow
+
+When the user provides a search query:
+
+1. **Check keys** — `~/.search-keys.json` or env vars
+2. **Classify the query**:
+   - 技术查询（代码、工具、框架、API、算法）→ 多语言搜索高价值
+   - 新闻 / 时效查询 → 单语言已足够
+3. **Auto-translate for Chinese technical queries**：中文技术查询自动加英文 `--expand`，不要问用户：
+   ```
+   # 用户: "搜索 agent 编排最佳实践"
+   python search.py "agent 编排最佳实践" \
+     --expand "agent orchestration best practices multi-agent" \
+     --type web
+   ```
+   新闻类 (`最新 AI 新闻`) 则不加 expand。
+4. **Run** the script and present its Markdown output directly
+5. **Follow up** — offer `--scrape-top N` or `fetch_webpage` for deep dives on top URLs
+
+## Example Invocations
+
+```powershell
+# 默认全源搜索
+python .github/skills/multi-search/search.py "epub to markdown"
+
+# Web 搜索 + 自动抓取前 3 条 URL 全文
+python search.py "rust async runtime" --type web --scrape-top 3
+
+# 社区讨论
+python search.py "async python performance" --type community
+
+# 仅 Google（SerpAPI）
+python search.py "WebGPU compute" --type serpapi
+
+# 仅中文（Baidu，附带 AI Answer）
+python search.py "Python 异步编程" --type baidu
+
+# 仅 GitHub 仓库（默认会抓 README）
+python search.py "vector database" --type repos
+
+# 节省 token：只要标题+URL
+python search.py "react hooks" --brief --count 10
+```
+
+## Notes
+
+- 结果按归一化 URL 去重；同一 URL 被多源命中时显示 `also_from` 共识标记
+- `--type all` 默认并行最多 12 个源（ThreadPoolExecutor）
+- 各源默认 count 已调优到免费版上限附近，直接运行无需手工调参
+- Firecrawl 在 `--type all` 中**会**被调用（已含内联抓取，每条 1 credit）；预算敏感时用 `--type all` 之外的具体类型
+- Baidu 同时返回**搜索结果**和**独立 AI Answer**（千帆 ernie-4.5-turbo-32k，100 次/天免费）
+- Tavily 内置 `include_answer="advanced"`，搜索结果顶部直接显示 LLM 合成答案
+- Exa 通过 `outputSchema` 内置全局合成答案 + 每条 summary，含引用编号 `[1][2]`
+- AI Answer 块（Tavily / Exa / SerpAPI KG / Baidu）始终置顶展示
