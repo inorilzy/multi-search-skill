@@ -256,9 +256,30 @@ def main():
             if isinstance(_jina_raw, list)
             else ([_jina_raw] if _jina_raw else [])
         )
+        # Allocation: first JINA_FIRST_N URLs -> Jina (free 20 RPM w/o key, higher w/ key);
+        # remainder round-robin across tavily / exa / firecrawl.
+        JINA_FIRST_N = 20
+        SECONDARIES = ["tavily", "exa", "firecrawl"]
+        tavily_scrape_key = pick_key(keys.get("tavily", ""))
+        exa_scrape_key = pick_key(keys.get("exa", ""))
+
+        def _primary_for(i: int) -> str:
+            if i < JINA_FIRST_N:
+                return "jina"
+            return SECONDARIES[(i - JINA_FIRST_N) % len(SECONDARIES)]
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(urls_to_scrape) or 1)) as pool:
             futures = {
-                pool.submit(scrape_url_smart, u, fc_key, 25, jina_keys[i % len(jina_keys)] if jina_keys else "", pick_key(keys.get("exa", ""))): u
+                pool.submit(
+                    scrape_url_smart,
+                    u,
+                    fc_key,
+                    25,
+                    jina_keys[i % len(jina_keys)] if jina_keys else "",
+                    exa_scrape_key,
+                    tavily_scrape_key,
+                    _primary_for(i),
+                ): u
                 for i, u in enumerate(urls_to_scrape)
             }
             for fut in concurrent.futures.as_completed(futures):

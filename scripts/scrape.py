@@ -127,21 +127,72 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = 25) -> dict:
         return {"url": url, "error": f"Exa: {e}"}
 
 
+def scrape_url_tavily(url: str, api_key: str, timeout: int = 25) -> dict:
+    """Fetch page content via Tavily /extract API."""
+    payload = json.dumps({
+        "urls": [url],
+        "extract_depth": "basic",
+        "format": "markdown",
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.tavily.com/extract",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+        results = data.get("results") or []
+        if not results:
+            failed = data.get("failed_results") or []
+            msg = failed[0].get("error", "no content") if failed else "no results"
+            return {"url": url, "error": f"Tavily: {msg}"}
+        r = results[0]
+        md = r.get("raw_content") or ""
+        if not md:
+            return {"url": url, "error": "Tavily: empty content"}
+        return {
+            "url": url,
+            "title": url,
+            "markdown": md,
+            "length": len(md),
+            "via": "tavily",
+        }
+    except Exception as e:
+        return {"url": url, "error": f"Tavily: {e}"}
+
+
 def scrape_url_smart(url: str, firecrawl_key: str | None, timeout: int = 25,
-                     jina_key: str = "", exa_key: str = "") -> dict:
-    """Try Jina Reader first, then Exa /contents, then Firecrawl as last resort."""
-    result = scrape_url_jina(url, timeout=timeout, jina_key=jina_key)
-    if "error" not in result:
-        return result
-    if exa_key:
-        exa_result = scrape_url_exa(url, exa_key, timeout=timeout)
-        if "error" not in exa_result:
-            return exa_result
-    if firecrawl_key:
-        fc_result = scrape_url_firecrawl(url, firecrawl_key, timeout=timeout)
-        if "error" not in fc_result:
-            return fc_result
-        return fc_result
-    if exa_key:
-        return exa_result  # type: ignore[return-value]
-    return result
+                     jina_key: str = "", exa_key: str = "",
+                     tavily_key: str = "", primary: str = "jina") -> dict:
+    """Scrape `url` starting with `primary` backend, falling back through the others.
+
+    primary ∈ {jina, tavily, exa, firecrawl}. On failure, tries the remaining
+    backends in a fixed order (jina, tavily, exa, firecrawl) skipping the primary
+    and any without a credential where required.
+    """
+    def _call(backend: str) -> dict | None:
+        if backend == "jina":
+            return scrape_url_jina(url, timeout=timeout, jina_key=jina_key)
+        if backend == "tavily":
+            return scrape_url_tavily(url, tavily_key, timeout=timeout) if tavily_key else None
+        if backend == "exa":
+            return scrape_url_exa(url, exa_key, timeout=timeout) if exa_key else None
+        if backend == "firecrawl":
+            return scrape_url_firecrawl(url, firecrawl_key, timeout=timeout) if firecrawl_key else None
+        return None
+
+    order = [primary] + [b for b in ("jina", "tavily", "exa", "firecrawl") if b != primary]
+    last: dict | None = None
+    for backend in order:
+        r = _call(backend)
+        if r is None:
+            continue
+        last = r
+        if "error" not in r:
+            return r
+    return last or {"url": url, "error": "no scrape backend available"}

@@ -30,6 +30,7 @@ from scripts.scrape import (  # noqa: F401,E402
     scrape_url_firecrawl as scrape_url,
     scrape_url_jina,
     scrape_url_smart,
+    scrape_url_tavily,
 )
 from scripts.sources.brave import search_brave  # noqa: F401,E402
 from scripts.sources.exa import search_exa  # noqa: F401,E402
