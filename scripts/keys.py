@@ -1,7 +1,21 @@
 """Load API keys from ~/.search-keys.json + environment variables."""
 import json
 import os
+import random
 from pathlib import Path
+
+
+def pick_key(value) -> str:
+    """Return a single key string. If `value` is a list, pick one at random.
+
+    Tolerates None / "" / str / list[str]. Empty lists or falsy values -> "".
+    """
+    if not value:
+        return ""
+    if isinstance(value, list):
+        choices = [v for v in value if v]
+        return random.choice(choices) if choices else ""
+    return str(value)
 
 
 def load_keys() -> dict:

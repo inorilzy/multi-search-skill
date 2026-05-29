@@ -4,7 +4,7 @@ import sys
 
 from .dedup import deduplicate
 from .format import format_results, format_scrapes
-from .keys import load_keys
+from .keys import load_keys, pick_key
 from .scrape import scrape_url_smart
 from .sources.brave import search_brave
 from .sources.exa import search_exa
@@ -153,13 +153,13 @@ def main():
             if (lite or search_type in ("all", "web", "brave")) and "brave" in keys:
                 _tasks["brave"] = _pool.submit(search_brave, q, keys["brave"], brave_count)
             if (lite or search_type in ("all", "web", "tavily")) and "tavily" in keys:
-                _tasks["tavily"] = _pool.submit(search_tavily, q, keys["tavily"], tavily_count)
+                _tasks["tavily"] = _pool.submit(search_tavily, q, pick_key(keys["tavily"]), tavily_count)
             if not lite and search_type in ("all", "web", "exa") and "exa" in keys:
-                _tasks["exa"] = _pool.submit(search_exa, q, keys["exa"], exa_count)
+                _tasks["exa"] = _pool.submit(search_exa, q, pick_key(keys["exa"]), exa_count)
             if not lite and search_type in ("all", "web", "serpapi", "google") and "serpapi" in keys:
-                _tasks["serpapi"] = _pool.submit(search_serpapi, q, keys["serpapi"], serpapi_count, serpapi_engine)
+                _tasks["serpapi"] = _pool.submit(search_serpapi, q, pick_key(keys["serpapi"]), serpapi_count, serpapi_engine)
             if not lite and search_type in ("all", "web", "firecrawl") and "firecrawl" in keys:
-                _tasks["firecrawl"] = _pool.submit(search_firecrawl, q, keys["firecrawl"], firecrawl_count)
+                _tasks["firecrawl"] = _pool.submit(search_firecrawl, q, pick_key(keys["firecrawl"]), firecrawl_count)
             if not lite and search_type in ("all", "repos", "github"):
                 _tasks["github_repos"] = _pool.submit(search_github_repos, q, github_count, keys.get("github", ""))
             if not lite and search_type in ("all", "community", "hn", "hackernews"):
@@ -200,7 +200,7 @@ def main():
 
     if scrape_top > 0:
         scrape_top = min(scrape_top, 30)
-        fc_key = keys.get("firecrawl")
+        fc_key = pick_key(keys.get("firecrawl"))
         SKIP_SCRAPE_SOURCES: set[str] = set()
         PREFER_SCRAPE_SOURCES = {"brave", "serpapi", "hackernews", "stackoverflow"}
         urls_to_scrape: list = []
@@ -258,7 +258,7 @@ def main():
         )
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(urls_to_scrape) or 1)) as pool:
             futures = {
-                pool.submit(scrape_url_smart, u, fc_key, 25, jina_keys[i % len(jina_keys)] if jina_keys else "", keys.get("exa", "")): u
+                pool.submit(scrape_url_smart, u, fc_key, 25, jina_keys[i % len(jina_keys)] if jina_keys else "", pick_key(keys.get("exa", ""))): u
                 for i, u in enumerate(urls_to_scrape)
             }
             for fut in concurrent.futures.as_completed(futures):
