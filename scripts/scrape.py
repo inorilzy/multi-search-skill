@@ -4,12 +4,25 @@ GitHub repo root URLs are rewritten to raw README to avoid nav/chrome noise.
 """
 import json
 import re
+import urllib.parse
 import urllib.request
 
 from .http import urlopen_retry
 
 
 _GH_REPO_RE = re.compile(r"^https?://github\.com/([^/\s]+)/([^/\s#?]+)/?$")
+
+
+def _safe_http_url(url: str) -> str | None:
+    """Reject non-http(s) URLs (javascript:, file:, gopher:, ...) before we hand
+    them to a fetcher. Returns the URL unchanged if safe, else None."""
+    try:
+        p = urllib.parse.urlparse(url)
+    except Exception:
+        return None
+    if p.scheme not in ("http", "https") or not p.netloc:
+        return None
+    return url
 
 
 def _rewrite_for_clean_scrape(url: str) -> str:
@@ -25,6 +38,8 @@ def scrape_url_jina(url: str, timeout: int = 20, jina_key: str = "") -> dict:
     """Scrape a single URL via Jina Reader.
     Without key: 20 RPM (free). With key: higher RPM limit.
     Returns {url, title, markdown, error?}."""
+    if not _safe_http_url(url):
+        return {"url": url, "error": "rejected non-http(s) URL"}
     target = _rewrite_for_clean_scrape(url)
     jina_url = "https://r.jina.ai/" + target
     headers = {
@@ -36,7 +51,7 @@ def scrape_url_jina(url: str, timeout: int = 20, jina_key: str = "") -> dict:
         headers["Authorization"] = f"Bearer {jina_key}"
     req = urllib.request.Request(jina_url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout) as resp:
             md = resp.read().decode("utf-8", errors="replace")
     except Exception as e:
         return {"url": url, "error": str(e)}
@@ -59,6 +74,8 @@ def scrape_url_jina(url: str, timeout: int = 20, jina_key: str = "") -> dict:
 
 def scrape_url_firecrawl(url: str, api_key: str, timeout: int = 25) -> dict:
     """Scrape a single URL via Firecrawl /v1/scrape, return {url, title, markdown, error?}."""
+    if not _safe_http_url(url):
+        return {"url": url, "error": "rejected non-http(s) URL"}
     payload = json.dumps({
         "url": url,
         "formats": ["markdown"],
@@ -92,6 +109,8 @@ def scrape_url_firecrawl(url: str, api_key: str, timeout: int = 25) -> dict:
 
 def scrape_url_exa(url: str, api_key: str, timeout: int = 25) -> dict:
     """Fetch page content via Exa /contents API. Returns highlights + full text."""
+    if not _safe_http_url(url):
+        return {"url": url, "error": "rejected non-http(s) URL"}
     payload = json.dumps({
         "urls": [url],
         "highlights": True,
@@ -129,6 +148,8 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = 25) -> dict:
 
 def scrape_url_tavily(url: str, api_key: str, timeout: int = 25) -> dict:
     """Fetch page content via Tavily /extract API."""
+    if not _safe_http_url(url):
+        return {"url": url, "error": "rejected non-http(s) URL"}
     payload = json.dumps({
         "urls": [url],
         "extract_depth": "basic",

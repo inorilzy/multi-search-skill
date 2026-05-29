@@ -49,4 +49,16 @@ def deduplicate(results: list) -> tuple:
             other_src = item.get("source", "?")
             if other_src != existing.get("source") and other_src not in existing.get("also_from", []):
                 existing.setdefault("also_from", []).append(other_src)
+            # Promote richer fields from later occurrences so we don't lose
+            # pre-fetched content / longer descriptions / star counts just because
+            # a snippet-only source happened to return the URL first.
+            for fld in ("scraped_content", "description"):
+                new_val = item.get(fld) or ""
+                old_val = existing.get(fld) or ""
+                if len(new_val) > len(old_val):
+                    existing[fld] = new_val
+            if item.get("stars") and not existing.get("stars"):
+                existing["stars"] = item["stars"]
+            if (item.get("title") and len(item["title"]) > len(existing.get("title") or "")):
+                existing["title"] = item["title"]
     return deduped, raw_counts

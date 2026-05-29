@@ -1,9 +1,20 @@
 """Twitter/X search via twikit-ng using saved cookies."""
 import json
 import os
+import re
 
 
 REPLY_LIMIT = 20  # per tweet
+
+# Strip session credentials from any exception text before it reaches stdout/logs.
+_CRED_RE = re.compile(
+    r"(auth_token|ct0|kdt|guest_id|twid|personalization_id|att)=[A-Za-z0-9%_+\-./]+",
+    re.I,
+)
+
+
+def _scrub(msg: str) -> str:
+    return _CRED_RE.sub(r"\1=<redacted>", msg)[:300]
 
 
 def search_twitter(query: str, count: int = 10, cookies: "dict | str" = "") -> list:
@@ -30,7 +41,7 @@ def search_twitter(query: str, count: int = 10, cookies: "dict | str" = "") -> l
             with open(cookies_path, "r", encoding="utf-8") as f:
                 cookies_dict = json.load(f)
         except Exception as e:
-            return [{"source": "twitter", "error": f"cookies load failed: {e}"}]
+            return [{"source": "twitter", "error": f"cookies load failed: {_scrub(str(e))}"}]
 
     async def _do_search() -> list:
         client = Client("en-US")
@@ -75,9 +86,9 @@ def search_twitter(query: str, count: int = 10, cookies: "dict | str" = "") -> l
             try:
                 tweet_pairs = asyncio.run(_do_search())
             except Exception as e2:
-                return [{"source": "twitter", "error": f"retry failed: {str(e2)[:180]}"}]
+                return [{"source": "twitter", "error": f"retry failed: {_scrub(str(e2))}"}]
         else:
-            return [{"source": "twitter", "error": msg[:200]}]
+            return [{"source": "twitter", "error": _scrub(msg)}]
 
     items = []
     for t, replies in tweet_pairs:

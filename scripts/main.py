@@ -150,6 +150,18 @@ def main():
     firecrawl_count = firecrawl_count if firecrawl_count is not None else (min(gc, 10) if gc is not None else 5)
     twitter_count = twitter_count if twitter_count is not None else (min(gc, 20) if gc is not None else 10)
 
+    # Hard-clamp per-source counts to each provider's documented page-size cap,
+    # otherwise --brave-count 50 silently hits HTTP 400.
+    brave_count     = max(1, min(brave_count, 20))
+    tavily_count    = max(1, min(tavily_count, 20))
+    exa_count       = max(1, min(exa_count, 100))
+    github_count    = max(1, min(github_count, 100))
+    hn_count        = max(1, min(hn_count, 30))
+    so_count        = max(1, min(so_count, 100))
+    serpapi_count   = max(1, min(serpapi_count, 100))
+    firecrawl_count = max(1, min(firecrawl_count, 10))
+    twitter_count   = max(1, min(twitter_count, 20))
+
     query = " ".join(query_parts)
     if not query:
         print("Error: query is required")
@@ -179,11 +191,21 @@ def main():
             if not lite and search_type in ("all", "community", "twitter", "x"):
                 _tasks["twitter"] = _pool.submit(search_twitter, q, twitter_count, keys.get("twitter") or keys.get("twitter_cookies", ""))
         _results: list = []
-        for _name, _future in _tasks.items():
-            try:
-                _results.extend(_future.result(timeout=global_timeout))
-            except Exception as e:
-                _results.append({"source": _name, "error": str(e)})
+        # Iterate by completion so a slow source doesn't block reading from
+        # the others; preserves the original timeout semantics overall.
+        _name_by_fut = {f: n for n, f in _tasks.items()}
+        try:
+            for _future in concurrent.futures.as_completed(_tasks.values(), timeout=global_timeout):
+                _name = _name_by_fut.get(_future, "?")
+                try:
+                    _results.extend(_future.result())
+                except Exception as e:
+                    _results.append({"source": _name, "error": str(e)})
+        except concurrent.futures.TimeoutError:
+            for _future, _name in _name_by_fut.items():
+                if not _future.done():
+                    _future.cancel()
+                    _results.append({"source": _name, "error": f"timeout after {global_timeout}s"})
         return _results
 
     queries_to_run = [query] + expand_queries
