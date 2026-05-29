@@ -12,9 +12,11 @@
 ## ✨ 特性
 
 - **8 信源并行**：12 个 worker 线程，5–15 秒完成全部查询
+- **多 key 池**：任何 key 字段可作为 string 或 string 列表，`pick_key()` 随机轮换，免单 key 耗尽
 - **共识权重排序**：被多个信源同时命中的结果置顶，标记 `【×N】from: brave, tavily, ...`
 - **零配置可用**：无 key 时仍可跑 HackerNews / Stack Overflow / GitHub（gh CLI）
-- **聚合策略**：A 类（Tavily/Exa/Firecrawl）自带全文不二抓；B 类（Brave/SerpAPI/HN/SO/GitHub Repos）按共识权重调 Jina Reader（GitHub Repos 自动重写到 raw README）；Twitter 作为独立详情类，推文 + 评论与 A/B 合并输出
+- **聚合策略**：A 类（Tavily/Exa/Firecrawl）自带全文不二抓；B 类 PREFER（Brave/SerpAPI/HN/SO/GitHub Repos）按共识权重抓取（GitHub Repos 自动重写到 raw README）；Twitter 本身 `scraped_content` 已有推文+评论，不进抓取队列
+- **抓取后端可调**：默认全走 Jina；`--jina-first N` 调成「前 N 走 Jina + 剩下在 tavily/exa/firecrawl 间 round-robin」；`--no-jina` 跳过 Jina
 - **AI Answer 顶部展示**：Tavily / Exa / SerpAPI Knowledge Graph 答案合并置顶
 - **TLS 稳定**：内置 SSL 上下文 + 重试，解决 Python 3.12 严格 TLS 下的 EOF 错误
 
@@ -39,15 +41,17 @@ python search.py "epub to markdown" --type all
 ```json
 {
   "brave": "BSAxxxx",
-  "tavily": "tvly-xxxx",
-  "exa": "xxxx",
+  "tavily": ["tvly-key1", "tvly-key2"],
+  "exa": ["exa-key1", "exa-key2", "exa-key3"],
   "firecrawl": "fc-xxxx",
   "serpapi": "xxxx",
   "github": "ghp_xxxx",
-  "jina": "jina_xxxx",
+  "jina": ["jina_key1", "jina_key2"],
   "twitter": { "auth_token": "...", "ct0": "..." }
 }
 ```
+
+> **多 key 池**：任何字段都可以是 single string 或 array of strings。多 key 时随机轮换（jina 按 URL index round-robin），单 key 颍度耗尽后仍能切下一个。
 
 或用环境变量：`BRAVE_SEARCH_API_KEY` / `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` / `SERPAPI_KEY` / `GITHUB_TOKEN` / `JINA_API_KEY`。
 
@@ -61,7 +65,7 @@ python search.py "epub to markdown" --type all
 | 🔥 **Firecrawl** | 500 credits/月 | https://www.firecrawl.dev | 搜索时直接返回全文 markdown |
 | 🔎 **SerpAPI**（Google） | 250 次/月 | https://serpapi.com | 默认 `google_light` 引擎更省 quota |
 |  **GitHub** | 5,000 req/h（PAT） | https://github.com/settings/tokens | 推荐 `gh auth login`（自动管理） |
-| 📖 **Jina Reader**（可选） | 20 RPM 免费 | https://jina.ai/reader/ | scrape-top 默认走 Jina，Firecrawl 兜底 |
+| 📖 **Jina Reader**（可选） | 20 RPM 免费 | https://jina.ai/reader/ | scrape-top 默认主用 Jina；Tavily Extract / Exa contents / Firecrawl 作 fallback |
 
 ### 无需 key 的信源
 
@@ -125,9 +129,12 @@ _from: brave, tavily_
 | `--brave-count` / `--tavily-count` / `--exa-count` / `--firecrawl-count` / `--serpapi-count` / `--github-count` / `--hn-count` / `--so-count` | 见 SKILL.md | 单源覆盖 |
 | `--serpapi-engine` | `google_light` | 也支持 `google`（含 Knowledge Graph） |
 | `--timeout N` | `60` | 单源超时秒数 |
-| `--scrape-top N` | `0` | 搜完后抓 Top N URL 全文（Jina → Firecrawl 兜底，上限 30） |
+| `--scrape-top N` | `30` | 搜完后抓 Top N URL 全文（默认开，上限 30；传 `0` 或 `--no-scrape` 关闭） |
+| `--no-scrape` | — | 快捷关闭 scrape |
 | `--scrape-chars N` | `2000` | 每页最大字符数 |
-| `--scrape-per-source N` | `3` | 每个来源最多抓几条（防霸屏） |
+| `--scrape-per-source N` | `6` | 每个来源最多抓几条（防霸屏） |
+| `--jina-first N` | `scrape_top` (all-Jina) | 前 N 个 URL 走 Jina；剩余 tavily/exa/firecrawl 轮转。Jina 额度紧张时设小（如 `20`） |
+| `--no-jina` | — | 跳过 Jina，全 tavily/exa/firecrawl |
 | `--expand "q2" "q3"` | — | 并行扩展查询（lite 模式仅 brave+tavily） |
 | `--brief` | — | 仅输出标题+URL |
 

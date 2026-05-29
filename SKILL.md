@@ -33,9 +33,9 @@ full-page scraping of top result URLs (Jina Reader → Firecrawl fallback).
 
 | 类 | 信源 | scrape 行为 |
 |---|---|---|
-| 🟢 **A. 自带全文** | Tavily / Exa / Firecrawl | 搜索时已带 `scraped_content`，不再二次抓取 |
-| 🟠 **B. 仅 snippet，按权重 Jina 抓** | Brave / SerpAPI / HackerNews / StackOverflow / **GitHub Repos（抽 README）** | `--scrape-top` 优先抓这一层 |
-| 🐦 **Twitter·独立详情** | Twitter / X | 每条推文拉取全文 + 翻页评论，作为详情独立块与 A/B 同场合并 |
+| 🟢 **A. 自带全文** | Tavily / Exa / Firecrawl | 搜索时已带 `scraped_content`，**显式 SKIP** 抓取队列，零额外调用 |
+| 🟠 **B. 仅 snippet，进抓取队列** | Brave / SerpAPI / HackerNews / StackOverflow / **GitHub Repos（抽 README）** | `--scrape-top` 优先抓这一层（PREFER 源） |
+| 🐦 **Twitter·独立详情** | Twitter / X | `search_twitter` 已把推文 + 评论塞进 `scraped_content`，**SKIP** 抓取队列 |
 
 ## API Key Setup
 
@@ -45,15 +45,17 @@ Keys are loaded in priority order:
    ```json
    {
      "brave": "BSAxxxx",
-     "tavily": "tvly-xxxx",
-     "exa": "xxxx",
+     "tavily": ["tvly-key1", "tvly-key2"],
+     "exa": ["exa-key1", "exa-key2", "exa-key3"],
      "firecrawl": "fc-xxxx",
      "serpapi": "xxxx",
      "github": "ghp_xxxx",
-     "jina": "jina_xxxx",
+     "jina": ["jina_key1", "jina_key2"],
      "twitter": { "auth_token": "...", "ct0": "..." }
    }
    ```
+
+> **多 key 池**：任何字段可以是 string 或 string 数组。多 key 时调用前由 `pick_key()` 随机轮换（jina 例外，按 URL index round-robin），降低单 key 配额耗尽风险。
 
 GitHub token is **optional** — falls back to `gh` CLI if absent (must be `gh auth login`'d).
 Sources without their required key are silently skipped in `--type all` mode.
@@ -84,10 +86,12 @@ Free key sources:
 | `--so-count N` | **10** (上限 100) | Stack Overflow |
 | `--twitter-count N` | **10** (上限 20) | Twitter / X（需 `~/.mcp-twikit/cookies.json`） |
 | `--timeout N` | `60` | 每源超时秒数 |
-| `--scrape-top N` | `10` | 默认开：按共识权重拹取前 N 条 URL 全文（上限 30）。传 `0` 或 `--no-scrape` 关闭 |
+| `--scrape-top N` | `30` | 默认开：按共识权重抓取前 N 条 URL 全文（上限 30）。传 `0` 或 `--no-scrape` 关闭 |
 | `--no-scrape` | — | 快捷关闭 scrape（等价于 `--scrape-top 0`） |
-| `--scrape-chars N` | `2000` | 每页最大字符数 |
-| `--scrape-per-source N` | `5` | 每个来源最多抓几条（防霸屏） |
+| `--scrape-chars N` | `2000` | 每页最大字符数（stdout 截断；完整内容仍在 memory） |
+| `--scrape-per-source N` | `6` | 每个来源最多抓几条（防霸屏） |
+| `--jina-first N` | `scrape_top` (all-Jina) | 前 N 个 URL 走 Jina；剩余在 tavily/exa/firecrawl 间 round-robin。Jina 额度紧张时设小（如 `20`） |
+| `--no-jina` | — | 跳过 Jina，全部走 tavily/exa/firecrawl 轮转（等价 `--jina-first 0`） |
 | `--expand "q2" "q3"` | — | 额外并行查询（lite 模式只跑 brave+tavily，省 quota） |
 | `--brief` | — | 仅输出标题+URL，省 token |
 
@@ -106,23 +110,27 @@ Free key sources:
 
 ## Scraping (默认开启)
 
-默认 `--scrape-top 10`：搜索完成后自动按**共识权重**拹 10 条 URL 调 Jina Reader 拿全文 markdown（Firecrawl 兑底）：
+默认 `--scrape-top 30`：搜索完成后自动按**共识权重**抓 30 条 URL，**全部走 Jina Reader**（当前 Jina 额度充足）；Jina 失败时按 `scrape_url_smart()` fallback 链 tavily → exa → firecrawl。
 
 ```
-python search.py "rust async runtime"           # 默认已含 scrape
-python search.py "react hooks" --scrape-top 5    # 只拼 5 条
-python search.py "news today" --no-scrape        # 时效查询，关闭 scrape
+python search.py "rust async runtime"               # 默认 30 条全 Jina
+python search.py "react hooks" --scrape-top 10        # 只抓 10 条
+python search.py "news today" --no-scrape             # 时效查询，关闭 scrape
+python search.py "x" --jina-first 20                  # Jina 额度紧张：前 20 Jina + 后 10 三家轮转
+python search.py "x" --no-jina                        # 不用 Jina：全部 tavily/exa/firecrawl 轮转
 ```
 
 Output adds a `## 🔥 Scraped Content` section with a **关键信息速览** summary table, then full per-page sections.
 
 **Smart routing**:
-- A 类（Tavily / Exa / Firecrawl）已自带 `scraped_content`，直接注入，**零 Jina 调用**
-- B 类（Brave / SerpAPI / HN / SO / GitHub Repos）按共识权重抓取，每源上限 `--scrape-per-source` (默认 5)
+- A 类（Tavily / Exa / Firecrawl）已自带 `scraped_content`，直接注入，**SKIP 抓取队列**
+- B 类 PREFER 源（Brave / SerpAPI / HN / SO / GitHub Repos）按共识权重抓取，每源上限 `--scrape-per-source` (默认 6)
+- **Twitter** SKIP：`search_twitter` 已通过 twikit-ng 把推文 + 翻页评论塞进 `scraped_content`，不进抓取队列
 - GitHub Repos 被抓时自动重写到 `raw.githubusercontent.com/.../README.md`，远比 description 富信息
-- **Twitter** 作为独立一类：推文全文 + 翻页评论进 `scraped_content`，最后与 A/B 同场输出
+- 后端分配：默认全 Jina；`--jina-first N` 前 N 个 Jina，剩余 tavily/exa/firecrawl round-robin；`--no-jina` 完全跳过 Jina
+- 单条 URL 失败时 `scrape_url_smart()` 自动 fallback：jina → tavily → exa → firecrawl
 
-Hard cap: 30 URLs/run（Jina 免费版 20 RPM）。Firecrawl 兑底每条 1 credit。
+Hard cap: 30 URLs/run。Tavily Extract / Exa contents / Firecrawl 各为付费/限流后端，按需轮换。
 
 ### 整体流程
 
