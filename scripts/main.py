@@ -201,12 +201,12 @@ def main():
     if scrape_top > 0:
         scrape_top = min(scrape_top, 30)
         fc_key = pick_key(keys.get("firecrawl"))
-        # exa/tavily already pre-fetch markdown during search; firecrawl /search does too.
-        # Skip these as scrape candidates so we don't double-fetch.
-        SKIP_SCRAPE_SOURCES: set[str] = {"exa", "tavily", "firecrawl"}
+        # exa/tavily already pre-fetch markdown during search; firecrawl /search does too;
+        # twitter results carry tweet text in scraped_content. Skip all as scrape candidates.
+        SKIP_SCRAPE_SOURCES: set[str] = {"exa", "tavily", "firecrawl", "twitter"}
         PREFER_SCRAPE_SOURCES = {
             "brave", "serpapi", "hackernews", "stackoverflow",
-            "github-repos", "twitter",
+            "github-repos",
         }
         urls_to_scrape: list = []
         seen_urls: set = set()
@@ -254,7 +254,7 @@ def main():
                 "markdown": content,
                 "length": len(content),
             })
-        print(f"Scraping top {len(urls_to_scrape)} URL(s) ({len(prefetched)} pre-fetched by Tavily/Exa)...", file=sys.stderr)
+        print(f"Scraping top {len(urls_to_scrape)} URL(s) ({len(prefetched)} pre-fetched by sources)...", file=sys.stderr)
         _jina_raw = keys.get("jina", "")
         jina_keys: list[str] = (
             [k for k in _jina_raw if k]
