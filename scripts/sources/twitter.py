@@ -6,12 +6,13 @@ import os
 REPLY_LIMIT = 20  # per tweet
 
 
-def search_twitter(query: str, count: int = 10, cookies_path: str = "") -> list:
+def search_twitter(query: str, count: int = 10, cookies: "dict | str" = "") -> list:
     """Search Twitter/X via twikit-ng using saved cookies.
 
-    Cookies file should be a JSON dict with at minimum {"auth_token": "...", "ct0": "..."}.
-    Default path: ~/.mcp-twikit/cookies.json (shared with mcp-twikit).
-    Override via keys.json "twitter_cookies" field or TWITTER_COOKIES_PATH env var.
+    `cookies` accepts:
+      - dict: {auth_token, ct0, ...} (e.g. from ~/.search-keys.json `"twitter": {...}`)
+      - str: path to a JSON cookies file (e.g. ~/.mcp-twikit/cookies.json)
+      - "" / falsy: falls back to ~/.mcp-twikit/cookies.json
     """
     try:
         import asyncio
@@ -19,20 +20,21 @@ def search_twitter(query: str, count: int = 10, cookies_path: str = "") -> list:
     except ImportError:
         return [{"source": "twitter", "error": "twikit-ng not installed (pip install twikit-ng)"}]
 
-    if not cookies_path:
-        cookies_path = os.path.expanduser("~/.mcp-twikit/cookies.json")
-    if not os.path.exists(cookies_path):
-        return [{"source": "twitter", "error": f"cookies file not found: {cookies_path}"}]
-
-    try:
-        with open(cookies_path, "r", encoding="utf-8") as f:
-            cookies = json.load(f)
-    except Exception as e:
-        return [{"source": "twitter", "error": f"cookies load failed: {e}"}]
+    if isinstance(cookies, dict):
+        cookies_dict = cookies
+    else:
+        cookies_path = cookies or os.path.expanduser("~/.mcp-twikit/cookies.json")
+        if not os.path.exists(cookies_path):
+            return [{"source": "twitter", "error": f"cookies file not found: {cookies_path}"}]
+        try:
+            with open(cookies_path, "r", encoding="utf-8") as f:
+                cookies_dict = json.load(f)
+        except Exception as e:
+            return [{"source": "twitter", "error": f"cookies load failed: {e}"}]
 
     async def _do_search() -> list:
         client = Client("en-US")
-        client.set_cookies(cookies)
+        client.set_cookies(cookies_dict)
         tweets = await client.search_tweet(query, "Top", count=count)
         out = []
         for t in tweets[:count]:

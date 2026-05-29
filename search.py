@@ -31,7 +31,6 @@ from scripts.scrape import (  # noqa: F401,E402
     scrape_url_jina,
     scrape_url_smart,
 )
-from scripts.sources.baidu import search_baidu, search_baidu_ai  # noqa: F401,E402
 from scripts.sources.brave import search_brave  # noqa: F401,E402
 from scripts.sources.exa import search_exa  # noqa: F401,E402
 from scripts.sources.firecrawl import search_firecrawl  # noqa: F401,E402

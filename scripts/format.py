@@ -6,7 +6,6 @@ SOURCE_ICONS = {
     "exa": "✨",
     "firecrawl": "🔥",
     "github-repos": "📦",
-    "baidu": "🐾",
     "serpapi": "🔎",
     "hackernews": "🟠",
     "stackoverflow": "🏆",
@@ -66,7 +65,7 @@ def format_scrapes(scrapes: list, max_chars: int = 2000) -> str:
 
 
 def format_results(results: list, query: str, raw_counts: dict | None = None,
-                   brief: bool = False, baidu_answer: str = "") -> str:
+                   brief: bool = False) -> str:
     """Format aggregated results for display."""
     lines = [f"## Search Results: `{query}`\n"]
     tavily_answers = [r for r in results if r.get("source") == "tavily_answer"]
@@ -79,8 +78,6 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
         lines.append(f"\n> **Exa AI Answer:** {exa_answers[0]['answer']}\n")
     if serpapi_answers:
         lines.append(f"\n> **Google Knowledge Graph:** {serpapi_answers[0]['answer']}\n")
-    if baidu_answer:
-        lines.append(f"\n> **百度 AI 总结:** {baidu_answer}\n")
 
     if raw_counts is None:
         source_counts: dict = {}

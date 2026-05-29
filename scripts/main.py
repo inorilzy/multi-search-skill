@@ -6,7 +6,6 @@ from .dedup import deduplicate
 from .format import format_results, format_scrapes
 from .keys import load_keys
 from .scrape import scrape_url_smart
-from .sources.baidu import search_baidu, search_baidu_ai
 from .sources.brave import search_brave
 from .sources.exa import search_exa
 from .sources.firecrawl import search_firecrawl
@@ -38,7 +37,6 @@ def main():
     github_count = None
     hn_count = None
     so_count = None
-    baidu_count = None
     serpapi_count = None
     firecrawl_count = None
     twitter_count = None
@@ -46,7 +44,7 @@ def main():
     global_timeout = 60
     scrape_top = 10
     scrape_chars = 2000
-    scrape_per_source = 2
+    scrape_per_source = 5
     expand_queries: list = []
     brief = False
 
@@ -90,10 +88,6 @@ def main():
             i += 2
         elif args[i] == "--so-count" and i + 1 < len(args):
             try: so_count = int(args[i + 1])
-            except ValueError: pass
-            i += 2
-        elif args[i] == "--baidu-count" and i + 1 < len(args):
-            try: baidu_count = int(args[i + 1])
             except ValueError: pass
             i += 2
         elif args[i] == "--firecrawl-count" and i + 1 < len(args):
@@ -142,7 +136,6 @@ def main():
     github_count  = github_count  if github_count  is not None else (min(gc, 100) if gc is not None else 10)
     hn_count      = hn_count      if hn_count      is not None else (gc           if gc is not None else 10)
     so_count      = so_count      if so_count      is not None else (min(gc, 100) if gc is not None else 10)
-    baidu_count   = baidu_count   if baidu_count   is not None else (min(gc, 50)  if gc is not None else 10)
     serpapi_count = serpapi_count if serpapi_count is not None else (min(gc, 20)  if gc is not None else 10)
     firecrawl_count = firecrawl_count if firecrawl_count is not None else (min(gc, 10) if gc is not None else 5)
     twitter_count = twitter_count if twitter_count is not None else (min(gc, 20) if gc is not None else 10)
@@ -153,21 +146,6 @@ def main():
         sys.exit(1)
 
     keys = load_keys()
-    missing = []
-    if search_type in ("all", "web") and "brave" not in keys:
-        missing.append("brave (BRAVE_SEARCH_API_KEY or ~/.search-keys.json)")
-    if search_type in ("all", "web") and "tavily" not in keys:
-        missing.append("tavily (TAVILY_API_KEY or ~/.search-keys.json)")
-
-    if missing and search_type not in ("repos", "code"):
-        print(f"⚠️  Missing API keys: {', '.join(missing)}")
-        print("Add them to ~/.search-keys.json: {\"brave\": \"...\", \"tavily\": \"...\"}")
-        if search_type == "all":
-            print("Falling back to GitHub-only search...\n")
-            search_type = "github"
-        elif search_type == "web":
-            print("Cannot perform web search without API keys. Use --type repos for GitHub search.")
-            sys.exit(1)
 
     def _run_search(q: str, lite: bool = False) -> list:
         _tasks: dict = {}
@@ -178,8 +156,6 @@ def main():
                 _tasks["tavily"] = _pool.submit(search_tavily, q, keys["tavily"], tavily_count)
             if not lite and search_type in ("all", "web", "exa") and "exa" in keys:
                 _tasks["exa"] = _pool.submit(search_exa, q, keys["exa"], exa_count)
-            if not lite and search_type in ("all", "web", "baidu") and "baidu" in keys:
-                _tasks["baidu"] = _pool.submit(search_baidu, q, keys["baidu"], baidu_count)
             if not lite and search_type in ("all", "web", "serpapi", "google") and "serpapi" in keys:
                 _tasks["serpapi"] = _pool.submit(search_serpapi, q, keys["serpapi"], serpapi_count, serpapi_engine)
             if not lite and search_type in ("all", "web", "firecrawl") and "firecrawl" in keys:
@@ -191,7 +167,7 @@ def main():
             if not lite and search_type in ("all", "community", "so", "stackoverflow"):
                 _tasks["stackoverflow"] = _pool.submit(search_stackoverflow, q, so_count)
             if not lite and search_type in ("all", "community", "twitter", "x"):
-                _tasks["twitter"] = _pool.submit(search_twitter, q, twitter_count, keys.get("twitter_cookies", ""))
+                _tasks["twitter"] = _pool.submit(search_twitter, q, twitter_count, keys.get("twitter") or keys.get("twitter_cookies", ""))
         _results: list = []
         for _name, _future in _tasks.items():
             try:
@@ -204,11 +180,6 @@ def main():
     q_label = f"{len(queries_to_run)} quer{'y' if len(queries_to_run) == 1 else 'ies'}"
     print(f"Searching {q_label} across sources...", file=sys.stderr)
     all_results: list = []
-
-    ai_futures: dict = {}
-    ai_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-    if keys.get("baidu"):
-        ai_futures["baidu"] = ai_executor.submit(search_baidu_ai, query, keys["baidu"])
 
     if len(queries_to_run) == 1:
         all_results = _run_search(query)
@@ -225,22 +196,13 @@ def main():
     valid_count = len([r for r in deduped if "error" not in r and r.get("source") not in ("tavily_answer", "serpapi_answer", "exa_answer")])
     print(f"Found {valid_count} unique results.", file=sys.stderr)
 
-    baidu_answer_text = ""
-    if ai_futures:
-        if "baidu" in ai_futures:
-            try:
-                baidu_answer_text = ai_futures["baidu"].result(timeout=60) or ""
-            except Exception:
-                pass
-    ai_executor.shutdown(wait=False)
-
-    output = format_results(deduped, query, raw_counts=raw_counts, brief=brief, baidu_answer=baidu_answer_text)
+    output = format_results(deduped, query, raw_counts=raw_counts, brief=brief)
 
     if scrape_top > 0:
         scrape_top = min(scrape_top, 30)
         fc_key = keys.get("firecrawl")
         SKIP_SCRAPE_SOURCES: set[str] = set()
-        PREFER_SCRAPE_SOURCES = {"brave", "serpapi", "baidu", "hackernews", "stackoverflow"}
+        PREFER_SCRAPE_SOURCES = {"brave", "serpapi", "hackernews", "stackoverflow"}
         urls_to_scrape: list = []
         seen_urls: set = set()
         deduped_for_scrape = sorted(

@@ -10,7 +10,8 @@ def load_keys() -> dict:
     keys: dict = {}
     if keys_file.exists():
         try:
-            keys = json.loads(keys_file.read_text())
+            # utf-8-sig tolerates BOM (PowerShell 5.1 writes BOM by default)
+            keys = json.loads(keys_file.read_text(encoding="utf-8-sig"))
         except Exception:
             pass
     for env_name, key_name in [
@@ -21,8 +22,6 @@ def load_keys() -> dict:
         ("GITHUB_TOKEN", "github"),
         ("GH_TOKEN", "github"),
         ("FIRECRAWL_API_KEY", "firecrawl"),
-        ("BAIDU_API_KEY", "baidu"),
-        ("QIANFAN_API_KEY", "baidu"),
         ("SERPAPI_API_KEY", "serpapi"),
         ("SERPAPI_KEY", "serpapi"),
         ("JINA_API_KEY", "jina"),
