@@ -11,6 +11,7 @@ from .sources.exa import search_exa
 from .sources.firecrawl import search_firecrawl
 from .sources.github import search_github_repos
 from .sources.hackernews import search_hackernews
+from .sources.reddit import search_reddit
 from .sources.serpapi import search_serpapi
 from .sources.stackoverflow import search_stackoverflow
 from .sources.tavily import search_tavily
@@ -24,7 +25,7 @@ def main():
     if not args:
         print("Usage: python search.py <query> [--type all|web|code|repos|...] [--count N]")
         print("       [--brave-count N] [--tavily-count N] [--exa-count N] [--github-count N]")
-        print("       [--serpapi-count N] [--hn-count N] [--so-count N]")
+        print("       [--serpapi-count N] [--hn-count N] [--so-count N] [--reddit-count N]")
         print("       [--firecrawl-count N] [--twitter-count N]")
         print("       [--timeout N] [--scrape-top N] [--no-scrape] [--scrape-chars N]")
         print("       [--scrape-per-source N] [--jina-first N | --no-jina]")
@@ -39,6 +40,7 @@ def main():
     github_count = None
     hn_count = None
     so_count = None
+    reddit_count = None
     serpapi_count = None
     firecrawl_count = None
     twitter_count = None
@@ -91,6 +93,10 @@ def main():
             i += 2
         elif args[i] == "--so-count" and i + 1 < len(args):
             try: so_count = int(args[i + 1])
+            except ValueError: pass
+            i += 2
+        elif args[i] == "--reddit-count" and i + 1 < len(args):
+            try: reddit_count = int(args[i + 1])
             except ValueError: pass
             i += 2
         elif args[i] == "--firecrawl-count" and i + 1 < len(args):
@@ -146,6 +152,7 @@ def main():
     github_count  = github_count  if github_count  is not None else (min(gc, 100) if gc is not None else 10)
     hn_count      = hn_count      if hn_count      is not None else (gc           if gc is not None else 10)
     so_count      = so_count      if so_count      is not None else (min(gc, 100) if gc is not None else 10)
+    reddit_count  = reddit_count  if reddit_count  is not None else (min(gc, 25)  if gc is not None else 10)
     serpapi_count = serpapi_count if serpapi_count is not None else (min(gc, 20)  if gc is not None else 10)
     firecrawl_count = firecrawl_count if firecrawl_count is not None else (min(gc, 10) if gc is not None else 5)
     twitter_count = twitter_count if twitter_count is not None else (min(gc, 20) if gc is not None else 10)
@@ -158,6 +165,7 @@ def main():
     github_count    = max(1, min(github_count, 100))
     hn_count        = max(1, min(hn_count, 30))
     so_count        = max(1, min(so_count, 100))
+    reddit_count    = max(1, min(reddit_count, 25))
     serpapi_count   = max(1, min(serpapi_count, 100))
     firecrawl_count = max(1, min(firecrawl_count, 10))
     twitter_count   = max(1, min(twitter_count, 20))
@@ -188,6 +196,8 @@ def main():
                 _tasks["hackernews"] = _pool.submit(search_hackernews, q, hn_count)
             if not lite and search_type in ("all", "community", "so", "stackoverflow"):
                 _tasks["stackoverflow"] = _pool.submit(search_stackoverflow, q, so_count)
+            if not lite and search_type in ("all", "community", "reddit"):
+                _tasks["reddit"] = _pool.submit(search_reddit, q, reddit_count, keys.get("reddit", ""))
             if not lite and search_type in ("all", "community", "twitter", "x"):
                 _tasks["twitter"] = _pool.submit(search_twitter, q, twitter_count, keys.get("twitter") or keys.get("twitter_cookies", ""))
         _results: list = []
@@ -235,7 +245,7 @@ def main():
         fc_key = pick_key(keys.get("firecrawl"))
         # exa/tavily already pre-fetch markdown during search; firecrawl /search does too;
         # twitter results carry tweet text in scraped_content. Skip all as scrape candidates.
-        SKIP_SCRAPE_SOURCES: set[str] = {"exa", "tavily", "firecrawl", "twitter"}
+        SKIP_SCRAPE_SOURCES: set[str] = {"exa", "tavily", "firecrawl", "twitter", "reddit"}
         PREFER_SCRAPE_SOURCES = {
             "brave", "serpapi", "hackernews", "stackoverflow",
             "github-repos",
