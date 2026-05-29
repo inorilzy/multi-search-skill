@@ -136,32 +136,119 @@ Hard cap: 30 URLs/run。Tavily Extract / Exa contents / Firecrawl 各为付费/�
 
 ```mermaid
 flowchart TD
-    U[用户查询] --> K[加载 keys]
-    K --> FAN[并行 fan-out · 12 workers]
+    %% ========== 输入层 ==========
+    U([用户查询 / agent 调用]):::user
+    U --> CLI[search.py CLI<br/>解析 --type / --count / --scrape-top<br/>--jina-first / --no-jina / --expand]
+    CLI --> ZH{中文技术查询?}
+    ZH -->|是| EXP[Auto-expand:<br/>追加英文同义关键词]
+    ZH -->|否| K
+    EXP --> K
 
-    FAN --> A[A类·自带全文<br/>Tavily / Exa / Firecrawl]
-    FAN --> B[B类·仅 snippet<br/>Brave / SerpAPI<br/>HN / SO / GitHub Repos]
-    FAN --> TW[Twitter·独立详情<br/>get_tweet_by_id<br/>翻页 replies.next 拿 N 条评论<br/>sleep 0.4s 节流]
+    %% ========== Key 加载 ==========
+    K[load_keys<br/>env vars → ~/.search-keys.json<br/>multi-key 池 · pick_key 随机轮换]:::infra
+    K --> TYPE{--type 路由}
 
-    TW --> RT{遇到 404/429?}
-    RT -->|是| RTY[等 5s · 整次 search 重试 1 次]
-    RT -->|否| TWE[推文 + 评论 → scraped_content]
-    RTY --> TWE
+    %% ========== 路由分流 ==========
+    TYPE -->|all| FAN
+    TYPE -->|web| FANW[Brave + Tavily + Exa<br/>Firecrawl + SerpAPI]
+    TYPE -->|community| FANC[HN + SO + Twitter]
+    TYPE -->|repos / github| GH
+    TYPE -->|单源| ONE[单一信源直跑]
+    FANW --> FAN
+    FANC --> FAN
+    GH --> FAN
+    ONE --> RESP
 
-    A --> INJ[直接 inject scraped_content]
-    TWE --> INJ
+    FAN[ThreadPoolExecutor · 12 workers<br/>as_completed · 单源 timeout 60s<br/>超时即 cancel future]:::infra
 
-    INJ --> M[URL 去重 · 共识权重打分]
-    B --> M
+    %% ========== 三类信源 ==========
+    FAN --> A
+    FAN --> B
+    FAN --> TW
 
-    M --> SCR{需要 scrape?}
-    SCR -->|是| SCR1[B 类按权重抓 Jina Reader<br/>GitHub Repos → README markdown<br/>Firecrawl 兑底]
-    SCR -->|否| OUT
-    SCR1 --> OUT
+    subgraph A_GROUP[A 类 · 自带全文<br/>scraped_content 已内联]
+      direction LR
+      A1[🌐 Tavily<br/>+ AI Answer]
+      A2[✨ Exa<br/>+ AI Answer + summary]
+      A3[🔥 Firecrawl<br/>内联 markdown]
+    end
+    A[A 类]:::aclass --> A_GROUP
 
-    OUT[渲染 Markdown<br/>AI Answers + 共识列表<br/>+ Scraped Content + Top replies]
-    OUT --> SUM[Agent 总结回复]
+    subgraph B_GROUP[B 类 · 仅 snippet<br/>进 scrape 候选池]
+      direction LR
+      B1[🔍 Brave]
+      B2[🔎 SerpAPI<br/>Auth header · key 不入 URL<br/>+ Knowledge Graph]
+      B3[🟠 HackerNews<br/>Algolia API]
+      B4[🏆 Stack Overflow<br/>StackExchange API]
+      B5[📦 GitHub Repos<br/>抓取时重写到 raw README]
+    end
+    B[B 类]:::bclass --> B_GROUP
+
+    subgraph TW_GROUP[Twitter · 独立详情]
+      direction TB
+      TW1[search_twitter<br/>twikit-ng + cookies]
+      TW2[get_tweet_by_id 取推文]
+      TW3[翻页 replies.next<br/>抓 N 条评论 · sleep 0.4s]
+      TW1 --> TW2 --> TW3
+      TW3 --> TWR{404 / 429?}
+      TWR -->|是| TWRTY[等 5s · 重试 1 次]
+      TWR -->|否| TWE[推文 + 评论<br/>→ scraped_content]
+      TWRTY --> TWE
+    end
+    TW[🐦 Twitter / X]:::twclass --> TW_GROUP
+
+    %% ========== 合并 + 去重 ==========
+    A_GROUP --> INJ[直接 inject scraped_content<br/>SKIP scrape 队列]
+    TW_GROUP --> INJ
+    INJ --> M
+    B_GROUP --> M
+
+    M[dedup_by_url<br/>归一化 URL · 合并 also_from<br/>共识权重打分 · 保留更长字段]:::infra
+
+    %% ========== Scrape 决策 ==========
+    M --> SCRQ{--scrape-top > 0?}
+    SCRQ -->|否 / --no-scrape| OUT
+    SCRQ -->|是| ALLOC[scrape 分配器<br/>按共识权重排序 · 每源上限 6<br/>硬上限 30 URLs]
+
+    ALLOC --> JF{--jina-first N?}
+    JF -->|默认 all-Jina| JINA
+    JF -->|前 N 走 Jina| JINA
+    JF -->|--no-jina| RR
+
+    JINA[📖 Jina Reader<br/>多 key round-robin<br/>20 RPM/key]:::scrape
+    RR[Tavily Extract /<br/>Exa contents /<br/>Firecrawl scrape<br/>round-robin]:::scrape
+
+    JINA --> SAFE
+    RR --> SAFE
+
+    SAFE{HTTP scheme<br/>校验<br/>_safe_http_url}:::safety
+    SAFE -->|非 http/https| DROP[丢弃]
+    SAFE -->|ok| FB{抓取成功?}
+    FB -->|失败| FBC[fallback 链<br/>jina → tavily → exa → firecrawl]
+    FBC --> SAFE
+    FB -->|成功| SAN
+
+    SAN[🔒 _sanitize_scraped<br/>剥 HTML · 拆 image auto-load<br/>转义 ``` 围栏]:::safety
+    SAN --> FENCE[🔒 包裹 untrusted 围栏<br/>+ UNTRUSTED CONTENT 警告条]:::safety
+    FENCE --> OUT
+
+    %% ========== 渲染层 ==========
+    OUT[format_results<br/>顶部 AI Answers ·<br/>共识列表 · Scraped Content ·<br/>key/cookie 正则脱敏]:::infra
+    OUT --> RESP
+
+    RESP([Markdown 输出<br/>agent 读取并总结回复]):::user
+
+    %% ========== 样式 ==========
+    classDef user fill:#1e3a8a,stroke:#1e40af,color:#fff
+    classDef infra fill:#374151,stroke:#6b7280,color:#fff
+    classDef aclass fill:#065f46,stroke:#10b981,color:#fff
+    classDef bclass fill:#9a3412,stroke:#f97316,color:#fff
+    classDef twclass fill:#0e7490,stroke:#06b6d4,color:#fff
+    classDef scrape fill:#7c2d12,stroke:#ea580c,color:#fff
+    classDef safety fill:#7f1d1d,stroke:#dc2626,color:#fff
 ```
+
+> **图例**：🟢 A 类自带全文 · 🟠 B 类需要抓 · 🟦 Twitter 独立链路 · 🔴 安全围栏（key 脱敏 + URL 校验 + untrusted 隔离）
 
 ## Expand Queries (`--expand`)
 
