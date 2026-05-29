@@ -42,9 +42,9 @@ def main():
     twitter_count = None
     serpapi_engine = "google_light"
     global_timeout = 60
-    scrape_top = 10
+    scrape_top = 30
     scrape_chars = 2000
-    scrape_per_source = 5
+    scrape_per_source = 6
     expand_queries: list = []
     brief = False
 
@@ -201,8 +201,13 @@ def main():
     if scrape_top > 0:
         scrape_top = min(scrape_top, 30)
         fc_key = pick_key(keys.get("firecrawl"))
-        SKIP_SCRAPE_SOURCES: set[str] = set()
-        PREFER_SCRAPE_SOURCES = {"brave", "serpapi", "hackernews", "stackoverflow"}
+        # exa/tavily already pre-fetch markdown during search; firecrawl /search does too.
+        # Skip these as scrape candidates so we don't double-fetch.
+        SKIP_SCRAPE_SOURCES: set[str] = {"exa", "tavily", "firecrawl"}
+        PREFER_SCRAPE_SOURCES = {
+            "brave", "serpapi", "hackernews", "stackoverflow",
+            "github-repos", "twitter",
+        }
         urls_to_scrape: list = []
         seen_urls: set = set()
         deduped_for_scrape = sorted(
