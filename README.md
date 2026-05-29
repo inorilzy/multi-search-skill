@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 
-并行聚合搜索 — 一条命令同时调用 **9 个信源**：Web 搜索 + Google + 代码仓库 + 社区问答 + Twitter/X + 可选全文抓取，按“共识权重”排序输出去重 Markdown 结果。
+并行聚合搜索 — 一条命令同时调用 **8 个信源**：Web 搜索 + Google + 代码仓库 + 社区问答 + Twitter/X + 可选全文抓取，按“共识权重”排序输出去重 Markdown 结果。
 
 > 全部信源都有 **永久免费额度**，下方列出每个 key 的免费申请地址。
 
@@ -11,11 +11,11 @@
 
 ## ✨ 特性
 
-- **9 信源并行**：12 个 worker 线程，5–15 秒完成全部查询
+- **8 信源并行**：12 个 worker 线程，5–15 秒完成全部查询
 - **共识权重排序**：被多个信源同时命中的结果置顶，标记 `【×N】from: brave, tavily, ...`
 - **零配置可用**：无 key 时仍可跑 HackerNews / Stack Overflow / GitHub（gh CLI）
-- **聚合策略**：A 类（Tavily/Exa/Firecrawl）自带全文不二抓；B 类（Brave/SerpAPI/Baidu/HN/SO/GitHub Repos）按共识权重调 Jina Reader（GitHub Repos 自动重写到 raw README）；Twitter 作为独立详情类，推文 + 评论与 A/B 合并输出
-- **AI Answer 顶部展示**：Tavily / Exa / SerpAPI Knowledge Graph / Baidu 千帆答案合并置顶
+- **聚合策略**：A 类（Tavily/Exa/Firecrawl）自带全文不二抓；B 类（Brave/SerpAPI/HN/SO/GitHub Repos）按共识权重调 Jina Reader（GitHub Repos 自动重写到 raw README）；Twitter 作为独立详情类，推文 + 评论与 A/B 合并输出
+- **AI Answer 顶部展示**：Tavily / Exa / SerpAPI Knowledge Graph 答案合并置顶
 - **TLS 稳定**：内置 SSL 上下文 + 重试，解决 Python 3.12 严格 TLS 下的 EOF 错误
 
 ---
@@ -43,13 +43,13 @@ python search.py "epub to markdown" --type all
   "exa": "xxxx",
   "firecrawl": "fc-xxxx",
   "serpapi": "xxxx",
-  "baidu": "bce-v3/ALTAK-xxxx/xxxx",
   "github": "ghp_xxxx",
-  "jina": "jina_xxxx"
+  "jina": "jina_xxxx",
+  "twitter": { "auth_token": "...", "ct0": "..." }
 }
 ```
 
-或用环境变量：`BRAVE_SEARCH_API_KEY` / `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` / `SERPAPI_KEY` / `BAIDU_API_KEY` / `GITHUB_TOKEN` / `JINA_API_KEY`。
+或用环境变量：`BRAVE_SEARCH_API_KEY` / `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` / `SERPAPI_KEY` / `GITHUB_TOKEN` / `JINA_API_KEY`。
 
 ### 免费额度 & 申请地址
 
@@ -60,8 +60,7 @@ python search.py "epub to markdown" --type all
 | ✨ **Exa** | 1,000 次/月 | https://exa.ai | 神经搜索 + outputSchema 全局答案 |
 | 🔥 **Firecrawl** | 500 credits/月 | https://www.firecrawl.dev | 搜索时直接返回全文 markdown |
 | 🔎 **SerpAPI**（Google） | 250 次/月 | https://serpapi.com | 默认 `google_light` 引擎更省 quota |
-| 🐾 **百度千帆 AI Search** | 1,500 次/月 + AI 100/天 | https://console.bce.baidu.com/qianfan | 中文搜索效果最好 |
-| 📦 **GitHub** | 5,000 req/h（PAT） | https://github.com/settings/tokens | 推荐 `gh auth login`（自动管理） |
+|  **GitHub** | 5,000 req/h（PAT） | https://github.com/settings/tokens | 推荐 `gh auth login`（自动管理） |
 | 📖 **Jina Reader**（可选） | 20 RPM 免费 | https://jina.ai/reader/ | scrape-top 默认走 Jina，Firecrawl 兜底 |
 
 ### 无需 key 的信源
@@ -70,6 +69,7 @@ python search.py "epub to markdown" --type all
 |------|------|
 | 🟠 HackerNews | Algolia 公共 API |
 | 🏆 Stack Overflow | StackExchange 公共 API |
+| 🐦 Twitter / X | 使用 cookies（放 `~/.search-keys.json` 的 `twitter` 字段，或复用 `~/.mcp-twikit/cookies.json`） |
 
 ---
 
@@ -90,7 +90,6 @@ python search.py "async python performance" --type community
 
 # 单一信源
 python search.py "latest Rust 1.80 features" --type serpapi
-python search.py "中文大模型对比" --type baidu
 
 # 调整数量和超时
 python search.py "react hooks" --count 15 --timeout 60
@@ -102,7 +101,7 @@ python search.py "react hooks" --brief
 ### 输出格式
 
 ```
-## Sources (raw hits): brave=20, tavily=20, exa=20, serpapi=15, baidu=20, github=20, ...
+## Sources (raw hits): brave=20, tavily=20, exa=20, serpapi=15, github=20, ...
 ## Consensus: 87 unique URLs, 14 matched by 2+ sources (top weight: ×4)
 
 ### 【×4】fastapi/fastapi
@@ -121,9 +120,9 @@ _from: brave, tavily_
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--type` | `all` | `all` / `web` / `repos` / `github` / `community` / `twitter` / `x` / `brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `baidu` / `hn` / `so` |
+| `--type` | `all` | `all` / `web` / `repos` / `github` / `community` / `twitter` / `x` / `brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `hn` / `so` |
 | `--count N` | 各源独立 | 全局覆盖单源 count |
-| `--brave-count` / `--tavily-count` / `--exa-count` / `--firecrawl-count` / `--serpapi-count` / `--baidu-count` / `--github-count` / `--hn-count` / `--so-count` | 见 SKILL.md | 单源覆盖 |
+| `--brave-count` / `--tavily-count` / `--exa-count` / `--firecrawl-count` / `--serpapi-count` / `--github-count` / `--hn-count` / `--so-count` | 见 SKILL.md | 单源覆盖 |
 | `--serpapi-engine` | `google_light` | 也支持 `google`（含 Knowledge Graph） |
 | `--timeout N` | `60` | 单源超时秒数 |
 | `--scrape-top N` | `0` | 搜完后抓 Top N URL 全文（Jina → Firecrawl 兜底，上限 30） |
