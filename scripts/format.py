@@ -10,7 +10,6 @@ SOURCE_ICONS = {
     "serpapi": "🔎",
     "hackernews": "🟠",
     "stackoverflow": "🏆",
-    "reddit": "👽",
     "twitter": "🐦",
 }
 
