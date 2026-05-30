@@ -16,7 +16,7 @@
 - **共识权重排序**：被多个信源同时命中的结果置顶，标记 `【×N】from: brave, tavily, ...`
 - **基础零配置**：无 key 时可跑 HackerNews / Stack Overflow；GitHub 在本机 `gh auth login` 后也可用
 - **聚合策略**：Tavily / Exa / Firecrawl / Twitter/X 搜索结果若带 `scraped_content` 会直接进入抓取内容区；Brave / SerpAPI / HN / SO / GitHub Repos 进入后续抓取候选池，GitHub repo 根 URL 抓取时会重写到 raw README
-- **抓取后端可调**：默认不抓全文；传 `--scrape-top N` 后优先用 Tavily / Exa / Firecrawl 抓取，Jina Reader 作为无 key 兜底
+- **抓取后端可调**：默认不抓全文；传 `--scrape-top N` 后在 Tavily / Exa / Firecrawl 间轮转抓取
 - **AI Answer 顶部展示**：Tavily / Exa / SerpAPI Knowledge Graph 答案合并置顶
 - **TLS 稳定**：内置 SSL 上下文 + 重试，解决 Python 3.12 严格 TLS 下的 EOF 错误
 
@@ -46,14 +46,13 @@ python search.py "epub to markdown"
   "firecrawl": "fc-xxxx",
   "serpapi": "xxxx",
   "github": "ghp_xxxx",
-  "jina": ["jina_key1", "jina_key2"],
   "twitter": { "auth_token": "...", "ct0": "..." }
 }
 ```
 
-> **多 key 池**：API key 字段可以是 single string 或 array of strings。多数源每次调用随机选一个 key；Jina 在抓取 URL 列表时按 URL index round-robin。Twitter 的 `twitter` 字段是 cookie dict，不参与随机轮换。
+> **多 key 池**：API key 字段可以是 single string 或 array of strings。多数源每次调用随机选一个 key；Twitter 的 `twitter` 字段是 cookie dict，不参与随机轮换。
 
-或用环境变量：`BRAVE_SEARCH_API_KEY` / `BRAVE_API_KEY` / `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` / `SERPAPI_API_KEY` / `SERPAPI_KEY` / `GITHUB_TOKEN` / `GH_TOKEN` / `JINA_API_KEY` / `TWITTER_COOKIES_PATH`。
+或用环境变量：`BRAVE_SEARCH_API_KEY` / `BRAVE_API_KEY` / `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` / `SERPAPI_API_KEY` / `SERPAPI_KEY` / `GITHUB_TOKEN` / `GH_TOKEN` / `TWITTER_COOKIES_PATH`。
 
 ### API / 配额参考
 
@@ -67,7 +66,6 @@ python search.py "epub to markdown"
 | 🔥 **Firecrawl** | 500 credits/月 | https://www.firecrawl.dev | 搜索时直接返回全文 markdown |
 | 🔎 **SerpAPI**（Google） | 免费层额度以 SerpAPI 后台为准 | https://serpapi.com | 默认 `google_light`；`google` 才通常返回 Knowledge Graph |
 |  **GitHub** | REST API token 额度以 GitHub 为准 | https://github.com/settings/tokens | 没有 token 时 fallback 到已登录的 `gh` CLI |
-| 📖 **Jina Reader**（可选） | 无 key 可用免费限流；key 可提高额度 | https://jina.ai/reader/ | `--scrape-top N` 时作为 Tavily / Exa / Firecrawl 之后的兜底 reader |
 
 ### 不使用 API key 的信源
 
@@ -91,7 +89,7 @@ python search.py "agent memory" --type lite
 # 社交和社区讨论：Twitter/X + HackerNews + Stack Overflow
 python search.py "Claude Code feedback" --type discussion
 
-# 默认全源 + 自动抓取前 3 条 URL 全文；Jina 仅在 keyed reader 失败后兜底
+# 默认全源 + 自动抓取前 3 条 URL 全文
 python search.py "rust async runtime" --scrape-top 3
 
 # 仅 GitHub 仓库
@@ -138,8 +136,6 @@ _from: brave, tavily_
 | `--no-scrape` | — | 快捷关闭 scrape |
 | `--scrape-chars N` | `2000` | 每页最大字符数 |
 | `--scrape-per-source N` | `6` | 每个来源最多抓几条（防霸屏） |
-| `--jina-first N` | — | 默认 Jina 只兜底；传 `N` 可强制前 N 个候选 URL 先走 Jina |
-| `--no-jina` | — | 完全跳过 Jina 兜底，只在 Tavily / Exa / Firecrawl 间轮转 |
 | `--expand "q2" "q3"` | — | 并行扩展查询（扩展查询使用 `lite` 路由，省请求链路） |
 | `--brief` | — | 仅输出标题+URL |
 

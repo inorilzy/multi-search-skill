@@ -28,7 +28,6 @@ from scripts.scrape import (  # noqa: F401,E402
     _rewrite_for_clean_scrape,
     scrape_url_exa,
     scrape_url_firecrawl as scrape_url,
-    scrape_url_jina,
     scrape_url_smart,
     scrape_url_tavily,
 )

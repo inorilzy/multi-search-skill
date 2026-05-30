@@ -1,4 +1,4 @@
-"""URL scraping: Tavily / Exa / Firecrawl first, Jina Reader fallback.
+"""URL scraping via Tavily / Exa / Firecrawl.
 
 GitHub repo root URLs are rewritten to raw README to avoid nav/chrome noise.
 """
@@ -32,44 +32,6 @@ def _rewrite_for_clean_scrape(url: str) -> str:
         owner, repo = m.group(1), m.group(2).removesuffix(".git")
         return f"https://raw.githubusercontent.com/{owner}/{repo}/HEAD/README.md"
     return url
-
-
-def scrape_url_jina(url: str, timeout: int = 20, jina_key: str = "") -> dict:
-    """Scrape a single URL via Jina Reader.
-    Without key: 20 RPM (free). With key: higher RPM limit.
-    Returns {url, title, markdown, error?}."""
-    if not _safe_http_url(url):
-        return {"url": url, "error": "rejected non-http(s) URL"}
-    target = _rewrite_for_clean_scrape(url)
-    jina_url = "https://r.jina.ai/" + target
-    headers = {
-        "Accept": "text/plain",
-        "User-Agent": "multi-search/1.0",
-        "X-Return-Format": "markdown",
-    }
-    if jina_key:
-        headers["Authorization"] = f"Bearer {jina_key}"
-    req = urllib.request.Request(jina_url, headers=headers)
-    try:
-        with urlopen_retry(req, timeout=timeout) as resp:
-            md = resp.read().decode("utf-8", errors="replace")
-    except Exception as e:
-        return {"url": url, "error": str(e)}
-    if not md or len(md) < 50:
-        return {"url": url, "error": "empty response from Jina"}
-    title = ""
-    lines = md.split("\n")
-    for line in lines[:5]:
-        if line.startswith("Title:"):
-            title = line[6:].strip()
-            break
-    return {
-        "url": url,
-        "title": title or url,
-        "markdown": md,
-        "length": len(md),
-        "via": "jina",
-    }
 
 
 def scrape_url_firecrawl(url: str, api_key: str, timeout: int = 25) -> dict:
@@ -188,17 +150,14 @@ def scrape_url_tavily(url: str, api_key: str, timeout: int = 25) -> dict:
 
 
 def scrape_url_smart(url: str, firecrawl_key: str | None, timeout: int = 25,
-                     jina_key: str = "", exa_key: str = "",
-                     tavily_key: str = "", primary: str = "tavily",
-                     allow_jina: bool = True) -> dict:
+                     exa_key: str = "", tavily_key: str = "",
+                     primary: str = "tavily") -> dict:
     """Scrape `url` starting with `primary` backend, falling back through the others.
 
-    primary ∈ {jina, tavily, exa, firecrawl}. On failure, tries the remaining
-    keyed backends first and keeps Jina as the final zero-config fallback.
+    primary ∈ {tavily, exa, firecrawl}. On failure, tries the remaining
+    keyed backends in a fixed order.
     """
     def _call(backend: str) -> dict | None:
-        if backend == "jina":
-            return scrape_url_jina(url, timeout=timeout, jina_key=jina_key) if allow_jina else None
         if backend == "tavily":
             return scrape_url_tavily(url, tavily_key, timeout=timeout) if tavily_key else None
         if backend == "exa":
@@ -208,8 +167,6 @@ def scrape_url_smart(url: str, firecrawl_key: str | None, timeout: int = 25,
         return None
 
     order = [primary] + [b for b in ("tavily", "exa", "firecrawl") if b != primary]
-    if allow_jina and "jina" not in order:
-        order.append("jina")
     last: dict | None = None
     for backend in order:
         r = _call(backend)

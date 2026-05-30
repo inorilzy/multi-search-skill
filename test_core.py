@@ -1,7 +1,8 @@
 import unittest
+from unittest import mock
 
 from scripts.dedup import _norm_url, deduplicate
-from scripts.main import available_routes, normalize_route, resolve_route
+from scripts.main import available_routes, main, normalize_route, resolve_route
 from scripts import scrape
 
 
@@ -50,13 +51,12 @@ class DedupTests(unittest.TestCase):
 
 
 class ScrapeRoutingTests(unittest.TestCase):
-    def test_jina_is_last_fallback_by_default(self):
+    def test_scrape_falls_back_across_keyed_readers(self):
         calls = []
         originals = (
             scrape.scrape_url_tavily,
             scrape.scrape_url_exa,
             scrape.scrape_url_firecrawl,
-            scrape.scrape_url_jina,
         )
 
         def fail(name):
@@ -65,15 +65,14 @@ class ScrapeRoutingTests(unittest.TestCase):
                 return {"url": "https://example.com", "error": f"{name} failed"}
             return _inner
 
-        def succeed_jina(*args, **kwargs):
-            calls.append("jina")
-            return {"url": "https://example.com", "markdown": "ok", "via": "jina"}
+        def succeed_firecrawl(*args, **kwargs):
+            calls.append("firecrawl")
+            return {"url": "https://example.com", "markdown": "ok", "via": "firecrawl"}
 
         try:
             scrape.scrape_url_tavily = fail("tavily")
             scrape.scrape_url_exa = fail("exa")
-            scrape.scrape_url_firecrawl = fail("firecrawl")
-            scrape.scrape_url_jina = succeed_jina
+            scrape.scrape_url_firecrawl = succeed_firecrawl
             result = scrape.scrape_url_smart(
                 "https://example.com",
                 "firecrawl-key",
@@ -86,11 +85,18 @@ class ScrapeRoutingTests(unittest.TestCase):
                 scrape.scrape_url_tavily,
                 scrape.scrape_url_exa,
                 scrape.scrape_url_firecrawl,
-                scrape.scrape_url_jina,
             ) = originals
 
-        self.assertEqual(calls, ["tavily", "exa", "firecrawl", "jina"])
-        self.assertEqual(result["via"], "jina")
+        self.assertEqual(calls, ["tavily", "exa", "firecrawl"])
+        self.assertEqual(result["via"], "firecrawl")
+
+
+class CliTests(unittest.TestCase):
+    def test_unknown_option_exits_with_error(self):
+        with mock.patch("sys.argv", ["search.py", "query", "--unknown-option"]):
+            with self.assertRaises(SystemExit) as cm:
+                main()
+        self.assertEqual(cm.exception.code, 2)
 
 
 if __name__ == "__main__":

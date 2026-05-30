@@ -76,7 +76,7 @@ def main():
         print("       [--serpapi-count N] [--hn-count N] [--so-count N]")
         print("       [--firecrawl-count N] [--twitter-count N]")
         print("       [--timeout N] [--scrape-top N] [--no-scrape] [--scrape-chars N]")
-        print("       [--scrape-per-source N] [--jina-first N | --no-jina]")
+        print("       [--scrape-per-source N]")
         sys.exit(1)
 
     query_parts: list = []
@@ -96,8 +96,6 @@ def main():
     scrape_top = 0
     scrape_chars = 2000
     scrape_per_source = 6
-    jina_first = None  # None = tavily/exa/firecrawl first; int = first N via Jina, rest via paid backends
-    no_jina = False
     expand_queries: list = []
     brief = False
 
@@ -173,19 +171,14 @@ def main():
             try: scrape_per_source = int(args[i + 1])
             except ValueError: pass
             i += 2
-        elif args[i] == "--jina-first" and i + 1 < len(args):
-            try: jina_first = int(args[i + 1])
-            except ValueError: pass
-            i += 2
-        elif args[i] == "--no-jina":
-            jina_first = 0
-            no_jina = True
-            i += 1
         elif args[i] == "--expand":
             i += 1
             while i < len(args) and not args[i].startswith("--"):
                 expand_queries.append(args[i])
                 i += 1
+        elif args[i].startswith("--"):
+            print(f"Error: unknown option '{args[i]}'", file=sys.stderr)
+            sys.exit(2)
         else:
             query_parts.append(args[i])
             i += 1
@@ -343,21 +336,12 @@ def main():
                 "length": len(content),
             })
         print(f"Scraping top {len(urls_to_scrape)} URL(s) ({len(prefetched)} pre-fetched by sources)...", file=sys.stderr)
-        _jina_raw = keys.get("jina", "")
-        jina_keys: list[str] = (
-            [k for k in _jina_raw if k]
-            if isinstance(_jina_raw, list)
-            else ([_jina_raw] if _jina_raw else [])
-        )
         SECONDARIES = ["tavily", "exa", "firecrawl"]
         tavily_scrape_key = pick_key(keys.get("tavily", ""))
         exa_scrape_key = pick_key(keys.get("exa", ""))
 
         def _primary_for(i: int) -> str:
-            if jina_first is not None and i < jina_first:
-                return "jina"
-            offset = i - (jina_first or 0)
-            return SECONDARIES[offset % len(SECONDARIES)]
+            return SECONDARIES[i % len(SECONDARIES)]
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(urls_to_scrape) or 1)) as pool:
             futures = {
@@ -366,11 +350,9 @@ def main():
                     u,
                     fc_key,
                     25,
-                    jina_keys[i % len(jina_keys)] if jina_keys else "",
                     exa_scrape_key,
                     tavily_scrape_key,
                     _primary_for(i),
-                    not no_jina,
                 ): u
                 for i, u in enumerate(urls_to_scrape)
             }
