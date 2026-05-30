@@ -1,4 +1,4 @@
-"""URL scraping: Jina Reader → Exa /contents → Firecrawl fallback chain.
+"""URL scraping: Tavily / Exa / Firecrawl first, Jina Reader fallback.
 
 GitHub repo root URLs are rewritten to raw README to avoid nav/chrome noise.
 """
@@ -189,16 +189,16 @@ def scrape_url_tavily(url: str, api_key: str, timeout: int = 25) -> dict:
 
 def scrape_url_smart(url: str, firecrawl_key: str | None, timeout: int = 25,
                      jina_key: str = "", exa_key: str = "",
-                     tavily_key: str = "", primary: str = "jina") -> dict:
+                     tavily_key: str = "", primary: str = "tavily",
+                     allow_jina: bool = True) -> dict:
     """Scrape `url` starting with `primary` backend, falling back through the others.
 
     primary ∈ {jina, tavily, exa, firecrawl}. On failure, tries the remaining
-    backends in a fixed order (jina, tavily, exa, firecrawl) skipping the primary
-    and any without a credential where required.
+    keyed backends first and keeps Jina as the final zero-config fallback.
     """
     def _call(backend: str) -> dict | None:
         if backend == "jina":
-            return scrape_url_jina(url, timeout=timeout, jina_key=jina_key)
+            return scrape_url_jina(url, timeout=timeout, jina_key=jina_key) if allow_jina else None
         if backend == "tavily":
             return scrape_url_tavily(url, tavily_key, timeout=timeout) if tavily_key else None
         if backend == "exa":
@@ -207,7 +207,9 @@ def scrape_url_smart(url: str, firecrawl_key: str | None, timeout: int = 25,
             return scrape_url_firecrawl(url, firecrawl_key, timeout=timeout) if firecrawl_key else None
         return None
 
-    order = [primary] + [b for b in ("jina", "tavily", "exa", "firecrawl") if b != primary]
+    order = [primary] + [b for b in ("tavily", "exa", "firecrawl") if b != primary]
+    if allow_jina and "jina" not in order:
+        order.append("jina")
     last: dict | None = None
     for backend in order:
         r = _call(backend)

@@ -18,7 +18,13 @@ from .sources.twitter import search_twitter
 
 
 ROUTE_ALIASES = {
-    "github": "repos",
+    "all": "default",
+    "balanced": "lite",
+    "social": "discussion",
+    "social+community": "discussion",
+    "social-community": "discussion",
+    "community": "discussion",
+    "repos": "github",
     "google": "serpapi",
     "x": "twitter",
     "hn": "hackernews",
@@ -26,22 +32,18 @@ ROUTE_ALIASES = {
 }
 
 ROUTE_PROFILES = {
-    "all": {
+    "default": {
         "brave", "tavily", "exa", "firecrawl", "serpapi",
         "github_repos", "hackernews", "stackoverflow", "twitter",
     },
-    "balanced": {"brave", "tavily", "exa", "github_repos", "hackernews", "stackoverflow"},
-    "web": {"brave", "tavily", "exa", "firecrawl", "serpapi"},
-    "code": {"github_repos", "stackoverflow", "brave"},
-    "community": {"hackernews", "stackoverflow"},
-    "social": {"twitter"},
-    "realtime": {"twitter", "brave", "serpapi"},
-    "repos": {"github_repos"},
+    "lite": {"tavily", "exa", "firecrawl"},
+    "discussion": {"twitter", "hackernews", "stackoverflow"},
     "brave": {"brave"},
     "tavily": {"tavily"},
     "exa": {"exa"},
     "firecrawl": {"firecrawl"},
     "serpapi": {"serpapi"},
+    "github": {"github_repos"},
     "twitter": {"twitter"},
     "hackernews": {"hackernews"},
     "stackoverflow": {"stackoverflow"},
@@ -59,7 +61,7 @@ def normalize_route(search_type: str) -> str:
 
 def resolve_route(search_type: str, lite: bool = False) -> set[str]:
     if lite:
-        return {"brave", "tavily"}
+        return ROUTE_PROFILES["lite"]
     route = normalize_route(search_type)
     return ROUTE_PROFILES.get(route, set())
 
@@ -69,7 +71,7 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = sys.argv[1:]
     if not args:
-        print("Usage: python search.py <query> [--type balanced|all|web|code|community|social|realtime|repos|...] [--count N]")
+        print("Usage: python search.py <query> [--type default|lite|discussion|...] [--count N]")
         print("       [--brave-count N] [--tavily-count N] [--exa-count N] [--github-count N]")
         print("       [--serpapi-count N] [--hn-count N] [--so-count N]")
         print("       [--firecrawl-count N] [--twitter-count N]")
@@ -78,7 +80,7 @@ def main():
         sys.exit(1)
 
     query_parts: list = []
-    search_type = "balanced"
+    search_type = "default"
     count = None
     brave_count = None
     tavily_count = None
@@ -94,7 +96,8 @@ def main():
     scrape_top = 0
     scrape_chars = 2000
     scrape_per_source = 6
-    jina_first = None  # None = all-Jina (= scrape_top); int = first N via Jina, rest via tavily/exa/firecrawl round-robin
+    jina_first = None  # None = tavily/exa/firecrawl first; int = first N via Jina, rest via paid backends
+    no_jina = False
     expand_queries: list = []
     brief = False
 
@@ -176,6 +179,7 @@ def main():
             i += 2
         elif args[i] == "--no-jina":
             jina_first = 0
+            no_jina = True
             i += 1
         elif args[i] == "--expand":
             i += 1
@@ -345,18 +349,15 @@ def main():
             if isinstance(_jina_raw, list)
             else ([_jina_raw] if _jina_raw else [])
         )
-        # Allocation: first JINA_FIRST_N URLs -> Jina (free 20 RPM w/o key, higher w/ key);
-        # remainder round-robin across tavily / exa / firecrawl.
-        # Default = scrape_top (all-Jina). Override with --jina-first N or --no-jina.
-        JINA_FIRST_N = jina_first if jina_first is not None else scrape_top
         SECONDARIES = ["tavily", "exa", "firecrawl"]
         tavily_scrape_key = pick_key(keys.get("tavily", ""))
         exa_scrape_key = pick_key(keys.get("exa", ""))
 
         def _primary_for(i: int) -> str:
-            if i < JINA_FIRST_N:
+            if jina_first is not None and i < jina_first:
                 return "jina"
-            return SECONDARIES[(i - JINA_FIRST_N) % len(SECONDARIES)]
+            offset = i - (jina_first or 0)
+            return SECONDARIES[offset % len(SECONDARIES)]
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(urls_to_scrape) or 1)) as pool:
             futures = {
@@ -369,6 +370,7 @@ def main():
                     exa_scrape_key,
                     tavily_scrape_key,
                     _primary_for(i),
+                    not no_jina,
                 ): u
                 for i, u in enumerate(urls_to_scrape)
             }

@@ -11,12 +11,12 @@
 
 ## ✨ 特性
 
-- **9 个 route source**：`all` 会尝试 Brave、Tavily、Exa、Firecrawl、SerpAPI、GitHub Repos、HackerNews、Stack Overflow、Twitter/X；缺 key 的付费/API 源会跳过或返回错误
+- **3 个主 route**：`default` 跑全源，`lite` 跑 Tavily + Exa + Firecrawl，`discussion` 跑 Twitter/X + HackerNews + Stack Overflow
 - **多 key 池**：API key 字段可作为 string 或 string 列表，`pick_key()` 随机轮换，降低单 key 配额耗尽风险
 - **共识权重排序**：被多个信源同时命中的结果置顶，标记 `【×N】from: brave, tavily, ...`
 - **基础零配置**：无 key 时可跑 HackerNews / Stack Overflow；GitHub 在本机 `gh auth login` 后也可用
 - **聚合策略**：Tavily / Exa / Firecrawl / Twitter/X 搜索结果若带 `scraped_content` 会直接进入抓取内容区；Brave / SerpAPI / HN / SO / GitHub Repos 进入后续抓取候选池，GitHub repo 根 URL 抓取时会重写到 raw README
-- **抓取后端可调**：默认不抓全文；传 `--scrape-top N` 后候选 URL 先走 Jina，`--jina-first N` 可调成「前 N 走 Jina + 剩下在 Tavily/Exa/Firecrawl 间 round-robin」
+- **抓取后端可调**：默认不抓全文；传 `--scrape-top N` 后优先用 Tavily / Exa / Firecrawl 抓取，Jina Reader 作为无 key 兜底
 - **AI Answer 顶部展示**：Tavily / Exa / SerpAPI Knowledge Graph 答案合并置顶
 - **TLS 稳定**：内置 SSL 上下文 + 重试，解决 Python 3.12 严格 TLS 下的 EOF 错误
 
@@ -67,7 +67,7 @@ python search.py "epub to markdown"
 | 🔥 **Firecrawl** | 500 credits/月 | https://www.firecrawl.dev | 搜索时直接返回全文 markdown |
 | 🔎 **SerpAPI**（Google） | 免费层额度以 SerpAPI 后台为准 | https://serpapi.com | 默认 `google_light`；`google` 才通常返回 Knowledge Graph |
 |  **GitHub** | REST API token 额度以 GitHub 为准 | https://github.com/settings/tokens | 没有 token 时 fallback 到已登录的 `gh` CLI |
-| 📖 **Jina Reader**（可选） | 无 key 可用免费限流；key 可提高额度 | https://jina.ai/reader/ | 传 `--scrape-top N` 后优先用 Jina；Tavily Extract / Exa contents / Firecrawl 作 fallback |
+| 📖 **Jina Reader**（可选） | 无 key 可用免费限流；key 可提高额度 | https://jina.ai/reader/ | `--scrape-top N` 时作为 Tavily / Exa / Firecrawl 之后的兜底 reader |
 
 ### 不使用 API key 的信源
 
@@ -82,26 +82,20 @@ python search.py "epub to markdown"
 ## 🚀 使用示例
 
 ```powershell
-# 推荐日常：质量/成本/噪音均衡
-python search.py "epub to markdown" --type balanced
+# 默认全源聚合：覆盖网页、详情、代码、社区和 Twitter/X
+python search.py "epub to markdown"
 
-# 最全摸底：全部信源并行
-python search.py "epub to markdown" --type all
+# 轻量详情搜索：Tavily + Exa + Firecrawl，通常能直接带回正文/摘要
+python search.py "agent memory" --type lite
 
-# Web 搜索 + 自动抓取前 3 条 URL 全文
-python search.py "rust async runtime" --type web --scrape-top 3
+# 社交和社区讨论：Twitter/X + HackerNews + Stack Overflow
+python search.py "Claude Code feedback" --type discussion
 
-# 仅 GitHub 仓库（开启 scrape 时会把 repo 根 URL 改写到 raw README）
-python search.py "vector database" --type repos
+# 默认全源 + 自动抓取前 3 条 URL 全文；Jina 仅在 keyed reader 失败后兜底
+python search.py "rust async runtime" --scrape-top 3
 
-# 代码实现和技术解法（GitHub + Stack Overflow + Brave）
-python search.py "python async patterns" --type code
-
-# 仅社区讨论（HN + Stack Overflow，不含社交实时流）
-python search.py "async python performance" --type community
-
-# 实时社交信号
-python search.py "latest AI agent release" --type social
+# 仅 GitHub 仓库
+python search.py "vector database" --type github
 
 # 单一信源
 python search.py "latest Rust 1.80 features" --type serpapi
@@ -135,7 +129,7 @@ _from: brave, tavily_
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--type` | `balanced` | 意图路由：`all` / `balanced` / `web` / `code` / `community` / `social` / `realtime` / `repos`；单源直连：`brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `github` / `hn` / `so` / `twitter` / `x` |
+| `--type` | `default` | 主路由：`default` / `lite` / `discussion`；常用别名：`all`、`social+community`、`social-community`；单源直连：`brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `github` / `hn` / `so` / `twitter` / `x` |
 | `--count N` | 各源独立 | 全局覆盖单源 count；随后按各 provider 上限 clamp |
 | `--brave-count` / `--tavily-count` / `--exa-count` / `--firecrawl-count` / `--serpapi-count` / `--github-count` / `--hn-count` / `--so-count` / `--twitter-count` | 见 SKILL.md | 单源覆盖 |
 | `--serpapi-engine` | `google_light` | 也支持 `google`；`google` 才通常包含 Knowledge Graph |
@@ -144,9 +138,9 @@ _from: brave, tavily_
 | `--no-scrape` | — | 快捷关闭 scrape |
 | `--scrape-chars N` | `2000` | 每页最大字符数 |
 | `--scrape-per-source N` | `6` | 每个来源最多抓几条（防霸屏） |
-| `--jina-first N` | `scrape_top` | 候选 URL 前 N 个走 Jina；剩余 tavily/exa/firecrawl 轮转。Jina 额度紧张时设小（如 `20`） |
-| `--no-jina` | — | 跳过 Jina，候选 URL 在 tavily/exa/firecrawl 间轮转；没有对应 key 的后端会被 fallback 链跳过 |
-| `--expand "q2" "q3"` | — | 并行扩展查询（lite 模式仅 brave+tavily） |
+| `--jina-first N` | — | 默认 Jina 只兜底；传 `N` 可强制前 N 个候选 URL 先走 Jina |
+| `--no-jina` | — | 完全跳过 Jina 兜底，只在 Tavily / Exa / Firecrawl 间轮转 |
+| `--expand "q2" "q3"` | — | 并行扩展查询（扩展查询使用 `lite` 路由，省请求链路） |
 | `--brief` | — | 仅输出标题+URL |
 
 ---
