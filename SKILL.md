@@ -7,7 +7,7 @@ description: >
   parallel request, with optional Jina / Firecrawl scraping of top URLs.
   Activate when user says: search, find, look up, multi-search, search everywhere,
   搜索, 查找, 查一下, 聚合搜索, 多源搜索.
-argument-hint: "<query> [--type all|web|code|repos|community|...] [--count N] [--scrape-top N] [--timeout N]"
+argument-hint: "<query> [--type all|balanced|web|code|community|social|realtime|repos|...] [--count N] [--scrape-top N] [--timeout N]"
 ---
 
 # Multi-Search
@@ -97,14 +97,22 @@ Free key sources:
 
 ## Search Types
 
-| Flag | Sources Used |
-|------|-------------|
-| `--type all` (default) | Brave + Tavily + Exa + Firecrawl + SerpAPI + GitHub Repos + HackerNews + Stack Overflow + Twitter |
-| `--type web` | Brave + Tavily + Exa + Firecrawl + SerpAPI |
-| `--type repos` / `github` | GitHub Repos only |
-| `--type community` | HackerNews + Stack Overflow + Twitter |
-| `--type twitter` / `x` | Twitter / X only |
-| `--type brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `hn` / `so` | Single source only |
+`--type` 分两层：常用时按**搜索意图**选 profile；调试或控 quota 时再用单源直连。
+
+| Intent Route | Sources Used | Use When |
+|--------------|-------------|----------|
+| `--type all` (default) | Brave + Tavily + Exa + Firecrawl + SerpAPI + GitHub Repos + HackerNews + Stack Overflow + Twitter | 最全摸底 |
+| `--type balanced` | Brave + Tavily + Exa + GitHub Repos + HackerNews + Stack Overflow | 默认推荐；质量/成本/噪音均衡 |
+| `--type web` | Brave + Tavily + Exa + Firecrawl + SerpAPI | 文档、博客、官网、网页资料 |
+| `--type code` | GitHub Repos + Stack Overflow + Brave | 仓库、实现、技术解法 |
+| `--type community` | HackerNews + Stack Overflow | 技术社区讨论和 Q&A，不含社交实时流 |
+| `--type social` | Twitter / X | 实时社交信号 |
+| `--type realtime` | Twitter + Brave + SerpAPI | 追新、发布、事件类查询 |
+| `--type repos` / `github` | GitHub Repos only | 只找仓库 |
+
+| Provider Route | Sources Used |
+|----------------|-------------|
+| `--type brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `hn` / `so` / `twitter` / `x` | Single source only |
 
 \* Sources whose key is missing are silently skipped.
 
@@ -150,12 +158,20 @@ flowchart TD
 
     %% ========== 路由分流 ==========
     TYPE -->|all| FAN
+    TYPE -->|balanced| FANB[Brave + Tavily + Exa<br/>GitHub + HN + SO]
     TYPE -->|web| FANW[Brave + Tavily + Exa<br/>Firecrawl + SerpAPI]
-    TYPE -->|community| FANC[HN + SO + Twitter]
+    TYPE -->|code| FANCODE[GitHub + SO + Brave]
+    TYPE -->|community| FANC[HN + SO]
+    TYPE -->|social| FANSOC[Twitter]
+    TYPE -->|realtime| FANRT[Twitter + Brave + SerpAPI]
     TYPE -->|repos / github| GH
-    TYPE -->|单源| ONE[单一信源直跑]
+    TYPE -->|provider| ONE[单一信源直跑]
+    FANB --> FAN
     FANW --> FAN
+    FANCODE --> FAN
     FANC --> FAN
+    FANSOC --> FAN
+    FANRT --> FAN
     GH --> FAN
     ONE --> RESP
 

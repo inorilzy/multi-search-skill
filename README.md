@@ -80,8 +80,11 @@ python search.py "epub to markdown" --type all
 ## 🚀 使用示例
 
 ```powershell
-# 默认全信源搜索
-python search.py "epub to markdown"
+# 推荐日常：质量/成本/噪音均衡
+python search.py "epub to markdown" --type balanced
+
+# 最全摸底：全部信源并行
+python search.py "epub to markdown" --type all
 
 # Web 搜索 + 自动抓取前 3 条 URL 全文
 python search.py "rust async runtime" --type web --scrape-top 3
@@ -89,8 +92,14 @@ python search.py "rust async runtime" --type web --scrape-top 3
 # 仅 GitHub 仓库（默认还会抓 README）
 python search.py "vector database" --type repos
 
-# 仅社区讨论（HN + Stack Overflow + Twitter）
+# 代码实现和技术解法（GitHub + Stack Overflow + Brave）
+python search.py "python async patterns" --type code
+
+# 仅社区讨论（HN + Stack Overflow，不含社交实时流）
 python search.py "async python performance" --type community
+
+# 实时社交信号
+python search.py "latest AI agent release" --type social
 
 # 单一信源
 python search.py "latest Rust 1.80 features" --type serpapi
@@ -124,7 +133,7 @@ _from: brave, tavily_
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--type` | `all` | `all` / `web` / `repos` / `github` / `community` / `twitter` / `x` / `brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `hn` / `so` |
+| `--type` | `all` | 意图路由：`all` / `balanced` / `web` / `code` / `community` / `social` / `realtime` / `repos`；单源直连：`brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `github` / `hn` / `so` / `twitter` / `x` |
 | `--count N` | 各源独立 | 全局覆盖单源 count |
 | `--brave-count` / `--tavily-count` / `--exa-count` / `--firecrawl-count` / `--serpapi-count` / `--github-count` / `--hn-count` / `--so-count` | 见 SKILL.md | 单源覆盖 |
 | `--serpapi-engine` | `google_light` | 也支持 `google`（含 Knowledge Graph） |

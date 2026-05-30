@@ -17,12 +17,50 @@ from .sources.tavily import search_tavily
 from .sources.twitter import search_twitter
 
 
+ROUTE_ALIASES = {
+    "github": "repos",
+    "google": "serpapi",
+    "x": "twitter",
+    "hn": "hackernews",
+    "so": "stackoverflow",
+}
+
+ROUTE_PROFILES = {
+    "all": {
+        "brave", "tavily", "exa", "firecrawl", "serpapi",
+        "github_repos", "hackernews", "stackoverflow", "twitter",
+    },
+    "balanced": {"brave", "tavily", "exa", "github_repos", "hackernews", "stackoverflow"},
+    "web": {"brave", "tavily", "exa", "firecrawl", "serpapi"},
+    "code": {"github_repos", "stackoverflow", "brave"},
+    "community": {"hackernews", "stackoverflow"},
+    "social": {"twitter"},
+    "realtime": {"twitter", "brave", "serpapi"},
+    "repos": {"github_repos"},
+    "brave": {"brave"},
+    "tavily": {"tavily"},
+    "exa": {"exa"},
+    "firecrawl": {"firecrawl"},
+    "serpapi": {"serpapi"},
+    "twitter": {"twitter"},
+    "hackernews": {"hackernews"},
+    "stackoverflow": {"stackoverflow"},
+}
+
+
+def resolve_route(search_type: str, lite: bool = False) -> set[str]:
+    if lite:
+        return {"brave", "tavily"}
+    route = ROUTE_ALIASES.get(search_type, search_type)
+    return ROUTE_PROFILES.get(route, set())
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = sys.argv[1:]
     if not args:
-        print("Usage: python search.py <query> [--type all|web|code|repos|...] [--count N]")
+        print("Usage: python search.py <query> [--type all|balanced|web|code|community|social|realtime|repos|...] [--count N]")
         print("       [--brave-count N] [--tavily-count N] [--exa-count N] [--github-count N]")
         print("       [--serpapi-count N] [--hn-count N] [--so-count N]")
         print("       [--firecrawl-count N] [--twitter-count N]")
@@ -171,24 +209,25 @@ def main():
 
     def _run_search(q: str, lite: bool = False) -> list:
         _tasks: dict = {}
+        source_names = resolve_route(search_type, lite=lite)
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as _pool:
-            if (lite or search_type in ("all", "web", "brave")) and "brave" in keys:
+            if "brave" in source_names and "brave" in keys:
                 _tasks["brave"] = _pool.submit(search_brave, q, keys["brave"], brave_count)
-            if (lite or search_type in ("all", "web", "tavily")) and "tavily" in keys:
+            if "tavily" in source_names and "tavily" in keys:
                 _tasks["tavily"] = _pool.submit(search_tavily, q, pick_key(keys["tavily"]), tavily_count)
-            if not lite and search_type in ("all", "web", "exa") and "exa" in keys:
+            if "exa" in source_names and "exa" in keys:
                 _tasks["exa"] = _pool.submit(search_exa, q, pick_key(keys["exa"]), exa_count)
-            if not lite and search_type in ("all", "web", "serpapi", "google") and "serpapi" in keys:
+            if "serpapi" in source_names and "serpapi" in keys:
                 _tasks["serpapi"] = _pool.submit(search_serpapi, q, pick_key(keys["serpapi"]), serpapi_count, serpapi_engine)
-            if not lite and search_type in ("all", "web", "firecrawl") and "firecrawl" in keys:
+            if "firecrawl" in source_names and "firecrawl" in keys:
                 _tasks["firecrawl"] = _pool.submit(search_firecrawl, q, pick_key(keys["firecrawl"]), firecrawl_count)
-            if not lite and search_type in ("all", "repos", "github"):
+            if "github_repos" in source_names:
                 _tasks["github_repos"] = _pool.submit(search_github_repos, q, github_count, keys.get("github", ""))
-            if not lite and search_type in ("all", "community", "hn", "hackernews"):
+            if "hackernews" in source_names:
                 _tasks["hackernews"] = _pool.submit(search_hackernews, q, hn_count)
-            if not lite and search_type in ("all", "community", "so", "stackoverflow"):
+            if "stackoverflow" in source_names:
                 _tasks["stackoverflow"] = _pool.submit(search_stackoverflow, q, so_count)
-            if not lite and search_type in ("all", "community", "twitter", "x"):
+            if "twitter" in source_names:
                 _tasks["twitter"] = _pool.submit(search_twitter, q, twitter_count, keys.get("twitter") or keys.get("twitter_cookies", ""))
         _results: list = []
         # Iterate by completion so a slow source doesn't block reading from
