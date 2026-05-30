@@ -90,7 +90,7 @@ def scrape_url_firecrawl(url: str, api_key: str, timeout: int = 25) -> dict:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except Exception as e:
         return {"url": url, "error": str(e)}
@@ -123,7 +123,7 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = 25) -> dict:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
         statuses = data.get("statuses") or []
         if statuses and statuses[0].get("status") != "success":
@@ -165,7 +165,7 @@ def scrape_url_tavily(url: str, api_key: str, timeout: int = 25) -> dict:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
         results = data.get("results") or []
         if not results:

@@ -48,10 +48,19 @@ ROUTE_PROFILES = {
 }
 
 
+def available_routes() -> list[str]:
+    """Return valid --type choices, including aliases."""
+    return sorted(set(ROUTE_PROFILES) | set(ROUTE_ALIASES))
+
+
+def normalize_route(search_type: str) -> str:
+    return ROUTE_ALIASES.get(search_type, search_type)
+
+
 def resolve_route(search_type: str, lite: bool = False) -> set[str]:
     if lite:
         return {"brave", "tavily"}
-    route = ROUTE_ALIASES.get(search_type, search_type)
+    route = normalize_route(search_type)
     return ROUTE_PROFILES.get(route, set())
 
 
@@ -60,7 +69,7 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = sys.argv[1:]
     if not args:
-        print("Usage: python search.py <query> [--type all|balanced|web|code|community|social|realtime|repos|...] [--count N]")
+        print("Usage: python search.py <query> [--type balanced|all|web|code|community|social|realtime|repos|...] [--count N]")
         print("       [--brave-count N] [--tavily-count N] [--exa-count N] [--github-count N]")
         print("       [--serpapi-count N] [--hn-count N] [--so-count N]")
         print("       [--firecrawl-count N] [--twitter-count N]")
@@ -69,7 +78,7 @@ def main():
         sys.exit(1)
 
     query_parts: list = []
-    search_type = "all"
+    search_type = "balanced"
     count = None
     brave_count = None
     tavily_count = None
@@ -82,7 +91,7 @@ def main():
     twitter_count = None
     serpapi_engine = "google_light"
     global_timeout = 60
-    scrape_top = 30
+    scrape_top = 0
     scrape_chars = 2000
     scrape_per_source = 6
     jina_first = None  # None = all-Jina (= scrape_top); int = first N via Jina, rest via tavily/exa/firecrawl round-robin
@@ -204,6 +213,10 @@ def main():
     if not query:
         print("Error: query is required")
         sys.exit(1)
+    if normalize_route(search_type) not in ROUTE_PROFILES:
+        choices = ", ".join(available_routes())
+        print(f"Error: unknown --type '{search_type}'. Available types: {choices}", file=sys.stderr)
+        sys.exit(2)
 
     keys = load_keys()
 

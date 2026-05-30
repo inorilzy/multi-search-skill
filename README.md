@@ -3,20 +3,20 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 
-并行聚合搜索 — 一条命令同时调用 **8 个信源**：Web 搜索 + Google + 代码仓库 + 社区问答 + Twitter/X + 可选全文抓取，按“共识权重”排序输出去重 Markdown 结果。
+并行聚合搜索 — 一条命令按路由调用最多 **9 个信源**：Web 搜索、Google SERP、代码仓库、社区问答、Twitter/X，以及可选全文抓取，按“共识权重”排序输出去重 Markdown 结果。
 
-> 全部信源都有 **永久免费额度**，下方列出每个 key 的免费申请地址。
+> 不是所有信源都能零配置使用。无 key 时仍可跑 HackerNews / Stack Overflow；GitHub 需要 `GITHUB_TOKEN` / `GH_TOKEN`，或本机已登录 `gh` CLI；Twitter/X 需要 `twikit-ng` 和 cookies。
 
 ---
 
 ## ✨ 特性
 
-- **8 信源并行**：12 个 worker 线程，5–15 秒完成全部查询
-- **多 key 池**：任何 key 字段可作为 string 或 string 列表，`pick_key()` 随机轮换，免单 key 耗尽
+- **9 个 route source**：`all` 会尝试 Brave、Tavily、Exa、Firecrawl、SerpAPI、GitHub Repos、HackerNews、Stack Overflow、Twitter/X；缺 key 的付费/API 源会跳过或返回错误
+- **多 key 池**：API key 字段可作为 string 或 string 列表，`pick_key()` 随机轮换，降低单 key 配额耗尽风险
 - **共识权重排序**：被多个信源同时命中的结果置顶，标记 `【×N】from: brave, tavily, ...`
-- **零配置可用**：无 key 时仍可跑 HackerNews / Stack Overflow / GitHub（gh CLI）
-- **聚合策略**：A 类（Tavily/Exa/Firecrawl）自带全文不二抓；B 类 PREFER（Brave/SerpAPI/HN/SO/GitHub Repos）按共识权重抓取（GitHub Repos 自动重写到 raw README）；Twitter 本身 `scraped_content` 已有推文+评论，不进抓取队列
-- **抓取后端可调**：默认全走 Jina；`--jina-first N` 调成「前 N 走 Jina + 剩下在 tavily/exa/firecrawl 间 round-robin」；`--no-jina` 跳过 Jina
+- **基础零配置**：无 key 时可跑 HackerNews / Stack Overflow；GitHub 在本机 `gh auth login` 后也可用
+- **聚合策略**：Tavily / Exa / Firecrawl / Twitter/X 搜索结果若带 `scraped_content` 会直接进入抓取内容区；Brave / SerpAPI / HN / SO / GitHub Repos 进入后续抓取候选池，GitHub repo 根 URL 抓取时会重写到 raw README
+- **抓取后端可调**：默认不抓全文；传 `--scrape-top N` 后候选 URL 先走 Jina，`--jina-first N` 可调成「前 N 走 Jina + 剩下在 Tavily/Exa/Firecrawl 间 round-robin」
 - **AI Answer 顶部展示**：Tavily / Exa / SerpAPI Knowledge Graph 答案合并置顶
 - **TLS 稳定**：内置 SSL 上下文 + 重试，解决 Python 3.12 严格 TLS 下的 EOF 错误
 
@@ -28,13 +28,13 @@
 git clone https://github.com/inorilzy/multi-search-skill.git
 cd multi-search-skill
 
-# 仅依赖 Python 3.9+ 标准库 —— 无 pip 安装步骤
-python search.py "epub to markdown" --type all
+# 核心搜索仅依赖 Python 3.9+ 标准库；Twitter/X 路由需要可选依赖 twikit-ng
+python search.py "epub to markdown"
 ```
 
 ---
 
-## 🔑 API Keys（全部免费）
+## 🔑 API Keys
 
 所有 key 写入 `~/.search-keys.json`（**不要提交到仓库**）：
 
@@ -51,29 +51,31 @@ python search.py "epub to markdown" --type all
 }
 ```
 
-> **多 key 池**：任何字段都可以是 single string 或 array of strings。多 key 时随机轮换（jina 按 URL index round-robin），单 key 颍度耗尽后仍能切下一个。
+> **多 key 池**：API key 字段可以是 single string 或 array of strings。多数源每次调用随机选一个 key；Jina 在抓取 URL 列表时按 URL index round-robin。Twitter 的 `twitter` 字段是 cookie dict，不参与随机轮换。
 
-或用环境变量：`BRAVE_SEARCH_API_KEY` / `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` / `SERPAPI_KEY` / `GITHUB_TOKEN` / `JINA_API_KEY`。
+或用环境变量：`BRAVE_SEARCH_API_KEY` / `BRAVE_API_KEY` / `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` / `SERPAPI_API_KEY` / `SERPAPI_KEY` / `GITHUB_TOKEN` / `GH_TOKEN` / `JINA_API_KEY` / `TWITTER_COOKIES_PATH`。
 
-### 免费额度 & 申请地址
+### API / 配额参考
 
-| 信源 | 免费额度 | 注册地址 | 备注 |
+额度来自各服务公开免费层或常见免费用法，可能随服务商调整；代码不会校验套餐类型。
+
+| 信源 | 参考额度 | 注册地址 | 备注 |
 |------|----------|----------|------|
 | 🔍 **Brave Search** | 2,000 次/月 | https://brave.com/search/api/ | 邮箱注册即得 |
 | 🌐 **Tavily** | 1,000 次/月 | https://tavily.com | AI 优化结果 + advanced answer |
 | ✨ **Exa** | 1,000 次/月 | https://exa.ai | 神经搜索 + outputSchema 全局答案 |
 | 🔥 **Firecrawl** | 500 credits/月 | https://www.firecrawl.dev | 搜索时直接返回全文 markdown |
-| 🔎 **SerpAPI**（Google） | 250 次/月 | https://serpapi.com | 默认 `google_light` 引擎更省 quota |
-|  **GitHub** | 5,000 req/h（PAT） | https://github.com/settings/tokens | 推荐 `gh auth login`（自动管理） |
-| 📖 **Jina Reader**（可选） | 20 RPM 免费 | https://jina.ai/reader/ | scrape-top 默认主用 Jina；Tavily Extract / Exa contents / Firecrawl 作 fallback |
+| 🔎 **SerpAPI**（Google） | 免费层额度以 SerpAPI 后台为准 | https://serpapi.com | 默认 `google_light`；`google` 才通常返回 Knowledge Graph |
+|  **GitHub** | REST API token 额度以 GitHub 为准 | https://github.com/settings/tokens | 没有 token 时 fallback 到已登录的 `gh` CLI |
+| 📖 **Jina Reader**（可选） | 无 key 可用免费限流；key 可提高额度 | https://jina.ai/reader/ | 传 `--scrape-top N` 后优先用 Jina；Tavily Extract / Exa contents / Firecrawl 作 fallback |
 
-### 无需 key 的信源
+### 不使用 API key 的信源
 
 | 信源 | 说明 |
 |------|------|
 | 🟠 HackerNews | Algolia 公共 API |
 | 🏆 Stack Overflow | StackExchange 公共 API |
-| 🐦 Twitter / X | 使用 cookies（放 `~/.search-keys.json` 的 `twitter` 字段，或复用 `~/.mcp-twikit/cookies.json`） |
+| 🐦 Twitter / X | 需要 `pip install twikit-ng`，并提供 cookies（`~/.search-keys.json` 的 `twitter` 字段、`TWITTER_COOKIES_PATH`，或默认 `~/.mcp-twikit/cookies.json`） |
 
 ---
 
@@ -89,7 +91,7 @@ python search.py "epub to markdown" --type all
 # Web 搜索 + 自动抓取前 3 条 URL 全文
 python search.py "rust async runtime" --type web --scrape-top 3
 
-# 仅 GitHub 仓库（默认还会抓 README）
+# 仅 GitHub 仓库（开启 scrape 时会把 repo 根 URL 改写到 raw README）
 python search.py "vector database" --type repos
 
 # 代码实现和技术解法（GitHub + Stack Overflow + Brave）
@@ -114,11 +116,11 @@ python search.py "react hooks" --brief
 ### 输出格式
 
 ```
-## Sources (raw hits): brave=20, tavily=20, exa=20, serpapi=15, github=20, ...
-## Consensus: 87 unique URLs, 14 matched by 2+ sources (top weight: ×4)
+**Sources (raw hits):** 🔍 **brave**: 10 | 🌐 **tavily**: 10 | ✨ **exa**: 10 | 🔎 **serpapi**: 10 | 📦 **github-repos**: 10
+**Consensus:** 42 unique URLs, 6 matched by 2+ sources (top weight: ×4)
 
 ### 【×4】fastapi/fastapi
-_from: brave, tavily, serpapi, github_
+_from: brave, tavily, serpapi, github-repos_
 FastAPI framework, high performance, easy to learn...
 https://github.com/fastapi/fastapi
 
@@ -133,17 +135,17 @@ _from: brave, tavily_
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--type` | `all` | 意图路由：`all` / `balanced` / `web` / `code` / `community` / `social` / `realtime` / `repos`；单源直连：`brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `github` / `hn` / `so` / `twitter` / `x` |
-| `--count N` | 各源独立 | 全局覆盖单源 count |
-| `--brave-count` / `--tavily-count` / `--exa-count` / `--firecrawl-count` / `--serpapi-count` / `--github-count` / `--hn-count` / `--so-count` | 见 SKILL.md | 单源覆盖 |
-| `--serpapi-engine` | `google_light` | 也支持 `google`（含 Knowledge Graph） |
+| `--type` | `balanced` | 意图路由：`all` / `balanced` / `web` / `code` / `community` / `social` / `realtime` / `repos`；单源直连：`brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `google` / `github` / `hn` / `so` / `twitter` / `x` |
+| `--count N` | 各源独立 | 全局覆盖单源 count；随后按各 provider 上限 clamp |
+| `--brave-count` / `--tavily-count` / `--exa-count` / `--firecrawl-count` / `--serpapi-count` / `--github-count` / `--hn-count` / `--so-count` / `--twitter-count` | 见 SKILL.md | 单源覆盖 |
+| `--serpapi-engine` | `google_light` | 也支持 `google`；`google` 才通常包含 Knowledge Graph |
 | `--timeout N` | `60` | 单源超时秒数 |
-| `--scrape-top N` | `30` | 搜完后抓 Top N URL 全文（默认开，上限 30；传 `0` 或 `--no-scrape` 关闭） |
+| `--scrape-top N` | `0` | 默认不输出全文抓取内容；传 `N` 后复用源自带全文，并对候选 URL 抓取补充内容，候选抓取上限 30 |
 | `--no-scrape` | — | 快捷关闭 scrape |
 | `--scrape-chars N` | `2000` | 每页最大字符数 |
 | `--scrape-per-source N` | `6` | 每个来源最多抓几条（防霸屏） |
-| `--jina-first N` | `scrape_top` (all-Jina) | 前 N 个 URL 走 Jina；剩余 tavily/exa/firecrawl 轮转。Jina 额度紧张时设小（如 `20`） |
-| `--no-jina` | — | 跳过 Jina，全 tavily/exa/firecrawl |
+| `--jina-first N` | `scrape_top` | 候选 URL 前 N 个走 Jina；剩余 tavily/exa/firecrawl 轮转。Jina 额度紧张时设小（如 `20`） |
+| `--no-jina` | — | 跳过 Jina，候选 URL 在 tavily/exa/firecrawl 间轮转；没有对应 key 的后端会被 fallback 链跳过 |
 | `--expand "q2" "q3"` | — | 并行扩展查询（lite 模式仅 brave+tavily） |
 | `--brief` | — | 仅输出标题+URL |
 

@@ -2,7 +2,6 @@
 """测试各搜索源的实际返回条数上限和稳定性。运行 2 轮，对比结果。"""
 
 import sys
-import json
 import time
 from pathlib import Path
 
@@ -17,7 +16,6 @@ from search import (
     search_github_repos,
     search_hackernews,
     search_stackoverflow,
-    search_baidu,
 )
 
 QUERY = "python async programming"
@@ -110,16 +108,6 @@ print()
 print("🏆 StackOverflow (free Stack Exchange API, pagesize max 100)")
 r, e = test_source("stackoverflow", search_stackoverflow, QUERY, TEST_COUNT)
 report.append({"source": "stackoverflow", "r1": r[0], "r2": r[1] if len(r)>1 else "?", "errors": e, "api_limit": "100/page"})
-
-print()
-
-# Baidu 千帆
-if "baidu" in keys:
-    print("🐾 Baidu 千帆 (free tier: 1500/mo, top_k max 50)")
-    r, e = test_source("baidu", search_baidu, QUERY, keys["baidu"], TEST_COUNT)
-    report.append({"source": "baidu", "r1": r[0], "r2": r[1] if len(r)>1 else "?", "errors": e, "api_limit": "50/req"})
-else:
-    print("🐾 Baidu: NO KEY")
 
 print()
 

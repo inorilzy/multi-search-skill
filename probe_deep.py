@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""深入测试 Brave/SerpAPI/Tavily 的实际返回上限"""
+"""深入探测 Brave/SerpAPI/Tavily 的实际返回上限。"""
 import sys, time
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
