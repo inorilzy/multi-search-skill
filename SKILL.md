@@ -71,6 +71,15 @@ Keyed sources and setup links:
 - **SerpAPI**: https://serpapi.com (free quota varies by account; default engine is `google_light`)
 - **Twitter / X**: 需要 `pip install twikit-ng` 并提供 cookies。推荐直接在 `~/.search-keys.json` 加 `"twitter": {"auth_token":"...", "ct0":"..."}`；也可设置 `TWITTER_COOKIES_PATH`，或复用默认 `~/.mcp-twikit/cookies.json`。
 
+### Twitter / X Degradation
+
+Twitter/X is useful and included in `default` / `discussion`, but it is not a zero-config source. If `twikit-ng` is missing, cookies are missing/expired, or X returns 429/login challenges, keep the search result and report the `twitter error` line briefly. Do not block the overall answer; the other sources are still valid.
+
+Quick checks:
+- `python -c "import twikit"` should succeed in the same Python environment used to run `search.py`
+- `~/.search-keys.json` should contain `"twitter": {"auth_token": "...", "ct0": "..."}`
+- refresh cookies when Twitter/X starts returning auth, login, 401/403, or persistent 429 errors
+
 ## Count & Timeout Control
 
 各源有独立默认值，并会按 provider/page-size 上限 clamp。`--count N` 覆盖所有源；`--xxx-count N` 单独覆盖。
@@ -285,7 +294,8 @@ When the user provides a search query:
      --type discussion
    ```
 5. **Run** the script and present its Markdown output directly
-6. **Follow up** — offer `--scrape-top N` or `fetch_webpage` for deep dives on top URLs
+6. **Handle partial failures** — if a source returns an error item (especially Twitter/X), mention it briefly and continue with available sources instead of treating the whole search as failed
+7. **Follow up** — offer `--scrape-top N` or `fetch_webpage` for deep dives on top URLs
 
 ## Example Invocations
 

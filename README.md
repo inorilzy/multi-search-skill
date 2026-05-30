@@ -75,6 +75,20 @@ python search.py "epub to markdown"
 | 🏆 Stack Overflow | StackExchange 公共 API |
 | 🐦 Twitter / X | 需要 `pip install twikit-ng`，并提供 cookies（`~/.search-keys.json` 的 `twitter` 字段、`TWITTER_COOKIES_PATH`，或默认 `~/.mcp-twikit/cookies.json`） |
 
+### Twitter / X 可选配置
+
+`default` 和 `discussion` 会尝试调用 Twitter/X，因为它常常提供最新项目反馈和讨论。但 Twitter/X 不是零配置源：需要安装 `twikit-ng`，并提供登录 cookies。
+
+```powershell
+python -m pip install twikit-ng
+```
+
+如果没有安装依赖、cookies 缺失/过期、或遇到 429 限流，命令不会整体失败；结果中会显示 `twitter error`，其它来源仍会正常输出。需要稳定社交结果时，先确认：
+
+- `python -c "import twikit"` 能成功
+- `~/.search-keys.json` 中有 `"twitter": {"auth_token": "...", "ct0": "..."}`
+- cookies 没有过期，且账号没有触发登录验证/限流
+
 ---
 
 ## 🚀 使用示例
