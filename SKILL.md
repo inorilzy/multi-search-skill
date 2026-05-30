@@ -291,8 +291,8 @@ When the user provides a search query:
 
 1. **Check keys** — `~/.search-keys.json` or env vars
 2. **Classify the query**:
-   - 技术查询（代码、工具、框架、API、算法）→ 多语言搜索高价值
-   - 新闻 / 时效查询 → 单语言已足够
+    - 技术查询（代码、工具、框架、API、算法）→ 多语言搜索高价值
+    - 新闻 / 时效查询 → 单语言已足够
     - 中文用户说“推特上 / Twitter 上 / X 上 / 社交上 / 实时讨论” → 用 `--type social`
     - 中文用户说“有哪些实现 / 实现方案 / 开源项目 / repo / 仓库” → 用 `--type code` 或 `--type repos`
     - 中文用户说“社区讨论 / HN / Stack Overflow / 问答” → 用 `--type community`
