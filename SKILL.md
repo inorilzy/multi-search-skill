@@ -3,10 +3,12 @@ name: multi-search
 description: >
   Aggregated search across 8 sources: Brave, Tavily, Exa, Firecrawl, SerpAPI,
   GitHub Repos, HackerNews, Stack Overflow, Twitter/X. Combines web
-  results, AI answers, repo discovery and community Q&A in one
-  parallel request, with optional Jina / Firecrawl scraping of top URLs.
-  Activate when user says: search, find, look up, multi-search, search everywhere,
-  搜索, 查找, 查一下, 聚合搜索, 多源搜索.
+  results, AI answers, repo discovery, community Q&A, and Twitter/X social search
+  in one parallel request, with optional Jina / Firecrawl scraping of top URLs.
+  Activate when user asks to search, find, look up, multi-search, search everywhere,
+  or uses Chinese search intents like 搜索, 搜一下, 帮我搜, 查找, 查一下, 查查,
+  找找, 找一下, 看看, 聚合搜索, 多源搜索, 在 Twitter/X/推特 上搜, 有哪些实现,
+  有哪些方案, 有哪些项目, 有哪些讨论.
 argument-hint: "<query> [--type all|balanced|web|code|community|social|realtime|repos|...] [--count N] [--scrape-top N] [--timeout N]"
 ---
 
@@ -291,6 +293,9 @@ When the user provides a search query:
 2. **Classify the query**:
    - 技术查询（代码、工具、框架、API、算法）→ 多语言搜索高价值
    - 新闻 / 时效查询 → 单语言已足够
+    - 中文用户说“推特上 / Twitter 上 / X 上 / 社交上 / 实时讨论” → 用 `--type social`
+    - 中文用户说“有哪些实现 / 实现方案 / 开源项目 / repo / 仓库” → 用 `--type code` 或 `--type repos`
+    - 中文用户说“社区讨论 / HN / Stack Overflow / 问答” → 用 `--type community`
 3. **Auto-translate for Chinese technical queries**：中文技术查询自动加英文 `--expand`，不要问用户：
    ```
    # 用户: "搜索 agent 编排最佳实践"
@@ -299,8 +304,14 @@ When the user provides a search query:
      --type web
    ```
    新闻类 (`最新 AI 新闻`) 则不加 expand。
-4. **Run** the script and present its Markdown output directly
-5. **Follow up** — offer `--scrape-top N` or `fetch_webpage` for deep dives on top URLs
+4. **Chinese platform example**：用户说“搜一下 twitter 上 agent memory 有哪些实现”时，命中本 skill，并路由为：
+   ```
+   python search.py "agent memory 实现" \
+     --expand "agent memory implementation patterns" \
+     --type social
+   ```
+5. **Run** the script and present its Markdown output directly
+6. **Follow up** — offer `--scrape-top N` or `fetch_webpage` for deep dives on top URLs
 
 ## Example Invocations
 

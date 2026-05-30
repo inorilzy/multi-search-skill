@@ -168,6 +168,8 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
             weight_prefix = "【 1 】 "
         also_str = f"  _from: {src}" + (f", {', '.join(also)}" if also else "") + "_"
         lines.append(f"{i}. {weight_prefix}{icon} **[{title}]({url})**{stars_str}{also_str}")
+        if src == "twitter" and url:
+            lines.append(f"   链接: {url}")
         if desc and not brief:
             short = desc[:200].replace("\n", " ")
             if len(desc) > 200:
