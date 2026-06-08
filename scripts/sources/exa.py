@@ -1,16 +1,17 @@
-"""Exa.ai search with highlights + summary + full text + synthesized answer."""
+"""Exa.ai search with full text."""
 import json
 import urllib.request
 
 from ..http import urlopen_retry
+from ..secrets import scrub_secrets
 
 
-def search_exa(query: str, api_key: str, count: int = 10) -> list:
-    """Search via Exa.ai with highlights + summary + synthesized answer.
+def search_exa(query: str, api_key: str, count: int = 10, timeout: float = 20) -> list:
+    """Search via Exa.ai with full text.
 
     Uses type=auto (router; 'neural' is deprecated per Exa docs).
-    Requests contents.text + highlights + summary, plus a top-level
-    outputSchema=text for a global synthesized answer with grounding.
+    Requests contents.text for actual page content. Highlights, summary, and
+    output synthesis are intentionally not enabled by default.
     """
     payload = json.dumps({
         "query": query,
@@ -18,12 +19,6 @@ def search_exa(query: str, api_key: str, count: int = 10) -> list:
         "type": "auto",
         "contents": {
             "text": {"maxCharacters": 8000},
-            "highlights": True,
-            "summary": True,
-        },
-        "outputSchema": {
-            "type": "text",
-            "description": "A concise synthesized answer to the user's query, based on the search results.",
         },
     }).encode()
     req = urllib.request.Request(
@@ -39,36 +34,20 @@ def search_exa(query: str, api_key: str, count: int = 10) -> list:
         method="POST",
     )
     try:
-        with urlopen_retry(req, timeout=20) as resp:
+        with urlopen_retry(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except Exception as e:
-        return [{"source": "exa", "error": str(e)}]
+        return [{"source": "exa", "error": scrub_secrets(e, api_key)}]
     items = []
     for r in data.get("results", []):
-        highlights = r.get("highlights") or []
-        highlight_text = " [...] ".join(highlights) if highlights else ""
-        summary = (r.get("summary") or "").strip()
         text = (r.get("text") or "").strip()
-        description = summary or highlight_text or text
         result = {
             "source": "exa",
             "title": r.get("title", ""),
             "url": r.get("url", ""),
-            "description": description[:300],
+            "description": text[:300],
         }
         if text:
             result["scraped_content"] = text
-        else:
-            full = []
-            if summary:
-                full.append(summary)
-            if highlight_text:
-                full.append(highlight_text)
-            if full:
-                result["scraped_content"] = "\n\n".join(full)
         items.append(result)
-    output = data.get("output") or {}
-    answer = output.get("content") if isinstance(output.get("content"), str) else ""
-    if answer:
-        items.insert(0, {"source": "exa_answer", "answer": answer})
     return items

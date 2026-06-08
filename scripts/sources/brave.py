@@ -5,9 +5,10 @@ import urllib.parse
 import urllib.request
 
 from ..http import urlopen_retry
+from ..secrets import scrub_secrets
 
 
-def search_brave(query: str, api_key: str, count: int = 10) -> list:
+def search_brave(query: str, api_key: str, count: int = 10, timeout: float = 15) -> list:
     """Call Brave Search API.
     Uses extra_snippets=true: returns up to 5 additional excerpts per result (free, no extra cost).
     """
@@ -24,13 +25,13 @@ def search_brave(query: str, api_key: str, count: int = 10) -> list:
         },
     )
     try:
-        with urlopen_retry(req, timeout=15) as resp:
+        with urlopen_retry(req, timeout=timeout) as resp:
             raw = resp.read()
             if resp.headers.get("Content-Encoding") == "gzip":
                 raw = gzip.decompress(raw)
             data = json.loads(raw)
     except Exception as e:
-        return [{"source": "brave", "error": str(e)}]
+        return [{"source": "brave", "error": scrub_secrets(e, api_key)}]
 
     results = []
     for item in data.get("web", {}).get("results", []):

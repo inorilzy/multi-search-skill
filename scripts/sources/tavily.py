@@ -3,30 +3,35 @@ import json
 import urllib.request
 
 from ..http import urlopen_retry
+from ..secrets import scrub_secrets
 
 
-def search_tavily(query: str, api_key: str, max_results: int = 10) -> list:
+def search_tavily(query: str, api_key: str, max_results: int = 10, timeout: float = 15) -> list:
     """Call Tavily Search API."""
     payload = json.dumps(
         {
             "query": query,
             "max_results": max_results,
-            "api_key": api_key,
+            "search_depth": "advanced",
             "include_answer": "advanced",
             "include_raw_content": "markdown",
+            "include_usage": True,
         }
     ).encode()
     req = urllib.request.Request(
         "https://api.tavily.com/search",
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         method="POST",
     )
     try:
-        with urlopen_retry(req, timeout=15) as resp:
+        with urlopen_retry(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except Exception as e:
-        return [{"source": "tavily", "error": str(e)}]
+        return [{"source": "tavily", "error": scrub_secrets(e, api_key)}]
 
     results = []
     for item in data.get("results", []):

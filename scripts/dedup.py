@@ -1,5 +1,9 @@
-"""URL normalization + cross-source deduplication."""
+"""URL normalization, content splitting, and cross-source deduplication."""
 import urllib.parse
+
+
+ANSWER_SOURCES = {"tavily_answer", "serpapi_answer", "exa_answer"}
+MIN_USEFUL_WEB_CONTENT_CHARS = 300
 
 
 def _norm_url(url: str) -> str:
@@ -17,6 +21,72 @@ def _norm_url(url: str) -> str:
         return url
 
 
+def _raw_counts(results: list) -> dict:
+    raw_counts: dict = {}
+    for item in results:
+        if (item.get("status") == "ok"
+                or "error" in item
+                or item.get("source") in ANSWER_SOURCES):
+            continue
+        src = item.get("source", "?")
+        raw_counts[src] = raw_counts.get(src, 0) + 1
+    return raw_counts
+
+
+def is_usable_web_content(content: str, min_chars: int = MIN_USEFUL_WEB_CONTENT_CHARS) -> bool:
+    """Return whether content is substantial enough to stand in for webpage text."""
+    return len((content or "").strip()) >= min_chars
+
+
+def _is_passthrough(item: dict) -> bool:
+    return (
+        item.get("status") == "ok"
+        or "error" in item
+        or item.get("source") in ANSWER_SOURCES
+        or not item.get("url")
+    )
+
+
+def split_by_content(results: list) -> tuple[list[dict], list[dict], list[dict], dict]:
+    """Split raw search results into content-bearing and metadata-only rows."""
+    with_content: list[dict] = []
+    without_content: list[dict] = []
+    passthrough: list[dict] = []
+
+    for item in results:
+        if _is_passthrough(item):
+            passthrough.append(item)
+            continue
+        content = item.get("scraped_content") or ""
+        if item.get("source") == "twitter":
+            # Twitter discussion content is independent of webpage body;
+            # any non-empty scraped_content counts as "has content".
+            if content:
+                with_content.append(item)
+            else:
+                without_content.append(item)
+        else:
+            # For web sources, short/empty content should not satisfy
+            # "already has content" — otherwise it blocks richer scraping.
+            if is_usable_web_content(content):
+                with_content.append(item)
+            else:
+                without_content.append(item)
+
+    return with_content, without_content, passthrough, _raw_counts(results)
+
+
+def result_to_scrape(item: dict) -> dict:
+    content = item.get("scraped_content") or ""
+    return {
+        "url": item.get("url", ""),
+        "title": item.get("title") or item.get("url", ""),
+        "via": f"{item.get('source', '?')}:prefetch",
+        "markdown": content,
+        "length": len(content),
+    }
+
+
 def deduplicate(results: list) -> tuple:
     """Remove duplicate URLs, keeping first occurrence. Returns (deduped, source_counts_raw).
 
@@ -24,17 +94,15 @@ def deduplicate(results: list) -> tuple:
     see that Brave/Tavily both returned a URL even if only one is shown.
     Each kept item also gets an 'also_from' list of other sources that returned the same URL.
     """
-    raw_counts: dict = {}
-    for item in results:
-        if "error" in item or item.get("source") in ("tavily_answer", "serpapi_answer", "exa_answer"):
-            continue
-        src = item.get("source", "?")
-        raw_counts[src] = raw_counts.get(src, 0) + 1
+    raw_counts = _raw_counts(results)
 
     seen: dict = {}
     deduped: list = []
     for item in results:
         url = item.get("url", "")
+        if item.get("status") == "ok":
+            deduped.append(item)
+            continue
         if not url:
             deduped.append(item)
             continue

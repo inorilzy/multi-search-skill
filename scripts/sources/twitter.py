@@ -3,6 +3,8 @@ import json
 import os
 import re
 
+from ..secrets import scrub_secrets
+
 
 REPLY_LIMIT = 20  # per tweet
 
@@ -13,11 +15,17 @@ _CRED_RE = re.compile(
 )
 
 
-def _scrub(msg: str) -> str:
-    return _CRED_RE.sub(r"\1=<redacted>", msg)[:300]
+def _scrub(msg: str, cookies=None) -> str:
+    redacted = _CRED_RE.sub(r"\1=<redacted>", str(msg))
+    return scrub_secrets(redacted, cookies, limit=300)
 
 
-def search_twitter(query: str, count: int = 10, cookies: "dict | str" = "") -> list:
+def search_twitter(
+    query: str,
+    count: int = 10,
+    cookies: "dict | str" = "",
+    timeout: float | None = None,
+) -> list:
     """Search Twitter/X via twikit-ng using saved cookies.
 
     `cookies` accepts:
@@ -72,23 +80,28 @@ def search_twitter(query: str, count: int = 10, cookies: "dict | str" = "") -> l
                         break
                 await asyncio.sleep(0.6)
             except Exception as e:
-                replies.append(f"  - _(replies fetch failed: {str(e)[:80]})_")
+                replies.append(f"  - _(replies fetch failed: {_scrub(str(e), cookies_dict)[:80]})_")
             out.append((t, replies))
         return out
 
+    async def _do_search_with_timeout() -> list:
+        if timeout is not None and timeout > 0:
+            return await asyncio.wait_for(_do_search(), timeout=timeout)
+        return await _do_search()
+
     try:
-        tweet_pairs = asyncio.run(_do_search())
+        tweet_pairs = asyncio.run(_do_search_with_timeout())
     except Exception as e:
         msg = str(e) or repr(e) or type(e).__name__
         if "404" in msg or "429" in msg or "rate" in msg.lower():
             import time as _t
-            _t.sleep(5)
+            _t.sleep(min(5, max(0.0, timeout or 5)))
             try:
-                tweet_pairs = asyncio.run(_do_search())
+                tweet_pairs = asyncio.run(_do_search_with_timeout())
             except Exception as e2:
-                return [{"source": "twitter", "error": f"retry failed: {_scrub(str(e2))}"}]
+                return [{"source": "twitter", "error": f"retry failed: {_scrub(str(e2), cookies_dict)}"}]
         else:
-            return [{"source": "twitter", "error": _scrub(msg)}]
+            return [{"source": "twitter", "error": _scrub(msg, cookies_dict)}]
 
     items = []
     for t, replies in tweet_pairs:

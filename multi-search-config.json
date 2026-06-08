@@ -1,0 +1,24 @@
+{
+  "type": "default",
+  "count": null,
+  "counts": {
+    "brave": 10,
+    "tavily": 10,
+    "exa": 10,
+    "firecrawl": 5,
+    "serpapi": 10,
+    "github": 10,
+    "twitter": 10
+  },
+  "serpapi_engine": "google_light",
+  "timeout": 60,
+  "scrape_top": 30,
+  "no_scrape": false,
+  "scrape_chars": 6000,
+  "scrape_per_source": 6,
+  "scrape_timeout": 60,
+  "scrape_concurrency": 5,
+  "expand": [],
+  "brief": false,
+  "verbose": false
+}

@@ -18,28 +18,50 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from scripts.dedup import _norm_url, deduplicate  # noqa: F401,E402
-from scripts.format import format_results, format_scrapes  # noqa: F401,E402
-from scripts.http import urlopen_retry as _urlopen_retry  # noqa: F401,E402
-from scripts.keys import load_keys  # noqa: F401,E402
-from scripts.main import main  # noqa: F401,E402
-from scripts.scrape import (  # noqa: F401,E402
+from scripts.dedup import _norm_url, deduplicate
+from scripts.format import format_results, format_scrapes
+from scripts.http import urlopen_retry as _urlopen_retry
+from scripts.keys import load_keys
+from scripts.main import main
+from scripts.scrape import (
     _GH_REPO_RE,
     _rewrite_for_clean_scrape,
     scrape_url_exa,
-    scrape_url_firecrawl as scrape_url,
     scrape_url_smart,
     scrape_url_tavily,
 )
-from scripts.sources.brave import search_brave  # noqa: F401,E402
-from scripts.sources.exa import search_exa  # noqa: F401,E402
-from scripts.sources.firecrawl import search_firecrawl  # noqa: F401,E402
-from scripts.sources.github import search_github_repos  # noqa: F401,E402
-from scripts.sources.hackernews import search_hackernews  # noqa: F401,E402
-from scripts.sources.serpapi import search_serpapi  # noqa: F401,E402
-from scripts.sources.stackoverflow import search_stackoverflow  # noqa: F401,E402
-from scripts.sources.tavily import search_tavily  # noqa: F401,E402
-from scripts.sources.twitter import search_twitter  # noqa: F401,E402
+from scripts.sources.brave import search_brave
+from scripts.sources.exa import search_exa
+from scripts.sources.firecrawl import search_firecrawl
+from scripts.sources.github import search_github_repos
+from scripts.sources.serpapi import search_serpapi
+from scripts.sources.tavily import search_tavily
+from scripts.sources.twitter import search_twitter
+
+scrape_url = scrape_url_smart
+
+__all__ = [
+    "_GH_REPO_RE",
+    "_norm_url",
+    "_rewrite_for_clean_scrape",
+    "_urlopen_retry",
+    "deduplicate",
+    "format_results",
+    "format_scrapes",
+    "load_keys",
+    "main",
+    "scrape_url",
+    "scrape_url_exa",
+    "scrape_url_smart",
+    "scrape_url_tavily",
+    "search_brave",
+    "search_exa",
+    "search_firecrawl",
+    "search_github_repos",
+    "search_serpapi",
+    "search_tavily",
+    "search_twitter",
+]
 
 
 if __name__ == "__main__":
