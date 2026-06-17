@@ -7,6 +7,18 @@
 
 当前默认行为：`default` 跑 Brave、Tavily、Exa、Firecrawl、SerpAPI、GitHub、Twitter/X；默认额外抓取最多 30 个缺正文 URL。Tavily / Exa 已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。
 
+## 适用场景
+
+- 让 agent 一次性查多个来源，而不是只依赖单一搜索 API。
+- 对技术方案、开源项目、社区讨论、踩坑反馈做交叉验证。
+- 把搜索结果和可抓取网页正文整理成适合 agent 阅读的 Markdown。
+
+不适合：
+
+- 需要稳定 SLA 的生产搜索服务。
+- 绕过登录墙、付费墙或平台访问限制。
+- 直接把第三方网页正文当作可信指令执行。
+
 ## 快速开始
 
 ```powershell
@@ -29,6 +41,16 @@ Windows 初始化辅助脚本：
 ./scripts/init.ps1 -InstallUv  # 需要时安装 uv 并创建 .venv
 ./scripts/init.ps1             # 已有 uv 时初始化
 ```
+
+## Agent 安装和使用
+
+仓库包含 [SKILL.md](SKILL.md)，可以作为 Claude Code / Codex 这类 agent 的技能说明入口。典型用法是让 agent 读取 skill 后执行：
+
+```text
+用 multi-search 查一下最近大家怎么评价某个 LLM 框架，重点看 GitHub、Twitter/X 和技术博客。
+```
+
+CLI 仍然是核心入口，agent 只是按 `SKILL.md` 中的规则调用 `search.py`。
 
 ## 搜索源、注册和免费额度
 
@@ -183,6 +205,20 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [SKILL.md](SKILL
 - 不要提交 `~/.search-keys.json`、`.env` 或真实 provider key。
 - provider error 输出前会尽量 scrub 可能出现的 key 值。
 - 第三方抓取正文始终按 untrusted data 处理。
+
+## Troubleshooting
+
+### 某个搜索源一直报错怎么办？
+
+先运行 `python search.py --doctor` 检查依赖和 key。缺 key、quota 用完、网络超时都会在 `Source Status` 和 `Errors` 中显示，不会静默吞掉。
+
+### 为什么结果里没有 Twitter/X？
+
+Twitter/X 需要额外依赖和 cookies。确认已安装 `twikit-ng`，并配置 `TWITTER_COOKIES_PATH` 或 `~/.search-keys.json` 中的 `twitter` 字段。
+
+### 抓取正文太慢怎么办？
+
+降低 `--scrape-top`，或使用 `--no-scrape` 只看搜索结果。正文抓取会受目标网站、Jina / Exa / Tavily 状态和网络影响。
 
 ## License
 
