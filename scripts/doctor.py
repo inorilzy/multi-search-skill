@@ -74,9 +74,12 @@ def doctor() -> int:
         ("exa", "Exa key"),
         ("firecrawl", "Firecrawl key"),
         ("serpapi", "SerpAPI key"),
+        ("zhihu", "Zhihu Access Secret"),
+        ("youtube", "YouTube API key"),
     ]:
         missing = "missing; source will be skipped"
         print(_status(bool(keys.get(key_name)), label, "configured" if keys.get(key_name) else missing))
+    print(_status(True, "Bilibili cookie", "configured" if keys.get("bilibili") else "optional; anonymous public search will be used"))
 
     jina_active, jina_total = count_jina_keys(keys.get("jina"))
     if jina_total:

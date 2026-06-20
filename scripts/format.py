@@ -6,6 +6,13 @@ SOURCE_ICONS = {
     "tavily": "🌐",
     "exa": "✨",
     "firecrawl": "🔥",
+    "v2ex": "V2",
+    "zhihu": "ZH",
+    "reddit": "RD",
+    "youtube": "▶️",
+    "bilibili": "B站",
+    "hackernews": "📰",
+    "stackoverflow": "🧩",
     "github-repos": "📦",
     "serpapi": "🔎",
     "twitter": "🐦",
@@ -115,9 +122,10 @@ def format_scrapes(scrapes: list, max_chars: int = 6000) -> str:
 
 
 def format_results(results: list, query: str, raw_counts: dict | None = None,
-                   brief: bool = False, verbose: bool = False) -> str:
+                   brief: bool = False, verbose: bool = False,
+                   title_url_only: bool = False) -> str:
     """Format aggregated results for display."""
-    lines = [f"## Search Results: `{query}`\n"]
+    lines = [f"## multi-search Results: `{query}`\n"]
     tavily_answers = [r for r in results if r.get("source") == "tavily_answer"]
     exa_answers = [r for r in results if r.get("source") == "exa_answer"]
     serpapi_answers = [r for r in results if r.get("source") == "serpapi_answer"]
@@ -164,7 +172,7 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     ]
     lines.append("**Sources (raw hits):** " + (" | ".join(summary_parts) if summary_parts else "none"))
 
-    if source_counts or error_by_source:
+    if (source_counts or error_by_source) and not title_url_only:
         lines.append("\n### Source Status\n")
         lines.append("| Source | Raw hits | Status | Detail |")
         lines.append("|---|---:|---|---|")
@@ -183,6 +191,7 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
                 f"| {SOURCE_ICONS.get(src, '•')} {src} | {source_counts.get(src, 0)} "
                 f"| {status} | {_cell(detail, 120)} |"
             )
+        lines.append("")
 
     def _weight(item):
         if "error" in item:
@@ -194,6 +203,28 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     valid = [r for r in results if "error" not in r]
     consensus_count = sum(1 for r in valid if _weight(r) >= 2)
     max_weight = max((_weight(r) for r in valid), default=0)
+    lines.append(f"**Result count:** {len(valid)} results")
+
+    if title_url_only:
+        if errors:
+            lines.append("\n### Errors\n")
+            lines.append("| Source | Error |")
+            lines.append("|---|---|")
+            for item in errors:
+                lines.append(f"| {SOURCE_ICONS.get(item.get('source'), '•')} {item.get('source', '?')} | {_cell(item.get('error'), 160)} |")
+            lines.append("")
+        lines.append("\n### Top:\n")
+        if valid:
+            for i, item in enumerate(valid, 1):
+                title = _cell(item.get("title", "(no title)"), 200)
+                url = item.get("url", "")
+                lines.append(f"{i}. {title}")
+                lines.append(f"   {url}")
+        else:
+            lines.append("No successful results.")
+        lines.append("")
+        return "\n".join(lines)
+
     if valid:
         lines.append(
             f"**Consensus:** {len(valid)} unique URLs, {consensus_count} "
@@ -224,6 +255,18 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
         lines.append("|---|---|")
         for item in errors:
             lines.append(f"| {SOURCE_ICONS.get(item.get('source'), '•')} {item.get('source', '?')} | {_cell(item.get('error'), 160)} |")
+        lines.append("")
+
+    if valid:
+        lines.append("### Top:\n")
+        for i, item in enumerate(valid[:5], 1):
+            title = _cell(item.get("title", "(no title)"), 120)
+            url = item.get("url", "")
+            lines.append(f"{i}. {_md_link(title, url)}")
+        lines.append("")
+    else:
+        lines.append("### Top:\n")
+        lines.append("No successful results.")
         lines.append("")
 
     lines.append("### Ranked Results\n")

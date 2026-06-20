@@ -17,13 +17,26 @@ from .format import format_results, format_scrapes
 from .keys import count_jina_keys, get_active_jina_keys, key_pool, load_keys
 from .scrape import scrape_url_smart
 from .secrets import scrub_secrets
-from .sources.brave import search_brave
-from .sources.exa import search_exa
-from .sources.firecrawl import search_firecrawl
-from .sources.github import search_github_repos
-from .sources.serpapi import search_serpapi
-from .sources.tavily import search_tavily
-from .sources.twitter import search_twitter
+from .searchers.brave import search_brave
+from .searchers.bilibili import search_bilibili
+from .searchers.exa import search_exa
+from .searchers.firecrawl import (
+    search_firecrawl,
+    search_linuxdo,
+    search_reddit,
+    search_v2ex,
+    search_zhihu as search_zhihu_firecrawl,
+)
+from .searchers.github import search_github_repos
+from .searchers.hackernews import search_hackernews
+from .searchers.linuxdo import search_linuxdo_api
+from .searchers.serpapi import search_serpapi
+from .searchers.stackoverflow import search_stackoverflow
+from .searchers.tavily import search_tavily
+from .searchers.twitter import search_twitter
+from .searchers.reddit import search_reddit_oauth
+from .searchers.youtube import search_youtube
+from .searchers.zhihu import search_zhihu
 
 
 ROUTE_PROFILES = {
@@ -33,25 +46,48 @@ ROUTE_PROFILES = {
     },
     "lite": {"tavily", "exa"},
     "discussion": {"twitter"},
+    "video": {"youtube", "bilibili"},
     "brave": {"brave"},
+    "bilibili": {"bilibili"},
     "tavily": {"tavily"},
     "exa": {"exa"},
     "firecrawl": {"firecrawl"},
+    "v2ex": {"v2ex"},
+    "linuxdo": {"linuxdo"},
+    "linux-do": {"linuxdo"},
+    "linuxdo-api": {"linuxdo_api"},
+    "zhihu": {"zhihu"},
+    "reddit": {"reddit"},
+    "reddit-oauth": {"reddit_oauth"},
+    "hackernews": {"hackernews"},
     "serpapi": {"serpapi"},
+    "stackoverflow": {"stackoverflow"},
     "github": {"github_repos"},
     "twitter": {"twitter"},
+    "youtube": {"youtube"},
 }
 
 
 PREFER_SCRAPE_SOURCES = {
-    "brave", "serpapi", "github-repos", "firecrawl",
+    "brave", "serpapi", "github-repos", "firecrawl", "v2ex", "zhihu", "reddit", "hackernews", "stackoverflow",
 }
+
+VIDEO_SOURCES = {"youtube", "bilibili"}
 
 
 def _has_preferred_scrape_source(item: dict) -> bool:
     sources = {item.get("source")}
     sources.update(item.get("also_from") or [])
     return bool(sources & PREFER_SCRAPE_SOURCES)
+
+
+def _is_video_result(item: dict) -> bool:
+    sources = {item.get("source")}
+    sources.update(item.get("also_from") or [])
+    if sources & VIDEO_SOURCES:
+        return True
+    url = str(item.get("url") or "").lower()
+    return any(host in url for host in ("youtube.com/", "youtu.be/", "bilibili.com/"))
 
 
 def available_routes() -> list[str]:
@@ -76,11 +112,13 @@ def main():
     if not args:
         print("Usage: python search.py <query> [--type default|lite|discussion|...] [--count N]")
         print("       [--brave-count N] [--tavily-count N] [--exa-count N] [--github-count N]")
-        print("       [--serpapi-count N]")
-        print("       [--firecrawl-count N] [--twitter-count N]")
+        print("       [--serpapi-count N] [--youtube-count N] [--bilibili-count N]")
+        print("       [--hackernews-count N] [--stackoverflow-count N]")
+        print("       [--firecrawl-count N] [--zhihu-count N] [--twitter-count N]")
+        print("       Routes include: default, lite, discussion, video, v2ex, zhihu, and single-source routes")
         print("       [--timeout N] [--scrape-top N] [--no-scrape] [--scrape-chars N]")
         print("       [--scrape-per-source N] [--scrape-timeout N] [--scrape-concurrency N]")
-        print("       [--brief] [--verbose]")
+        print("       [--brief] [--verbose] [--title-url-only]")
         print("       [--config PATH]")
         print("       [--doctor]")
         sys.exit(1)
@@ -171,8 +209,15 @@ def main():
     tavily_count = _strict_source_count("tavily", None)
     exa_count = _strict_source_count("exa", None)
     github_count = _strict_source_count("github", None)
+    hackernews_count = _strict_source_count("hackernews", None)
     serpapi_count = _strict_source_count("serpapi", None)
+    youtube_count = _strict_source_count("youtube", None)
+    bilibili_count = _strict_source_count("bilibili", None)
+    stackoverflow_count = _strict_source_count("stackoverflow", None)
     firecrawl_count = _strict_source_count("firecrawl", None)
+    zhihu_count = _strict_source_count("zhihu", None)
+    linuxdo_count = _strict_source_count("linuxdo", None)
+    linuxdo_api_count = _strict_source_count("linuxdo_api", None)
     twitter_count = _strict_source_count("twitter", None)
     serpapi_engine = str(config.get("serpapi_engine", "google_light"))
     if serpapi_engine not in {"google_light", "google"}:
@@ -188,6 +233,7 @@ def main():
     expand_queries: list = _config_list("expand") or _config_list("expand_queries")
     brief = _config_bool("brief", False)
     verbose = _config_bool("verbose", False)
+    title_url_only = _config_bool("title_url_only", False)
     count_from_cli = False
     source_counts_from_cli: set[str] = set()
     expand_from_cli = False
@@ -221,6 +267,22 @@ def main():
             serpapi_count = _positive(_int_value("--serpapi-count", i), "--serpapi-count")
             source_counts_from_cli.add("serpapi")
             i += 2
+        elif args[i] == "--youtube-count":
+            youtube_count = _positive(_int_value("--youtube-count", i), "--youtube-count")
+            source_counts_from_cli.add("youtube")
+            i += 2
+        elif args[i] == "--bilibili-count":
+            bilibili_count = _positive(_int_value("--bilibili-count", i), "--bilibili-count")
+            source_counts_from_cli.add("bilibili")
+            i += 2
+        elif args[i] == "--hackernews-count":
+            hackernews_count = _positive(_int_value("--hackernews-count", i), "--hackernews-count")
+            source_counts_from_cli.add("hackernews")
+            i += 2
+        elif args[i] == "--stackoverflow-count":
+            stackoverflow_count = _positive(_int_value("--stackoverflow-count", i), "--stackoverflow-count")
+            source_counts_from_cli.add("stackoverflow")
+            i += 2
         elif args[i] == "--serpapi-engine":
             serpapi_engine = _value("--serpapi-engine", i)
             if serpapi_engine not in {"google_light", "google"}:
@@ -229,6 +291,20 @@ def main():
         elif args[i] == "--firecrawl-count":
             firecrawl_count = _positive(_int_value("--firecrawl-count", i), "--firecrawl-count")
             source_counts_from_cli.add("firecrawl")
+            i += 2
+        elif args[i] == "--zhihu-count":
+            zhihu_count = _positive(_int_value("--zhihu-count", i), "--zhihu-count")
+            source_counts_from_cli.add("zhihu")
+            i += 2
+        elif args[i] == "--linuxdo-count":
+            linuxdo_count = _positive(_int_value("--linuxdo-count", i), "--linuxdo-count")
+            source_counts_from_cli.add("linuxdo")
+            i += 2
+        elif args[i] == "--linuxdo-api-count":
+            linuxdo_api_count = _positive(_int_value("--linuxdo-api-count", i), "--linuxdo-api-count")
+            source_counts_from_cli.add("linuxdo_api")
+            i += 2
+        elif args[i] == "--reddit-rss-count":
             i += 2
         elif args[i] == "--twitter-count":
             twitter_count = _positive(_int_value("--twitter-count", i), "--twitter-count")
@@ -242,6 +318,9 @@ def main():
             i += 1
         elif args[i] == "--verbose":
             verbose = True
+            i += 1
+        elif args[i] == "--title-url-only":
+            title_url_only = True
             i += 1
         elif args[i] == "--scrape-top":
             scrape_top = _nonnegative(_int_value("--scrape-top", i), "--scrape-top")
@@ -288,10 +367,24 @@ def main():
             exa_count = None
         if "github" not in source_counts_from_cli:
             github_count = None
+        if "hackernews" not in source_counts_from_cli:
+            hackernews_count = None
         if "serpapi" not in source_counts_from_cli:
             serpapi_count = None
+        if "youtube" not in source_counts_from_cli:
+            youtube_count = None
+        if "bilibili" not in source_counts_from_cli:
+            bilibili_count = None
+        if "stackoverflow" not in source_counts_from_cli:
+            stackoverflow_count = None
         if "firecrawl" not in source_counts_from_cli:
             firecrawl_count = None
+        if "zhihu" not in source_counts_from_cli:
+            zhihu_count = None
+        if "linuxdo" not in source_counts_from_cli:
+            linuxdo_count = None
+        if "linuxdo_api" not in source_counts_from_cli:
+            linuxdo_api_count = None
         if "twitter" not in source_counts_from_cli:
             twitter_count = None
 
@@ -300,8 +393,15 @@ def main():
     tavily_count = _optional_positive(tavily_count, "counts.tavily / --tavily-count")
     exa_count = _optional_positive(exa_count, "counts.exa / --exa-count")
     github_count = _optional_positive(github_count, "counts.github / --github-count")
+    hackernews_count = _optional_positive(hackernews_count, "counts.hackernews / --hackernews-count")
     serpapi_count = _optional_positive(serpapi_count, "counts.serpapi / --serpapi-count")
+    youtube_count = _optional_positive(youtube_count, "counts.youtube / --youtube-count")
+    bilibili_count = _optional_positive(bilibili_count, "counts.bilibili / --bilibili-count")
+    stackoverflow_count = _optional_positive(stackoverflow_count, "counts.stackoverflow / --stackoverflow-count")
     firecrawl_count = _optional_positive(firecrawl_count, "counts.firecrawl / --firecrawl-count")
+    zhihu_count = _optional_positive(zhihu_count, "counts.zhihu / --zhihu-count")
+    linuxdo_count = _optional_positive(linuxdo_count, "counts.linuxdo / --linuxdo-count")
+    linuxdo_api_count = _optional_positive(linuxdo_api_count, "counts.linuxdo_api / --linuxdo-api-count")
     twitter_count = _optional_positive(twitter_count, "counts.twitter / --twitter-count")
 
     global_timeout = max(0, global_timeout if global_timeout is not None else 60)
@@ -316,19 +416,30 @@ def main():
     tavily_count  = tavily_count  if tavily_count  is not None else (min(gc, 20)  if gc is not None else 10)
     exa_count     = exa_count     if exa_count     is not None else (min(gc, 100) if gc is not None else 10)
     github_count  = github_count  if github_count  is not None else (min(gc, 100) if gc is not None else 10)
+    hackernews_count = hackernews_count if hackernews_count is not None else (min(gc, 100) if gc is not None else 10)
     serpapi_count = serpapi_count if serpapi_count is not None else (min(gc, 100)  if gc is not None else 10)
-    firecrawl_count = firecrawl_count if firecrawl_count is not None else (min(gc, 10) if gc is not None else 5)
+    youtube_count = youtube_count if youtube_count is not None else (min(gc, 50) if gc is not None else 10)
+    bilibili_count = bilibili_count if bilibili_count is not None else (min(gc, 50) if gc is not None else 10)
+    stackoverflow_count = stackoverflow_count if stackoverflow_count is not None else (min(gc, 100) if gc is not None else 10)
+    firecrawl_count = firecrawl_count if firecrawl_count is not None else (min(gc, 100) if gc is not None else 10)
+    zhihu_count = zhihu_count if zhihu_count is not None else (min(gc, 10) if gc is not None else 10)
+    linuxdo_count = linuxdo_count if linuxdo_count is not None else (min(gc, 20) if gc is not None else 10)
+    linuxdo_api_count = linuxdo_api_count if linuxdo_api_count is not None else (min(gc, 10) if gc is not None else 10)
     twitter_count = twitter_count if twitter_count is not None else (min(gc, 20) if gc is not None else 10)
 
-    # Hard-clamp per-source counts to provider/page-size or local conservative caps,
-    # otherwise --brave-count 50 silently hits HTTP 400. Firecrawl is locally
-    # capped at 10 to avoid unexpectedly large metadata searches.
+    # Hard-clamp per-source counts to provider/page-size caps,
+    # otherwise --brave-count 50 silently hits HTTP 400.
     brave_count     = max(1, min(brave_count, 20))
     tavily_count    = max(1, min(tavily_count, 20))
     exa_count       = max(1, min(exa_count, 100))
     github_count    = max(1, min(github_count, 100))
+    hackernews_count = max(1, min(hackernews_count, 100))
     serpapi_count   = max(1, min(serpapi_count, 100))
-    firecrawl_count = max(1, min(firecrawl_count, 10))
+    youtube_count   = max(1, min(youtube_count, 50))
+    bilibili_count  = max(1, min(bilibili_count, 50))
+    stackoverflow_count = max(1, min(stackoverflow_count, 100))
+    firecrawl_count = max(1, min(firecrawl_count, 100))
+    zhihu_count = max(1, min(zhihu_count, 10))
     twitter_count   = max(1, min(twitter_count, 20))
 
     query = " ".join(query_parts)
@@ -339,6 +450,9 @@ def main():
         choices = ", ".join(available_routes())
         print(f"Error: unknown --type '{search_type}'. Available types: {choices}", file=sys.stderr)
         sys.exit(2)
+    if search_type == "video":
+        title_url_only = True
+        scrape_top = 0
 
     keys = load_keys()
 
@@ -462,6 +576,22 @@ def main():
                     timeout=_source_request_timeout(20),
                 ),
             )
+        if "youtube" in source_names:
+            _add_keyed(
+                "youtube",
+                "youtube",
+                "missing YOUTUBE_API_KEY",
+                lambda api_key: _call_optional_timeout(
+                    search_youtube, q, api_key, youtube_count, timeout=_source_request_timeout(20),
+                ),
+            )
+        if "bilibili" in source_names:
+            _jobs.append((
+                "bilibili",
+                lambda: _call_optional_timeout(
+                    search_bilibili, q, keys.get("bilibili", ""), bilibili_count, timeout=_source_request_timeout(20),
+                ),
+            ))
         if "firecrawl" in source_names:
             _add_keyed(
                 "firecrawl",
@@ -471,6 +601,71 @@ def main():
                     search_firecrawl, q, api_key, firecrawl_count, timeout=_source_request_timeout(60),
                 ),
             )
+        if "v2ex" in source_names:
+            _add_keyed(
+                "v2ex",
+                "firecrawl",
+                "missing FIRECRAWL_API_KEY",
+                lambda api_key: _call_optional_timeout(
+            search_v2ex, q, api_key, firecrawl_count, timeout=_source_request_timeout(60),
+                ),
+            )
+        if "linuxdo" in source_names:
+            _add_keyed(
+                "linuxdo",
+                "firecrawl",
+                "missing FIRECRAWL_API_KEY",
+                lambda api_key: _call_optional_timeout(
+                    search_linuxdo, q, api_key, linuxdo_count, timeout=_source_request_timeout(60),
+                ),
+            )
+        if "linuxdo_api" in source_names:
+            linuxdo_cookie = keys.get("linuxdo", "")
+            _jobs.append((
+                "linuxdo-api",
+                lambda: _call_optional_timeout(
+                    search_linuxdo_api, q, linuxdo_cookie, linuxdo_api_count, timeout=_source_request_timeout(20),
+                ),
+            ))
+        if "reddit" in source_names:
+            _add_keyed(
+                "reddit",
+                "firecrawl",
+                "missing FIRECRAWL_API_KEY",
+                lambda api_key: _call_optional_timeout(
+            search_reddit, q, api_key, firecrawl_count, timeout=_source_request_timeout(60),
+                ),
+            )
+        if "zhihu" in source_names:
+            if keys.get("zhihu"):
+                _add_keyed(
+                    "zhihu",
+                    "zhihu",
+                    "missing ZHIHU_ACCESS_SECRET",
+                    lambda api_key: _call_optional_timeout(
+                        search_zhihu, q, api_key, zhihu_count, timeout=_source_request_timeout(5),
+                    ),
+                )
+            elif keys.get("firecrawl"):
+                _add_keyed(
+                    "zhihu",
+                    "firecrawl",
+                    "missing FIRECRAWL_API_KEY",
+                    lambda api_key: _call_optional_timeout(
+                        search_zhihu_firecrawl, q, api_key, firecrawl_count, timeout=_source_request_timeout(60),
+                    ),
+                )
+            else:
+                _results.extend(_missing("zhihu", "missing ZHIHU_ACCESS_SECRET / FIRECRAWL_API_KEY fallback"))
+        if "reddit_oauth" in source_names:
+            reddit_oauth_token = keys.get("reddit_token", "")
+            reddit_oauth_count_default = 10
+            _jobs.append((
+                "reddit-oauth",
+                lambda: _call_optional_timeout(
+                    search_reddit_oauth, q, reddit_oauth_token, reddit_oauth_count_default, timeout=_source_request_timeout(20),
+                ),
+            ))
         if "github_repos" in source_names:
             _jobs.append((
                 "github-repos",
@@ -479,6 +674,26 @@ def main():
                     q,
                     github_count,
                     keys.get("github", ""),
+                    timeout=_source_request_timeout(20),
+                ),
+            ))
+        if "hackernews" in source_names:
+            _jobs.append((
+                "hackernews",
+                lambda: _call_optional_timeout(
+                    search_hackernews,
+                    q,
+                    hackernews_count,
+                    timeout=_source_request_timeout(20),
+                ),
+            ))
+        if "stackoverflow" in source_names:
+            _jobs.append((
+                "stackoverflow",
+                lambda: _call_optional_timeout(
+                    search_stackoverflow,
+                    q,
+                    stackoverflow_count,
                     timeout=_source_request_timeout(20),
                 ),
             ))
@@ -570,6 +785,7 @@ def main():
     scrape_candidates = [
         item for item in deduped_without_content
         if item.get("url") and _norm_url(item.get("url", "")) not in content_urls
+        and not _is_video_result(item)
     ]
     scrape_errors: list = []
     content_pool: dict[str, dict] = {}
@@ -619,12 +835,15 @@ def main():
 
         tavily_scrape_keys = key_pool(keys.get("tavily", ""))
         exa_scrape_keys = key_pool(keys.get("exa", ""))
+        firecrawl_scrape_keys = key_pool(keys.get("firecrawl", ""))
         jina_keys_list = get_active_jina_keys(keys.get("jina", ""))
         scrape_backends = ["jina"]
         if exa_scrape_keys:
             scrape_backends.append("exa")
         if tavily_scrape_keys:
             scrape_backends.append("tavily")
+        if firecrawl_scrape_keys:
+            scrape_backends.append("firecrawl")
 
         prefetch_count = len(content_pool)
         jina_active, jina_total = count_jina_keys(keys.get("jina", ""))
@@ -673,11 +892,12 @@ def main():
                             item,
                             scrape_url_smart(
                                 item["url"],
-                                timeout=25,
+                                timeout=30,
                                 primary=_primary_for(i),
                                 backends=tuple(scrape_backends),
                                 jina_keys=_rotated_key_pool(jina_keys_list, i),
                                 exa_keys=_rotated_key_pool(exa_scrape_keys, i),
+                                firecrawl_keys=_rotated_key_pool(firecrawl_scrape_keys, i),
                                 tavily_keys=_rotated_key_pool(tavily_scrape_keys, i),
                                 deadline=scrape_deadline,
                             ),
@@ -707,7 +927,10 @@ def main():
                 if error is not None:
                     scrape_errors.append({
                         "url": item.get("url", ""),
-                        "error": scrub_secrets(error, (jina_keys_list, exa_scrape_keys, tavily_scrape_keys)),
+                        "error": scrub_secrets(
+                            error,
+                            (jina_keys_list, exa_scrape_keys, tavily_scrape_keys, firecrawl_scrape_keys),
+                        ),
                     })
                 elif scrape_result and scrape_result.get("error"):
                     scrape_errors.append(scrape_result)
@@ -731,7 +954,14 @@ def main():
         and r.get("source") not in ("tavily_answer", "serpapi_answer", "exa_answer")
     ])
     print(f"Found {valid_count} unique results.", file=sys.stderr)
-    output = format_results(final_results, query, raw_counts=raw_counts, brief=brief, verbose=verbose)
+    output = format_results(
+        final_results,
+        query,
+        raw_counts=raw_counts,
+        brief=brief,
+        verbose=verbose,
+        title_url_only=title_url_only,
+    )
     if scrape_top > 0:
         scrapes = list(content_pool.values()) + scrape_errors
         output += format_scrapes(scrapes, max_chars=scrape_chars)

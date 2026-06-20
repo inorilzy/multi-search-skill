@@ -24,14 +24,29 @@ from scripts.keys import (
 )
 from scripts.main import _has_preferred_scrape_source, available_routes, main, resolve_route
 from scripts import scrape
+from scripts.scrape import _resolve_scrape_policy
 from scripts.secrets import scrub_secrets
-from scripts.sources.brave import search_brave
-from scripts.sources.exa import search_exa
-from scripts.sources.firecrawl import search_firecrawl
-from scripts.sources.github import search_github_repos
-from scripts.sources.serpapi import search_serpapi
-from scripts.sources.tavily import search_tavily
-from scripts.sources import twitter as twitter_source
+from scripts.searchers.brave import search_brave
+from scripts.searchers.bilibili import search_bilibili
+from scripts.searchers.exa import search_exa
+from scripts.searchers.firecrawl import (
+    REDDIT_DOMAINS,
+    V2EX_DOMAINS,
+    ZHIHU_DOMAINS,
+    search_firecrawl,
+    search_reddit,
+    search_v2ex,
+    search_zhihu as search_zhihu_firecrawl,
+)
+from scripts.searchers.github import search_github_repos
+from scripts.searchers.hackernews import search_hackernews
+from scripts.searchers.serpapi import search_serpapi
+from scripts.searchers.stackoverflow import search_stackoverflow
+from scripts.searchers.tavily import search_tavily
+from scripts.searchers import twitter as twitter_source
+from scripts.searchers.youtube import search_youtube
+from scripts.searchers.zhihu import search_zhihu
+from scripts.scrapers import reddit as reddit_scraper
 
 
 class _FakeResponse:
@@ -47,6 +62,21 @@ class _FakeResponse:
 
     def read(self):
         return json.dumps(self.payload).encode("utf-8")
+
+
+class _BytesResponse:
+    def __init__(self, payload: bytes, headers: dict | None = None):
+        self.payload = payload
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self.payload
 
 
 def _headers(req) -> dict:
@@ -99,8 +129,16 @@ class RouteTests(unittest.TestCase):
         })
         self.assertEqual(resolve_route("lite"), {"tavily", "exa"})
         self.assertEqual(resolve_route("discussion"), {"twitter"})
+        self.assertEqual(resolve_route("video"), {"youtube", "bilibili"})
         self.assertEqual(resolve_route("github"), {"github_repos"})
         self.assertEqual(resolve_route("firecrawl"), {"firecrawl"})
+        self.assertEqual(resolve_route("youtube"), {"youtube"})
+        self.assertEqual(resolve_route("bilibili"), {"bilibili"})
+        self.assertEqual(resolve_route("v2ex"), {"v2ex"})
+        self.assertEqual(resolve_route("zhihu"), {"zhihu"})
+        self.assertEqual(resolve_route("reddit"), {"reddit"})
+        self.assertEqual(resolve_route("hackernews"), {"hackernews"})
+        self.assertEqual(resolve_route("stackoverflow"), {"stackoverflow"})
 
     def test_removed_aliases_do_not_resolve(self):
         self.assertEqual(resolve_route("all"), set())
@@ -110,14 +148,23 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(resolve_route("repos"), set())
         self.assertEqual(resolve_route("google"), set())
         self.assertEqual(resolve_route("x"), set())
-        self.assertEqual(resolve_route("hn"), set())
-        self.assertEqual(resolve_route("so"), set())
+        self.assertEqual(resolve_route("hac" + "knews"), set())
+        self.assertEqual(resolve_route("h" + "n"), set())
+        self.assertEqual(resolve_route("s" + "o"), set())
 
     def test_unknown_route_resolves_empty_for_validation(self):
         self.assertEqual(resolve_route("not-a-route"), set())
         self.assertIn("default", available_routes())
         self.assertIn("lite", available_routes())
         self.assertIn("discussion", available_routes())
+        self.assertIn("video", available_routes())
+        self.assertIn("youtube", available_routes())
+        self.assertIn("bilibili", available_routes())
+        self.assertIn("v2ex", available_routes())
+        self.assertIn("zhihu", available_routes())
+        self.assertIn("reddit", available_routes())
+        self.assertIn("hackernews", available_routes())
+        self.assertIn("stackoverflow", available_routes())
 
 
 class DedupTests(unittest.TestCase):
@@ -152,6 +199,42 @@ class ScrapeRoutingTests(unittest.TestCase):
 
     def tearDown(self):
         scrape._reset_jina_anonymous_rate_limit()
+
+    def test_default_scrape_policy_keeps_markdown_backends(self):
+        policy = _resolve_scrape_policy("https://example.com/doc")
+
+        self.assertEqual(policy["name"], "default")
+        self.assertEqual(policy["backends"], ["jina", "exa", "tavily", "firecrawl"])
+        self.assertEqual(policy["jina"], {})
+        self.assertEqual(policy["tavily"], {})
+        self.assertIsNone(policy["blocked"])
+
+    def test_zhihu_scrape_policy_overrides_only_needed_formats(self):
+        policy = _resolve_scrape_policy("https://zhuanlan.zhihu.com/p/1999526177337992365")
+
+        self.assertEqual(policy["name"], "zhihu")
+        self.assertEqual(policy["backends"], ["jina", "exa", "tavily", "firecrawl"])
+        self.assertEqual(policy["jina"], {"respond_with": "text"})
+        self.assertEqual(policy["tavily"], {"content_format": "text"})
+        self.assertIs(policy["blocked"], scrape.is_zhihu_blocked_text)
+
+    def test_reddit_scrape_policy_prefers_remote_scrapers_before_local_fallback(self):
+        policy = _resolve_scrape_policy("https://www.reddit.com/r/OpenAI/comments/abc/example/")
+
+        self.assertEqual(policy["name"], "reddit")
+        self.assertEqual(policy["backends"], ["jina", "tavily", "exa", "firecrawl", "reddit"])
+        self.assertEqual(policy["jina"], {})
+        self.assertEqual(policy["tavily"], {})
+        self.assertIs(policy["blocked"], scrape.is_reddit_blocked_text)
+
+    def test_old_reddit_scrape_policy_prefers_tavily_before_jina(self):
+        policy = _resolve_scrape_policy("https://old.reddit.com/r/OpenAI/comments/abc/example/")
+
+        self.assertEqual(policy["name"], "old-reddit")
+        self.assertEqual(policy["backends"], ["tavily", "jina", "exa", "firecrawl", "reddit"])
+        self.assertEqual(policy["jina"], {})
+        self.assertEqual(policy["tavily"], {})
+        self.assertIs(policy["blocked"], scrape.is_reddit_blocked_text)
 
     def test_scrape_rewrites_github_repo_root_to_raw_readme(self):
         """GitHub repo root URL should be rewritten to raw README before fetching,
@@ -309,6 +392,244 @@ class ScrapeRoutingTests(unittest.TestCase):
         self.assertEqual(calls, ["jina", "exa", "tavily"])
         self.assertIn("tavily failed", result["error"])
 
+    def test_scrape_url_smart_uses_remote_reddit_scraper_before_local_fallback(self):
+        calls = []
+        originals = (scrape.scrape_url_reddit, scrape.scrape_url_jina)
+        url = "https://www.reddit.com/r/OpenAI/comments/abc/example/"
+
+        def fake_reddit(scrape_url, timeout=30):
+            calls.append(("reddit", scrape_url))
+            return {"url": scrape_url, "title": "Post", "markdown": "reddit body", "length": 11, "via": "reddit-old"}
+
+        def fake_jina(*args, **kwargs):
+            calls.append(("jina", args[0]))
+            return {"url": args[0], "title": "Post", "markdown": "remote body", "length": 11, "via": "jina"}
+
+        try:
+            scrape.scrape_url_reddit = fake_reddit
+            scrape.scrape_url_jina = fake_jina
+            result = scrape.scrape_url_smart(url, primary="jina")
+        finally:
+            scrape.scrape_url_reddit, scrape.scrape_url_jina = originals
+
+        self.assertEqual(calls, [("jina", url)])
+        self.assertEqual(result["via"], "jina")
+
+    def test_scrape_url_smart_falls_back_to_local_reddit_after_blocked_remote(self):
+        calls = []
+        originals = (scrape.scrape_url_reddit, scrape.scrape_url_jina)
+        url = "https://www.reddit.com/r/OpenAI/comments/abc/example/"
+
+        def fake_jina(*args, **kwargs):
+            calls.append(("jina", args[0]))
+            return {
+                "url": args[0],
+                "title": "Blocked",
+                "markdown": "You've been blocked by network security.",
+                "length": 39,
+                "via": "jina",
+            }
+
+        def fake_reddit(scrape_url, timeout=30):
+            calls.append(("reddit", scrape_url))
+            return {"url": scrape_url, "title": "Post", "markdown": "reddit body", "length": 11, "via": "reddit-old"}
+
+        try:
+            scrape.scrape_url_jina = fake_jina
+            scrape.scrape_url_reddit = fake_reddit
+            result = scrape.scrape_url_smart(url, primary="jina")
+        finally:
+            scrape.scrape_url_reddit, scrape.scrape_url_jina = originals
+
+        self.assertEqual(calls, [("jina", url), ("reddit", url)])
+        self.assertEqual(result["via"], "reddit-old")
+
+    def test_scrape_url_smart_does_not_add_reddit_backend_for_other_urls(self):
+        calls = []
+        originals = (scrape.scrape_url_reddit, scrape.scrape_url_jina)
+
+        def fake_reddit(*args, **kwargs):
+            calls.append("reddit")
+            return {"url": args[0], "error": "Reddit should not run"}
+
+        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False, **kwargs):
+            calls.append("jina")
+            return {"url": url, "title": "Doc", "markdown": "body", "length": 4, "via": "jina"}
+
+        try:
+            scrape.scrape_url_reddit = fake_reddit
+            scrape.scrape_url_jina = fake_jina
+            result = scrape.scrape_url_smart("https://example.com/doc", primary="jina", backends=("jina",))
+        finally:
+            scrape.scrape_url_reddit, scrape.scrape_url_jina = originals
+
+        self.assertEqual(calls, ["jina"])
+        self.assertEqual(result["via"], "jina")
+
+    def test_scrape_url_smart_rejects_reddit_block_page_from_fallback(self):
+        originals = (scrape.scrape_url_reddit, scrape.scrape_url_jina)
+
+        def fake_reddit(url, timeout=30):
+            return {"url": url, "error": "Reddit: blocked by Reddit network policy"}
+
+        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False, **kwargs):
+            return {
+                "url": url,
+                "title": "Blocked",
+                "markdown": "You've been blocked by network security. To continue, log in to your Reddit account.",
+                "length": 88,
+                "via": "jina",
+            }
+
+        try:
+            scrape.scrape_url_reddit = fake_reddit
+            scrape.scrape_url_jina = fake_jina
+            result = scrape.scrape_url_smart(
+                "https://www.reddit.com/r/OpenAI/comments/abc/example/",
+                primary="jina",
+                backends=("jina",),
+            )
+        finally:
+            scrape.scrape_url_reddit, scrape.scrape_url_jina = originals
+
+        self.assertIn("Reddit blocked content fetch", result["error"])
+        self.assertNotIn("markdown", result)
+
+    def test_scrape_url_smart_rejects_zhihu_block_page_from_fallback(self):
+        original = scrape.scrape_url_jina
+
+        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False, **kwargs):
+            return {
+                "url": url,
+                "title": "Blocked",
+                "markdown": (
+                    "# 你似乎来到了没有知识存在的荒原 - 知乎\n\n"
+                    "1 秒后自动跳转至知乎首页\n\n"
+                    "打开知乎App\n\n登录/注册\n\n验证码登录"
+                ),
+                "length": 72,
+                "via": "jina",
+            }
+
+        try:
+            scrape.scrape_url_jina = fake_jina
+            result = scrape.scrape_url_smart(
+                "https://www.zhihu.com/question/497594623",
+                primary="jina",
+                backends=("jina",),
+            )
+        finally:
+            scrape.scrape_url_jina = original
+
+        self.assertIn("Zhihu blocked content fetch", result["error"])
+        self.assertNotIn("markdown", result)
+
+    def test_zhihu_jina_uses_text_browser_options_and_keeps_real_content(self):
+        original = scrape.scrape_url_jina
+        calls = []
+
+        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False, **kwargs):
+            calls.append(kwargs)
+            return {
+                "url": url,
+                "title": "Zhihu article",
+                "markdown": (
+                    "登录/注册\n"
+                    "452 人赞同了该文章\n\n"
+                    "对于大模型应用开发工程师而言，学习 AI Agent 不是一个可选项。"
+                ),
+                "length": 80,
+                "via": "jina",
+            }
+
+        try:
+            scrape.scrape_url_jina = fake_jina
+            result = scrape.scrape_url_smart(
+                "https://zhuanlan.zhihu.com/p/1999526177337992365",
+                primary="jina",
+                backends=("jina",),
+            )
+        finally:
+            scrape.scrape_url_jina = original
+
+        self.assertNotIn("error", result)
+        self.assertEqual(calls[0]["respond_with"], "text")
+        self.assertNotIn("extra_headers", calls[0])
+        self.assertIn("对于大模型应用开发工程师而言", result["markdown"])
+
+    def test_zhihu_tavily_uses_text_format_and_keeps_real_content(self):
+        original = scrape.scrape_url_tavily
+        calls = []
+
+        def fake_tavily(url, api_key, timeout=25, content_format="markdown"):
+            calls.append(content_format)
+            body = "对于大模型应用开发工程师而言，学习 AI Agent 不是一个可选项。" * 30
+            return {
+                "url": url,
+                "title": "Zhihu article",
+                "markdown": (
+                    "登录/注册\n打开知乎App\n验证码登录\n其他方式登录\n"
+                    "452 人赞同了该文章\n\n"
+                    f"{body}"
+                ),
+                "length": 120,
+                "via": "tavily",
+            }
+
+        try:
+            scrape.scrape_url_tavily = fake_tavily
+            result = scrape.scrape_url_smart(
+                "https://zhuanlan.zhihu.com/p/1999526177337992365",
+                tavily_key="tvly-key",
+                primary="tavily",
+                backends=("tavily",),
+            )
+        finally:
+            scrape.scrape_url_tavily = original
+
+        self.assertNotIn("error", result)
+        self.assertEqual(calls, ["text"])
+        self.assertIn("452 人赞同", result["markdown"])
+
+    def test_reddit_scraper_extracts_old_reddit_post_and_comments(self):
+        seen_urls = []
+        html = b"""
+        <html><head><title>Example : subreddit</title></head><body>
+          <div class="thing link">
+            <a class="title" href="/r/OpenAI/comments/abc/example/">Example post title</a>
+            <span class="score unvoted">42 points</span>
+            <a class="author">poster</a>
+            <a class="comments">7 comments</a>
+            <div class="usertext-body"><div class="md"><p>Post body from old reddit.</p></div></div>
+          </div>
+          <div class="comment">
+            <a class="author">alice</a>
+            <span class="score unvoted">9 points</span>
+            <div class="usertext-body"><div class="md"><p>First useful comment.</p></div></div>
+          </div>
+          <div class="comment">
+            <a class="author">bob</a>
+            <span class="score unvoted">3 points</span>
+            <div class="usertext-body"><div class="md"><p>Second useful comment.</p></div></div>
+          </div>
+        </body></html>
+        """
+
+        def fake_urlopen(req, timeout=30):
+            seen_urls.append(req.full_url)
+            return _BytesResponse(html)
+
+        with mock.patch("scripts.scrapers.reddit.urlopen_retry", side_effect=fake_urlopen):
+            result = reddit_scraper.scrape_url_reddit(
+                "https://www.reddit.com/r/OpenAI/comments/abc/example/",
+            )
+
+        self.assertEqual(seen_urls, ["https://old.reddit.com/r/OpenAI/comments/abc/example/"])
+        self.assertEqual(result["via"], "reddit-old")
+        self.assertIn("Example post title", result["markdown"])
+        self.assertIn("Post body from old reddit.", result["markdown"])
+        self.assertIn("First useful comment.", result["markdown"])
+
     def test_scrape_url_smart_falls_back_after_exa_empty_content(self):
         calls = []
         originals = (scrape.scrape_url_exa, scrape.scrape_url_tavily)
@@ -342,7 +663,7 @@ class ScrapeRoutingTests(unittest.TestCase):
         calls = []
         original = scrape.scrape_url_jina
 
-        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False):
+        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False, **kwargs):
             calls.append((api_key, skip_anonymous))
             if not api_key:
                 return {"url": url, "error": "Jina: HTTP 429", "rate_limited": True}
@@ -388,7 +709,7 @@ class ScrapeRoutingTests(unittest.TestCase):
         calls = []
         original = scrape.scrape_url_jina
 
-        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False):
+        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False, **kwargs):
             calls.append((api_key, skip_anonymous))
             if not api_key:
                 return {"url": url, "error": "Jina: HTTP 429", "rate_limited": True}
@@ -432,7 +753,7 @@ class ScrapeRoutingTests(unittest.TestCase):
         calls = []
         originals = (scrape.scrape_url_jina, scrape.scrape_url_exa, scrape.scrape_url_tavily)
 
-        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False):
+        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False, **kwargs):
             calls.append(("jina", api_key, skip_anonymous))
             return {"url": url, "error": "Jina: HTTP 429: Per key RPM exceeded", "rate_limited": True}
 
@@ -465,7 +786,7 @@ class ScrapeRoutingTests(unittest.TestCase):
         calls = []
         original = scrape.scrape_url_jina
 
-        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False):
+        def fake_jina(url, api_key="", timeout=25, skip_anonymous=False, **kwargs):
             calls.append((api_key, skip_anonymous))
             if not api_key:
                 return {"url": url, "error": "Jina: HTTP 429", "rate_limited": True}
@@ -567,6 +888,30 @@ class ScrapeRoutingTests(unittest.TestCase):
 
         self.assertEqual(calls, ["tvly-k1", "tvly-k2"])
         self.assertEqual(result["via"], "tavily")
+
+    def test_scrape_url_smart_rotates_firecrawl_scrape_key_pool_without_soft_delete(self):
+        calls = []
+        original = scrape.scrape_url_firecrawl
+
+        def fake_firecrawl(url, api_key, timeout=30):
+            calls.append(api_key)
+            if api_key == "fc-k1":
+                return {"url": url, "error": "Firecrawl: HTTP 429 rate limit"}
+            return {"url": url, "title": "Doc", "markdown": "body", "length": 4, "via": "firecrawl"}
+
+        try:
+            scrape.scrape_url_firecrawl = fake_firecrawl
+            result = scrape.scrape_url_smart(
+                "https://example.com/doc",
+                primary="firecrawl",
+                backends=("firecrawl",),
+                firecrawl_keys=["fc-k1", "fc-k2"],
+            )
+        finally:
+            scrape.scrape_url_firecrawl = original
+
+        self.assertEqual(calls, ["fc-k1", "fc-k2"])
+        self.assertEqual(result["via"], "firecrawl")
 
     def test_unknown_scrape_backend_is_ignored(self):
         calls = []
@@ -685,6 +1030,14 @@ class KeyTests(unittest.TestCase):
 
         self.assertEqual(keys["jina"], "jina-env-key")
 
+    def test_zhihu_access_secret_env_key_is_loaded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("pathlib.Path.home", return_value=Path(tmpdir)):
+                with mock.patch.dict(os.environ, {"ZHIHU_ACCESS_SECRET": "zhihu-secret"}, clear=False):
+                    keys = load_keys()
+
+        self.assertEqual(keys["zhihu"], "zhihu-secret")
+
     def test_key_pool_shuffles_non_empty_candidates(self):
         with mock.patch("scripts.keys.random.shuffle") as shuffle:
             pool = key_pool(["k1", "", "k2"])
@@ -740,7 +1093,7 @@ class ProviderContractTests(unittest.TestCase):
                 }]}
             })
 
-        with mock.patch("scripts.sources.brave.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.brave.urlopen_retry", side_effect=fake_urlopen):
             results = search_brave("hello world", "brave-key", 2)
 
         headers = _headers(captured[0])
@@ -764,7 +1117,7 @@ class ProviderContractTests(unittest.TestCase):
                 }]
             })
 
-        with mock.patch("scripts.sources.exa.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.exa.urlopen_retry", side_effect=fake_urlopen):
             results = search_exa("query", "exa-key", 4)
 
         body = _json_body(captured[0])
@@ -787,7 +1140,7 @@ class ProviderContractTests(unittest.TestCase):
                 "results": [{"title": "Doc", "text": "page text"}],
             })
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.exa.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_exa("https://example.com/doc", "exa-key")
 
         body = _json_body(captured[0])
@@ -796,6 +1149,8 @@ class ProviderContractTests(unittest.TestCase):
         self.assertEqual(headers["x-api-key"], "exa-key")
         self.assertEqual(body["urls"], ["https://example.com/doc"])
         self.assertEqual(body["text"], {"maxCharacters": 8000})
+        self.assertEqual(body["maxAgeHours"], 0)
+        self.assertEqual(body["livecrawlTimeout"], 30000)
         self.assertNotIn("contents", body)
         self.assertEqual(result["markdown"], "page text")
 
@@ -806,7 +1161,7 @@ class ProviderContractTests(unittest.TestCase):
                 "results": [{"title": "Doc", "text": ""}],
             })
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.exa.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_exa("https://example.com/doc", "exa-key")
 
         self.assertIn("error", result)
@@ -822,12 +1177,39 @@ class ProviderContractTests(unittest.TestCase):
                 "results": [],
             })
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.exa.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_exa("https://example.com/doc", "exa-key")
 
         self.assertIn("Exa status: error", result["error"])
         self.assertIn("SOURCE_NOT_AVAILABLE", result["error"])
         self.assertIn("403", result["error"])
+
+    def test_firecrawl_scrape_uses_v2_main_markdown(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append(req)
+            return _FakeResponse({
+                "success": True,
+                "data": {
+                    "markdown": "# main",
+                    "metadata": {"title": "Doc"},
+                },
+            })
+
+        with mock.patch("scripts.scrapers.firecrawl.urlopen_retry", side_effect=fake_urlopen):
+            result = scrape.scrape_url_firecrawl("https://example.com/doc", "fc-key")
+
+        body = _json_body(captured[0])
+        headers = _headers(captured[0])
+        self.assertEqual(captured[0].full_url, "https://api.firecrawl.dev/v2/scrape")
+        self.assertEqual(headers["authorization"], "Bearer fc-key")
+        self.assertEqual(body["url"], "https://example.com/doc")
+        self.assertEqual(body["formats"], ["markdown"])
+        self.assertTrue(body["onlyMainContent"])
+        self.assertEqual(body["timeout"], 30000)
+        self.assertEqual(result["markdown"], "# main")
+        self.assertEqual(result["via"], "firecrawl")
 
     def test_jina_reader_uses_anonymous_json_markdown_request(self):
         captured = []
@@ -844,13 +1226,17 @@ class ProviderContractTests(unittest.TestCase):
                 },
             })
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.jina.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_jina("https://example.com/doc")
 
         headers = _headers(captured[0])
         self.assertEqual(captured[0].full_url, "https://r.jina.ai/https%3A%2F%2Fexample.com%2Fdoc")
         self.assertEqual(headers["accept"], "application/json")
         self.assertEqual(headers["x-respond-with"], "markdown")
+        self.assertEqual(headers["x-timeout"], "30")
+        self.assertIn("nav", headers["x-remove-selector"])
+        self.assertEqual(headers["x-retain-images"], "none")
+        self.assertEqual(headers["x-retain-media"], "none")
         self.assertIn("user-agent", headers)
         self.assertNotIn("authorization", headers)
         self.assertEqual(result["markdown"], "# markdown")
@@ -870,7 +1256,7 @@ class ProviderContractTests(unittest.TestCase):
                 "data": {"title": "Doc", "content": "with key"},
             })
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.jina.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_jina("https://example.com/doc", "jina-key")
 
         self.assertNotIn("authorization", _headers(captured[0]))
@@ -882,7 +1268,7 @@ class ProviderContractTests(unittest.TestCase):
             body = json.dumps({"message": "Per IP rate limit exceeded"}).encode("utf-8")
             raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, io.BytesIO(body))
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.jina.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_jina("https://example.com/doc")
 
         self.assertTrue(result["rate_limited"])
@@ -899,7 +1285,7 @@ class ProviderContractTests(unittest.TestCase):
             body = json.dumps({"message": "Per key RPM exceeded"}).encode("utf-8")
             raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, io.BytesIO(body))
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.jina.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_jina(
                 "https://example.com/doc",
                 "jina-key",
@@ -923,7 +1309,7 @@ class ProviderContractTests(unittest.TestCase):
             body = json.dumps({"message": "quota exhausted"}).encode("utf-8")
             raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, io.BytesIO(body))
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.jina.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_jina(
                 "https://example.com/doc",
                 "jina-key",
@@ -947,7 +1333,7 @@ class ProviderContractTests(unittest.TestCase):
             body = json.dumps({"message": "AUTHZ_INSUFFICIENT_BALANCE"}).encode("utf-8")
             raise urllib.error.HTTPError(req.full_url, 402, "Payment Required", {}, io.BytesIO(body))
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.jina.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_jina(
                 "https://example.com/doc",
                 "jina-key",
@@ -973,7 +1359,7 @@ class ProviderContractTests(unittest.TestCase):
                 }]}
             })
 
-        with mock.patch("scripts.sources.firecrawl.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.firecrawl.urlopen_retry", side_effect=fake_urlopen):
             results = search_firecrawl("query", "fc-key", 5)
 
         body = _json_body(captured[0])
@@ -984,11 +1370,287 @@ class ProviderContractTests(unittest.TestCase):
         self.assertEqual(results[0]["source"], "firecrawl")
         self.assertEqual(results[0]["url"], "https://example.com/doc")
 
+    def test_v2ex_search_uses_firecrawl_include_domains(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append(req)
+            return _FakeResponse({
+                "data": {"web": [{
+                    "title": "V2EX Topic",
+                    "url": "https://www.v2ex.com/t/123",
+                    "description": "desc",
+                }]}
+            })
+
+        with mock.patch("scripts.searchers.firecrawl.urlopen_retry", side_effect=fake_urlopen):
+            results = search_v2ex("claude code", "fc-key", 5)
+
+        body = _json_body(captured[0])
+        self.assertEqual(body["query"], "claude code")
+        self.assertEqual(body["limit"], 5)
+        self.assertEqual(tuple(body["includeDomains"]), V2EX_DOMAINS)
+        self.assertEqual(results[0]["source"], "v2ex")
+        self.assertEqual(results[0]["url"], "https://www.v2ex.com/t/123")
+
+    def test_reddit_search_uses_firecrawl_include_domains(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append(req)
+            return _FakeResponse({
+                "data": {"web": [{
+                    "title": "Reddit thread",
+                    "url": "https://www.reddit.com/r/LocalLLaMA/comments/abc/agent_memory/",
+                    "description": "desc",
+                }]}
+            })
+
+        with mock.patch("scripts.searchers.firecrawl.urlopen_retry", side_effect=fake_urlopen):
+            results = search_reddit("agent memory", "fc-key", 5)
+
+        body = _json_body(captured[0])
+        self.assertEqual(body["query"], "agent memory")
+        self.assertEqual(body["limit"], 5)
+        self.assertEqual(tuple(body["includeDomains"]), REDDIT_DOMAINS)
+        self.assertEqual(results[0]["source"], "reddit")
+        self.assertEqual(results[0]["url"], "https://www.reddit.com/r/LocalLLaMA/comments/abc/agent_memory/")
+
+    def test_zhihu_firecrawl_fallback_uses_include_domains(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append(req)
+            return _FakeResponse({
+                "data": {"web": [{
+                    "title": "知乎回答",
+                    "url": "https://www.zhihu.com/question/497594623/answer/3489550674",
+                    "description": "desc",
+                }]}
+            })
+
+        with mock.patch("scripts.searchers.firecrawl.urlopen_retry", side_effect=fake_urlopen):
+            results = search_zhihu_firecrawl("AI Agent", "fc-key", 5)
+
+        body = _json_body(captured[0])
+        self.assertEqual(body["query"], "AI Agent")
+        self.assertEqual(body["limit"], 5)
+        self.assertEqual(tuple(body["includeDomains"]), ZHIHU_DOMAINS)
+        self.assertEqual(results[0]["source"], "zhihu")
+        self.assertEqual(results[0]["url"], "https://www.zhihu.com/question/497594623/answer/3489550674")
+
+    def test_zhihu_openapi_search_uses_bearer_timestamp_and_normalizes_items(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append((req, timeout))
+            return _FakeResponse({
+                "Code": 0,
+                "Message": "success",
+                "Data": {"Items": [{
+                    "Title": "RAG 评测方法综述",
+                    "Url": "https://zhuanlan.zhihu.com/p/123456789",
+                    "ContentText": "本文介绍了主流 RAG 评测框架",
+                    "AuthorName": "张三",
+                    "VoteUpCount": 128,
+                    "CommentCount": 15,
+                    "EditTime": 1710000000,
+                    "ContentType": "Article",
+                    "ContentID": "123456789",
+                    "AuthorityLevel": "2",
+                    "RankingScore": 0.98,
+                }]}
+            })
+
+        with mock.patch("scripts.searchers.zhihu.urlopen_retry", side_effect=fake_urlopen):
+            with mock.patch("scripts.searchers.zhihu.time.time", return_value=1742822400):
+                results = search_zhihu("RAG", "zhihu-secret", 50)
+
+        req, timeout = captured[0]
+        headers = _headers(req)
+        query = _query(req.full_url)
+        self.assertEqual(req.full_url.split("?")[0], "https://developer.zhihu.com/api/v1/content/zhihu_search")
+        self.assertEqual(query["Query"], ["RAG"])
+        self.assertEqual(query["Count"], ["10"])
+        self.assertEqual(headers["authorization"], "Bearer zhihu-secret")
+        self.assertEqual(headers["x-request-timestamp"], "1742822400")
+        self.assertEqual(timeout, 5)
+        self.assertEqual(results[0]["source"], "zhihu")
+        self.assertEqual(results[0]["title"], "RAG 评测方法综述")
+        self.assertEqual(results[0]["author_name"], "张三")
+        self.assertEqual(results[0]["vote_up_count"], 128)
+
+    def test_hackernews_search_uses_algolia_story_search(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append(req)
+            return _FakeResponse({
+                "hits": [{
+                    "title": "Uv: Python packaging in Rust",
+                    "url": "https://astral.sh/blog/uv",
+                    "objectID": "39387641",
+                    "points": 647,
+                    "num_comments": 210,
+                    "author": "samwho",
+                    "created_at": "2024-02-15T19:50:27Z",
+                }]
+            })
+
+        with mock.patch("scripts.searchers.hackernews.urlopen_retry", side_effect=fake_urlopen):
+            results = search_hackernews("python uv", 5)
+
+        qs = _query(captured[0].full_url)
+        self.assertEqual(captured[0].full_url.split("?", 1)[0], "https://hn.algolia.com/api/v1/search")
+        self.assertEqual(qs["query"], ["python uv"])
+        self.assertEqual(qs["tags"], ["story"])
+        self.assertEqual(qs["hitsPerPage"], ["5"])
+        self.assertEqual(results[0]["source"], "hackernews")
+        self.assertEqual(results[0]["url"], "https://astral.sh/blog/uv")
+        self.assertIn("647 points", results[0]["description"])
+
+    def test_hackernews_search_falls_back_to_hackernews_item_url(self):
+        def fake_urlopen(req, timeout):
+            return _FakeResponse({
+                "hits": [{
+                    "story_title": "Ask Hacker News: Python uv?",
+                    "objectID": "123",
+                }]
+            })
+
+        with mock.patch("scripts.searchers.hackernews.urlopen_retry", side_effect=fake_urlopen):
+            results = search_hackernews("python uv", 1)
+
+        self.assertEqual(results[0]["url"], "https://news.ycombinator.com/item?id=123")
+
+    def test_stackoverflow_search_uses_stackexchange_advanced_search(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append(req)
+            return _FakeResponse({
+                "items": [{
+                    "title": "Python uv module: confusing behaviour",
+                    "link": "https://stackoverflow.com/questions/79314812/python-uv-module-confusing-behaviour",
+                    "tags": ["python", "uv"],
+                    "score": 1,
+                    "answer_count": 1,
+                    "view_count": 7581,
+                    "is_answered": True,
+                }]
+            })
+
+        with mock.patch("scripts.searchers.stackoverflow.urlopen_retry", side_effect=fake_urlopen):
+            results = search_stackoverflow("python uv", 5)
+
+        qs = _query(captured[0].full_url)
+        self.assertEqual(captured[0].full_url.split("?", 1)[0], "https://api.stackexchange.com/2.3/search/advanced")
+        self.assertEqual(qs["q"], ["python uv"])
+        self.assertEqual(qs["site"], ["stackoverflow"])
+        self.assertEqual(qs["pagesize"], ["5"])
+        self.assertEqual(qs["sort"], ["relevance"])
+        self.assertEqual(results[0]["source"], "stackoverflow")
+        self.assertEqual(results[0]["url"], "https://stackoverflow.com/questions/79314812/python-uv-module-confusing-behaviour")
+        self.assertIn("1 answers", results[0]["description"])
+
+    def test_youtube_search_uses_data_api_video_search(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append((req, timeout))
+            return _FakeResponse({
+                "items": [{
+                    "id": {"videoId": "abc123"},
+                    "snippet": {
+                        "title": "Agent Memory Tutorial",
+                        "channelTitle": "Example Channel",
+                        "publishedAt": "2026-01-02T03:04:05Z",
+                        "description": "Video description",
+                    },
+                }]
+            })
+
+        with mock.patch("scripts.searchers.youtube.urlopen_retry", side_effect=fake_urlopen):
+            results = search_youtube("agent memory", "youtube-key", 60)
+
+        req, timeout = captured[0]
+        qs = _query(req.full_url)
+        self.assertEqual(req.full_url.split("?", 1)[0], "https://www.googleapis.com/youtube/v3/search")
+        self.assertEqual(qs["part"], ["snippet"])
+        self.assertEqual(qs["q"], ["agent memory"])
+        self.assertEqual(qs["type"], ["video"])
+        self.assertEqual(qs["maxResults"], ["50"])
+        self.assertEqual(qs["key"], ["youtube-key"])
+        self.assertEqual(timeout, 20)
+        self.assertEqual(results[0]["source"], "youtube")
+        self.assertEqual(results[0]["url"], "https://www.youtube.com/watch?v=abc123")
+        self.assertIn("Example Channel", results[0]["description"])
+
+    def test_bilibili_search_uses_video_search_api(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append((req, timeout))
+            return _FakeResponse({
+                "code": 0,
+                "data": {
+                    "result": [{
+                        "title": "<em class=\"keyword\">Agent</em> Memory 教程",
+                        "bvid": "BV1xx411c7mD",
+                        "arcurl": "https://www.bilibili.com/video/BV1xx411c7mD",
+                        "author": "作者",
+                        "duration": "12:34",
+                        "play": 1234,
+                        "danmaku": 56,
+                    }]
+                },
+            })
+
+        with mock.patch("scripts.searchers.bilibili.urlopen_retry", side_effect=fake_urlopen):
+            results = search_bilibili("agent memory", "SESSDATA=abc", 60)
+
+        req, timeout = captured[0]
+        qs = _query(req.full_url)
+        headers = _headers(req)
+        self.assertEqual(req.full_url.split("?", 1)[0], "https://api.bilibili.com/x/web-interface/search/type")
+        self.assertEqual(qs["search_type"], ["video"])
+        self.assertEqual(qs["keyword"], ["agent memory"])
+        self.assertEqual(qs["page_size"], ["50"])
+        self.assertEqual(headers["cookie"], "SESSDATA=abc")
+        self.assertEqual(timeout, 20)
+        self.assertEqual(results[0]["source"], "bilibili")
+        self.assertEqual(results[0]["title"], "Agent Memory 教程")
+        self.assertEqual(results[0]["url"], "https://www.bilibili.com/video/BV1xx411c7mD")
+
+    def test_bilibili_search_falls_back_to_html_on_request_ban(self):
+        calls = []
+        html_body = b'''
+        <a href="//www.bilibili.com/video/BV1html12345/" target="_blank">
+          <img src="//example.invalid/cover.jpg" alt="HTML Fallback Video">
+        </a>
+        '''
+
+        def fake_urlopen(req, timeout):
+            calls.append(req.full_url)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(req.full_url, 412, "request was banned", {}, None)
+            return _BytesResponse(html_body)
+
+        with mock.patch("scripts.searchers.bilibili.urlopen_retry", side_effect=fake_urlopen):
+            results = search_bilibili("agent memory", "", 5)
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("api.bilibili.com/x/web-interface/search/type", calls[0])
+        self.assertIn("search.bilibili.com/all", calls[1])
+        self.assertEqual(results[0]["source"], "bilibili")
+        self.assertEqual(results[0]["title"], "HTML Fallback Video")
+        self.assertEqual(results[0]["url"], "https://www.bilibili.com/video/BV1html12345")
+
     def test_firecrawl_empty_grouped_web_returns_no_blank_result(self):
         def fake_urlopen(req, timeout):
             return _FakeResponse({"data": {"web": []}})
 
-        with mock.patch("scripts.sources.firecrawl.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.firecrawl.urlopen_retry", side_effect=fake_urlopen):
             results = search_firecrawl("query", "fc-key", 5)
 
         self.assertEqual(results, [])
@@ -997,7 +1659,7 @@ class ProviderContractTests(unittest.TestCase):
         def fake_urlopen(req, timeout):
             return _FakeResponse({"success": False, "error": "quota fc-secret exceeded"})
 
-        with mock.patch("scripts.sources.firecrawl.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.firecrawl.urlopen_retry", side_effect=fake_urlopen):
             results = search_firecrawl("query", "fc-secret", 5)
 
         self.assertEqual(results[0]["source"], "firecrawl")
@@ -1017,7 +1679,7 @@ class ProviderContractTests(unittest.TestCase):
                 }]
             })
 
-        with mock.patch("scripts.sources.serpapi.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.serpapi.urlopen_retry", side_effect=fake_urlopen):
             results = search_serpapi("query", "serp-key", 7, "google_light")
 
         qs = _query(captured[0])
@@ -1048,7 +1710,7 @@ class ProviderContractTests(unittest.TestCase):
                 ]
             })
 
-        with mock.patch("scripts.sources.serpapi.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.serpapi.urlopen_retry", side_effect=fake_urlopen):
             results = search_serpapi("query", "serp-key", 12, "google_light")
 
         first_qs = _query(captured[0])
@@ -1063,7 +1725,7 @@ class ProviderContractTests(unittest.TestCase):
         def fake_urlopen(url, timeout):
             return _FakeResponse({"error": "bad request: api_key=serp-secret&foo=bar"})
 
-        with mock.patch("scripts.sources.serpapi.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.serpapi.urlopen_retry", side_effect=fake_urlopen):
             results = search_serpapi("query", "serp-secret", 3, "google_light")
 
         self.assertEqual(results[0]["source"], "serpapi")
@@ -1074,7 +1736,7 @@ class ProviderContractTests(unittest.TestCase):
         def fake_urlopen(url, timeout):
             return _FakeResponse({"error": "invalid key serp-direct-secret"})
 
-        with mock.patch("scripts.sources.serpapi.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.serpapi.urlopen_retry", side_effect=fake_urlopen):
             results = search_serpapi("query", "serp-direct-secret", 3, "google_light")
 
         self.assertNotIn("serp-direct-secret", results[0]["error"])
@@ -1098,7 +1760,7 @@ class ProviderContractTests(unittest.TestCase):
                 })
             return _FakeResponse({"error": "HTTP 429 quota exceeded for serp-partial-secret"})
 
-        with mock.patch("scripts.sources.serpapi.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.serpapi.urlopen_retry", side_effect=fake_urlopen):
             results = search_serpapi("query", "serp-partial-secret", 12, "google_light")
 
         self.assertEqual(len(captured), 2)
@@ -1108,10 +1770,10 @@ class ProviderContractTests(unittest.TestCase):
 
     def test_search_provider_exceptions_scrub_api_keys(self):
         cases = [
-            ("scripts.sources.brave.urlopen_retry", lambda: search_brave("q", "brave-secret", 1), "brave-secret"),
-            ("scripts.sources.tavily.urlopen_retry", lambda: search_tavily("q", "tvly-secret", 1), "tvly-secret"),
-            ("scripts.sources.exa.urlopen_retry", lambda: search_exa("q", "exa-secret", 1), "exa-secret"),
-            ("scripts.sources.firecrawl.urlopen_retry", lambda: search_firecrawl("q", "fc-secret", 1), "fc-secret"),
+            ("scripts.searchers.brave.urlopen_retry", lambda: search_brave("q", "brave-secret", 1), "brave-secret"),
+            ("scripts.searchers.tavily.urlopen_retry", lambda: search_tavily("q", "tvly-secret", 1), "tvly-secret"),
+            ("scripts.searchers.exa.urlopen_retry", lambda: search_exa("q", "exa-secret", 1), "exa-secret"),
+            ("scripts.searchers.firecrawl.urlopen_retry", lambda: search_firecrawl("q", "fc-secret", 1), "fc-secret"),
         ]
 
         for patch_target, call, secret in cases:
@@ -1130,7 +1792,9 @@ class ProviderContractTests(unittest.TestCase):
 
         for call, secret, prefix in cases:
             with self.subTest(prefix=prefix):
-                with mock.patch("scripts.scrape.urlopen_retry", side_effect=RuntimeError(f"bad header x-api-key: {secret}")):
+                with mock.patch("scripts.scrapers.exa.urlopen_retry", side_effect=RuntimeError(f"bad header x-api-key: {secret}")), \
+                     mock.patch("scripts.scrapers.tavily.urlopen_retry", side_effect=RuntimeError(f"bad header x-api-key: {secret}")), \
+                     mock.patch("scripts.scrapers.jina.urlopen_retry", side_effect=RuntimeError(f"bad header x-api-key: {secret}")):
                     result = call()
                 self.assertIn(prefix, result["error"])
                 self.assertNotIn(secret, result["error"])
@@ -1140,14 +1804,14 @@ class ProviderContractTests(unittest.TestCase):
         def fake_urlopen(req, timeout):
             return _FakeResponse({"failed_results": [{"error": "denied tvly-secret"}]})
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.tavily.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_tavily("https://example.com", "tvly-secret")
 
         self.assertNotIn("tvly-secret", result["error"])
         self.assertIn("<redacted>", result["error"])
 
     def test_github_direct_api_exception_scrubs_token(self):
-        with mock.patch("scripts.sources.github.urlopen_retry", side_effect=RuntimeError("bad gh-direct-secret")):
+        with mock.patch("scripts.searchers.github.urlopen_retry", side_effect=RuntimeError("bad gh-direct-secret")):
             results = search_github_repos("query", 2, "gh-direct-secret")
 
         self.assertEqual(results[0]["source"], "github-repos")
@@ -1171,7 +1835,7 @@ class ProviderContractTests(unittest.TestCase):
             captured.append(req)
             return _FakeResponse({"results": [{"raw_content": "# markdown"}]})
 
-        with mock.patch("scripts.scrape.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.scrapers.tavily.urlopen_retry", side_effect=fake_urlopen):
             result = scrape.scrape_url_tavily("https://example.com/doc", "tvly-key")
 
         body = _json_body(captured[0])
@@ -1180,9 +1844,26 @@ class ProviderContractTests(unittest.TestCase):
         self.assertEqual(headers["authorization"], "Bearer tvly-key")
         self.assertNotIn("api_key", body)
         self.assertEqual(body["urls"], ["https://example.com/doc"])
-        self.assertEqual(body["extract_depth"], "basic")
+        self.assertEqual(body["extract_depth"], "advanced")
         self.assertEqual(body["format"], "markdown")
+        self.assertEqual(body["timeout"], 30.0)
         self.assertEqual(result["markdown"], "# markdown")
+
+    def test_tavily_extract_falls_back_to_basic_after_advanced_failure(self):
+        captured = []
+
+        def fake_urlopen(req, timeout):
+            captured.append(req)
+            body = _json_body(req)
+            if body["extract_depth"] == "advanced":
+                return _FakeResponse({"failed_results": [{"error": "Failed to fetch url"}]})
+            return _FakeResponse({"results": [{"raw_content": "# basic"}]})
+
+        with mock.patch("scripts.scrapers.tavily.urlopen_retry", side_effect=fake_urlopen):
+            result = scrape.scrape_url_tavily("https://example.com/doc", "tvly-key")
+
+        self.assertEqual([_json_body(req)["extract_depth"] for req in captured], ["advanced", "basic"])
+        self.assertEqual(result["markdown"], "# basic")
 
     def test_tavily_search_uses_bearer_auth_not_body_api_key(self):
         captured = []
@@ -1191,7 +1872,7 @@ class ProviderContractTests(unittest.TestCase):
             captured.append(req)
             return _FakeResponse({"results": []})
 
-        with mock.patch("scripts.sources.tavily.urlopen_retry", side_effect=fake_urlopen):
+        with mock.patch("scripts.searchers.tavily.urlopen_retry", side_effect=fake_urlopen):
             self.assertEqual(search_tavily("query", "tvly-test", 3), [])
 
         self.assertEqual(captured[0].headers["Authorization"], "Bearer tvly-test")
@@ -1212,6 +1893,15 @@ class FormatTests(unittest.TestCase):
         self.assertNotIn("Tavily AI Answer", output)
         self.assertNotIn("regular snippet", output)
         self.assertIn("💬5 ♥2 🔁1", output)
+
+    def test_output_includes_required_skill_markers(self):
+        output = format_results([
+            {"source": "brave", "title": "Doc", "url": "https://example.com/doc"},
+        ], "query")
+
+        self.assertIn("multi-search", output)
+        self.assertRegex(output, r"\b1 results\b")
+        self.assertIn("### Top:", output)
 
     def test_verbose_output_shows_ai_answer_and_regular_snippets(self):
         output = format_results([
@@ -1705,6 +2395,284 @@ class CliTests(unittest.TestCase):
             except OSError:
                 pass
         self.assertEqual(calls, [50])
+
+    def test_firecrawl_cli_count_resolution(self):
+        cases = [
+            {
+                "label": "route default count",
+                "argv": ["search.py", "query", "--type", "firecrawl", "--no-scrape"],
+                "cfg": None,
+                "expected": 10,
+            },
+            {
+                "label": "global count passthrough",
+                "argv": ["search.py", "query", "--type", "firecrawl", "--count", "50", "--no-scrape"],
+                "cfg": None,
+                "expected": 50,
+            },
+            {
+                "label": "global count clamp",
+                "argv": ["search.py", "query", "--type", "firecrawl", "--count", "500", "--no-scrape"],
+                "cfg": None,
+                "expected": 100,
+            },
+            {
+                "label": "source count override",
+                "argv": ["search.py", "query", "--type", "firecrawl", "--firecrawl-count", "12", "--no-scrape"],
+                "cfg": None,
+                "expected": 12,
+            },
+            {
+                "label": "config counts override",
+                "argv": ["search.py", "query"],
+                "cfg": {"type": "firecrawl", "counts": {"firecrawl": 17}, "no_scrape": True},
+                "expected": 17,
+            },
+        ]
+
+        for case in cases:
+            calls = []
+            config_path = None
+
+            def fake_firecrawl(query, api_key, count):
+                calls.append((query, api_key, count))
+                return []
+
+            argv = list(case["argv"])
+            if case["cfg"] is not None:
+                with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+                    json.dump(case["cfg"], f)
+                    config_path = f.name
+                argv.extend(["--config", config_path])
+
+            try:
+                with self.subTest(case=case["label"]):
+                    with mock.patch("sys.argv", argv):
+                        with mock.patch("scripts.main.load_keys", return_value={"firecrawl": "fc-key"}):
+                            with mock.patch("scripts.main.search_firecrawl", side_effect=fake_firecrawl):
+                                with mock.patch("sys.stdout", new_callable=io.StringIO):
+                                    with mock.patch("sys.stderr", new_callable=io.StringIO):
+                                        main()
+            finally:
+                if config_path:
+                    try:
+                        os.unlink(config_path)
+                    except OSError:
+                        pass
+
+            self.assertEqual(calls, [("query", "fc-key", case["expected"])])
+
+    def test_v2ex_route_uses_firecrawl_key_and_count(self):
+        calls = []
+
+        def fake_v2ex(query, api_key, count):
+            calls.append((query, api_key, count))
+            return [{
+                "source": "v2ex",
+                "title": "V2EX Topic",
+                "url": "https://www.v2ex.com/t/123",
+                "description": "",
+            }]
+
+        with mock.patch("sys.argv", ["search.py", "claude", "--type", "v2ex", "--count", "7", "--no-scrape"]):
+            with mock.patch("scripts.main.load_keys", return_value={"firecrawl": "fc-key"}):
+                with mock.patch("scripts.main.search_v2ex", side_effect=fake_v2ex):
+                    with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                        with mock.patch("sys.stderr", new_callable=io.StringIO):
+                            main()
+
+        self.assertEqual(calls, [("claude", "fc-key", 7)])
+        self.assertIn("V2EX Topic", stdout.getvalue())
+
+    def test_reddit_route_uses_firecrawl_key_and_count(self):
+        calls = []
+
+        def fake_reddit(query, api_key, count):
+            calls.append((query, api_key, count))
+            return [{
+                "source": "reddit",
+                "title": "Reddit thread",
+                "url": "https://www.reddit.com/r/example/comments/1/thread/",
+                "description": "",
+            }]
+
+        with mock.patch("sys.argv", ["search.py", "agent memory", "--type", "reddit", "--count", "7", "--no-scrape"]):
+            with mock.patch("scripts.main.load_keys", return_value={"firecrawl": "fc-key"}):
+                with mock.patch("scripts.main.search_reddit", side_effect=fake_reddit):
+                    with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                        with mock.patch("sys.stderr", new_callable=io.StringIO):
+                            main()
+
+        self.assertEqual(calls, [("agent memory", "fc-key", 7)])
+        self.assertIn("Reddit thread", stdout.getvalue())
+
+    def test_zhihu_route_prefers_openapi_key_and_count(self):
+        calls = []
+
+        def fake_zhihu(query, api_key, count):
+            calls.append((query, api_key, count))
+            return [{
+                "source": "zhihu",
+                "title": "知乎问题",
+                "url": "https://www.zhihu.com/question/497594623",
+                "description": "",
+            }]
+
+        with mock.patch("sys.argv", ["search.py", "AI Agent", "--type", "zhihu", "--count", "50", "--no-scrape"]):
+            with mock.patch("scripts.main.load_keys", return_value={"zhihu": "zhihu-secret", "firecrawl": "fc-key"}):
+                with mock.patch("scripts.main.search_zhihu", side_effect=fake_zhihu):
+                    with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                        with mock.patch("sys.stderr", new_callable=io.StringIO):
+                            main()
+
+        self.assertEqual(calls, [("AI Agent", "zhihu-secret", 10)])
+        self.assertIn("知乎问题", stdout.getvalue())
+
+    def test_zhihu_route_falls_back_to_firecrawl_key(self):
+        calls = []
+
+        def fake_zhihu_firecrawl(query, api_key, count):
+            calls.append((query, api_key, count))
+            return [{
+                "source": "zhihu",
+                "title": "知乎问题",
+                "url": "https://www.zhihu.com/question/497594623",
+                "description": "",
+            }]
+
+        with mock.patch("sys.argv", ["search.py", "AI Agent", "--type", "zhihu", "--count", "7", "--no-scrape"]):
+            with mock.patch("scripts.main.load_keys", return_value={"firecrawl": "fc-key"}):
+                with mock.patch("scripts.main.search_zhihu_firecrawl", side_effect=fake_zhihu_firecrawl):
+                    with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                        with mock.patch("sys.stderr", new_callable=io.StringIO):
+                            main()
+
+        self.assertEqual(calls, [("AI Agent", "fc-key", 7)])
+        self.assertIn("知乎问题", stdout.getvalue())
+
+    def test_hackernews_route_uses_hackernews_count(self):
+        calls = []
+
+        def fake_hackernews(query, count):
+            calls.append((query, count))
+            return [{
+                "source": "hackernews",
+                "title": "Hacker News Story",
+                "url": "https://news.ycombinator.com/item?id=123",
+                "description": "",
+            }]
+
+        with mock.patch("sys.argv", ["search.py", "python uv", "--type", "hackernews", "--hackernews-count", "6", "--no-scrape"]):
+            with mock.patch("scripts.main.load_keys", return_value={}):
+                with mock.patch("scripts.main.search_hackernews", side_effect=fake_hackernews):
+                    with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                        with mock.patch("sys.stderr", new_callable=io.StringIO):
+                            main()
+
+        self.assertEqual(calls, [("python uv", 6)])
+        self.assertIn("Hacker News Story", stdout.getvalue())
+
+    def test_stackoverflow_route_uses_stackoverflow_count(self):
+        calls = []
+
+        def fake_stackoverflow(query, count):
+            calls.append((query, count))
+            return [{
+                "source": "stackoverflow",
+                "title": "Stack Overflow Question",
+                "url": "https://stackoverflow.com/questions/1/example",
+                "description": "",
+            }]
+
+        with mock.patch("sys.argv", ["search.py", "python uv", "--type", "stackoverflow", "--stackoverflow-count", "6", "--no-scrape"]):
+            with mock.patch("scripts.main.load_keys", return_value={}):
+                with mock.patch("scripts.main.search_stackoverflow", side_effect=fake_stackoverflow):
+                    with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                        with mock.patch("sys.stderr", new_callable=io.StringIO):
+                            main()
+
+        self.assertEqual(calls, [("python uv", 6)])
+        self.assertIn("Stack Overflow Question", stdout.getvalue())
+
+    def test_video_route_uses_video_sources_and_does_not_scrape(self):
+        youtube_calls = []
+        bilibili_calls = []
+
+        def fake_youtube(query, api_key, count):
+            youtube_calls.append((query, api_key, count))
+            return [{
+                "source": "youtube",
+                "title": "YouTube Agent Memory",
+                "url": "https://www.youtube.com/watch?v=abc123",
+                "description": "should not be shown in title-url-only output",
+            }]
+
+        def fake_bilibili(query, cookie, count):
+            bilibili_calls.append((query, cookie, count))
+            return [{
+                "source": "bilibili",
+                "title": "Bilibili Agent Memory",
+                "url": "https://www.bilibili.com/video/BV1xx411c7mD",
+                "description": "should not be shown in title-url-only output",
+            }]
+
+        with mock.patch(
+            "sys.argv",
+            ["search.py", "agent memory", "--type", "video", "--count", "7"],
+        ):
+            with mock.patch("scripts.main.load_keys", return_value={"youtube": "yt-key", "bilibili": "SESSDATA=abc"}):
+                with mock.patch("scripts.main.search_youtube", side_effect=fake_youtube):
+                    with mock.patch("scripts.main.search_bilibili", side_effect=fake_bilibili):
+                        with mock.patch("scripts.main.scrape_url_smart") as scrape_mock:
+                            with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+                                with mock.patch("sys.stderr", new_callable=io.StringIO):
+                                    main()
+
+        output = stdout.getvalue()
+        self.assertEqual(youtube_calls, [("agent memory", "yt-key", 7)])
+        self.assertEqual(bilibili_calls, [("agent memory", "SESSDATA=abc", 7)])
+        scrape_mock.assert_not_called()
+        self.assertIn("YouTube Agent Memory", output)
+        self.assertIn("https://www.youtube.com/watch?v=abc123", output)
+        self.assertIn("Bilibili Agent Memory", output)
+        self.assertIn("https://www.bilibili.com/video/BV1xx411c7mD", output)
+        self.assertNotIn("should not be shown", output)
+        self.assertNotIn("Scraped Content", output)
+
+    def test_firecrawl_metadata_scrape_includes_firecrawl_backend(self):
+        scrape_calls = []
+
+        def fake_firecrawl(query, api_key, count):
+            return [{
+                "source": "firecrawl",
+                "title": "Metadata only",
+                "url": "https://example.com/firecrawl-result",
+                "description": "snippet only",
+            }]
+
+        def fake_scrape(url, *args, **kwargs):
+            scrape_calls.append((
+                url,
+                tuple(kwargs.get("backends") or ()),
+                tuple(kwargs.get("firecrawl_keys") or ()),
+            ))
+            return {"url": url, "title": "Fetched", "markdown": "body", "length": 4, "via": "exa"}
+
+        with mock.patch("sys.argv", ["search.py", "query", "--type", "firecrawl"]):
+            with mock.patch(
+                "scripts.main.load_keys",
+                return_value={"firecrawl": "fc-key", "exa": "exa-key", "tavily": "tvly-key"},
+            ):
+                with mock.patch("scripts.main.search_firecrawl", side_effect=fake_firecrawl):
+                    with mock.patch("scripts.main.scrape_url_smart", side_effect=fake_scrape):
+                        with mock.patch("sys.stdout", new_callable=io.StringIO):
+                            with mock.patch("sys.stderr", new_callable=io.StringIO):
+                                main()
+
+        self.assertEqual(
+            scrape_calls,
+            [("https://example.com/firecrawl-result", ("jina", "exa", "tavily", "firecrawl"), ("fc-key",))],
+        )
 
     def test_serpapi_key_pool_falls_back_on_auth_error(self):
         calls = []

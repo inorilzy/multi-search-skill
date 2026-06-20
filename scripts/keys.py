@@ -168,6 +168,9 @@ def load_keys() -> dict:
         ("FIRECRAWL_API_KEY", "firecrawl"),
         ("SERPAPI_API_KEY", "serpapi"),
         ("SERPAPI_KEY", "serpapi"),
+        ("ZHIHU_ACCESS_SECRET", "zhihu"),
+        ("YOUTUBE_API_KEY", "youtube"),
+        ("BILIBILI_COOKIE", "bilibili"),
         ("TWITTER_COOKIES_PATH", "twitter_cookies"),
     ]:
         val = os.getenv(env_name)

@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "patchright": "^1.60.2",
+    "playwright": "^1.60.0",
+    "rebrowser-playwright": "^1.52.0"
+  }
+}
