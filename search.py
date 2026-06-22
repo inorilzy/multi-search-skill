@@ -23,6 +23,7 @@ from scripts.format import format_results, format_scrapes
 from scripts.http import urlopen_retry as _urlopen_retry
 from scripts.keys import load_keys
 from scripts.main import main
+from scripts.models import ProviderError, ProviderStatus, ScrapeResult, SearchResult
 from scripts.scrape import (
     _GH_REPO_RE,
     _rewrite_for_clean_scrape,
@@ -31,6 +32,27 @@ from scripts.scrape import (
     scrape_url_smart,
     scrape_url_tavily,
 )
+from scripts.cache import JsonCache, make_scrape_cache_key, make_search_cache_key
+from scripts.capabilities import (
+    PROVIDER_CAPABILITIES,
+    AuthMode,
+    OperationalProfile,
+    OutputCapability,
+    ProviderCapability,
+    ProviderKind,
+    ScrapeCapability,
+    ScrapePolicy,
+    SearchCapability,
+    capability_table_rows,
+    get_capability,
+)
+from scripts.scrape_planner import ScrapePlan, plan_scrapes
+from scripts.service import MultiSearchRequest, ScrapeRequest, run_multi_search, run_scrape
+from scripts.key_state import BasicKeyManager, SQLiteKeyManager
+from scripts.site_memory import SiteScraperMemory
+from scripts.state_store import StateStore
+from scripts.scrapers.registry import SCRAPER_REGISTRY, ScrapeContext, ScraperSpec, call_scraper
+from scripts.search_runner import ProviderSpec, SearchContext, SearchRunner, SearchRunnerConfig
 from scripts.searchers.brave import search_brave
 from scripts.searchers.bilibili import search_bilibili
 from scripts.searchers.exa import search_exa
@@ -51,11 +73,47 @@ __all__ = [
     "_norm_url",
     "_rewrite_for_clean_scrape",
     "_urlopen_retry",
+    "JsonCache",
+    "AuthMode",
+    "OperationalProfile",
+    "OutputCapability",
+    "PROVIDER_CAPABILITIES",
+    "ProviderCapability",
+    "ProviderError",
+    "ProviderKind",
+    "ProviderSpec",
+    "ProviderStatus",
+    "SCRAPER_REGISTRY",
+    "ScrapeContext",
+    "ScrapeCapability",
+    "ScrapePlan",
+    "ScrapePolicy",
+    "ScrapeResult",
+    "ScraperSpec",
+    "SearchContext",
+    "SearchCapability",
+    "SearchResult",
+    "SearchRunner",
+    "SearchRunnerConfig",
+    "BasicKeyManager",
+    "SQLiteKeyManager",
+    "SiteScraperMemory",
+    "StateStore",
+    "MultiSearchRequest",
+    "ScrapeRequest",
+    "call_scraper",
+    "capability_table_rows",
     "deduplicate",
     "format_results",
     "format_scrapes",
+    "get_capability",
     "load_keys",
     "main",
+    "make_scrape_cache_key",
+    "make_search_cache_key",
+    "plan_scrapes",
+    "run_multi_search",
+    "run_scrape",
     "scrape_url",
     "scrape_url_exa",
     "scrape_url_firecrawl",

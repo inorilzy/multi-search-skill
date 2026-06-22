@@ -1,5 +1,6 @@
 """Reddit-specific scraping via old.reddit.com HTML."""
 import re
+import html as html_lib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,6 +25,7 @@ _BLOCKED_MARKERS = (
     "your request has been blocked",
 )
 _SPACE_RE = re.compile(r"\s+")
+_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def is_reddit_url(url: str) -> bool:
@@ -150,6 +152,38 @@ def _extract_post(soup) -> tuple[str, str]:
     return title, markdown
 
 
+def _strip_html(value: str) -> str:
+    return _SPACE_RE.sub(" ", html_lib.unescape(_TAG_RE.sub(" ", value))).strip()
+
+
+def _extract_simple_old_reddit(html: str, url: str) -> tuple[str, str]:
+    """Best-effort old.reddit parser used when BeautifulSoup is unavailable."""
+    title_match = re.search(r'<a[^>]+class=["\'][^"\']*\btitle\b[^"\']*["\'][^>]*>(.*?)</a>', html, re.I | re.S)
+    page_title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.I | re.S)
+    title = _strip_html(title_match.group(1)) if title_match else _strip_html(page_title_match.group(1)) if page_title_match else "Reddit"
+    md_blocks = re.findall(
+        r'<div[^>]+class=["\'][^"\']*\busertext-body\b[^"\']*["\'][^>]*>\s*<div[^>]+class=["\'][^"\']*\bmd\b[^"\']*["\'][^>]*>(.*?)</div>\s*</div>',
+        html,
+        re.I | re.S,
+    )
+    texts = [_strip_html(block) for block in md_blocks]
+    texts = [text for text in texts if text]
+    if "/comments/" in urllib.parse.urlparse(url).path:
+        parts = [f"# {title}"]
+        if texts:
+            parts.append("## Post\n\n" + texts[0])
+        if len(texts) > 1:
+            comments = [f"{idx}. {body[:1200]}" for idx, body in enumerate(texts[1:13], 1)]
+            parts.append("## Top comments\n\n" + "\n\n".join(comments))
+        return title, "\n\n".join(parts)
+    rows = []
+    for idx, match in enumerate(re.finditer(r'<a[^>]+class=["\'][^"\']*\btitle\b[^"\']*["\'][^>]*>(.*?)</a>', html, re.I | re.S), 1):
+        rows.append(f"{idx}. {_strip_html(match.group(1))}")
+        if len(rows) >= 10:
+            break
+    return title, "## Top posts\n\n" + "\n\n".join(rows) if rows else ""
+
+
 def scrape_url_reddit(url: str, timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS) -> dict:
     """Fetch Reddit content from old.reddit.com and extract post/listing text."""
     if not _safe_http_url(url):
@@ -183,7 +217,16 @@ def scrape_url_reddit(url: str, timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS) 
     try:
         from bs4 import BeautifulSoup
     except ImportError:
-        return {"url": url, "error": "Reddit: beautifulsoup4 not installed"}
+        title, markdown = _extract_simple_old_reddit(html, url)
+        if len(markdown.strip()) < 80:
+            return {"url": url, "error": "Reddit: empty old.reddit content"}
+        return {
+            "url": url,
+            "title": title,
+            "markdown": markdown,
+            "length": len(markdown),
+            "via": "reddit-old",
+        }
 
     soup = BeautifulSoup(html, "html.parser")
     path = urllib.parse.urlparse(url).path

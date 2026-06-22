@@ -1,6 +1,7 @@
 """URL scraping orchestration via Jina / Exa / Tavily / Firecrawl."""
 import time
 
+from .auth import is_key_retryable_error
 from .keys import (
     get_active_jina_keys,
     mark_jina_exhausted_persistent,
@@ -27,14 +28,7 @@ from .scrapers.reddit import (
 )
 from .scrapers.tavily import scrape_url_tavily
 from .scrapers.zhihu import is_zhihu_blocked_text, is_zhihu_url
-
-
-_KEY_RETRY_PATTERNS = (
-    "401", "403", "429", "unauthorized", "forbidden", "invalid api",
-    "invalid key", "api key", "quota", "rate limit", "rate_limit",
-    "too many requests", "limit exceeded", "exceeded your", "credits",
-    "billing", "payment", "insufficient",
-)
+from .site_memory import ScrapeAttempt
 
 
 DEFAULT_SCRAPE_POLICY = {
@@ -103,10 +97,7 @@ def _key_candidates(single_key: str = "", keys: list[str] | tuple[str, ...] | No
 
 
 def _is_key_retryable_error(result: dict) -> bool:
-    if "error" not in result:
-        return False
-    message = str(result.get("error", "")).lower()
-    return any(pattern in message for pattern in _KEY_RETRY_PATTERNS)
+    return is_key_retryable_error(result)
 
 
 def _scrape_with_key_pool(keys: list[str], call, deadline: float | None = None) -> dict | None:
@@ -134,7 +125,8 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      exa_keys: list[str] | tuple[str, ...] | None = None,
                      firecrawl_keys: list[str] | tuple[str, ...] | None = None,
                      tavily_keys: list[str] | tuple[str, ...] | None = None,
-                     deadline: float | None = None) -> dict:
+                     deadline: float | None = None,
+                     site_memory=None) -> dict:
     """Scrape `url` starting with `primary` backend, falling back through the others."""
 
     def _remaining_timeout() -> float:
@@ -239,6 +231,8 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         return None
 
     enabled = list(policy["backends"])
+    if site_memory is not None:
+        enabled = site_memory.reorder_backends(url, enabled)
     order = []
     if primary in enabled and primary not in order:
         order.append(primary)
@@ -247,9 +241,11 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
     for backend in order:
         if deadline is not None and time.monotonic() >= deadline:
             break
+        started = time.monotonic()
         result = _call(backend)
         if result is None:
             continue
+        elapsed_ms = int((time.monotonic() - started) * 1000)
         last = result
         blocked = policy["blocked"]
         if blocked and blocked(result.get("markdown") or ""):
@@ -257,8 +253,35 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                 "url": url,
                 "error": f"{backend}: {policy['name'].title()} blocked content fetch",
             }
+            if site_memory is not None:
+                site_memory.record_attempt(ScrapeAttempt(
+                    url=url,
+                    scraper=backend,
+                    success=False,
+                    content_length=0,
+                    error_type="blocked",
+                    error_message=last["error"],
+                    elapsed_ms=elapsed_ms,
+                ))
             continue
         if "error" not in result:
             result["url"] = url
+            if site_memory is not None:
+                site_memory.record_attempt(ScrapeAttempt(
+                    url=url,
+                    scraper=backend,
+                    success=True,
+                    content_length=len(result.get("markdown") or ""),
+                    elapsed_ms=elapsed_ms,
+                ))
             return result
+        if site_memory is not None:
+            site_memory.record_attempt(ScrapeAttempt(
+                url=url,
+                scraper=backend,
+                success=False,
+                content_length=len(result.get("markdown") or ""),
+                error_message=str(result.get("error") or ""),
+                elapsed_ms=elapsed_ms,
+            ))
     return last or {"url": url, "error": "no scrape backend available"}

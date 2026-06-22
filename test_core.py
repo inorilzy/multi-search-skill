@@ -1,4 +1,5 @@
 import unittest
+import base64
 import io
 import json
 import os
@@ -13,6 +14,8 @@ import search as search_shim
 
 from scripts.dedup import _norm_url, deduplicate, split_by_content
 from scripts.format import format_results, format_scrapes
+from scripts.cache import JsonCache, make_scrape_cache_key
+from scripts.auth import is_key_retryable_error
 from scripts.keys import (
     _JINA_EXHAUSTED,
     count_jina_keys,
@@ -23,6 +26,11 @@ from scripts.keys import (
     pick_key,
 )
 from scripts.main import _has_preferred_scrape_source, available_routes, main, resolve_route
+from scripts.capabilities import PROVIDER_CAPABILITIES, ProviderKind, ScrapePolicy, capability_table_rows
+from scripts.models import ProviderError, ScrapeResult, SearchResult
+from scripts.search_runner import ROUTE_PROFILES, ProviderSpec, SearchRunner, SearchRunnerConfig, call_optional_timeout
+from scripts.scrape_planner import plan_scrapes
+from scripts.scrapers.registry import SCRAPER_REGISTRY, ScrapeContext, ScraperSpec, call_scraper
 from scripts import scrape
 from scripts.scrape import _resolve_scrape_policy
 from scripts.secrets import scrub_secrets
@@ -39,6 +47,7 @@ from scripts.searchers.firecrawl import (
     search_zhihu as search_zhihu_firecrawl,
 )
 from scripts.searchers.github import search_github_repos
+from scripts.searchers import deepseek_web as deepseek_source
 from scripts.searchers.hackernews import search_hackernews
 from scripts.searchers.serpapi import search_serpapi
 from scripts.searchers.stackoverflow import search_stackoverflow
@@ -120,6 +129,54 @@ class SearchShimTests(unittest.TestCase):
         self.assertIs(search_shim.scrape_url, search_shim.scrape_url_smart)
         self.assertIn("scrape_url", search_shim.__all__)
 
+    def test_new_architecture_symbols_are_exported(self):
+        self.assertIs(search_shim.SearchResult, SearchResult)
+        self.assertIs(search_shim.SearchRunner, SearchRunner)
+        self.assertIs(search_shim.SCRAPER_REGISTRY, SCRAPER_REGISTRY)
+        self.assertIn("plan_scrapes", search_shim.__all__)
+
+    def test_capability_symbols_are_exported(self):
+        self.assertIs(search_shim.PROVIDER_CAPABILITIES, PROVIDER_CAPABILITIES)
+        self.assertEqual(search_shim.get_capability("brave").public_name, "brave")
+        self.assertIn("capability_table_rows", search_shim.__all__)
+
+
+class ModelTests(unittest.TestCase):
+    def test_search_result_round_trip_preserves_unknown_metadata(self):
+        row = {
+            "source": "brave",
+            "title": "Doc",
+            "url": "https://example.com",
+            "description": "snippet",
+            "also_from": ["exa"],
+            "stars": 3,
+            "custom": {"rank": 1},
+        }
+
+        result = SearchResult.from_dict(row).to_dict()
+
+        self.assertEqual(result["source"], "brave")
+        self.assertEqual(result["also_from"], ["exa"])
+        self.assertEqual(result["custom"], {"rank": 1})
+
+    def test_scrape_result_round_trip_preserves_length_and_raw(self):
+        row = {"url": "https://example.com", "title": "Doc", "markdown": "body", "length": 99, "via": "jina", "cache": "hit"}
+
+        result = ScrapeResult.from_dict(row).to_dict()
+
+        self.assertEqual(result["length"], 99)
+        self.assertEqual(result["via"], "jina")
+        self.assertEqual(result["cache"], "hit")
+
+    def test_provider_error_round_trip_keeps_source_error_and_raw(self):
+        row = {"source": "exa", "error": "quota", "retryable": True}
+
+        result = ProviderError.from_dict(row).to_dict()
+
+        self.assertEqual(result["source"], "exa")
+        self.assertEqual(result["error"], "quota")
+        self.assertTrue(result["retryable"])
+
 
 class RouteTests(unittest.TestCase):
     def test_named_routes_resolve_to_expected_profiles(self):
@@ -139,6 +196,10 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(resolve_route("reddit"), {"reddit"})
         self.assertEqual(resolve_route("hackernews"), {"hackernews"})
         self.assertEqual(resolve_route("stackoverflow"), {"stackoverflow"})
+        self.assertEqual(resolve_route("glm-web"), {"glm_web"})
+        self.assertEqual(resolve_route("glm_web"), {"glm_web"})
+        self.assertEqual(resolve_route("deepseek-web"), {"deepseek_web"})
+        self.assertEqual(resolve_route("deepseek_web"), {"deepseek_web"})
 
     def test_removed_aliases_do_not_resolve(self):
         self.assertEqual(resolve_route("all"), set())
@@ -165,6 +226,184 @@ class RouteTests(unittest.TestCase):
         self.assertIn("reddit", available_routes())
         self.assertIn("hackernews", available_routes())
         self.assertIn("stackoverflow", available_routes())
+        self.assertIn("glm-web", available_routes())
+        self.assertIn("deepseek-web", available_routes())
+
+
+class CapabilityTests(unittest.TestCase):
+    def test_capabilities_cover_all_route_sources(self):
+        route_sources = set().union(*ROUTE_PROFILES.values())
+
+        self.assertFalse(route_sources - set(PROVIDER_CAPABILITIES))
+
+    def test_capabilities_cover_all_scraper_backends(self):
+        for name in SCRAPER_REGISTRY:
+            self.assertIn(name, PROVIDER_CAPABILITIES)
+            self.assertTrue(PROVIDER_CAPABILITIES[name].scrape.can_scrape)
+
+    def test_video_sources_are_marked_skip_for_scraping(self):
+        for name in ("youtube", "bilibili"):
+            capability = PROVIDER_CAPABILITIES[name]
+            self.assertEqual(capability.kind, ProviderKind.VIDEO_SEARCHER)
+            self.assertEqual(capability.scrape_policy, ScrapePolicy.SKIP)
+
+    def test_content_searchers_return_content_and_prefetch(self):
+        for name in ("tavily", "exa", "twitter"):
+            capability = PROVIDER_CAPABILITIES[name]
+            self.assertTrue(capability.output.returns_content)
+            self.assertEqual(capability.scrape_policy, ScrapePolicy.PREFETCH)
+
+    def test_capability_table_rows_are_flat_for_markdown_rendering(self):
+        rows = capability_table_rows(["brave", "tavily"])
+
+        self.assertEqual(rows[0]["provider"], "brave")
+        self.assertEqual(rows[0]["can_search"], True)
+        self.assertEqual(rows[1]["returns_content"], True)
+        self.assertIn("auth_mode", rows[0])
+
+
+class SearchRunnerTests(unittest.TestCase):
+    def test_keyed_provider_success_and_dataclass_rows(self):
+        cfg = SearchRunnerConfig(
+            route="custom",
+            counts={"custom": 1},
+            timeout=5,
+            serpapi_engine="google_light",
+            keys={"custom": "key"},
+        )
+        providers = {
+            "custom": ProviderSpec(
+                name="custom",
+                public_name="custom",
+                key_name="custom",
+                call=lambda q, cfg, ctx, key: [SearchResult(source="custom", title=q, url="https://example.com")],
+            )
+        }
+        runner = SearchRunner(cfg, providers, route_resolver=lambda route, lite=False: {"custom"})
+
+        rows = runner.run("query")
+
+        self.assertEqual(rows[0]["source"], "custom")
+        self.assertEqual(rows[0]["title"], "query")
+
+    def test_missing_key_reports_public_source_name(self):
+        cfg = SearchRunnerConfig("custom", {}, 5, "google_light", {})
+        providers = {
+            "custom": ProviderSpec(
+                name="custom",
+                public_name="public-source",
+                key_name="custom",
+                missing_message="missing CUSTOM_KEY",
+                call=lambda *args: [],
+            )
+        }
+        runner = SearchRunner(cfg, providers, route_resolver=lambda route, lite=False: {"custom"})
+
+        rows = runner.run("query")
+
+        self.assertEqual(rows, [{"source": "public-source", "error": "skipped: missing CUSTOM_KEY"}])
+
+    def test_key_pool_falls_back_from_retryable_error(self):
+        calls = []
+        cfg = SearchRunnerConfig("custom", {}, 5, "google_light", {"custom": ["bad", "good"]})
+
+        def call(q, cfg, ctx, key):
+            calls.append(key)
+            if key == "bad":
+                return [{"source": "custom", "error": "HTTP 429 quota exceeded"}]
+            return [{"source": "custom", "title": "ok", "url": "https://example.com"}]
+
+        providers = {"custom": ProviderSpec("custom", "custom", call, key_name="custom")}
+        runner = SearchRunner(cfg, providers, route_resolver=lambda route, lite=False: {"custom"})
+        with mock.patch("scripts.keys.random.shuffle", side_effect=lambda xs: None):
+            rows = runner.run("query")
+
+        self.assertEqual(calls, ["bad", "good"])
+        self.assertEqual(rows[0]["title"], "ok")
+
+    def test_timeout_returns_without_waiting_for_slow_provider(self):
+        cfg = SearchRunnerConfig("custom", {}, 1, "google_light", {})
+
+        def slow(q, cfg, ctx, key):
+            time.sleep(3)
+            return [{"source": "public-source", "title": "late", "url": "https://late.example"}]
+
+        providers = {"custom": ProviderSpec("custom", "public-source", slow)}
+        runner = SearchRunner(cfg, providers, route_resolver=lambda route, lite=False: {"custom"})
+        started = time.monotonic()
+        rows = runner.run("query")
+
+        self.assertLess(time.monotonic() - started, 2.2)
+        self.assertEqual(rows, [{"source": "public-source", "error": "timeout after 1s"}])
+
+    def test_retry_helper_recognizes_quota_and_rate_errors(self):
+        for message in ("HTTP 401", "HTTP 403", "HTTP 429", "quota exceeded", "rate limit", "credits exhausted"):
+            self.assertTrue(is_key_retryable_error([{"source": "x", "error": message}]))
+        self.assertFalse(is_key_retryable_error([{"source": "x", "error": "DNS failed"}]))
+
+
+class DeepSeekWebTests(unittest.TestCase):
+    def test_deepseek_hash_v1_matches_reference_vectors(self):
+        vectors = {
+            b"": "e594808bc5b7151ac160c6d39a02e0a8e261ed588578403099e3561dc40c26b3",
+            b"testsalt_1700000000_42": "d4a2ea58c89e40887c933484868380c6f803eaa8dc53a3b9df8e431b921a4f09",
+            b"testsalt_1700000000_100000": "abea2f35796b65486e9be1b36f7878c66cab021e96faa473fdf4decd31f9ba30",
+            b"abc123salt_1700000000_12345": "74b3b7452745b70e85eb32ee7f0a9ec0381d42dd5137b695da915e104fc390e1",
+        }
+
+        for raw, expected in vectors.items():
+            self.assertEqual(deepseek_source._deepseek_hash_v1(raw).hex(), expected)
+
+    def test_deepseek_pow_header_contains_answer(self):
+        target = deepseek_source._deepseek_hash_v1(b"testsalt_1700000000_42").hex()
+        header = deepseek_source._solve_pow({
+            "algorithm": "DeepSeekHashV1",
+            "challenge": target,
+            "salt": "testsalt",
+            "expire_at": 1700000000,
+            "difficulty": 1000,
+            "signature": "sig",
+            "target_path": "/api/v0/chat/completion",
+        })
+
+        payload = json.loads(base64.b64decode(header).decode("utf-8"))
+        self.assertEqual(payload["answer"], 42)
+        self.assertEqual(payload["target_path"], "/api/v0/chat/completion")
+
+    def test_deepseek_auth_export_parses_token_and_cookie(self):
+        export = {
+            "cookies": [
+                {"name": "ds_session_id", "value": "sid"},
+                {"name": "smidV2", "value": "smid"},
+            ],
+            "localStorage": {"userToken": json.dumps({"value": "tok"})},
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+            json.dump(export, f)
+            path = f.name
+        try:
+            token, cookie = deepseek_source._resolve_auth(export_path=path)
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(token, "tok")
+        self.assertIn("ds_session_id=sid", cookie)
+        self.assertIn("smidV2=smid", cookie)
+
+    def test_deepseek_sse_parser_extracts_answer_and_results(self):
+        payload = "\n".join([
+            "event: update_session",
+            'data: {"p":"response/content","v":"答案"}',
+            'data: {"p":"response/search/results","v":[{"title":"Doc","url":"https://example.com","snippet":"body","cite_index":1}]}',
+            'data: {"v":{"response":{"message_id":"msg1","content":"补充"}}}',
+        ]).encode("utf-8")
+
+        answer, results, message_id = deepseek_source._parse_sse(payload, max_results=10)
+
+        self.assertEqual(answer, "答案补充")
+        self.assertEqual(message_id, "msg1")
+        self.assertEqual(results[0]["source"], "deepseek-web")
+        self.assertEqual(results[0]["url"], "https://example.com")
 
 
 class DedupTests(unittest.TestCase):
@@ -191,6 +430,114 @@ class DedupTests(unittest.TestCase):
         self.assertEqual(deduped[0]["also_from"], ["tavily"])
         self.assertEqual(deduped[0]["title"], "Longer title")
         self.assertEqual(deduped[0]["scraped_content"], "full text")
+
+
+class ScrapePlannerTests(unittest.TestCase):
+    def test_prefetched_content_does_not_enter_scrape_items(self):
+        rows = [
+            {"source": "tavily", "title": "Full", "url": "https://example.com/full", "scraped_content": "x" * 400},
+            {"source": "brave", "title": "Needs", "url": "https://example.com/needs", "description": "snippet"},
+        ]
+
+        plan = plan_scrapes(rows, keys={}, scrape_top=2, scrape_per_source=6)
+
+        self.assertEqual([item["url"] for item in plan.items_to_scrape], ["https://example.com/needs"])
+        self.assertIn("https://example.com/full", {row["url"] for row in plan.content_pool.values()})
+
+    def test_video_results_are_not_scrape_candidates(self):
+        rows = [
+            {"source": "youtube", "title": "Video", "url": "https://youtube.com/watch?v=1"},
+            {"source": "brave", "title": "Doc", "url": "https://example.com/doc"},
+        ]
+
+        plan = plan_scrapes(rows, keys={}, scrape_top=5, scrape_per_source=6)
+
+        self.assertEqual([item["url"] for item in plan.items_to_scrape], ["https://example.com/doc"])
+
+    def test_preferred_sources_and_source_quota_are_applied(self):
+        rows = [
+            {"source": "exa", "title": "Generic", "url": "https://example.com/generic"},
+            {"source": "brave", "title": "Preferred 1", "url": "https://example.com/p1"},
+            {"source": "brave", "title": "Preferred 2", "url": "https://example.com/p2"},
+        ]
+
+        plan = plan_scrapes(rows, keys={}, scrape_top=5, scrape_per_source=1)
+
+        self.assertEqual([item["url"] for item in plan.items_to_scrape], ["https://example.com/p1", "https://example.com/generic"])
+        self.assertEqual(plan.source_quota, {"brave": 1, "exa": 1})
+
+    def test_key_pools_rotate_per_url(self):
+        rows = [
+            {"source": "brave", "title": f"Doc {idx}", "url": f"https://example.com/{idx}"}
+            for idx in range(3)
+        ]
+
+        with mock.patch("scripts.keys.random.shuffle", side_effect=lambda xs: None):
+            plan = plan_scrapes(
+                rows,
+                keys={"exa": ["e1", "e2"], "tavily": ["t1", "t2"]},
+                scrape_top=3,
+                scrape_per_source=6,
+            )
+
+        self.assertEqual([tuple(item.key_pools.exa) for item in plan.plan_items], [("e1", "e2"), ("e2", "e1"), ("e1", "e2")])
+        self.assertEqual([item.primary_backend for item in plan.plan_items], ["jina", "exa", "tavily"])
+
+
+class CacheTests(unittest.TestCase):
+    def test_json_cache_hit_miss_and_disable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            key = make_scrape_cache_key("https://example.com", ["jina"], {"primary": "jina"})
+            disabled = JsonCache(tmp, enabled=False)
+            self.assertFalse(disabled.set("scrape", key, {"url": "https://example.com"}))
+            self.assertIsNone(disabled.get("scrape", key))
+
+            cache = JsonCache(tmp, ttl_seconds=60, enabled=True)
+            self.assertTrue(cache.set("scrape", key, {"url": "https://example.com", "via": "jina"}))
+            self.assertEqual(cache.get("scrape", key)["via"], "jina")
+
+    def test_json_cache_ignores_corrupt_and_expired_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = JsonCache(tmp, ttl_seconds=0, enabled=True)
+            key = "abc"
+            path = cache.path_for("scrape", key)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("not json", encoding="utf-8")
+            self.assertIsNone(cache.get("scrape", key))
+            path.write_text(json.dumps({"created": 1, "value": {"url": "x"}}), encoding="utf-8")
+            self.assertIsNone(cache.get("scrape", key))
+
+
+class ScraperRegistryTests(unittest.TestCase):
+    def test_registry_contains_standard_backends(self):
+        self.assertIn("jina", SCRAPER_REGISTRY)
+        self.assertIn("exa", SCRAPER_REGISTRY)
+        self.assertIn("tavily", SCRAPER_REGISTRY)
+        self.assertIn("firecrawl", SCRAPER_REGISTRY)
+        self.assertIn("reddit", SCRAPER_REGISTRY)
+
+    def test_adapter_accepts_dataclass_return(self):
+        spec = ScraperSpec(
+            name="custom",
+            public_name="custom",
+            call=lambda url, ctx, key: ScrapeResult(url=url, markdown="body", via=ctx.backend),
+        )
+
+        row = call_scraper(spec, "https://example.com", ScrapeContext(backend="custom"))
+
+        self.assertEqual(row["url"], "https://example.com")
+        self.assertEqual(row["via"], "custom")
+
+    def test_adapter_accepts_dict_return(self):
+        spec = ScraperSpec(
+            name="custom",
+            public_name="custom",
+            call=lambda url, ctx, key: {"url": url, "markdown": "body", "via": "custom"},
+        )
+
+        row = call_scraper(spec, "https://example.com", ScrapeContext(backend="custom"))
+
+        self.assertEqual(row["markdown"], "body")
 
 
 class ScrapeRoutingTests(unittest.TestCase):

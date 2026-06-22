@@ -1,22 +1,35 @@
 """CLI entry point: argparse + orchestration."""
 import concurrent.futures
-import inspect
 import queue
 import sys
 import threading
 import time
 
+from .cache import JsonCache, make_scrape_cache_key
 from .config import ConfigError, load_config, config_bool, config_list
 from .dedup import (
-    _norm_url,
     deduplicate,
-    result_to_scrape,
-    split_by_content,
 )
 from .format import format_results, format_scrapes
-from .keys import count_jina_keys, get_active_jina_keys, key_pool, load_keys
+from .keys import count_jina_keys, load_keys
 from .scrape import scrape_url_smart
+from .scrape_planner import (
+    add_to_content_pool,
+    has_preferred_scrape_source,
+    is_video_result,
+    plan_scrapes,
+)
 from .secrets import scrub_secrets
+from .search_runner import (
+    ROUTE_PROFILES,
+    ProviderSpec,
+    SearchRunner,
+    SearchRunnerConfig,
+    available_routes,
+    call_optional_timeout,
+    resolve_route,
+    run_keyed_source,
+)
 from .searchers.brave import search_brave
 from .searchers.bilibili import search_bilibili
 from .searchers.exa import search_exa
@@ -28,6 +41,8 @@ from .searchers.firecrawl import (
     search_zhihu as search_zhihu_firecrawl,
 )
 from .searchers.github import search_github_repos
+from .searchers.glm_web import search_glm_web
+from .searchers.deepseek_web import search_deepseek_web
 from .searchers.hackernews import search_hackernews
 from .searchers.linuxdo import search_linuxdo_api
 from .searchers.serpapi import search_serpapi
@@ -39,66 +54,137 @@ from .searchers.youtube import search_youtube
 from .searchers.zhihu import search_zhihu
 
 
-ROUTE_PROFILES = {
-    "default": {
-        "brave", "tavily", "exa", "firecrawl", "serpapi",
-        "github_repos", "twitter",
-    },
-    "lite": {"tavily", "exa"},
-    "discussion": {"twitter"},
-    "video": {"youtube", "bilibili"},
-    "brave": {"brave"},
-    "bilibili": {"bilibili"},
-    "tavily": {"tavily"},
-    "exa": {"exa"},
-    "firecrawl": {"firecrawl"},
-    "v2ex": {"v2ex"},
-    "linuxdo": {"linuxdo"},
-    "linux-do": {"linuxdo"},
-    "linuxdo-api": {"linuxdo_api"},
-    "zhihu": {"zhihu"},
-    "reddit": {"reddit"},
-    "reddit-oauth": {"reddit_oauth"},
-    "hackernews": {"hackernews"},
-    "serpapi": {"serpapi"},
-    "stackoverflow": {"stackoverflow"},
-    "github": {"github_repos"},
-    "twitter": {"twitter"},
-    "youtube": {"youtube"},
-}
+_has_preferred_scrape_source = has_preferred_scrape_source
+_is_video_result = is_video_result
 
 
-PREFER_SCRAPE_SOURCES = {
-    "brave", "serpapi", "github-repos", "firecrawl", "v2ex", "zhihu", "reddit", "hackernews", "stackoverflow",
-}
+def build_provider_registry() -> dict[str, ProviderSpec]:
+    """Build searcher registry from current module symbols.
 
-VIDEO_SOURCES = {"youtube", "bilibili"}
+    Tests and legacy callers often monkeypatch ``scripts.main.search_*``. Keeping
+    this registry dynamic preserves that compatibility while moving fanout logic
+    into SearchRunner.
+    """
+    return {
+        "brave": ProviderSpec(
+            name="brave", public_name="brave", key_name="brave",
+            missing_message="missing BRAVE_SEARCH_API_KEY / BRAVE_API_KEY", timeout_default=15,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_brave, q, key, cfg.counts["brave"], timeout=ctx.timeout),
+        ),
+        "tavily": ProviderSpec(
+            name="tavily", public_name="tavily", key_name="tavily",
+            missing_message="missing TAVILY_API_KEY", timeout_default=15,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_tavily, q, key, cfg.counts["tavily"], timeout=ctx.timeout),
+        ),
+        "exa": ProviderSpec(
+            name="exa", public_name="exa", key_name="exa",
+            missing_message="missing EXA_API_KEY", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_exa, q, key, cfg.counts["exa"], timeout=ctx.timeout),
+        ),
+        "serpapi": ProviderSpec(
+            name="serpapi", public_name="serpapi", key_name="serpapi",
+            missing_message="missing SERPAPI_API_KEY / SERPAPI_KEY", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_serpapi, q, key, cfg.counts["serpapi"], cfg.serpapi_engine, timeout=ctx.timeout,
+            ),
+        ),
+        "youtube": ProviderSpec(
+            name="youtube", public_name="youtube", key_name="youtube",
+            missing_message="missing YOUTUBE_API_KEY", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_youtube, q, key, cfg.counts["youtube"], timeout=ctx.timeout),
+        ),
+        "bilibili": ProviderSpec(
+            name="bilibili", public_name="bilibili", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_bilibili, q, cfg.keys.get("bilibili", ""), cfg.counts["bilibili"], timeout=ctx.timeout,
+            ),
+        ),
+        "firecrawl": ProviderSpec(
+            name="firecrawl", public_name="firecrawl", key_name="firecrawl",
+            missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout),
+        ),
+        "v2ex": ProviderSpec(
+            name="v2ex", public_name="v2ex", key_name="firecrawl",
+            missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_v2ex, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout),
+        ),
+        "linuxdo": ProviderSpec(
+            name="linuxdo", public_name="linuxdo", key_name="firecrawl",
+            missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_linuxdo, q, key, cfg.counts["linuxdo"], timeout=ctx.timeout),
+        ),
+        "linuxdo_api": ProviderSpec(
+            name="linuxdo_api", public_name="linuxdo-api", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_linuxdo_api, q, cfg.keys.get("linuxdo", ""), cfg.counts["linuxdo_api"], timeout=ctx.timeout,
+            ),
+        ),
+        "reddit": ProviderSpec(
+            name="reddit", public_name="reddit", key_name="firecrawl",
+            missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_reddit, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout),
+        ),
+        "reddit_oauth": ProviderSpec(
+            name="reddit_oauth", public_name="reddit-oauth", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_reddit_oauth, q, cfg.keys.get("reddit_token", ""), 10, timeout=ctx.timeout,
+            ),
+        ),
+        "github_repos": ProviderSpec(
+            name="github_repos", public_name="github-repos", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_github_repos, q, cfg.counts["github"], cfg.keys.get("github", ""), timeout=ctx.timeout,
+            ),
+        ),
+        "hackernews": ProviderSpec(
+            name="hackernews", public_name="hackernews", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_hackernews, q, cfg.counts["hackernews"], timeout=ctx.timeout),
+        ),
+        "stackoverflow": ProviderSpec(
+            name="stackoverflow", public_name="stackoverflow", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_stackoverflow, q, cfg.counts["stackoverflow"], timeout=ctx.timeout),
+        ),
+        "twitter": ProviderSpec(
+            name="twitter", public_name="twitter", timeout_default=20,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_twitter,
+                q,
+                cfg.counts["twitter"],
+                cfg.keys.get("twitter") or cfg.keys.get("twitter_cookies", ""),
+                timeout=ctx.timeout,
+            ),
+        ),
+        "zhihu": ProviderSpec(name="zhihu", public_name="zhihu", timeout_default=60, call=_search_zhihu_with_fallback),
+        "glm_web": ProviderSpec(
+            name="glm_web", public_name="glm-web", timeout_default=120,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_glm_web, q, cfg.counts["glm_web"], timeout=ctx.timeout),
+        ),
+        "deepseek_web": ProviderSpec(
+            name="deepseek_web", public_name="deepseek-web", timeout_default=120,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_deepseek_web, q, cfg.counts["deepseek_web"], cfg.keys.get("deepseek_web"), timeout=ctx.timeout,
+            ),
+        ),
+    }
 
 
-def _has_preferred_scrape_source(item: dict) -> bool:
-    sources = {item.get("source")}
-    sources.update(item.get("also_from") or [])
-    return bool(sources & PREFER_SCRAPE_SOURCES)
-
-
-def _is_video_result(item: dict) -> bool:
-    sources = {item.get("source")}
-    sources.update(item.get("also_from") or [])
-    if sources & VIDEO_SOURCES:
-        return True
-    url = str(item.get("url") or "").lower()
-    return any(host in url for host in ("youtube.com/", "youtu.be/", "bilibili.com/"))
-
-
-def available_routes() -> list[str]:
-    """Return valid --type choices."""
-    return sorted(ROUTE_PROFILES)
-
-
-def resolve_route(search_type: str, lite: bool = False) -> set[str]:
-    if lite:
-        return ROUTE_PROFILES["lite"]
-    return ROUTE_PROFILES.get(search_type, set())
+def _search_zhihu_with_fallback(query, cfg, ctx, _key):
+    if cfg.keys.get("zhihu"):
+        return run_keyed_source(
+            "zhihu",
+            cfg.keys.get("zhihu"),
+            lambda api_key: call_optional_timeout(search_zhihu, query, api_key, cfg.counts["zhihu"], timeout=min(ctx.timeout, 5)),
+            deadline=ctx.deadline,
+        )
+    if cfg.keys.get("firecrawl"):
+        return run_keyed_source(
+            "zhihu",
+            cfg.keys.get("firecrawl"),
+            lambda api_key: call_optional_timeout(search_zhihu_firecrawl, query, api_key, cfg.counts["firecrawl"], timeout=ctx.timeout),
+            deadline=ctx.deadline,
+        )
+    return [{"source": "zhihu", "error": "skipped: missing ZHIHU_ACCESS_SECRET / FIRECRAWL_API_KEY fallback"}]
 
 
 def main():
@@ -115,6 +201,7 @@ def main():
         print("       [--serpapi-count N] [--youtube-count N] [--bilibili-count N]")
         print("       [--hackernews-count N] [--stackoverflow-count N]")
         print("       [--firecrawl-count N] [--zhihu-count N] [--twitter-count N]")
+        print("       [--glm-web-count N] [--deepseek-web-count N]")
         print("       Routes include: default, lite, discussion, video, v2ex, zhihu, and single-source routes")
         print("       [--timeout N] [--scrape-top N] [--no-scrape] [--scrape-chars N]")
         print("       [--scrape-per-source N] [--scrape-timeout N] [--scrape-concurrency N]")
@@ -219,6 +306,8 @@ def main():
     linuxdo_count = _strict_source_count("linuxdo", None)
     linuxdo_api_count = _strict_source_count("linuxdo_api", None)
     twitter_count = _strict_source_count("twitter", None)
+    glm_web_count = _strict_source_count("glm_web", None)
+    deepseek_web_count = _strict_source_count("deepseek_web", None)
     serpapi_engine = str(config.get("serpapi_engine", "google_light"))
     if serpapi_engine not in {"google_light", "google"}:
         _fail("serpapi_engine must be 'google_light' or 'google'")
@@ -234,6 +323,11 @@ def main():
     brief = _config_bool("brief", False)
     verbose = _config_bool("verbose", False)
     title_url_only = _config_bool("title_url_only", False)
+    cache_enabled = _config_bool("cache_enabled", False)
+    if _config_bool("no_cache", False):
+        cache_enabled = False
+    cache_ttl_seconds = _nonnegative(_strict_config_int_default("cache_ttl_seconds", 86400), "cache_ttl_seconds")
+    cache_dir = str(config.get("cache_dir", ".cache/multi-search"))
     count_from_cli = False
     source_counts_from_cli: set[str] = set()
     expand_from_cli = False
@@ -309,6 +403,14 @@ def main():
         elif args[i] == "--twitter-count":
             twitter_count = _positive(_int_value("--twitter-count", i), "--twitter-count")
             source_counts_from_cli.add("twitter")
+            i += 2
+        elif args[i] == "--glm-web-count":
+            glm_web_count = _positive(_int_value("--glm-web-count", i), "--glm-web-count")
+            source_counts_from_cli.add("glm_web")
+            i += 2
+        elif args[i] == "--deepseek-web-count":
+            deepseek_web_count = _positive(_int_value("--deepseek-web-count", i), "--deepseek-web-count")
+            source_counts_from_cli.add("deepseek_web")
             i += 2
         elif args[i] == "--timeout":
             global_timeout = _nonnegative(_int_value("--timeout", i), "--timeout")
@@ -387,6 +489,10 @@ def main():
             linuxdo_api_count = None
         if "twitter" not in source_counts_from_cli:
             twitter_count = None
+        if "glm_web" not in source_counts_from_cli:
+            glm_web_count = None
+        if "deepseek_web" not in source_counts_from_cli:
+            deepseek_web_count = None
 
     count = _optional_positive(count, "count")
     brave_count = _optional_positive(brave_count, "counts.brave / --brave-count")
@@ -403,6 +509,8 @@ def main():
     linuxdo_count = _optional_positive(linuxdo_count, "counts.linuxdo / --linuxdo-count")
     linuxdo_api_count = _optional_positive(linuxdo_api_count, "counts.linuxdo_api / --linuxdo-api-count")
     twitter_count = _optional_positive(twitter_count, "counts.twitter / --twitter-count")
+    glm_web_count = _optional_positive(glm_web_count, "counts.glm_web / --glm-web-count")
+    deepseek_web_count = _optional_positive(deepseek_web_count, "counts.deepseek_web / --deepseek-web-count")
 
     global_timeout = max(0, global_timeout if global_timeout is not None else 60)
     scrape_top = max(0, scrape_top if scrape_top is not None else 30)
@@ -426,6 +534,8 @@ def main():
     linuxdo_count = linuxdo_count if linuxdo_count is not None else (min(gc, 20) if gc is not None else 10)
     linuxdo_api_count = linuxdo_api_count if linuxdo_api_count is not None else (min(gc, 10) if gc is not None else 10)
     twitter_count = twitter_count if twitter_count is not None else (min(gc, 20) if gc is not None else 10)
+    glm_web_count = glm_web_count if glm_web_count is not None else (min(gc, 30) if gc is not None else 10)
+    deepseek_web_count = deepseek_web_count if deepseek_web_count is not None else (min(gc, 30) if gc is not None else 10)
 
     # Hard-clamp per-source counts to provider/page-size caps,
     # otherwise --brave-count 50 silently hits HTTP 400.
@@ -441,6 +551,8 @@ def main():
     firecrawl_count = max(1, min(firecrawl_count, 100))
     zhihu_count = max(1, min(zhihu_count, 10))
     twitter_count   = max(1, min(twitter_count, 20))
+    glm_web_count   = max(1, min(glm_web_count, 30))
+    deepseek_web_count = max(1, min(deepseek_web_count, 30))
 
     query = " ".join(query_parts)
     if not query:
@@ -455,313 +567,44 @@ def main():
         scrape_top = 0
 
     keys = load_keys()
-
-    def _missing(source: str, message: str) -> list:
-        return [{"source": source, "error": f"skipped: {message}"}]
-
-    KEY_FALLBACK_PATTERNS = (
-        "401", "403", "429", "unauthorized", "forbidden", "invalid api",
-        "invalid key", "api key", "quota", "rate limit", "rate_limit",
-        "too many requests", "limit exceeded", "exceeded your", "credits",
-        "billing", "payment", "insufficient",
+    counts = {
+        "brave": brave_count,
+        "tavily": tavily_count,
+        "exa": exa_count,
+        "github": github_count,
+        "hackernews": hackernews_count,
+        "serpapi": serpapi_count,
+        "youtube": youtube_count,
+        "bilibili": bilibili_count,
+        "stackoverflow": stackoverflow_count,
+        "firecrawl": firecrawl_count,
+        "zhihu": zhihu_count,
+        "linuxdo": linuxdo_count,
+        "linuxdo_api": linuxdo_api_count,
+        "twitter": twitter_count,
+        "glm_web": glm_web_count,
+        "deepseek_web": deepseek_web_count,
+    }
+    runner_config = SearchRunnerConfig(
+        route=search_type,
+        counts=counts,
+        timeout=global_timeout,
+        serpapi_engine=serpapi_engine,
+        keys=keys,
     )
-
-    def _is_key_retryable_error(results: list) -> bool:
-        error_rows = [r for r in results or [] if "error" in r]
-        if not error_rows:
-            return False
-        msg = " ".join(str(r.get("error", "")) for r in error_rows).lower()
-        return any(pattern in msg for pattern in KEY_FALLBACK_PATTERNS)
-
-    def _call_optional_timeout(fn, *positional, timeout: float):
-        try:
-            params = inspect.signature(fn).parameters
-            accepts_timeout = "timeout" in params
-        except (TypeError, ValueError):
-            accepts_timeout = False
-        if accepts_timeout:
-            return fn(*positional, timeout=timeout)
-        return fn(*positional)
-
-    def _run_keyed_source(source: str, key_value, call_with_key, deadline: float | None = None) -> list:
-        candidates = key_pool(key_value)
-        if not candidates:
-            return _missing(source, "missing API key")
-        last_results = []
-        partial_rows = []
-        for idx, candidate in enumerate(candidates):
-            if deadline is not None and time.monotonic() >= deadline:
-                break
-            results = call_with_key(candidate) or []
-            if not _is_key_retryable_error(results):
-                if any("error" in r for r in results):
-                    return partial_rows + results
-                return results
-            partial_rows.extend(r for r in results if "error" not in r)
-            last_results = results
-            if idx == len(candidates) - 1:
-                break
-        error_rows = [r for r in last_results if "error" in r]
-        err = error_rows[0].get("error", "key pool exhausted") if error_rows else "key pool exhausted"
-        err = scrub_secrets(err, key_value)
-        exhausted = {"source": source, "error": f"key pool exhausted after {len(candidates)} key(s): {err}"}
-        return partial_rows + [exhausted]
-
-    def _run_search(q: str, lite: bool = False) -> list:
-        _results: list = []
-        _jobs: list[tuple[str, object]] = []
-        source_names = resolve_route(search_type, lite=lite)
-        timeout_seconds = max(0, global_timeout if global_timeout is not None else 60)
-        source_deadline = time.monotonic() + timeout_seconds
-
-        def _source_request_timeout(default: float) -> float:
-            remaining = source_deadline - time.monotonic()
-            if remaining <= 0:
-                return 0.1
-            return min(float(default), max(0.1, remaining))
-
-        def _add_keyed(source: str, key_name: str, missing_message: str, call_with_key) -> None:
-            key_value = keys.get(key_name)
-            if key_value:
-                _jobs.append((
-                    source,
-                    lambda source=source, key_value=key_value, call_with_key=call_with_key: _run_keyed_source(
-                        source,
-                        key_value,
-                        call_with_key,
-                        deadline=source_deadline,
-                    ),
-                ))
-            else:
-                _results.extend(_missing(source, missing_message))
-
-        if "brave" in source_names:
-            _add_keyed(
-                "brave",
-                "brave",
-                "missing BRAVE_SEARCH_API_KEY / BRAVE_API_KEY",
-                lambda api_key: _call_optional_timeout(
-                    search_brave, q, api_key, brave_count, timeout=_source_request_timeout(15),
-                ),
-            )
-        if "tavily" in source_names:
-            _add_keyed(
-                "tavily",
-                "tavily",
-                "missing TAVILY_API_KEY",
-                lambda api_key: _call_optional_timeout(
-                    search_tavily, q, api_key, tavily_count, timeout=_source_request_timeout(15),
-                ),
-            )
-        if "exa" in source_names:
-            _add_keyed(
-                "exa",
-                "exa",
-                "missing EXA_API_KEY",
-                lambda api_key: _call_optional_timeout(
-                    search_exa, q, api_key, exa_count, timeout=_source_request_timeout(20),
-                ),
-            )
-        if "serpapi" in source_names:
-            _add_keyed(
-                "serpapi",
-                "serpapi",
-                "missing SERPAPI_API_KEY / SERPAPI_KEY",
-                lambda api_key: _call_optional_timeout(
-                    search_serpapi,
-                    q,
-                    api_key,
-                    serpapi_count,
-                    serpapi_engine,
-                    timeout=_source_request_timeout(20),
-                ),
-            )
-        if "youtube" in source_names:
-            _add_keyed(
-                "youtube",
-                "youtube",
-                "missing YOUTUBE_API_KEY",
-                lambda api_key: _call_optional_timeout(
-                    search_youtube, q, api_key, youtube_count, timeout=_source_request_timeout(20),
-                ),
-            )
-        if "bilibili" in source_names:
-            _jobs.append((
-                "bilibili",
-                lambda: _call_optional_timeout(
-                    search_bilibili, q, keys.get("bilibili", ""), bilibili_count, timeout=_source_request_timeout(20),
-                ),
-            ))
-        if "firecrawl" in source_names:
-            _add_keyed(
-                "firecrawl",
-                "firecrawl",
-                "missing FIRECRAWL_API_KEY",
-                lambda api_key: _call_optional_timeout(
-                    search_firecrawl, q, api_key, firecrawl_count, timeout=_source_request_timeout(60),
-                ),
-            )
-        if "v2ex" in source_names:
-            _add_keyed(
-                "v2ex",
-                "firecrawl",
-                "missing FIRECRAWL_API_KEY",
-                lambda api_key: _call_optional_timeout(
-            search_v2ex, q, api_key, firecrawl_count, timeout=_source_request_timeout(60),
-                ),
-            )
-        if "linuxdo" in source_names:
-            _add_keyed(
-                "linuxdo",
-                "firecrawl",
-                "missing FIRECRAWL_API_KEY",
-                lambda api_key: _call_optional_timeout(
-                    search_linuxdo, q, api_key, linuxdo_count, timeout=_source_request_timeout(60),
-                ),
-            )
-        if "linuxdo_api" in source_names:
-            linuxdo_cookie = keys.get("linuxdo", "")
-            _jobs.append((
-                "linuxdo-api",
-                lambda: _call_optional_timeout(
-                    search_linuxdo_api, q, linuxdo_cookie, linuxdo_api_count, timeout=_source_request_timeout(20),
-                ),
-            ))
-        if "reddit" in source_names:
-            _add_keyed(
-                "reddit",
-                "firecrawl",
-                "missing FIRECRAWL_API_KEY",
-                lambda api_key: _call_optional_timeout(
-            search_reddit, q, api_key, firecrawl_count, timeout=_source_request_timeout(60),
-                ),
-            )
-        if "zhihu" in source_names:
-            if keys.get("zhihu"):
-                _add_keyed(
-                    "zhihu",
-                    "zhihu",
-                    "missing ZHIHU_ACCESS_SECRET",
-                    lambda api_key: _call_optional_timeout(
-                        search_zhihu, q, api_key, zhihu_count, timeout=_source_request_timeout(5),
-                    ),
-                )
-            elif keys.get("firecrawl"):
-                _add_keyed(
-                    "zhihu",
-                    "firecrawl",
-                    "missing FIRECRAWL_API_KEY",
-                    lambda api_key: _call_optional_timeout(
-                        search_zhihu_firecrawl, q, api_key, firecrawl_count, timeout=_source_request_timeout(60),
-                    ),
-                )
-            else:
-                _results.extend(_missing("zhihu", "missing ZHIHU_ACCESS_SECRET / FIRECRAWL_API_KEY fallback"))
-        if "reddit_oauth" in source_names:
-            reddit_oauth_token = keys.get("reddit_token", "")
-            reddit_oauth_count_default = 10
-            _jobs.append((
-                "reddit-oauth",
-                lambda: _call_optional_timeout(
-                    search_reddit_oauth, q, reddit_oauth_token, reddit_oauth_count_default, timeout=_source_request_timeout(20),
-                ),
-            ))
-        if "github_repos" in source_names:
-            _jobs.append((
-                "github-repos",
-                lambda: _call_optional_timeout(
-                    search_github_repos,
-                    q,
-                    github_count,
-                    keys.get("github", ""),
-                    timeout=_source_request_timeout(20),
-                ),
-            ))
-        if "hackernews" in source_names:
-            _jobs.append((
-                "hackernews",
-                lambda: _call_optional_timeout(
-                    search_hackernews,
-                    q,
-                    hackernews_count,
-                    timeout=_source_request_timeout(20),
-                ),
-            ))
-        if "stackoverflow" in source_names:
-            _jobs.append((
-                "stackoverflow",
-                lambda: _call_optional_timeout(
-                    search_stackoverflow,
-                    q,
-                    stackoverflow_count,
-                    timeout=_source_request_timeout(20),
-                ),
-            ))
-        if "twitter" in source_names:
-            _jobs.append((
-                "twitter",
-                lambda: _call_optional_timeout(
-                    search_twitter,
-                    q,
-                    twitter_count,
-                    keys.get("twitter") or keys.get("twitter_cookies", ""),
-                    timeout=_source_request_timeout(20),
-                ),
-            ))
-
-        if not _jobs:
-            return _results
-        if timeout_seconds <= 0:
-            for _name, _ in _jobs:
-                _results.append({"source": _name, "error": f"timeout after {timeout_seconds}s"})
-            return _results
-
-        _queue: queue.Queue = queue.Queue()
-
-        def _worker(source: str, call) -> None:
-            try:
-                _queue.put((source, call(), None))
-            except Exception as e:
-                _queue.put((source, None, e))
-
-        pending = {name for name, _ in _jobs}
-        for _name, _call in _jobs:
-            threading.Thread(target=_worker, args=(_name, _call), daemon=True).start()
-
-        deadline = source_deadline
-        while pending:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            try:
-                _name, source_results, error = _queue.get(timeout=remaining)
-            except queue.Empty:
-                break
-            if _name not in pending:
-                continue
-            pending.remove(_name)
-            if error is not None:
-                _results.append({"source": _name, "error": scrub_secrets(error, keys)})
-            elif source_results:
-                _results.extend(source_results)
-            else:
-                _results.append({"source": _name, "status": "ok", "raw_hits": 0})
-
-        for _name in sorted(pending):
-            _results.append({"source": _name, "error": f"timeout after {timeout_seconds}s"})
-        return _results
-
+    search_runner = SearchRunner(runner_config, build_provider_registry(), route_resolver=resolve_route)
+    cache = JsonCache(cache_dir, ttl_seconds=cache_ttl_seconds, enabled=cache_enabled)
     queries_to_run = [query] + expand_queries
     q_label = f"{len(queries_to_run)} quer{'y' if len(queries_to_run) == 1 else 'ies'}"
     print(f"Searching {q_label} across sources...", file=sys.stderr)
     all_results: list = []
 
     if len(queries_to_run) == 1:
-        all_results = _run_search(query)
+        all_results = search_runner.run(query)
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(queries_to_run)) as outer_pool:
             outer_futures = {
-                outer_pool.submit(_run_search, q, idx > 0): q
+                outer_pool.submit(search_runner.run, q, idx > 0): q
                 for idx, q in enumerate(queries_to_run)
             }
             for fut in concurrent.futures.as_completed(outer_futures):
@@ -774,77 +617,23 @@ def main():
                         "error": f"query '{q}' failed: {scrub_secrets(e, keys)}",
                     })
 
-    with_content, without_content, passthrough, raw_counts = split_by_content(all_results)
-    content_urls = {
-        _norm_url(item.get("url", ""))
-        for item in with_content
-        if item.get("url") and item.get("source") != "twitter"
-    }
-    deduped_without_content, _ = deduplicate(without_content)
-    final_without_content = deduped_without_content
-    scrape_candidates = [
-        item for item in deduped_without_content
-        if item.get("url") and _norm_url(item.get("url", "")) not in content_urls
-        and not _is_video_result(item)
-    ]
+    scrape_plan = plan_scrapes(
+        all_results,
+        keys=keys,
+        scrape_top=scrape_top,
+        scrape_per_source=scrape_per_source,
+    )
+    with_content = scrape_plan.with_content
+    final_without_content = scrape_plan.final_without_content
+    passthrough = scrape_plan.passthrough
+    raw_counts = scrape_plan.raw_counts
     scrape_errors: list = []
-    content_pool: dict[str, dict] = {}
-
-    def _add_to_content_pool(row: dict) -> None:
-        if row.get("error") or not row.get("url"):
-            return
-        norm_url = _norm_url(row.get("url", ""))
-        markdown = row.get("markdown") or ""
-        if not markdown:
-            return
-        existing = content_pool.get(norm_url)
-        if existing is None:
-            content_pool[norm_url] = dict(row)
-            return
-        old_markdown = existing.get("markdown") or ""
-        if len(markdown) > len(old_markdown):
-            old_via = existing.get("via") or ""
-            content_pool[norm_url] = dict(row)
-            if old_via and old_via not in (content_pool[norm_url].get("via") or ""):
-                content_pool[norm_url]["via"] = f"{content_pool[norm_url].get('via', '?')}, {old_via}"
-        elif row.get("via") and row.get("via") not in (existing.get("via") or ""):
-            existing["via"] = f"{existing.get('via', '?')}, {row['via']}"
-
-    for item in with_content:
-        _add_to_content_pool(result_to_scrape(item))
+    content_pool: dict[str, dict] = scrape_plan.content_pool
 
     if scrape_top > 0:
         scrape_top = min(scrape_top, 30)
-        candidates_for_scrape = sorted(
-            scrape_candidates,
-            key=lambda x: (
-                0 if _has_preferred_scrape_source(x) else 1,
-                -(1 + len(x.get("also_from") or [])),
-            ),
-        )
-        items_to_scrape: list = []
-        source_quota: dict = {}
-        for item in candidates_for_scrape:
-            src = item.get("source", "unknown")
-            if source_quota.get(src, 0) >= scrape_per_source:
-                continue
-            source_quota[src] = source_quota.get(src, 0) + 1
-            items_to_scrape.append(item)
-            if len(items_to_scrape) >= scrape_top:
-                break
-
-        tavily_scrape_keys = key_pool(keys.get("tavily", ""))
-        exa_scrape_keys = key_pool(keys.get("exa", ""))
-        firecrawl_scrape_keys = key_pool(keys.get("firecrawl", ""))
-        jina_keys_list = get_active_jina_keys(keys.get("jina", ""))
-        scrape_backends = ["jina"]
-        if exa_scrape_keys:
-            scrape_backends.append("exa")
-        if tavily_scrape_keys:
-            scrape_backends.append("tavily")
-        if firecrawl_scrape_keys:
-            scrape_backends.append("firecrawl")
-
+        items_to_scrape = scrape_plan.items_to_scrape
+        scrape_backends = scrape_plan.backend_order
         prefetch_count = len(content_pool)
         jina_active, jina_total = count_jina_keys(keys.get("jina", ""))
         print(
@@ -853,15 +642,6 @@ def main():
             f"Jina keys active/total: {jina_active}/{jina_total})...",
             file=sys.stderr,
         )
-
-        def _primary_for(i: int) -> str:
-            return scrape_backends[i % len(scrape_backends)]
-
-        def _rotated_key_pool(pool: list[str], offset: int) -> list[str]:
-            if not pool:
-                return []
-            shift = offset % len(pool)
-            return pool[shift:] + pool[:shift]
 
         def _scrape_timeout_row(item: dict) -> dict:
             return {
@@ -875,32 +655,48 @@ def main():
             task_queue: queue.Queue = queue.Queue()
             result_queue: queue.Queue = queue.Queue()
             scrape_deadline = time.monotonic() + scrape_timeout
-            for i, item in enumerate(items_to_scrape):
-                task_queue.put((i, item))
+            for plan_item in scrape_plan.plan_items:
+                task_queue.put(plan_item)
 
             def _scrape_worker() -> None:
                 while True:
                     if time.monotonic() >= scrape_deadline:
                         return
                     try:
-                        i, item = task_queue.get_nowait()
+                        plan_item = task_queue.get_nowait()
                     except queue.Empty:
                         return
+                    i = plan_item.index
+                    item = plan_item.item
                     try:
+                        cache_key = make_scrape_cache_key(
+                            item["url"],
+                            scrape_backends,
+                            {"primary": plan_item.primary_backend},
+                        )
+                        cached = cache.get("scrape", cache_key)
+                        if cached is not None:
+                            scrape_result = dict(cached)
+                            scrape_result.setdefault("cache", "hit")
+                        else:
+                            pools = plan_item.key_pools
+                            scrape_result = scrape_url_smart(
+                                item["url"],
+                                timeout=30,
+                                primary=plan_item.primary_backend,
+                                backends=tuple(scrape_backends),
+                                jina_keys=pools.jina,
+                                exa_keys=pools.exa,
+                                firecrawl_keys=pools.firecrawl,
+                                tavily_keys=pools.tavily,
+                                deadline=scrape_deadline,
+                            )
+                            if scrape_result and "error" not in scrape_result:
+                                cache.set("scrape", cache_key, scrape_result)
                         result_queue.put((
                             i,
                             item,
-                            scrape_url_smart(
-                                item["url"],
-                                timeout=30,
-                                primary=_primary_for(i),
-                                backends=tuple(scrape_backends),
-                                jina_keys=_rotated_key_pool(jina_keys_list, i),
-                                exa_keys=_rotated_key_pool(exa_scrape_keys, i),
-                                firecrawl_keys=_rotated_key_pool(firecrawl_scrape_keys, i),
-                                tavily_keys=_rotated_key_pool(tavily_scrape_keys, i),
-                                deadline=scrape_deadline,
-                            ),
+                            scrape_result,
                             None,
                         ))
                     except Exception as e:
@@ -929,13 +725,13 @@ def main():
                         "url": item.get("url", ""),
                         "error": scrub_secrets(
                             error,
-                            (jina_keys_list, exa_scrape_keys, tavily_scrape_keys, firecrawl_scrape_keys),
+                            keys,
                         ),
                     })
                 elif scrape_result and scrape_result.get("error"):
                     scrape_errors.append(scrape_result)
                 elif scrape_result:
-                    _add_to_content_pool(scrape_result)
+                    add_to_content_pool(content_pool, scrape_result)
                 else:
                     scrape_errors.append({
                         "url": item.get("url", ""),
@@ -951,7 +747,7 @@ def main():
         r for r in final_results
         if "error" not in r
         and r.get("status") != "ok"
-        and r.get("source") not in ("tavily_answer", "serpapi_answer", "exa_answer")
+        and r.get("source") not in ("tavily_answer", "serpapi_answer", "exa_answer", "glm_web_answer", "deepseek_web_answer")
     ])
     print(f"Found {valid_count} unique results.", file=sys.stderr)
     output = format_results(
