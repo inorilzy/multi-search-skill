@@ -26,15 +26,21 @@ them.
 
 ## Route Selection
 
-- Use `route="default"` for general research, technical options, repos, docs,
-  and mixed-source coverage.
-- Use `route="lite"` for quick web context with higher chance of built-in page
-  text from Tavily/Exa.
-- Use `route="discussion"` when the user mainly wants social/community feedback.
+- Use `route="web"` or omit `route` for ordinary factual web search. This is
+  the conservative default: Brave + Tavily + Exa + SerpAPI.
+- Use `route="fast"` when the user wants a quick summary, current background,
+  news-like context, or "just tell me what is going on". This prefers
+  answer-capable providers and does not scrape by default.
+- Use `route="expert"` for evidence-heavy research, comparisons, technical
+  decisions, architecture review, or fact checking. This searches broadly and
+  scrapes more URLs by default.
+- Use `route="social"` for Twitter/X or Reddit feedback.
+- Use `route="dev"` for GitHub repos, Stack Overflow, and Hacker News.
+- Use `route="cn-community"` for Zhihu, V2EX, and Linux Do.
 - Use `route="video"` when the user asks for videos/tutorials.
-- Use a single-source route when the user explicitly names a source, such as
-  GitHub, Twitter/X, Reddit, Hacker News, Stack Overflow, Zhihu, YouTube, or
-  Bilibili.
+- Use the `sources` argument for explicit single-source searches instead of a
+  single-source route, for example `sources=["github"]`, `sources=["brave"]`,
+  or `sources=["deepseek-web"]`.
 
 ## Result Handling
 
@@ -45,6 +51,8 @@ them.
   and setup/key warnings.
 - If one provider fails or is missing a key, continue using the other sources and
   report the failure briefly.
+- If a route degrades because its primary session/cookie providers are
+  unavailable, mention the degradation explicitly.
 - Prefer cross-source agreement over isolated hits when ranking conclusions.
 
 ## Safety

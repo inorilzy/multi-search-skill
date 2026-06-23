@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..support.dedup import _norm_url, deduplicate, result_to_scrape, split_by_content
-from ..state.keys import get_active_jina_keys, key_pool
+from ..state.key_state import BasicKeyManager
+from ..state.keys import get_active_jina_keys
 from ..support.models import as_dicts
 
 
@@ -93,12 +94,17 @@ def _primary_for(backends: list[str], index: int) -> str:
     return backends[index % len(backends)]
 
 
-def build_scrape_backends(keys: dict) -> tuple[list[str], ScrapeKeyPools]:
+def _managed_keys(key_manager, provider: str, value: Any) -> list[str]:
+    return [candidate.key for candidate in key_manager.candidates(provider, value)]
+
+
+def build_scrape_backends(keys: dict, key_manager=None) -> tuple[list[str], ScrapeKeyPools]:
+    manager = key_manager or BasicKeyManager()
     pools = ScrapeKeyPools(
         jina=get_active_jina_keys(keys.get("jina", "")),
-        exa=key_pool(keys.get("exa", "")),
-        firecrawl=key_pool(keys.get("firecrawl", "")),
-        tavily=key_pool(keys.get("tavily", "")),
+        exa=_managed_keys(manager, "exa", keys.get("exa", "")),
+        firecrawl=_managed_keys(manager, "firecrawl", keys.get("firecrawl", "")),
+        tavily=_managed_keys(manager, "tavily", keys.get("tavily", "")),
     )
     backends = ["jina"]
     if pools.exa:
@@ -116,6 +122,7 @@ def plan_scrapes(
     keys: dict,
     scrape_top: int,
     scrape_per_source: int,
+    key_manager=None,
 ) -> ScrapePlan:
     rows = as_dicts(all_results)
     with_content, without_content, passthrough, raw_counts = split_by_content(rows)
@@ -135,7 +142,7 @@ def plan_scrapes(
     for item in with_content:
         add_to_content_pool(content_pool, result_to_scrape(item))
 
-    backend_order, base_pools = build_scrape_backends(keys)
+    backend_order, base_pools = build_scrape_backends(keys, key_manager=key_manager)
     items_to_scrape: list[dict] = []
     source_quota: dict[str, int] = {}
     plan_items: list[ScrapePlanItem] = []

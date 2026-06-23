@@ -5,27 +5,28 @@
 
 并行聚合搜索 skill：一条命令同时调用 Web 搜索、Google SERP、代码仓库、Twitter/X 讨论，并按需要补抓网页正文，最后输出适合 agent 阅读的 Markdown。
 
-> 当前架构正在迁移为 **薄 skill + MCP server**：MCP 承载搜索、抓取、key 状态管理和站点抓取器记忆；薄 skill 只负责自然语言触发与 route 选择策略；CLI 继续作为调试和 fallback 入口。
+> 当前 canonical 运行时是 **薄 skill + MCP plugin**：`multi-search-plugin/mcp/src/` 承载搜索、抓取、key 状态管理和站点抓取器记忆；薄 skill 只负责自然语言触发与 route 选择策略。根目录 `scripts/` / `search.py` 是 legacy CLI/debug 路径，不再是插件主实现。
 
 ## MCP / 插件入口
 
-本仓库现在包含 Codex 插件元数据和 MCP server：
+本仓库现在包含 Codex 插件元数据和 MCP server。正式插件入口在 `multi-search-plugin/`：
 
 ```powershell
-python mcp/multi_search_server.py
+python multi-search-plugin/mcp/server.py
 ```
 
 插件相关文件：
 
-- `.codex-plugin/plugin.json`：插件 manifest。
-- `.mcp.json`：MCP server 启动配置。
-- `skills/multi-search/SKILL.md`：薄 skill，自然语言触发和使用策略。
+- `multi-search-plugin/.codex-plugin/plugin.json`：插件 manifest。
+- `multi-search-plugin/.mcp.json`：MCP server 启动配置。
+- `multi-search-plugin/skills/multi-search/SKILL.md`：薄 skill，自然语言触发和使用策略。
+- 根目录 `.mcp.json` 和 `mcp/multi_search_server.py` 只是兼容 shim，指向同一个插件 server。
 
 MCP tools 包括：`multi_search`、`scrape_url`、`list_sources`、`doctor`、`get_key_status`、`reset_key_state`、`get_site_scraper_stats`、`set_site_scraper_preference`、`reset_site_scraper_stats`。
 
-运行状态默认保存在 `~/.multi-search/state.sqlite`。明文 key 仍只从环境变量和 `~/.search-keys.json` 读取，不写入 SQLite。
+边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置放在 `multi-search-plugin/multi-search-config.json`；运行状态默认保存在 `~/.multi-search/state.sqlite`。`.mcp.json` 和 plugin manifest 只负责启动 server，不保存 secret。
 
-当前默认行为：`default` 跑 Brave、Tavily、Exa、Firecrawl、SerpAPI、GitHub、Twitter/X；默认额外抓取最多 30 个缺正文 URL。Tavily / Exa 已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。
+当前默认行为：`default` 是 `web` 的兼容别名，跑 Brave、Tavily、Exa、SerpAPI；默认额外抓取最多 8 个缺正文 URL。Tavily / Exa 已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。需要快速总结用 `fast`，需要更深证据用 `expert`。
 
 ## 适用场景
 
@@ -70,7 +71,7 @@ Windows 初始化辅助脚本：
 用 multi-search 查一下最近大家怎么评价某个 LLM 框架，重点看 GitHub、Twitter/X 和技术博客。
 ```
 
-CLI 仍然是核心入口，agent 只是按 `SKILL.md` 中的规则调用 `search.py`。
+MCP plugin 是核心入口，agent 按 `SKILL.md` 调用 MCP tools。`search.py` 只保留为 legacy/debug CLI，插件新能力应优先落在 `multi-search-plugin/mcp/src/`。
 
 ## 搜索源、注册和免费额度
 
@@ -97,18 +98,16 @@ CLI 仍然是核心入口，agent 只是按 `SKILL.md` 中的规则调用 `searc
 
 | Route | Sources | 适合场景 |
 |---|---|---|
-| `default` | Brave + Tavily + Exa + Firecrawl + SerpAPI + GitHub + Twitter/X | 普通搜索、需要覆盖面 |
-| `lite` | Tavily + Exa | 更快、更偏正文质量 |
-| `discussion` | Twitter/X | 看讨论、反馈、踩坑 |
+| `default` / `web` | Brave + Tavily + Exa + SerpAPI | 普通事实搜索；默认 route |
+| `fast` | DeepSeek Web + GLM Web + Tavily + Exa | 快速总结、新闻速览、当前背景；默认不额外抓正文 |
+| `expert` | Brave + Tavily + Exa + SerpAPI + Firecrawl | 需要证据的调研、比较、架构 review；默认抓取更多正文 |
+| `social` | Twitter/X + Reddit OAuth | 看社交反馈、口碑、讨论 |
+| `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
+| `cn-community` | Zhihu + V2EX + Linux Do | 中文社区讨论 |
 | `video` | YouTube + Bilibili | 搜视频；默认 title/url-only，不进入网页抓取 |
-| `v2ex` | Firecrawl domain-restricted search | 搜 V2EX；使用 Firecrawl `includeDomains`，不是 V2EX 站内搜索 |
-| `zhihu` | Zhihu OpenAPI search | 搜知乎；优先用官方 `zhihu_search` API，未配置知乎 key 时 fallback 到 Firecrawl 限定知乎域名 |
-| `reddit` | Firecrawl domain-restricted search | 搜 Reddit；正文抓取 remote-first，`old.reddit.com` 只做最后兜底，不依赖 Reddit OAuth |
-| `hackernews` | Hacker News Algolia search | 搜 Hacker News stories |
-| `stackoverflow` | Stack Exchange advanced search | 搜 Stack Overflow questions |
-| 单源 | `brave` / `tavily` / `exa` / `firecrawl` / `serpapi` / `github` / `twitter` / `youtube` / `bilibili` | 控 quota 或调试 |
+| 单源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]`、`sources=["deepseek-web"]` | 控 quota 或调试；不再使用单源 route |
 
-缺 key 的源会显示 error row，不会静默消失。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
+缺 key 的源会显示 error row，不会静默消失。`fast` 的 DeepSeek/GLM 这类 cookie/session 源不可用时会显式标注降级到 Tavily/Exa。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
 
 ## Keys
 
@@ -158,27 +157,29 @@ python -m scripts.mark_exhausted <jina-key>
 
 ```mermaid
 flowchart LR
-    Q[Query / CLI] --> SR[SearchRunner<br/>route · key pool · timeout · fanout]
-    SR --> S[Searcher 搜索器<br/>scripts/searchers/*]
-    S --> M[Merger / Ranker<br/>scripts/dedup.py]
-    M --> SP[ScrapePlanner 抓取规划器<br/>scripts/scrape_planner.py]
-    SP --> SO[Scrape orchestration<br/>scripts/scrape.py]
-    SO --> B[Scraper 抓取器 backend<br/>scripts/scrapers/*]
-    M --> R[Renderer 渲染器<br/>scripts/format.py]
+    Q[MCP tool / skill] --> SVC[src/service.py]
+    SVC --> SR[SearchRunner<br/>route · SQLite key state · timeout · fanout]
+    SR --> S[Searcher 搜索器<br/>mcp/src/search/searchers/*]
+    S --> M[Merger / Ranker<br/>mcp/src/support/dedup.py]
+    M --> SP[ScrapePlanner 抓取规划器<br/>mcp/src/scrape/scrape_planner.py]
+    SP --> SO[Scrape orchestration<br/>mcp/src/scrape/scrape.py]
+    SO --> B[Scraper 抓取器 backend<br/>mcp/src/scrape/scrapers/*]
+    M --> R[Renderer 渲染器<br/>mcp/src/support/format.py]
     B --> R
     R --> O[Markdown diagnostics + results]
 ```
 
 术语固定如下：
 
-- **Searcher 搜索器**：`scripts/searchers/*`，只负责 query -> `SearchResult`/dict，输出 title、url、description、source、score、raw metadata。
-- **SearchRunner 搜索调度器**：`scripts/search_runner.py`，负责 route、并发、timeout、key pool 和 source status。
-- **Merger/Ranker 合并排序器**：`scripts/dedup.py`，负责 URL 归一化、去重、`also_from`、共识权重和排序。
-- **ScrapePlanner 抓取规划器**：`scripts/scrape_planner.py`，负责决定哪些 URL 需要抓、每源 quota、backend 顺序和 key pool 轮换。
-- **Scraper 抓取器 backend**：`scripts/scrapers/*`，负责 url -> 正文。Jina、Exa、Tavily、Firecrawl、old.reddit 都是 backend。
-- **Scrape orchestration 抓取调度执行器**：`scripts/scrape.py`，负责单 URL fallback 链和站点策略，不直接等同于某个抓取器。
-- **Renderer 渲染器**：`scripts/format.py`，负责诊断信息、搜索结果、抓取正文和 untrusted 安全围栏。
-- **Cache 缓存**：`scripts/cache.py`，默认关闭；启用后先缓存 scrape 结果。
+- **Service 服务层**：`multi-search-plugin/mcp/src/service.py`，统一 MCP 参数、config、key、search、scrape、render。
+- **Searcher 搜索器**：`multi-search-plugin/mcp/src/search/searchers/*`，只负责 query -> `SearchResult`/dict，输出 title、url、description、source、score、raw metadata。
+- **SearchRunner 搜索调度器**：`multi-search-plugin/mcp/src/search/search_runner.py`，负责 route、并发、timeout、SQLite key state 和 source status。
+- **Merger/Ranker 合并排序器**：`multi-search-plugin/mcp/src/support/dedup.py`，负责 URL 归一化、去重、`also_from`、共识权重和排序。
+- **ScrapePlanner 抓取规划器**：`multi-search-plugin/mcp/src/scrape/scrape_planner.py`，负责决定哪些 URL 需要抓、每源 quota、backend 顺序和 key 候选。
+- **Scraper 抓取器 backend**：`multi-search-plugin/mcp/src/scrape/scrapers/*`，负责 url -> 正文。Jina、Exa、Tavily、Firecrawl、old.reddit 都是 backend。
+- **Scrape orchestration 抓取调度执行器**：`multi-search-plugin/mcp/src/scrape/scrape.py`，负责单 URL fallback 链、站点策略和 key 使用结果记录。
+- **Renderer 渲染器**：`multi-search-plugin/mcp/src/support/format.py`，负责诊断信息、搜索结果、抓取正文和 untrusted 安全围栏。
+- **Cache 缓存**：`multi-search-plugin/mcp/src/support/cache.py`，默认关闭；启用后先缓存 scrape 结果。
 
 ## 抓取流程
 
@@ -186,13 +187,13 @@ flowchart LR
 
 - `scrape_top` 只计算额外抓取的缺正文 URL；已有正文不占额度。
 - 默认抓取后端从可用能力构建：Jina 匿名优先；Exa / Tavily / Firecrawl 只有配置对应 key 后才进入 fallback 链。Reddit URL remote-first：`www.reddit.com` 走 Jina / Tavily / Exa / Firecrawl / old.reddit fallback，`old.reddit.com` 走 Tavily / Jina / Exa / Firecrawl / old.reddit fallback。Zhihu 搜索优先使用官方摘要结果，后续抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
-- Exa / Tavily / Firecrawl key 池按 URL offset 轮换；遇到 401 / 403 / 429 / quota / rate-limit 会试下一个 key。
+- Exa / Tavily / Firecrawl 在 search 和 scrape 中都走 SQLite key state：跳过 invalid / disabled / cooldown 未过期 / quota_exhausted 未过期；从未使用过的 key 优先；同等情况下按 `last_used_at` 最早优先；每次选中会更新 `last_used_at` 和 `use_count`。
 - 每个候选 URL 只走一次完整 fallback 链；失败或 `scrape_timeout` 后记录 Errors，不自动补位。
 - GitHub repo 根 URL 抓取时会改写到 raw README。
 
 ## 公共数据契约
 
-代码仍兼容 dict，但核心边界已经有 dataclass：`SearchResult`、`ScrapeResult`、`ProviderStatus`、`ProviderError`，定义在 `scripts/models.py`。
+代码仍兼容 dict，但核心边界已经有 dataclass：`SearchResult`、`ScrapeResult`、`ProviderStatus`、`ProviderError`，定义在 `multi-search-plugin/mcp/src/support/models.py`。
 
 - `SearchResult`/dict：`source`、`title`、`url`、`description`、`scraped_content`、`also_from`、`stars`、`score`、`raw`。
 - `ScrapeResult`/dict：`url`、`title`、`markdown`、`length`、`via`，可带 `cache`、backend chain 等 raw metadata。
@@ -202,14 +203,14 @@ flowchart LR
 ## 常用命令
 
 ```powershell
-# 默认全源 + 最多 30 个缺正文 URL 额外抓取
+# 默认 web route + 最多 8 个缺正文 URL 额外抓取
 python search.py "epub to markdown"
 
-# 快速正文源
-python search.py "agent memory" --type lite
+# 快速总结源
+python search.py "agent memory" --type fast
 
 # Twitter/X 讨论
-python search.py "Claude Code feedback" --type discussion
+python search.py "Claude Code feedback" --type social
 
 # 关闭额外抓取
 python search.py "latest Rust features" --no-scrape
@@ -217,30 +218,15 @@ python search.py "latest Rust features" --no-scrape
 # 只额外抓 3 个缺正文 URL
 python search.py "rust async runtime" --scrape-top 3
 
-# 单源搜索
-python search.py "vector database" --type github
-python search.py "WebGPU compute" --type serpapi
-
-# V2EX 搜索（Firecrawl 限定 V2EX 域名）
-python search.py "Claude Code" --type v2ex
-
-# 知乎搜索（优先官方 OpenAPI；无 ZHIHU_ACCESS_SECRET 时 fallback Firecrawl）
-python search.py "AI Agent" --type zhihu
-
-# Reddit 搜索（Firecrawl 限定 Reddit 域名；正文抓取 remote-first）
-python search.py "agent memory" --type reddit
+# 专用平台 route
+python search.py "vector database" --type dev
+python search.py "AI Agent" --type cn-community
 
 # 视频搜索（默认只输出 title + URL，不抓视频）
 python search.py "agent memory tutorial" --type video
 
-# Hacker News 搜索
-python search.py "python uv" --type hackernews
-
-# Stack Overflow 搜索
-python search.py "python uv" --type stackoverflow
-
 # 中文技术查询可以手动加英文扩展查询
-python search.py "agent 编排最佳实践" --expand "agent orchestration best practices multi-agent" --type lite
+python search.py "agent 编排最佳实践" --expand "agent orchestration best practices multi-agent" --type fast
 ```
 
 ## 配置和参数
@@ -251,7 +237,7 @@ python search.py "agent 编排最佳实践" --expand "agent orchestration best p
 
 | 参数 | 默认 | 说明 |
 |---|---:|---|
-| `--type` | `default` | 路由或单源 |
+| `--type` | `default` | 语义 route：`web` / `fast` / `expert` / `social` / `dev` / `cn-community` / `video`。单源请优先通过 MCP `sources` 参数指定。 |
 | `--count N` | per-source | 全局 count，会按各源上限 clamp |
 | `--timeout N` | 60 | 搜索阶段整批 deadline |
 | `--scrape-top N` | 30 | 额外抓取缺正文 URL 数，上限 30；传 0 关闭 |

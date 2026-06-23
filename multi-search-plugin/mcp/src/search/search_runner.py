@@ -15,36 +15,107 @@ from ..support.models import as_dicts
 from ..support.secrets import scrub_secrets
 
 
+ALL_SOURCE_NAMES = {
+    "bilibili", "brave", "deepseek_web", "exa", "firecrawl",
+    "github_repos", "glm_web", "hackernews", "linuxdo", "linuxdo_api",
+    "reddit", "reddit_oauth", "serpapi", "stackoverflow", "tavily",
+    "twitter", "v2ex", "youtube", "zhihu",
+}
+
+SOURCE_ALIASES = {
+    "deepseek-web": "deepseek_web",
+    "glm-web": "glm_web",
+    "github": "github_repos",
+    "github-repos": "github_repos",
+    "linux-do": "linuxdo",
+    "linuxdo-api": "linuxdo_api",
+    "reddit-oauth": "reddit_oauth",
+}
+
 ROUTE_PROFILES = {
-    "default": {
-        "brave", "tavily", "exa", "firecrawl", "serpapi",
-        "github_repos", "twitter",
-    },
-    "lite": {"tavily", "exa"},
-    "discussion": {"twitter"},
+    "default": {"brave", "tavily", "exa", "serpapi"},
+    "web": {"brave", "tavily", "exa", "serpapi"},
+    "fast": {"deepseek_web", "glm_web", "tavily", "exa"},
+    "expert": {"brave", "tavily", "exa", "serpapi", "firecrawl"},
+    "social": {"twitter", "reddit_oauth"},
+    "dev": {"stackoverflow", "github_repos", "hackernews"},
+    "cn-community": {"zhihu", "v2ex", "linuxdo"},
     "video": {"youtube", "bilibili"},
-    "brave": {"brave"},
-    "bilibili": {"bilibili"},
-    "tavily": {"tavily"},
-    "exa": {"exa"},
-    "firecrawl": {"firecrawl"},
-    "v2ex": {"v2ex"},
-    "linuxdo": {"linuxdo"},
-    "linux-do": {"linuxdo"},
-    "linuxdo-api": {"linuxdo_api"},
-    "zhihu": {"zhihu"},
-    "reddit": {"reddit"},
-    "reddit-oauth": {"reddit_oauth"},
-    "hackernews": {"hackernews"},
-    "serpapi": {"serpapi"},
-    "stackoverflow": {"stackoverflow"},
-    "github": {"github_repos"},
-    "twitter": {"twitter"},
-    "youtube": {"youtube"},
-    "glm-web": {"glm_web"},
-    "glm_web": {"glm_web"},
-    "deepseek-web": {"deepseek_web"},
-    "deepseek_web": {"deepseek_web"},
+}
+
+DEFAULT_ROUTE_META = {
+    "scrape_top": 30,
+    "show_answer": False,
+    "show_snippet": True,
+    "count": 10,
+    "timeout": 60,
+    "title_url_only": False,
+    "degrade_to": set(),
+    "primary_success_sources": set(),
+}
+
+ROUTE_META = {
+    "default": {
+        "scrape_top": 8,
+        "show_answer": True,
+        "show_snippet": True,
+        "count": 8,
+        "timeout": 60,
+    },
+    "web": {
+        "scrape_top": 8,
+        "show_answer": True,
+        "show_snippet": True,
+        "count": 8,
+        "timeout": 60,
+    },
+    "fast": {
+        "scrape_top": 0,
+        "show_answer": True,
+        "show_snippet": True,
+        "count": 5,
+        "timeout": 30,
+        "degrade_to": {"tavily", "exa"},
+        "primary_success_sources": {"deepseek-web", "glm-web", "deepseek_web_answer", "glm_web_answer"},
+    },
+    "expert": {
+        "scrape_top": 20,
+        "show_answer": False,
+        "show_snippet": True,
+        "count": 12,
+        "timeout": 90,
+    },
+    "social": {
+        "scrape_top": 0,
+        "show_answer": False,
+        "show_snippet": True,
+        "count": 8,
+        "timeout": 45,
+        "degrade_to": set(),
+        "primary_success_sources": {"twitter", "reddit-oauth"},
+    },
+    "dev": {
+        "scrape_top": 5,
+        "show_answer": False,
+        "show_snippet": True,
+        "count": 8,
+        "timeout": 60,
+    },
+    "cn-community": {
+        "scrape_top": 5,
+        "show_answer": False,
+        "show_snippet": True,
+        "count": 8,
+        "timeout": 60,
+    },
+    "video": {
+        "scrape_top": 0,
+        "show_answer": False,
+        "show_snippet": False,
+        "count": 10,
+        "timeout": 45,
+        "title_url_only": True,
+    },
 }
 
 
@@ -54,8 +125,18 @@ def available_routes() -> list[str]:
 
 def resolve_route(search_type: str, lite: bool = False) -> set[str]:
     if lite:
-        return ROUTE_PROFILES["lite"]
+        return ROUTE_PROFILES["fast"]
     return ROUTE_PROFILES.get(search_type, set())
+
+
+def route_meta(route: str) -> dict[str, Any]:
+    meta = dict(DEFAULT_ROUTE_META)
+    meta.update(ROUTE_META.get(route, {}))
+    return meta
+
+
+def normalize_source_name(source: str) -> str:
+    return SOURCE_ALIASES.get(source, source)
 
 
 @dataclass
@@ -112,6 +193,8 @@ def run_keyed_source(source: str, key_value, call_with_key, deadline: float | No
         if deadline is not None and time.monotonic() >= deadline:
             break
         key = candidate.key if isinstance(candidate, KeyCandidate) else str(candidate)
+        if hasattr(manager, "record_use") and isinstance(candidate, KeyCandidate):
+            manager.record_use(source, candidate)
         results = as_dicts(call_with_key(key) or [])
         outcome = manager.classify_result(source, results)
         manager.record_result(source, candidate, outcome)

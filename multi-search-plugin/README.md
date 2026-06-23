@@ -2,6 +2,10 @@
 
 This directory is the Codex plugin package for multi-search.
 
+This package is the canonical runtime. The parent repository still contains a
+legacy CLI/debug implementation under `scripts/`, but plugin tools should use
+only the bundled `mcp/src/` implementation.
+
 It contains:
 
 - `.codex-plugin/plugin.json` for plugin metadata.
@@ -18,6 +22,16 @@ The plugin is self-contained: the MCP tools call the bundled
 local SearchRunner, scrape pipeline, key state, and site scraper memory modules.
 It does not import the parent repository's `scripts/` package, and there is no
 CLI entrypoint — all access is through MCP.
+
+Configuration boundaries:
+
+- Secrets: environment variables or `~/.search-keys.json`.
+- Non-secret defaults: `multi-search-config.json` in this plugin directory.
+- Runtime state: `~/.multi-search/state.sqlite`.
+- Plugin/MCP manifests: startup metadata only, never API keys.
+
+MCP explicit arguments override `multi-search-config.json`; omitted arguments
+fall back to config, then built-in defaults.
 
 Run from this directory:
 

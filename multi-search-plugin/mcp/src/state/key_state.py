@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -85,6 +84,9 @@ class BasicKeyManager:
     def record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:
         return None
 
+    def record_use(self, provider: str, candidate: KeyCandidate) -> None:
+        return None
+
     def status_rows(self, provider: str | None = None) -> list[dict]:
         return []
 
@@ -99,7 +101,10 @@ class SQLiteKeyManager(BasicKeyManager):
         self.store = store or StateStore()
 
     def candidates(self, provider: str, key_value: Any) -> list[KeyCandidate]:
-        raw = super().candidates(provider, key_value)
+        raw = [
+            KeyCandidate(key=key, key_id=key_id_for(provider, key), fingerprint=key_fingerprint(key))
+            for key in _ordered_key_pool(key_value)
+        ]
         now = _now()
         rows = {
             row["key_id"]: row
@@ -108,12 +113,12 @@ class SQLiteKeyManager(BasicKeyManager):
                 (provider,),
             )
         }
-        usable: list[tuple[int, KeyCandidate]] = []
-        for cand in raw:
+        usable: list[tuple[int, str, str, KeyCandidate]] = []
+        for order, cand in enumerate(raw):
             row = rows.get(cand.key_id)
             if not row:
                 self._ensure_row(provider, cand)
-                usable.append((0, cand))
+                usable.append((0, "", f"{order:08d}", cand))
                 continue
             status = row.get("status") or ACTIVE
             if row.get("manually_disabled") or status in {DISABLED, INVALID}:
@@ -124,11 +129,23 @@ class SQLiteKeyManager(BasicKeyManager):
                 continue
             if status == QUOTA_EXHAUSTED and exhausted_until and exhausted_until > now:
                 continue
-            score = int(row.get("success_count") or 0) - int(row.get("failure_count") or 0)
-            usable.append((-score, cand))
-        random.shuffle(usable)
-        usable.sort(key=lambda item: item[0])
-        return [cand for _, cand in usable]
+            last_used_at = row.get("last_used_at") or ""
+            never_used = 0 if not last_used_at else 1
+            usable.append((never_used, last_used_at, f"{order:08d}", cand))
+        usable.sort(key=lambda item: (item[0], item[1], item[2]))
+        return [cand for *_unused, cand in usable]
+
+    def record_use(self, provider: str, candidate: KeyCandidate) -> None:
+        self._ensure_row(provider, candidate)
+        now = _iso()
+        self.store.execute(
+            """
+            UPDATE key_state
+            SET use_count = use_count + 1, last_used_at = ?, updated_at = ?
+            WHERE provider = ? AND key_id = ?
+            """,
+            (now, now, provider, candidate.key_id),
+        )
 
     def record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:
         self._ensure_row(provider, candidate)
@@ -226,3 +243,11 @@ def classify_error(message: str) -> str:
     if any(token in text for token in ("network", "connection", "dns", "ssl")):
         return "network"
     return "error"
+
+
+def _ordered_key_pool(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    return [str(value)]

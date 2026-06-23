@@ -23,12 +23,12 @@ from src.state.state_store import StateStore
 
 def multi_search_tool(
     query: str,
-    route: str = "default",
+    route: str | None = None,
     count: int | None = None,
     sources: list[str] | None = None,
-    scrape_top: int = 30,
-    scrape_chars: int = 6000,
-    timeout: int = 60,
+    scrape_top: int | None = None,
+    scrape_chars: int | None = None,
+    timeout: int | None = None,
     output: Literal["json", "markdown", "both"] = "both",
 ) -> dict[str, Any]:
     return run_multi_search(MultiSearchRequest(
@@ -47,8 +47,8 @@ def multi_search_tool(
 def scrape_url_tool(
     url: str,
     backends: list[str] | None = None,
-    scrape_chars: int = 6000,
-    timeout: int = 60,
+    scrape_chars: int | None = None,
+    timeout: int | None = None,
     output: Literal["json", "markdown", "both"] = "both",
 ) -> dict[str, Any]:
     return run_scrape(ScrapeRequest(

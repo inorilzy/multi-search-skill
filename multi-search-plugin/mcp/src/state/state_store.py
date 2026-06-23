@@ -21,6 +21,8 @@ SCHEMA = (
       failure_count INTEGER NOT NULL DEFAULT 0,
       rate_limit_count INTEGER NOT NULL DEFAULT 0,
       quota_error_count INTEGER NOT NULL DEFAULT 0,
+      use_count INTEGER NOT NULL DEFAULT 0,
+      last_used_at TEXT,
       last_success_at TEXT,
       last_failure_at TEXT,
       last_error_type TEXT,
@@ -110,6 +112,16 @@ class StateStore:
         with self.connect() as conn:
             for statement in SCHEMA:
                 conn.execute(statement)
+            self._ensure_columns(conn, "key_state", {
+                "use_count": "INTEGER NOT NULL DEFAULT 0",
+                "last_used_at": "TEXT",
+            })
+
+    def _ensure_columns(self, conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        for name, definition in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
     def rows(self, query: str, params: tuple = ()) -> list[dict]:
         with self.connect() as conn:

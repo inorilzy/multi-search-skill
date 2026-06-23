@@ -128,7 +128,8 @@ def format_scrapes(scrapes: list, max_chars: int = 6000) -> str:
 
 def format_results(results: list, query: str, raw_counts: dict | None = None,
                    brief: bool = False, verbose: bool = False,
-                   title_url_only: bool = False) -> str:
+                   title_url_only: bool = False, show_answer: bool = False,
+                   show_snippet: bool = True, degradation: dict | None = None) -> str:
     """Format aggregated results for display."""
     results = as_dicts(results)
     lines = [f"## multi-search Results: `{query}`\n"]
@@ -143,7 +144,10 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
         if r.get("source") not in ("tavily_answer", "serpapi_answer", "exa_answer", "glm_web_answer", "deepseek_web_answer")
         and r.get("status") != "ok"
     ]
-    show_answers = verbose and not brief
+    if degradation:
+        lines.append(f"\n> ⚠️ {degradation.get('message', 'route degraded')}\n")
+
+    show_answers = (show_answer or verbose) and not brief
     if show_answers and tavily_answers:
         lines.append(f"\n> **Tavily AI Answer:** {tavily_answers[0]['answer']}\n")
     if show_answers and exa_answers:
@@ -308,7 +312,7 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
             lines.append(f"   链接: {url}")
         # Default output is optimized for agents: keep compact social/community
         # signals, but save content snippets and AI answers for --verbose.
-        show_desc = desc and not brief and (verbose or src == "twitter")
+        show_desc = desc and not brief and (show_snippet or verbose or src == "twitter")
         if show_desc:
             short = desc[:200].replace("\n", " ")
             if len(desc) > 200:

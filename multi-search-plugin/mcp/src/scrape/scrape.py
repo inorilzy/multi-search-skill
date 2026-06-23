@@ -2,6 +2,7 @@
 import time
 
 from ..support.auth import is_key_retryable_error
+from ..state.key_state import KeyCandidate, key_fingerprint, key_id_for
 from ..state.keys import (
     get_active_jina_keys,
     mark_jina_exhausted_persistent,
@@ -100,12 +101,26 @@ def _is_key_retryable_error(result: dict) -> bool:
     return is_key_retryable_error(result)
 
 
-def _scrape_with_key_pool(keys: list[str], call, deadline: float | None = None) -> dict | None:
+def _candidate_for(provider: str, key: str) -> KeyCandidate:
+    return KeyCandidate(key=key, key_id=key_id_for(provider, key), fingerprint=key_fingerprint(key))
+
+
+def _record_key_result(provider: str, key: str, result: dict, key_manager) -> None:
+    if key_manager is None:
+        return
+    candidate = _candidate_for(provider, key)
+    key_manager.record_result(provider, candidate, key_manager.classify_result(provider, result))
+
+
+def _scrape_with_key_pool(provider: str, keys: list[str], call, deadline: float | None = None, key_manager=None) -> dict | None:
     last: dict | None = None
     for key in keys:
         if deadline is not None and time.monotonic() >= deadline:
             break
+        if key_manager is not None:
+            key_manager.record_use(provider, _candidate_for(provider, key))
         result = call(key)
+        _record_key_result(provider, key, result, key_manager)
         last = result
         if "error" not in result:
             return result
@@ -126,7 +141,8 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      firecrawl_keys: list[str] | tuple[str, ...] | None = None,
                      tavily_keys: list[str] | tuple[str, ...] | None = None,
                      deadline: float | None = None,
-                     site_memory=None) -> dict:
+                     site_memory=None,
+                     key_manager=None) -> dict:
     """Scrape `url` starting with `primary` backend, falling back through the others."""
 
     def _remaining_timeout() -> float:
@@ -177,6 +193,8 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                     break
                 if not get_active_jina_keys([key]):
                     continue
+                if key_manager is not None:
+                    key_manager.record_use("jina", _candidate_for("jina", key))
                 keyed = scrape_url_jina(
                     scrape_url,
                     key,
@@ -184,6 +202,7 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                     skip_anonymous=True,
                     **policy["jina"],
                 )
+                _record_key_result("jina", key, keyed, key_manager)
                 last = keyed
                 if "error" not in keyed:
                     return keyed
@@ -210,23 +229,29 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                     )
                 return scrape_url_tavily(scrape_url, key, timeout=_remaining_timeout())
             return _scrape_with_key_pool(
+                "tavily",
                 candidates,
                 _scrape_tavily,
                 deadline=deadline,
+                key_manager=key_manager,
             )
         if backend == "exa":
             candidates = _key_candidates(exa_key, exa_keys)
             return _scrape_with_key_pool(
+                "exa",
                 candidates,
                 lambda key: scrape_url_exa(scrape_url, key, timeout=_remaining_timeout()),
                 deadline=deadline,
+                key_manager=key_manager,
             )
         if backend == "firecrawl":
             candidates = _key_candidates(firecrawl_key or "", firecrawl_keys)
             return _scrape_with_key_pool(
+                "firecrawl",
                 candidates,
                 lambda key: scrape_url_firecrawl(scrape_url, key, timeout=_remaining_timeout()),
                 deadline=deadline,
+                key_manager=key_manager,
             )
         return None
 

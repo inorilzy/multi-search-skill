@@ -9,15 +9,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .support.cache import JsonCache, make_scrape_cache_key
-from .support.config import ConfigError, config_bool, config_list, load_config
+from .support.config import ConfigError, DEFAULT_CONFIG_PATH, config_bool, config_list, load_config
 from .support.dedup import deduplicate
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
-from .state.keys import count_jina_keys, load_keys
+from .state.keys import count_jina_keys, get_active_jina_keys, load_keys
 from .support.models import as_dicts
 from .scrape.scrape import scrape_url_smart
 from .scrape.scrape_planner import add_to_content_pool, plan_scrapes
-from .search.search_runner import ROUTE_PROFILES, SearchRunner, SearchRunnerConfig, resolve_route
+from .search.search_runner import (
+    ALL_SOURCE_NAMES,
+    ROUTE_PROFILES,
+    SearchRunner,
+    SearchRunnerConfig,
+    normalize_source_name,
+    resolve_route,
+    route_meta,
+)
 from .support.secrets import scrub_secrets
 from .state.site_memory import SiteScraperMemory
 from .state.state_store import StateStore
@@ -65,15 +73,15 @@ COUNT_CAPS = {
 @dataclass
 class MultiSearchRequest:
     query: str
-    route: str = "default"
+    route: str | None = None
     count: int | None = None
     sources: list[str] | None = None
-    scrape_top: int = 30
-    scrape_chars: int = 6000
-    scrape_per_source: int = 6
-    scrape_timeout: int = 60
-    scrape_concurrency: int = 5
-    timeout: int = 60
+    scrape_top: int | None = None
+    scrape_chars: int | None = None
+    scrape_per_source: int | None = None
+    scrape_timeout: int | None = None
+    scrape_concurrency: int | None = None
+    timeout: int | None = None
     output: str = "both"
     config_path: str | None = None
     expand: list[str] = field(default_factory=list)
@@ -87,8 +95,8 @@ class MultiSearchRequest:
 class ScrapeRequest:
     url: str
     backends: list[str] | None = None
-    scrape_chars: int = 6000
-    timeout: int = 60
+    scrape_chars: int | None = None
+    timeout: int | None = None
     output: str = "both"
     use_state: bool = True
 
@@ -99,26 +107,32 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     if not request.query:
         raise ValueError("query is required")
     config = _load_config_safe(request.config_path)
-    route = request.route or str(config.get("type", "default"))
+    route = str(_resolve_value(request.route, config, "type", "default"))
+    meta = route_meta(route)
     if request.sources:
-        source_names = set(request.sources)
+        source_names = {normalize_source_name(str(source)) for source in request.sources}
+        unknown_sources = source_names - ALL_SOURCE_NAMES
+        if unknown_sources:
+            raise ValueError(f"unknown source(s): {', '.join(sorted(unknown_sources))}")
     elif route in ROUTE_PROFILES:
         source_names = None
     else:
         raise ValueError(f"unknown route: {route}")
 
     keys = load_keys()
-    counts = _build_counts(config, request.count)
-    timeout = _nonnegative(request.timeout if request.timeout is not None else int(config.get("timeout", 60) or 60), 60)
-    scrape_top = _nonnegative(request.scrape_top, 30)
-    scrape_chars = max(1, int(request.scrape_chars or 6000))
-    scrape_per_source = max(1, int(request.scrape_per_source or 6))
-    scrape_timeout = _nonnegative(request.scrape_timeout, 60)
-    scrape_concurrency = max(1, int(request.scrape_concurrency or 5))
-    output_mode = request.output if request.output in {"json", "markdown", "both"} else "both"
-    if route == "video":
-        request.title_url_only = True
+    counts = _build_counts(config, request.count, route_default=meta["count"])
+    timeout = _resolve_nonnegative(request.timeout, config, "timeout", meta["timeout"])
+    if request.scrape_top is None and config_bool(config, "no_scrape", False):
         scrape_top = 0
+    else:
+        scrape_top = _resolve_nonnegative(request.scrape_top, config, "scrape_top", meta["scrape_top"])
+    scrape_chars = max(1, _resolve_int(request.scrape_chars, config, "scrape_chars", 6000))
+    scrape_per_source = max(1, _resolve_int(request.scrape_per_source, config, "scrape_per_source", 6))
+    scrape_timeout = _resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
+    scrape_concurrency = max(1, _resolve_int(request.scrape_concurrency, config, "scrape_concurrency", 5))
+    output_mode = request.output if request.output in {"json", "markdown", "both"} else "both"
+    if meta.get("title_url_only"):
+        request.title_url_only = True
 
     from .search.registry import build_provider_registry
 
@@ -157,6 +171,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
         scrape_timeout=scrape_timeout,
         scrape_concurrency=scrape_concurrency,
         site_memory=site_memory,
+        key_manager=key_manager,
     )
     final_results, _ = deduplicate(
         scrape_result["with_content"] + scrape_result["final_without_content"] + scrape_result["passthrough"]
@@ -171,6 +186,9 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             brief=request.brief,
             verbose=request.verbose,
             title_url_only=request.title_url_only,
+            show_answer=bool(meta.get("show_answer")) or request.verbose,
+            show_snippet=bool(meta.get("show_snippet")),
+            degradation=_route_degradation(route, all_results, source_names, meta),
         )
         if scrape_top > 0:
             markdown += format_scrapes(scrape_result["scrapes"], max_chars=scrape_chars)
@@ -191,6 +209,14 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             "scrape_candidate_count": len(scrape_result["items_to_scrape"]),
             "jina_keys_active_total": count_jina_keys(keys.get("jina")),
             "state_path": str(store.path) if store else None,
+            "route_meta": {
+                "scrape_top": scrape_top,
+                "show_answer": bool(meta.get("show_answer")) or request.verbose,
+                "show_snippet": bool(meta.get("show_snippet")),
+                "count": meta.get("count"),
+                "timeout": timeout,
+            },
+            "route_degradation": _route_degradation(route, all_results, source_names, meta),
         },
     }
     if output_mode in {"markdown", "both"}:
@@ -201,18 +227,23 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
 def run_scrape(request: ScrapeRequest | dict) -> dict:
     if isinstance(request, dict):
         request = ScrapeRequest(**request)
+    config = _load_config_safe(None)
     keys = load_keys()
+    timeout = _resolve_nonnegative(request.timeout, config, "scrape_timeout", 60)
+    scrape_chars = max(1, _resolve_int(request.scrape_chars, config, "scrape_chars", 6000))
     store = StateStore() if request.use_state else None
+    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
     site_memory = SiteScraperMemory(store) if store else None
     result = scrape_url_smart(
         request.url,
-        timeout=request.timeout,
+        timeout=timeout,
         backends=tuple(request.backends) if request.backends else None,
-        jina_keys=[],
-        exa_keys=_key_list(keys.get("exa")),
-        firecrawl_keys=_key_list(keys.get("firecrawl")),
-        tavily_keys=_key_list(keys.get("tavily")),
+        jina_keys=get_active_jina_keys(keys.get("jina")),
+        exa_keys=[candidate.key for candidate in key_manager.candidates("exa", keys.get("exa"))],
+        firecrawl_keys=[candidate.key for candidate in key_manager.candidates("firecrawl", keys.get("firecrawl"))],
+        tavily_keys=[candidate.key for candidate in key_manager.candidates("tavily", keys.get("tavily"))],
         site_memory=site_memory,
+        key_manager=key_manager,
     )
     response = {
         "url": request.url,
@@ -220,13 +251,13 @@ def run_scrape(request: ScrapeRequest | dict) -> dict:
         "site_scraper_updates": site_memory.consume_updates() if site_memory else [],
     }
     if request.output in {"markdown", "both"}:
-        response["markdown"] = format_scrapes([result], max_chars=request.scrape_chars)
+        response["markdown"] = format_scrapes([result], max_chars=scrape_chars)
     return response
 
 
 def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
     store = StateStore()
-    response = {"routes": sorted(ROUTE_PROFILES), "sources": sorted({src for vals in ROUTE_PROFILES.values() for src in vals})}
+    response = {"routes": sorted(ROUTE_PROFILES), "sources": sorted(ALL_SOURCE_NAMES)}
     if include_key_status:
         response["key_status"] = SQLiteKeyManager(store).status_rows()
     if include_scraper_stats:
@@ -240,6 +271,32 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
     data = {
         "server": "multi-search-mcp",
         "state_path": str(store.path),
+        "config_path": str(DEFAULT_CONFIG_PATH),
+        "key_sources": {
+            "env": [
+                "BRAVE_SEARCH_API_KEY",
+                "BRAVE_API_KEY",
+                "TAVILY_API_KEY",
+                "EXA_API_KEY",
+                "JINA_API_KEY",
+                "JINA_KEY",
+                "GITHUB_TOKEN",
+                "GH_TOKEN",
+                "FIRECRAWL_API_KEY",
+                "SERPAPI_API_KEY",
+                "SERPAPI_KEY",
+                "ZHIHU_ACCESS_SECRET",
+                "YOUTUBE_API_KEY",
+                "BILIBILI_COOKIE",
+                "TWITTER_COOKIES_PATH",
+                "DEEPSEEK_WEB_TOKEN",
+                "DEEPSEEK_USER_TOKEN",
+                "DEEPSEEK_WEB_COOKIE",
+                "DEEPSEEK_WEB_AUTH_EXPORT",
+            ],
+            "file": "~/.search-keys.json",
+            "state": str(store.path),
+        },
         "routes": sorted(ROUTE_PROFILES),
         "network_checked": bool(include_network),
     }
@@ -252,8 +309,14 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
 
 def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, scrape_top: int,
                       scrape_per_source: int, scrape_timeout: int, scrape_concurrency: int,
-                      site_memory: SiteScraperMemory | None) -> dict:
-    scrape_plan = plan_scrapes(all_results, keys=keys, scrape_top=scrape_top, scrape_per_source=scrape_per_source)
+                      site_memory: SiteScraperMemory | None, key_manager=None) -> dict:
+    scrape_plan = plan_scrapes(
+        all_results,
+        keys=keys,
+        scrape_top=scrape_top,
+        scrape_per_source=scrape_per_source,
+        key_manager=key_manager,
+    )
     scrape_errors: list[dict] = []
     content_pool = scrape_plan.content_pool
     if scrape_top > 0:
@@ -297,7 +360,7 @@ def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, 
                                 item["url"], timeout=30, primary=plan_item.primary_backend,
                                 backends=tuple(backends), jina_keys=pools.jina, exa_keys=pools.exa,
                                 firecrawl_keys=pools.firecrawl, tavily_keys=pools.tavily,
-                                deadline=deadline, site_memory=site_memory,
+                                deadline=deadline, site_memory=site_memory, key_manager=key_manager,
                             )
                             if scrape_result and "error" not in scrape_result:
                                 cache.set("scrape", cache_key, scrape_result)
@@ -344,7 +407,7 @@ def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, 
     }
 
 
-def _build_counts(config: dict, global_count: int | None = None) -> dict[str, int]:
+def _build_counts(config: dict, global_count: int | None = None, route_default: int = 10) -> dict[str, int]:
     counts_cfg = config.get("counts") if isinstance(config.get("counts"), dict) else {}
     configured_global = global_count if global_count is not None else config.get("count")
     counts = {}
@@ -353,9 +416,36 @@ def _build_counts(config: dict, global_count: int | None = None) -> dict[str, in
         if value is None and configured_global is not None:
             value = configured_global
         if value is None:
-            value = default
+            value = route_default
         counts[source] = max(1, min(int(value), COUNT_CAPS[source]))
     return counts
+
+
+def _route_degradation(route: str, results: list[dict], source_names: set[str] | None, meta: dict) -> dict | None:
+    if source_names is not None:
+        return None
+    primary_sources = set(meta.get("primary_success_sources") or [])
+    if not primary_sources:
+        return None
+    rows = as_dicts(results)
+    has_primary_success = any(
+        row.get("source") in primary_sources
+        and "error" not in row
+        and row.get("status") != "ok"
+        for row in rows
+    )
+    if has_primary_success:
+        return None
+    fallback_sources = sorted(meta.get("degrade_to") or [])
+    return {
+        "route": route,
+        "reason": "primary providers unavailable or returned no usable results",
+        "fallback_sources": fallback_sources,
+        "message": (
+            f"{route} degraded to {', '.join(fallback_sources)}"
+            if fallback_sources else f"{route} primary providers unavailable and no fallback is configured"
+        ),
+    }
 
 
 def _provider_status(results: list[dict]) -> list[dict]:
@@ -390,16 +480,6 @@ def _valid_result_count(results: list[dict]) -> int:
     ])
 
 
-def _key_list(value: Any) -> list[str]:
-    if not value:
-        return []
-    if isinstance(value, list):
-        return [str(item) for item in value if isinstance(item, str) and item]
-    if isinstance(value, str):
-        return [value]
-    return []
-
-
 def _load_config_safe(path: str | None) -> dict:
     try:
         return load_config(path)
@@ -413,3 +493,25 @@ def _nonnegative(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(0, parsed)
+
+
+def _resolve_value(request_value: Any, config: dict, key: str, default: Any) -> Any:
+    if request_value is not None:
+        return request_value
+    value = config.get(key)
+    return default if value is None else value
+
+
+def _resolve_int(request_value: Any, config: dict, key: str, default: int) -> int:
+    return _int_or_default(_resolve_value(request_value, config, key, default), default)
+
+
+def _resolve_nonnegative(request_value: Any, config: dict, key: str, default: int) -> int:
+    return max(0, _resolve_int(request_value, config, key, default))
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
