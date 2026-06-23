@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "multi-search": {
-      "command": "python",
-      "args": ["multi-search-plugin/mcp/server.py"]
-    }
-  }
-}

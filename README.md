@@ -20,7 +20,9 @@ python multi-search-plugin/mcp/server.py
 - `multi-search-plugin/.codex-plugin/plugin.json`：插件 manifest。
 - `multi-search-plugin/.mcp.json`：MCP server 启动配置。
 - `multi-search-plugin/skills/multi-search/SKILL.md`：薄 skill，自然语言触发和使用策略。
-- 根目录 `.mcp.json` 和 `mcp/multi_search_server.py` 只是兼容 shim，指向同一个插件 server。
+
+> 根目录不再保留独立的 `.mcp.json` / `.codex-plugin` / `skills` / `SKILL.md` / `mcp` shim。
+> canonical 入口只有 `multi-search-plugin/`，避免双 manifest 与 skill route 漂移。
 
 MCP tools 包括：`multi_search`、`scrape_url`、`list_sources`、`doctor`、`get_key_status`、`reset_key_state`、`get_site_scraper_stats`、`set_site_scraper_preference`、`reset_site_scraper_stats`。
 
@@ -65,13 +67,13 @@ Windows 初始化辅助脚本：
 
 ## Agent 安装和使用
 
-仓库包含 [SKILL.md](SKILL.md)，可以作为 Claude Code / Codex 这类 agent 的技能说明入口。典型用法是让 agent 读取 skill 后执行：
+skill 入口在 [multi-search-plugin/skills/multi-search/SKILL.md](multi-search-plugin/skills/multi-search/SKILL.md)，可以作为 Claude Code / Codex 这类 agent 的技能说明入口。典型用法是让 agent 读取 skill 后执行：
 
 ```text
 用 multi-search 查一下最近大家怎么评价某个 LLM 框架，重点看 GitHub、Twitter/X 和技术博客。
 ```
 
-MCP plugin 是核心入口，agent 按 `SKILL.md` 调用 MCP tools。`search.py` 只保留为 legacy/debug CLI，插件新能力应优先落在 `multi-search-plugin/mcp/src/`。
+MCP plugin 是核心入口，agent 按 plugin 的 `skills/multi-search/SKILL.md` 调用 MCP tools。`search.py` 只保留为 legacy/debug CLI，插件新能力应优先落在 `multi-search-plugin/mcp/src/`。
 
 ## 搜索源、注册和免费额度
 
@@ -264,7 +266,7 @@ JSON 配置还支持缓存字段：`cache_enabled`、`no_cache`、`cache_ttl_sec
 - `Ranked Results`：按共识权重排序后的结果。
 - `Scraped Content`：正文内容，统一包在 untrusted block 里。
 
-Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [SKILL.md](SKILL.md)。
+Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [multi-search-plugin/skills/multi-search/SKILL.md](multi-search-plugin/skills/multi-search/SKILL.md)。
 
 ## 安全
 

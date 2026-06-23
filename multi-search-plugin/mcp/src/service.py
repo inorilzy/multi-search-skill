@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .support.cache import JsonCache, make_scrape_cache_key
-from .support.config import ConfigError, DEFAULT_CONFIG_PATH, config_bool, config_list, load_config
+from .support.config import ConfigError, config_bool, config_list, load_config, resolve_config_path
 from .support.dedup import deduplicate
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
@@ -113,11 +113,16 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
         source_names = {normalize_source_name(str(source)) for source in request.sources}
         unknown_sources = source_names - ALL_SOURCE_NAMES
         if unknown_sources:
-            raise ValueError(f"unknown source(s): {', '.join(sorted(unknown_sources))}")
+            raise ValueError(
+                f"unknown source(s): {', '.join(sorted(unknown_sources))}; "
+                f"valid sources: {', '.join(sorted(ALL_SOURCE_NAMES))}"
+            )
     elif route in ROUTE_PROFILES:
         source_names = None
     else:
-        raise ValueError(f"unknown route: {route}")
+        raise ValueError(
+            f"unknown route: {route}; valid routes: {', '.join(sorted(ROUTE_PROFILES))}"
+        )
 
     keys = load_keys()
     counts = _build_counts(config, request.count, route_default=meta["count"])
@@ -271,7 +276,8 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
     data = {
         "server": "multi-search-mcp",
         "state_path": str(store.path),
-        "config_path": str(DEFAULT_CONFIG_PATH),
+        "config_path": str(resolve_config_path()),
+        "config_loaded": resolve_config_path().exists(),
         "key_sources": {
             "env": [
                 "BRAVE_SEARCH_API_KEY",

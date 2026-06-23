@@ -15,6 +15,8 @@ from src.service import MultiSearchRequest, ScrapeRequest, doctor_data, list_sou
 from src.state.key_state import COOLDOWN, SQLiteKeyManager, key_id_for
 from src.state.state_store import StateStore
 from src.support.format import format_results
+import tools
+from src.support import config as config_module
 
 
 class PluginRouteRedesignTests(unittest.TestCase):
@@ -303,6 +305,66 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(data["key_sources"]["file"], "~/.search-keys.json")
         self.assertIn("TAVILY_API_KEY", data["key_sources"]["env"])
         self.assertEqual(data["key_sources"]["state"], data["state_path"])
+
+
+class PluginEntryLayerTests(unittest.TestCase):
+    def test_multi_search_unknown_route_returns_structured_error(self):
+        result = tools.multi_search_tool("q", route="discussion", use_state=False)
+        self.assertEqual(result["error_type"], "invalid_request")
+        self.assertIn("valid routes", result["error"])
+        self.assertNotIn("markdown", result)
+
+    def test_multi_search_empty_query_returns_structured_error(self):
+        result = tools.multi_search_tool("", use_state=False)
+        self.assertEqual(result["error_type"], "invalid_request")
+        self.assertEqual(result["error"], "query is required")
+
+    def test_invalid_output_mode_is_rejected_at_tool_boundary(self):
+        result = tools.multi_search_tool("q", output="markdwon", use_state=False)
+        self.assertEqual(result["error_type"], "invalid_request")
+        self.assertIn("both", result["valid_output"])
+
+    def test_set_site_scraper_preference_rejects_unknown_backend(self):
+        result = tools.set_site_scraper_preference_tool("example.com", "not-a-backend")
+        self.assertEqual(result["error_type"], "invalid_request")
+        self.assertIn("jina", result["valid_scrapers"])
+
+    def test_multi_search_use_state_false_skips_state_store(self):
+        captured = {}
+
+        class FakeRunner:
+            def __init__(self, config, providers, route_resolver=None, key_manager=None):
+                captured["key_manager"] = type(key_manager).__name__
+
+            def run(self, query, lite=False):
+                return []
+
+        def fake_scrape_stage(all_results, **kwargs):
+            return {
+                "with_content": [], "final_without_content": [], "passthrough": [],
+                "raw_counts": {}, "items_to_scrape": [], "scrape_errors": [], "scrapes": [],
+            }
+
+        with mock.patch("src.service._load_config_safe", return_value={}), \
+             mock.patch("src.service.load_keys", return_value={}), \
+             mock.patch("src.service.SearchRunner", FakeRunner), \
+             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
+            tools.multi_search_tool("q", use_state=False)
+
+        self.assertEqual(captured["key_manager"], "BasicKeyManager")
+
+    def test_config_path_prefers_env_then_user_then_dev(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "cfg.json"
+            cfg.write_text("{}", encoding="utf-8")
+            with mock.patch.dict("os.environ", {config_module.CONFIG_ENV_VAR: str(cfg)}):
+                self.assertEqual(config_module.resolve_config_path(), cfg)
+
+    def test_load_config_missing_default_returns_empty_without_raising(self):
+        missing = Path(tempfile.gettempdir()) / "definitely-missing-multi-search-config.json"
+        with mock.patch.object(config_module, "resolve_config_path", return_value=missing):
+            self.assertEqual(config_module.load_config(), {})
 
 
 if __name__ == "__main__":

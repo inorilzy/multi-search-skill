@@ -1,9 +1,29 @@
 """Load and validate non-secret CLI defaults from JSON config files."""
 import json
+import os
 from pathlib import Path
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "multi-search-config.json"
+CONFIG_ENV_VAR = "MULTI_SEARCH_CONFIG"
+USER_CONFIG_PATH = Path.home() / ".multi-search" / "multi-search-config.json"
+# Development fallback: the config file shipped next to the plugin source tree.
+DEV_CONFIG_PATH = Path(__file__).resolve().parents[3] / "multi-search-config.json"
+
+
+def resolve_config_path() -> Path:
+    """Resolve the default config path in a portable, install-safe order.
+
+    Order of precedence:
+    1. ``MULTI_SEARCH_CONFIG`` environment variable (e.g. injected via .mcp.json).
+    2. User-level config under ``~/.multi-search`` (matches the state DB location).
+    3. Development fallback next to the plugin source tree, only if it exists.
+    """
+    env_value = os.environ.get(CONFIG_ENV_VAR)
+    if env_value:
+        return Path(env_value).expanduser()
+    if USER_CONFIG_PATH.exists():
+        return USER_CONFIG_PATH
+    return DEV_CONFIG_PATH
 
 
 class ConfigError(ValueError):
@@ -18,7 +38,7 @@ def load_config(path: str | None = None) -> dict:
     preferences that are safe to share.
     """
     explicit = path is not None
-    config_path = Path(path).expanduser() if explicit else DEFAULT_CONFIG_PATH
+    config_path = Path(path).expanduser() if explicit else resolve_config_path()
     if not config_path.exists():
         if explicit:
             raise ConfigError(f"config file not found: {config_path}")

@@ -2,14 +2,11 @@
 """MCP stdio server entrypoint for the multi-search plugin."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 from mcp.server.fastmcp import FastMCP
 
-HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+from pathing import add_plugin_to_path
+
+add_plugin_to_path()
 
 from tools import (
     doctor_tool,
@@ -37,16 +34,30 @@ mcp = FastMCP(
 def multi_search(query: str, route: str | None = None, count: int | None = None,
                  sources: list[str] | None = None, scrape_top: int | None = None,
                  scrape_chars: int | None = None, timeout: int | None = None,
+                 expand: list[str] | None = None, use_state: bool = True,
                  output: str = "both") -> dict:
-    """Search across configured sources, optionally scrape top URLs, and return structured results."""
-    return multi_search_tool(query, route, count, sources, scrape_top, scrape_chars, timeout, output)  # type: ignore[arg-type]
+    """Search across configured sources, optionally scrape top URLs, and return structured results.
+
+    `timeout` is the search-provider timeout in seconds. `expand` adds extra query
+    variants to run alongside `query`. Set `use_state=False` to skip the SQLite
+    state DB, key-health rotation, and site scraper memory (clean test path).
+    On invalid input the tool returns a structured {"error", "error_type"} dict.
+    """
+    return multi_search_tool(query, route, count, sources, scrape_top, scrape_chars,
+                             timeout, expand, use_state, output)  # type: ignore[arg-type]
 
 
 @mcp.tool(name="scrape_url")
 def scrape_url(url: str, backends: list[str] | None = None, scrape_chars: int | None = None,
-               timeout: int | None = None, output: str = "both") -> dict:
-    """Fetch readable page content using state-aware scraper backend ordering."""
-    return scrape_url_tool(url, backends, scrape_chars, timeout, output)  # type: ignore[arg-type]
+               scrape_timeout: int | None = None, use_state: bool = True,
+               output: str = "both") -> dict:
+    """Fetch readable page content using state-aware scraper backend ordering.
+
+    `scrape_timeout` is the per-scrape timeout in seconds. Set `use_state=False`
+    to skip the SQLite state DB and site scraper memory. On invalid input the
+    tool returns a structured {"error", "error_type"} dict.
+    """
+    return scrape_url_tool(url, backends, scrape_chars, scrape_timeout, use_state, output)  # type: ignore[arg-type]
 
 
 @mcp.tool(name="list_sources")

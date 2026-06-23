@@ -32,6 +32,10 @@ from .scrapers.zhihu import is_zhihu_blocked_text, is_zhihu_url
 from ..state.site_memory import ScrapeAttempt
 
 
+# Backends that have a real dispatch implementation in scrape_url_smart.
+KNOWN_BACKENDS = ("jina", "exa", "tavily", "firecrawl")
+
+
 DEFAULT_SCRAPE_POLICY = {
     "name": "default",
     "backends": ("jina", "exa", "tavily", "firecrawl"),
