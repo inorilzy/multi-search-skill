@@ -157,6 +157,8 @@ python -m scripts.mark_exhausted <jina-key>
 
 ## 架构和术语
 
+> 概念定义见术语表：[docs/glossary.md](docs/glossary.md)（route / source / 降级 / key 轮换等的单一事实来源）。
+
 ```mermaid
 flowchart LR
     Q[MCP tool / skill] --> SVC[src/service.py]
