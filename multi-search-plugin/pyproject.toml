@@ -1,0 +1,15 @@
+[project]
+name = "multi-search-mcp"
+version = "0.2.0"
+description = "Aggregated search MCP server for the multi-search plugin."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0",
+]
+
+[project.optional-dependencies]
+# Optional scrapers degrade gracefully when these are absent.
+scrapers = [
+    "beautifulsoup4>=4.12",
+    "twikit-ng",
+]

@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "multi-search": {
-      "command": "python",
-      "args": ["mcp/server.py"]
+      "command": "uv",
+      "args": ["run", "--with", "mcp", "python", "mcp/server.py"]
     }
   }
 }
