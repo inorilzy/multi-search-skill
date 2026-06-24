@@ -1,6 +1,6 @@
 {
   "name": "multi-search",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Aggregated search MCP plugin with thin skill guidance, key health tracking, and site scraper memory.",
   "author": {
     "name": "multi-search contributors"
