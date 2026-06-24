@@ -3,11 +3,6 @@ import time
 
 from ..support.auth import is_key_retryable_error
 from ..state.key_state import KeyCandidate, key_fingerprint, key_id_for
-from ..state.keys import (
-    get_active_jina_keys,
-    mark_jina_exhausted_persistent,
-    mark_jina_exhausted_runtime,
-)
 from .scrapers import (
     _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
     _GH_REPO_RE,
@@ -28,12 +23,16 @@ from .scrapers.reddit import (
     scrape_url_reddit,
 )
 from .scrapers.tavily import scrape_url_tavily
-from .scrapers.zhihu import is_zhihu_blocked_text, is_zhihu_url
+from .url_classify import is_zhihu_blocked_text, is_zhihu_url
 from ..state.site_memory import ScrapeAttempt
 
 
 # Backends that have a real dispatch implementation in scrape_url_smart.
-KNOWN_BACKENDS = ("jina", "exa", "tavily", "firecrawl")
+KNOWN_BACKENDS = ("jina", "exa", "tavily", "firecrawl", "reddit")
+# Keyed backends whose only requirement to run is a configured key. Used to
+# distinguish "no key configured" from "backend unknown" when a caller forces
+# a specific backend list.
+KEYED_BACKENDS = ("exa", "tavily", "firecrawl")
 
 
 DEFAULT_SCRAPE_POLICY = {
@@ -49,12 +48,14 @@ SCRAPE_POLICIES = (
         "name": "old-reddit",
         "match": is_old_reddit_url,
         "backends": ("tavily", "jina", "exa", "firecrawl", "reddit"),
+        "ensure_backends": ("reddit",),
         "blocked": is_reddit_blocked_text,
     },
     {
         "name": "reddit",
         "match": is_reddit_url,
         "backends": ("jina", "tavily", "exa", "firecrawl", "reddit"),
+        "ensure_backends": ("reddit",),
         "blocked": is_reddit_blocked_text,
     },
     {
@@ -81,11 +82,16 @@ def _resolve_scrape_policy(url: str, backends: list[str] | tuple[str, ...] | Non
         if not candidate["match"](url):
             continue
         if backends is None and candidate.get("backends"):
+            # No caller-supplied order: adopt the policy's full preferred order.
             enabled = list(candidate["backends"])
         else:
-            for backend in reversed(candidate.get("prepend_backends", ())):
+            # Caller supplied an explicit backend order (e.g. the search
+            # orchestrator). Keep that order but make sure policy-mandated
+            # fallbacks (such as the local ``reddit`` scraper) are still
+            # appended so URL-specific behavior is not silently dropped.
+            for backend in candidate.get("ensure_backends", ()):
                 if backend not in enabled:
-                    enabled.insert(0, backend)
+                    enabled.append(backend)
         policy["name"] = candidate["name"]
         policy["backends"] = enabled
         policy["jina"].update(candidate.get("jina", {}))
@@ -146,7 +152,8 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      tavily_keys: list[str] | tuple[str, ...] | None = None,
                      deadline: float | None = None,
                      site_memory=None,
-                     key_manager=None) -> dict:
+                     key_manager=None,
+                     jina_prefer_keyed: bool = False) -> dict:
     """Scrape `url` starting with `primary` backend, falling back through the others."""
 
     def _remaining_timeout() -> float:
@@ -159,6 +166,21 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
 
     policy = _resolve_scrape_policy(url, backends)
 
+    # When a caller forces an explicit backend list, surface configuration
+    # mistakes eagerly instead of letting them collapse into the generic
+    # "no scrape backend available" at the end.
+    if backends is not None:
+        key_pool_for = {
+            "exa": _key_candidates(exa_key, exa_keys),
+            "tavily": _key_candidates(tavily_key, tavily_keys),
+            "firecrawl": _key_candidates(firecrawl_key or "", firecrawl_keys),
+        }
+        for backend in backends:
+            if backend not in KNOWN_BACKENDS:
+                return {"url": url, "error": f"unknown scrape backend: {backend}"}
+            if backend in KEYED_BACKENDS and not key_pool_for[backend]:
+                return {"url": url, "error": f"missing key for backend: {backend}"}
+
     def _call(backend: str) -> dict | None:
         scrape_url = _rewrite_for_clean_scrape(url)
         call_timeout = _remaining_timeout()
@@ -166,58 +188,52 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             return {"url": scrape_url, "error": "scrape deadline exceeded"}
         if backend == "jina":
             key_pool = list(jina_keys or ([] if not jina_key else [jina_key]))
-            if not key_pool:
+
+            def _scrape_anonymous() -> dict:
                 if _jina_anonymous_cooling_down():
                     return {
                         "url": scrape_url,
                         "error": "Jina: anonymous rate limit cooldown active",
                         "rate_limited": True,
                     }
-                return scrape_url_jina(scrape_url, "", timeout=call_timeout, **policy["jina"])
-
-            if _jina_anonymous_cooling_down():
-                result = {
-                    "url": scrape_url,
-                    "error": "Jina: anonymous rate limit cooldown active",
-                    "rate_limited": True,
-                }
-            else:
-                result = scrape_url_jina(scrape_url, "", timeout=call_timeout, **policy["jina"])
-                if "error" not in result:
-                    return result
-                if result.get("rate_limited"):
+                result = scrape_url_jina(scrape_url, "", timeout=_remaining_timeout(), **policy["jina"])
+                if "error" in result and result.get("rate_limited"):
                     _record_jina_anonymous_rate_limit()
-                if not result.get("rate_limited"):
-                    return result
+                return result
 
-            last = result
-            for key in key_pool:
-                key_timeout = _remaining_timeout()
-                if key_timeout <= 0:
-                    break
-                if not get_active_jina_keys([key]):
-                    continue
-                if key_manager is not None:
-                    key_manager.record_use("jina", _candidate_for("jina", key))
-                keyed = scrape_url_jina(
+            def _scrape_keyed(key: str) -> dict:
+                return scrape_url_jina(
                     scrape_url,
                     key,
-                    timeout=key_timeout,
+                    timeout=_remaining_timeout(),
                     skip_anonymous=True,
                     **policy["jina"],
                 )
-                _record_key_result("jina", key, keyed, key_manager)
-                last = keyed
-                if "error" not in keyed:
+
+            keyed_pool = lambda: _scrape_with_key_pool(  # noqa: E731
+                "jina", key_pool, _scrape_keyed, deadline=deadline, key_manager=key_manager,
+            )
+
+            # No keys configured: anonymous channel is the only option.
+            if not key_pool:
+                return _scrape_anonymous()
+
+            # With keys present, "white-label first" stays the default to conserve
+            # paid quota; ``jina_prefer_keyed`` flips to keyed-first for users who
+            # want to bypass the shared anonymous quota entirely.
+            if jina_prefer_keyed:
+                keyed = keyed_pool()
+                if keyed is not None and "error" not in keyed:
                     return keyed
-                if keyed.get("key_exhausted") or keyed.get("exhausted"):
-                    mark_jina_exhausted_runtime(key)
-                    mark_jina_exhausted_persistent(key)
-                    continue
-                if keyed.get("rate_limited"):
-                    continue
-                return keyed
-            return last
+                return keyed if keyed is not None else _scrape_anonymous()
+
+            anon = _scrape_anonymous()
+            if "error" not in anon:
+                return anon
+            if not anon.get("rate_limited"):
+                return anon
+            keyed = keyed_pool()
+            return keyed if keyed is not None else anon
         if backend == "reddit":
             return scrape_url_reddit(scrape_url, timeout=call_timeout)
         if backend == "tavily":
@@ -229,9 +245,10 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                         scrape_url,
                         key,
                         timeout=_remaining_timeout(),
+                        deadline=deadline,
                         **tavily_options,
                     )
-                return scrape_url_tavily(scrape_url, key, timeout=_remaining_timeout())
+                return scrape_url_tavily(scrape_url, key, timeout=_remaining_timeout(), deadline=deadline)
             return _scrape_with_key_pool(
                 "tavily",
                 candidates,

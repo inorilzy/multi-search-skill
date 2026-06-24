@@ -2,7 +2,6 @@
 import json
 import os
 import random
-import threading
 from pathlib import Path
 
 
@@ -31,10 +30,6 @@ def key_pool(value) -> list[str]:
     return choices
 
 
-_JINA_EXHAUSTED: set[str] = set()
-_JINA_EXHAUSTED_LOCK = threading.Lock()
-
-
 def normalize_jina_config(value) -> list[dict]:
     """Normalize Jina config to list of {key, exhausted}.
 
@@ -61,87 +56,26 @@ def normalize_jina_config(value) -> list[dict]:
     return []
 
 
-def get_active_jina_keys(value) -> list[str]:
-    """Return non-exhausted Jina keys, shuffled.
+def jina_config_keys(value) -> list[str]:
+    """Return configured Jina keys that are not statically disabled.
 
-    Filters keys already marked exhausted in the config *and* keys
-    recorded in the runtime ``_JINA_EXHAUSTED`` set (session-scoped).
+    Honors the config-level ``exhausted: true`` flag (a user/operator opt-out),
+    but performs no shuffling and no runtime exhaustion bookkeeping. Live key
+    health (cooldown / quota / invalid) is owned by ``SQLiteKeyManager`` so that
+    Jina shares the same state-aware LRU rotation as the other providers.
     """
-    entries = normalize_jina_config(value)
-    with _JINA_EXHAUSTED_LOCK:
-        exhausted = set(_JINA_EXHAUSTED)
-    active = [e["key"] for e in entries if not e["exhausted"] and e["key"] not in exhausted]
-    random.shuffle(active)
-    return active
+    return [e["key"] for e in normalize_jina_config(value) if not e["exhausted"]]
 
 
 def count_jina_keys(value) -> tuple[int, int]:
-    """Return ``(active, total)`` Jina key counts."""
+    """Return ``(config_active, total)`` Jina key counts.
+
+    Reflects only static config state. Runtime health lives in the key-state DB.
+    """
     entries = normalize_jina_config(value)
     total = len(entries)
-    with _JINA_EXHAUSTED_LOCK:
-        exhausted = set(_JINA_EXHAUSTED)
-    active = sum(1 for e in entries if not e["exhausted"] and e["key"] not in exhausted)
+    active = sum(1 for e in entries if not e["exhausted"])
     return active, total
-
-
-def mark_jina_exhausted_runtime(key: str) -> None:
-    """Record *key* as exhausted for the current process session."""
-    if key:
-        with _JINA_EXHAUSTED_LOCK:
-            _JINA_EXHAUSTED.add(key)
-
-
-def mark_jina_exhausted_persistent(key_to_mark: str) -> bool:
-    """Mark a Jina key as exhausted in ``~/.search-keys.json``.
-
-    Returns ``True`` when the file was updated.
-    """
-    with _JINA_EXHAUSTED_LOCK:
-        keys_file = Path.home() / ".search-keys.json"
-        if not keys_file.exists():
-            return False
-        try:
-            data = json.loads(keys_file.read_text(encoding="utf-8-sig"))
-        except Exception:
-            return False
-        if not isinstance(data, dict):
-            return False
-
-        jina_val = data.get("jina")
-        if not jina_val:
-            return False
-
-        changed = False
-
-        def _mark(val):
-            nonlocal changed
-            if isinstance(val, str):
-                if val == key_to_mark:
-                    changed = True
-                    return {"key": val, "exhausted": True}
-                return val
-            if isinstance(val, dict):
-                if val.get("key") == key_to_mark and not val.get("exhausted"):
-                    val["exhausted"] = True
-                    changed = True
-                return val
-            if isinstance(val, list):
-                return [_mark(item) for item in val]
-            return val
-
-        data["jina"] = _mark(jina_val)
-
-        if changed:
-            try:
-                keys_file.write_text(
-                    json.dumps(data, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                return True
-            except Exception:
-                return False
-        return False
 
 
 def load_keys() -> dict:

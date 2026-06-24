@@ -6,7 +6,7 @@ from typing import Any
 
 from ..support.dedup import _norm_url, deduplicate, result_to_scrape, split_by_content
 from ..state.key_state import BasicKeyManager
-from ..state.keys import get_active_jina_keys
+from ..state.keys import jina_config_keys
 from ..support.models import as_dicts
 
 
@@ -101,7 +101,7 @@ def _managed_keys(key_manager, provider: str, value: Any) -> list[str]:
 def build_scrape_backends(keys: dict, key_manager=None) -> tuple[list[str], ScrapeKeyPools]:
     manager = key_manager or BasicKeyManager()
     pools = ScrapeKeyPools(
-        jina=get_active_jina_keys(keys.get("jina", "")),
+        jina=_managed_keys(manager, "jina", jina_config_keys(keys.get("jina", ""))),
         exa=_managed_keys(manager, "exa", keys.get("exa", "")),
         firecrawl=_managed_keys(manager, "firecrawl", keys.get("firecrawl", "")),
         tavily=_managed_keys(manager, "tavily", keys.get("tavily", "")),

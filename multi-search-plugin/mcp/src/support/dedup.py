@@ -7,6 +7,63 @@ from .models import as_dict, as_dicts
 ANSWER_SOURCES = {"tavily_answer", "serpapi_answer", "exa_answer", "glm_web_answer", "deepseek_web_answer"}
 MIN_USEFUL_WEB_CONTENT_CHARS = 300
 
+# When the same URL is returned by multiple sources, prefer the source that is
+# authoritative for that host as the canonical `source` (the others move to
+# also_from). Without this the canonical source is just whoever returned the URL
+# first, so a GitHub repo could be attributed to "brave" instead of "github-repos".
+CANONICAL_SOURCE_BY_HOST = {
+    "github.com": "github-repos",
+    "stackoverflow.com": "stackoverflow",
+    "news.ycombinator.com": "hackernews",
+    "reddit.com": "reddit",
+    "zhihu.com": "zhihu",
+    "v2ex.com": "v2ex",
+    "youtube.com": "youtube",
+    "youtu.be": "youtube",
+    "bilibili.com": "bilibili",
+}
+
+
+def _canonical_source_for_url(url: str) -> str | None:
+    try:
+        host = urllib.parse.urlparse(url).netloc.lower()
+    except Exception:
+        return None
+    if host.startswith("www."):
+        host = host[4:]
+    return CANONICAL_SOURCE_BY_HOST.get(host)
+
+
+def _prefer_canonical(existing: dict, candidate_source: str, url: str) -> None:
+    """If candidate_source is the authoritative source for this URL's host and
+    the row isn't already canonical, swap it in as the row's `source` and demote
+    the previous source into also_from."""
+    preferred = _canonical_source_for_url(url)
+    if not preferred or candidate_source != preferred:
+        return
+    current = existing.get("source")
+    if current == preferred:
+        return
+    if current and current not in existing.get("also_from", []):
+        existing.setdefault("also_from", []).append(current)
+    existing["source"] = preferred
+    if preferred in existing.get("also_from", []):
+        existing["also_from"] = [s for s in existing["also_from"] if s != preferred]
+
+# Exact tracking-parameter names to drop during URL normalization. Prefix
+# matching on "ref"/"source" used to also delete meaningful params like
+# ref_id / reference / source_id, collapsing distinct URLs into one and
+# silently dropping results. Only utm_* keeps prefix semantics.
+TRACKING_PARAMS = {
+    "fbclid", "gclid", "dclid", "msclkid", "yclid",
+    "ref", "ref_src", "source",
+}
+
+
+def _is_tracking_param(key: str) -> bool:
+    k = key.lower()
+    return k.startswith("utm_") or k in TRACKING_PARAMS
+
 
 def _norm_url(url: str) -> str:
     """Normalize URL for dedup: force https, lowercase host, strip trailing slash, remove UTM/tracking params."""
@@ -14,8 +71,7 @@ def _norm_url(url: str) -> str:
         parts = urllib.parse.urlparse(url.strip())
         scheme = "https" if parts.scheme in ("http", "https") else parts.scheme
         qs = urllib.parse.parse_qs(parts.query, keep_blank_values=True)
-        qs = {k: v for k, v in qs.items()
-              if not k.lower().startswith(("utm_", "fbclid", "gclid", "ref", "source"))}
+        qs = {k: v for k, v in qs.items() if not _is_tracking_param(k)}
         new_query = urllib.parse.urlencode(qs, doseq=True)
         path = parts.path.rstrip("/") or "/"
         return urllib.parse.urlunparse((scheme, parts.netloc.lower(), path, parts.params, new_query, ""))
@@ -91,6 +147,71 @@ def result_to_scrape(item: dict) -> dict:
     }
 
 
+def apply_scraped_content(rows: list, content_pool: dict) -> None:
+    """Write scraped markdown from content_pool back onto matching result rows.
+
+    content_pool is keyed by _norm_url(url) -> {"markdown", "via", ...}. For each
+    row whose normalized URL has pooled content, promote that content onto the
+    row's ``scraped_content`` (only when it is longer than what the row already
+    has) and flag the row with ``scraped=True`` / ``scrape_via``. This keeps the
+    final result records and the standalone ``scrapes`` view in sync instead of
+    leaving JSON rows as empty skeletons.
+    """
+    if not content_pool:
+        return
+    for row in rows:
+        url = row.get("url") if isinstance(row, dict) else getattr(row, "url", "")
+        if not url:
+            continue
+        pooled = content_pool.get(_norm_url(url))
+        if not pooled:
+            continue
+        markdown = pooled.get("markdown") or ""
+        if not markdown:
+            continue
+        existing = row.get("scraped_content") or ""
+        if len(markdown) > len(existing):
+            row["scraped_content"] = markdown
+        row["scraped"] = True
+        if pooled.get("via"):
+            row["scrape_via"] = pooled["via"]
+
+
+def consensus_weight(item: dict) -> int:
+    """Number of sources that agreed on a URL (1 + cross-source duplicates)."""
+    return 1 + len(item.get("also_from") or [])
+
+
+def rank_results(results: list) -> list:
+    """Order results by consensus + enrichment so a single ranking is shared by
+    JSON output, markdown rendering, and provider status.
+
+    Sort key (descending priority):
+      1. errors sink to the bottom
+      2. rows enriched with scraped content first (strongest quality signal)
+      3. higher consensus weight (more sources agreed)
+      4. longer scraped content
+      5. higher star count
+    Ties preserve insertion order (Python sort is stable).
+    """
+    rows = as_dicts(results)
+
+    def _key(item: dict):
+        is_error = "error" in item
+        has_content = bool(item.get("scraped_content"))
+        content_len = len((item.get("scraped_content") or ""))
+        stars = item.get("stars") or 0
+        return (
+            0 if is_error else 1,
+            1 if has_content else 0,
+            consensus_weight(item),
+            content_len,
+            stars,
+        )
+
+    return sorted(rows, key=_key, reverse=True)
+
+
 def deduplicate(results: list) -> tuple:
     """Remove duplicate URLs, keeping first occurrence. Returns (deduped, source_counts_raw).
 
@@ -122,6 +243,9 @@ def deduplicate(results: list) -> tuple:
             other_src = item.get("source", "?")
             if other_src != existing.get("source") and other_src not in existing.get("also_from", []):
                 existing.setdefault("also_from", []).append(other_src)
+            # Let an authoritative source for this host claim the canonical slot
+            # even if a generic search engine returned the URL first.
+            _prefer_canonical(existing, other_src, url)
             # Promote richer fields from later occurrences so we don't lose
             # pre-fetched content / longer descriptions / star counts just because
             # a snippet-only source happened to return the URL first.

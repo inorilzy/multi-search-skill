@@ -5,7 +5,6 @@ import urllib.parse
 
 _DEFAULT_SCRAPE_TIMEOUT_SECONDS = 30
 _GH_REPO_RE = re.compile(r"^https?://github\.com/([^/\s]+)/([^/\s#?]+)/?$")
-_JINA_KEY_INFO_URL = "https://dash.jina.ai/api/v1/api_key/fe_user"
 _JINA_REMOVE_SELECTOR = (
     "header, nav, footer, aside, script, style, noscript, "
     ".header, .navbar, .navigation, .menu, .sidebar, .footer, "

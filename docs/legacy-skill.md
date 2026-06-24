@@ -1,3 +1,12 @@
+<!--
+ARCHIVED LEGACY DOCUMENT — DO NOT USE AS THE ACTIVE SKILL OR CLI REFERENCE.
+
+The `scripts/` CLI and `search.py` entry described below have been REMOVED.
+The canonical runtime is now the MCP plugin under `multi-search-plugin/`.
+Active skill: `multi-search-plugin/skills/multi-search/SKILL.md`.
+This file is kept only for historical context (old routes/flags/architecture).
+-->
+
 ---
 name: multi-search
 description: >

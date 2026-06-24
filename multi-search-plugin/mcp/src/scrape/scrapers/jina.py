@@ -7,14 +7,9 @@ import urllib.parse
 import urllib.request
 
 from ...support.http import urlopen_retry
-from ...state.keys import (
-    mark_jina_exhausted_persistent,
-    mark_jina_exhausted_runtime,
-)
 from ...support.secrets import scrub_secrets
 from . import (
     _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
-    _JINA_KEY_INFO_URL,
     _JINA_REMOVE_SELECTOR,
     _safe_http_url,
 )
@@ -87,45 +82,17 @@ def _jina_rate_limited(status_code: int | None, message: str) -> bool:
     )
 
 
-def _jina_key_total_balance(api_key: str, timeout: int = 10) -> float | None:
-    if not api_key:
-        return None
-    url = _JINA_KEY_INFO_URL + "?" + urllib.parse.urlencode({"api_key": api_key})
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "Mozilla/5.0 multi-search/1.0",
-        },
+def _jina_quota_exhausted(status_code: int | None, message: str) -> bool:
+    """True when the error indicates the *key* is out of quota/balance."""
+    text = message.lower()
+    return (
+        status_code == 402
+        or "insufficient balance" in text
+        or "insufficient_balance" in text
+        or "payment required" in text
+        or "credits" in text
+        or "quota" in text
     )
-    try:
-        with urlopen_retry(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
-    except Exception:
-        return None
-    if not isinstance(data, dict):
-        return None
-    wallet = data.get("wallet")
-    if not isinstance(wallet, dict) and isinstance(data.get("data"), dict):
-        wallet = data["data"].get("wallet")
-    if not isinstance(wallet, dict):
-        return None
-    balance = wallet.get("total_balance")
-    if isinstance(balance, bool):
-        return None
-    if isinstance(balance, (int, float)):
-        return float(balance)
-    if isinstance(balance, str):
-        try:
-            return float(balance.strip())
-        except ValueError:
-            return None
-    return None
-
-
-def _jina_key_balance_exhausted(api_key: str, timeout: int = 10) -> bool:
-    balance = _jina_key_total_balance(api_key, timeout=timeout)
-    return balance is not None and balance <= 0
 
 
 def _jina_error_message(exc: urllib.error.HTTPError) -> str:
@@ -199,7 +166,10 @@ def scrape_url_jina(
                 rate_limited = True
                 if not key:
                     _record_jina_anonymous_rate_limit()
-                if key and _jina_key_balance_exhausted(key, timeout=min(timeout, 10)):
+                # Classify exhaustion from the error itself instead of issuing a
+                # blocking balance-API round-trip; the key-state store (and the
+                # caller) only need to know this key is out of quota.
+                if key and _jina_quota_exhausted(exc.code, message):
                     key_exhausted = True
             try:
                 exc.close()

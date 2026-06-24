@@ -1,4 +1,8 @@
-"""Zhihu-specific URL helpers."""
+"""Site-specific URL/text classifiers used by scrape policy resolution.
+
+These are pure URL/content heuristics (not scrapers), so they live alongside
+the scrape orchestrator rather than under ``scrapers/``.
+"""
 import urllib.parse
 
 

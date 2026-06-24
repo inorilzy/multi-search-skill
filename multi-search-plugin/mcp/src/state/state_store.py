@@ -22,6 +22,7 @@ SCHEMA = (
       rate_limit_count INTEGER NOT NULL DEFAULT 0,
       quota_error_count INTEGER NOT NULL DEFAULT 0,
       use_count INTEGER NOT NULL DEFAULT 0,
+      invalid_strikes INTEGER NOT NULL DEFAULT 0,
       last_used_at TEXT,
       last_success_at TEXT,
       last_failure_at TEXT,
@@ -115,6 +116,7 @@ class StateStore:
             self._ensure_columns(conn, "key_state", {
                 "use_count": "INTEGER NOT NULL DEFAULT 0",
                 "last_used_at": "TEXT",
+                "invalid_strikes": "INTEGER NOT NULL DEFAULT 0",
             })
 
     def _ensure_columns(self, conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:

@@ -10,10 +10,10 @@ from typing import Any
 
 from .support.cache import JsonCache, make_scrape_cache_key
 from .support.config import ConfigError, config_bool, config_list, load_config, resolve_config_path
-from .support.dedup import deduplicate
+from .support.dedup import apply_scraped_content, deduplicate, rank_results
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
-from .state.keys import count_jina_keys, get_active_jina_keys, load_keys
+from .state.keys import count_jina_keys, jina_config_keys, load_keys
 from .support.models import as_dicts
 from .scrape.scrape import scrape_url_smart
 from .scrape.scrape_planner import add_to_content_pool, plan_scrapes
@@ -134,6 +134,10 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     scrape_chars = max(1, _resolve_int(request.scrape_chars, config, "scrape_chars", 6000))
     scrape_per_source = max(1, _resolve_int(request.scrape_per_source, config, "scrape_per_source", 6))
     scrape_timeout = _resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
+    # Per-URL scrape cap inside the orchestrator. Defaults to the stage timeout
+    # so a single slow URL cannot silently swallow the whole budget, but it is
+    # always additionally bounded by the remaining stage deadline at call time.
+    scrape_url_timeout = _resolve_nonnegative(None, config, "scrape_url_timeout", scrape_timeout)
     scrape_concurrency = max(1, _resolve_int(request.scrape_concurrency, config, "scrape_concurrency", 5))
     output_mode = request.output if request.output in {"json", "markdown", "both"} else "both"
     if meta.get("title_url_only"):
@@ -174,6 +178,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
         scrape_top=scrape_top,
         scrape_per_source=scrape_per_source,
         scrape_timeout=scrape_timeout,
+        scrape_url_timeout=scrape_url_timeout,
         scrape_concurrency=scrape_concurrency,
         site_memory=site_memory,
         key_manager=key_manager,
@@ -181,6 +186,10 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     final_results, _ = deduplicate(
         scrape_result["with_content"] + scrape_result["final_without_content"] + scrape_result["passthrough"]
     )
+    # Single ranking shared by JSON results, markdown rendering, and provider
+    # status — previously sorting only happened inside format_results, so the
+    # JSON `results` order diverged from the markdown order.
+    final_results = rank_results(final_results)
     valid_count = _valid_result_count(final_results)
     markdown = ""
     if output_mode in {"markdown", "both"}:
@@ -243,7 +252,7 @@ def run_scrape(request: ScrapeRequest | dict) -> dict:
         request.url,
         timeout=timeout,
         backends=tuple(request.backends) if request.backends else None,
-        jina_keys=get_active_jina_keys(keys.get("jina")),
+        jina_keys=[candidate.key for candidate in key_manager.candidates("jina", jina_config_keys(keys.get("jina")))],
         exa_keys=[candidate.key for candidate in key_manager.candidates("exa", keys.get("exa"))],
         firecrawl_keys=[candidate.key for candidate in key_manager.candidates("firecrawl", keys.get("firecrawl"))],
         tavily_keys=[candidate.key for candidate in key_manager.candidates("tavily", keys.get("tavily"))],
@@ -315,7 +324,10 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
 
 def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, scrape_top: int,
                       scrape_per_source: int, scrape_timeout: int, scrape_concurrency: int,
-                      site_memory: SiteScraperMemory | None, key_manager=None) -> dict:
+                      site_memory: SiteScraperMemory | None, key_manager=None,
+                      scrape_url_timeout: int | None = None) -> dict:
+    if scrape_url_timeout is None:
+        scrape_url_timeout = scrape_timeout
     scrape_plan = plan_scrapes(
         all_results,
         keys=keys,
@@ -362,8 +374,12 @@ def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, 
                             scrape_result.setdefault("cache", "hit")
                         else:
                             pools = plan_item.key_pools
+                            per_url_timeout = scrape_url_timeout
+                            remaining = deadline - time.monotonic()
+                            if remaining < per_url_timeout:
+                                per_url_timeout = max(0, int(remaining))
                             scrape_result = scrape_url_smart(
-                                item["url"], timeout=30, primary=plan_item.primary_backend,
+                                item["url"], timeout=per_url_timeout, primary=plan_item.primary_backend,
                                 backends=tuple(backends), jina_keys=pools.jina, exa_keys=pools.exa,
                                 firecrawl_keys=pools.firecrawl, tavily_keys=pools.tavily,
                                 deadline=deadline, site_memory=site_memory, key_manager=key_manager,
@@ -401,6 +417,12 @@ def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, 
             for i, item in enumerate(items_to_scrape):
                 if i not in completed:
                     scrape_errors.append(timeout_row(item))
+
+    # Write freshly scraped content back onto the result records so JSON results,
+    # markdown ranking, and the standalone scrapes view all see enriched rows
+    # instead of leaving final_without_content as empty skeletons.
+    apply_scraped_content(scrape_plan.final_without_content, content_pool)
+    apply_scraped_content(scrape_plan.with_content, content_pool)
 
     return {
         "with_content": scrape_plan.with_content,

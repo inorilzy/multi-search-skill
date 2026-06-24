@@ -16,7 +16,14 @@ ACTIVE = "active"
 COOLDOWN = "cooldown"
 QUOTA_EXHAUSTED = "quota_exhausted"
 INVALID = "invalid"
+TRANSIENT_INVALID = "transient_invalid"
 DISABLED = "disabled"
+
+# Number of consecutive "invalid"-classified failures (e.g. transient 401/403)
+# tolerated before a key is escalated to a permanent INVALID state.
+INVALID_STRIKE_LIMIT = 3
+# Cooldown applied to a transiently-invalid key before it is retried.
+INVALID_COOLDOWN = timedelta(minutes=15)
 
 
 def _now() -> datetime:
@@ -127,6 +134,8 @@ class SQLiteKeyManager(BasicKeyManager):
             exhausted_until = _parse_iso(row.get("exhausted_until"))
             if status == COOLDOWN and cooldown_until and cooldown_until > now:
                 continue
+            if status == TRANSIENT_INVALID and cooldown_until and cooldown_until > now:
+                continue
             if status == QUOTA_EXHAUSTED and exhausted_until and exhausted_until > now:
                 continue
             last_used_at = row.get("last_used_at") or ""
@@ -156,7 +165,7 @@ class SQLiteKeyManager(BasicKeyManager):
                 UPDATE key_state
                 SET status = ?, success_count = success_count + 1, last_success_at = ?,
                     last_error_type = NULL, last_error_message = NULL, cooldown_until = NULL,
-                    updated_at = ?
+                    invalid_strikes = 0, updated_at = ?
                 WHERE provider = ? AND key_id = ?
                 """,
                 (ACTIVE, now, now, provider, candidate.key_id),
@@ -168,8 +177,19 @@ class SQLiteKeyManager(BasicKeyManager):
         exhausted_until = None
         rate_inc = 0
         quota_inc = 0
+        strike_assignment = "invalid_strikes = invalid_strikes"
         if error_type == "invalid":
-            status = INVALID
+            # A single 401/403 is often a transient upstream blip (Cloudflare,
+            # gateway, brief rate misclassification). Cool the key down and only
+            # escalate to a permanent INVALID after repeated consecutive hits.
+            current_strikes = self._invalid_strikes(provider, candidate.key_id)
+            new_strikes = current_strikes + 1
+            strike_assignment = f"invalid_strikes = {int(new_strikes)}"
+            if new_strikes >= INVALID_STRIKE_LIMIT:
+                status = INVALID
+            else:
+                status = TRANSIENT_INVALID
+                cooldown_until = _iso(_now() + INVALID_COOLDOWN)
         elif error_type == "rate_limit":
             status = COOLDOWN
             cooldown_until = _iso(_now() + timedelta(minutes=15))
@@ -178,13 +198,16 @@ class SQLiteKeyManager(BasicKeyManager):
             status = QUOTA_EXHAUSTED
             exhausted_until = _iso(_now() + timedelta(hours=24))
             quota_inc = 1
+        else:
+            # Any other failure type breaks the consecutive-invalid streak.
+            strike_assignment = "invalid_strikes = 0"
         self.store.execute(
-            """
+            f"""
             UPDATE key_state
             SET status = ?, failure_count = failure_count + 1,
                 rate_limit_count = rate_limit_count + ?, quota_error_count = quota_error_count + ?,
                 last_failure_at = ?, last_error_type = ?, last_error_message = ?,
-                cooldown_until = ?, exhausted_until = ?, updated_at = ?
+                cooldown_until = ?, exhausted_until = ?, {strike_assignment}, updated_at = ?
             WHERE provider = ? AND key_id = ?
             """,
             (
@@ -193,6 +216,16 @@ class SQLiteKeyManager(BasicKeyManager):
                 exhausted_until, now, provider, candidate.key_id,
             ),
         )
+
+    def _invalid_strikes(self, provider: str, key_id: str) -> int:
+        rows = self.store.rows(
+            "SELECT invalid_strikes FROM key_state WHERE provider = ? AND key_id = ?",
+            (provider, key_id),
+        )
+        if not rows:
+            return 0
+        value = rows[0].get("invalid_strikes")
+        return int(value or 0)
 
     def status_rows(self, provider: str | None = None) -> list[dict]:
         if provider:
@@ -211,7 +244,7 @@ class SQLiteKeyManager(BasicKeyManager):
         if key_id:
             where.append("key_id = ?")
             params.append(key_id)
-        sql = "UPDATE key_state SET status = ?, cooldown_until = NULL, exhausted_until = NULL, manually_disabled = 0, updated_at = ?"
+        sql = "UPDATE key_state SET status = ?, cooldown_until = NULL, exhausted_until = NULL, manually_disabled = 0, invalid_strikes = 0, updated_at = ?"
         if where:
             sql += " WHERE " + " AND ".join(where)
         with self.store.connect() as conn:

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 KEY_RETRY_PATTERNS = (
     "401", "403", "429", "unauthorized", "forbidden", "invalid api",
-    "invalid key", "api key", "quota", "rate limit", "rate_limit",
+    "invalid key", "api key expired", "api key disabled", "api key revoked",
+    "expired api key", "quota", "rate limit", "rate_limit",
     "too many requests", "limit exceeded", "exceeded your", "credits",
     "billing", "payment", "insufficient",
 )

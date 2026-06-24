@@ -2,6 +2,7 @@
 import re
 
 from .models import as_dicts
+from .dedup import consensus_weight, rank_results
 
 SOURCE_ICONS = {
     "brave": "🔍",
@@ -212,9 +213,11 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     def _weight(item):
         if "error" in item:
             return -1
-        return 1 + len(item.get("also_from") or [])
+        return consensus_weight(item)
 
-    results = sorted(results, key=_weight, reverse=True)
+    # Use the shared ranking so standalone callers match service-layer order
+    # (service already pre-ranks; rank_results is stable + idempotent here).
+    results = rank_results(results)
 
     valid = [r for r in results if "error" not in r]
     consensus_count = sum(1 for r in valid if _weight(r) >= 2)

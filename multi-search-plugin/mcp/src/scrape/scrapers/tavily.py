@@ -1,5 +1,6 @@
 """Tavily-backed URL scraping."""
 import json
+import time
 import urllib.request
 
 from ...support.http import urlopen_retry
@@ -12,17 +13,24 @@ def scrape_url_tavily(
     api_key: str,
     timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
     content_format: str = "markdown",
+    deadline: float | None = None,
 ) -> dict:
     """Fetch page content via Tavily /extract API."""
     if not _safe_http_url(url):
         return {"url": url, "error": "rejected non-http(s) URL"}
 
+    def _call_timeout() -> float:
+        if deadline is None:
+            return float(timeout)
+        return min(float(timeout), max(0.0, deadline - time.monotonic()))
+
     def _extract(depth: str) -> dict:
+        call_timeout = _call_timeout()
         payload = json.dumps({
             "urls": [url],
             "extract_depth": depth,
             "format": content_format,
-            "timeout": max(1.0, min(float(timeout), 60.0)),
+            "timeout": max(1.0, min(call_timeout, 60.0)),
         }).encode()
         req = urllib.request.Request(
             "https://api.tavily.com/extract",
@@ -33,7 +41,7 @@ def scrape_url_tavily(
             },
             method="POST",
         )
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=call_timeout) as resp:
             return json.loads(resp.read())
 
     def _parse(data: dict, depth: str) -> dict:
@@ -57,6 +65,10 @@ def scrape_url_tavily(
     try:
         advanced = _parse(_extract("advanced"), "advanced")
         if "error" not in advanced:
+            return advanced
+        # Respect the overall scrape deadline before spending another HTTP
+        # round-trip on the basic-depth fallback.
+        if deadline is not None and _call_timeout() <= 0:
             return advanced
         basic = _parse(_extract("basic"), "basic")
         if "error" not in basic:
