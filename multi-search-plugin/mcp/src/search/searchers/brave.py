@@ -8,13 +8,21 @@ from ...support.http import urlopen_retry
 from ...support.secrets import scrub_secrets
 
 
-def search_brave(query: str, api_key: str, count: int = 10, timeout: float = 15) -> list:
+def search_brave(
+    query: str,
+    api_key: str,
+    count: int = 10,
+    timeout: float = 15,
+    search_depth: str = "normal",
+) -> list:
     """Call Brave Search API.
     Uses extra_snippets=true: returns up to 5 additional excerpts per result (free, no extra cost).
     """
+    depth = (search_depth or "normal").lower()
+    extra_snippets = "false" if depth == "fast" else "true"
     url = (
         "https://api.search.brave.com/res/v1/web/search?"
-        + urllib.parse.urlencode({"q": query, "count": count, "extra_snippets": "true"})
+        + urllib.parse.urlencode({"q": query, "count": count, "extra_snippets": extra_snippets})
     )
     req = urllib.request.Request(
         url,
@@ -47,6 +55,8 @@ def search_brave(query: str, api_key: str, count: int = 10, timeout: float = 15)
                 "title": item.get("title", ""),
                 "url": item.get("url", ""),
                 "description": desc,
+                "search_depth": depth,
+                "extra_snippets": extra_snippets == "true",
             }
         )
     return results

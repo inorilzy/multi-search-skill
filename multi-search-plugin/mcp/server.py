@@ -34,6 +34,7 @@ mcp = FastMCP(
 def multi_search(query: str, route: str | None = None, count: int | None = None,
                  sources: list[str] | None = None, scrape_top: int | None = None,
                  scrape_chars: int | None = None, timeout: int | None = None,
+                 search_depth: str | None = None,
                  expand: list[str] | None = None, use_state: bool = True,
                  output: str = "both") -> dict:
     """Search across configured sources, optionally scrape top URLs, and return structured results.
@@ -44,7 +45,7 @@ def multi_search(query: str, route: str | None = None, count: int | None = None,
     On invalid input the tool returns a structured {"error", "error_type"} dict.
     """
     return multi_search_tool(query, route, count, sources, scrape_top, scrape_chars,
-                             timeout, expand, use_state, output)  # type: ignore[arg-type]
+                             timeout, search_depth, expand, use_state, output)  # type: ignore[arg-type]
 
 
 @mcp.tool(name="scrape_url")

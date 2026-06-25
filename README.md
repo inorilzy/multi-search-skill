@@ -30,6 +30,8 @@ MCP tools 包括：`multi_search`、`scrape_url`、`list_sources`、`doctor`、`
 
 当前默认行为：`default` 是 `web` 的兼容别名，跑 Brave、Tavily、Exa、SerpAPI；默认额外抓取最多 8 个缺正文 URL。Tavily / Exa 已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。需要快速总结用 `fast`，需要更深证据用 `expert`。
 
+`search_depth` 是跨通用搜索源的执行强度参数。对外推荐使用 `auto` / `fast` / `deep`；`auto` 会根据 prompt 复杂度在内部判定为 `fast` / `normal` / `deep`。当前已适配 Baidu、Tavily、Exa、Brave、SerpAPI、Firecrawl；没有原生 deep 参数的源会用更多上下文、额外片段或 inline markdown 做合成增强。
+
 ## 适用场景
 
 - 让 agent 一次性查多个来源，而不是只依赖单一搜索 API。
@@ -245,6 +247,7 @@ flowchart LR
 | `sources` | — | 直接指定一个或多个源，绕过 route |
 | `count` | per-source | 全局 count，会按各源上限 clamp |
 | `timeout` | 60 | 搜索阶段整批 deadline |
+| `search_depth` | `auto` | 搜索强度：对外推荐 `auto` / `fast` / `deep`；内部可解析为 `normal` 平衡档 |
 | `scrape_top` | 30 | 额外抓取缺正文 URL 数，上限 30；传 0 关闭 |
 | `scrape_chars` | provider | 单页抓取正文最大字符数 |
 | `expand` | — | 额外扩展查询（list），常用于给中文查询补英文 |

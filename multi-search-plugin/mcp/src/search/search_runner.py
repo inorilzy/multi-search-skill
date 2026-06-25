@@ -16,19 +16,21 @@ from ..support.secrets import scrub_secrets
 
 
 ALL_SOURCE_NAMES = {
-    "bilibili", "brave", "deepseek_web", "exa", "firecrawl",
+    "baidu", "bilibili", "brave", "deepseek_web", "exa", "firecrawl",
     "github_repos", "glm_web", "hackernews", "linuxdo", "linuxdo_api",
     "reddit", "reddit_oauth", "serpapi", "stackoverflow", "tavily",
     "twitter", "v2ex", "youtube", "zhihu",
 }
 
 SOURCE_ALIASES = {
+    "baidu-ai-search": "baidu",
     "deepseek-web": "deepseek_web",
     "glm-web": "glm_web",
     "github": "github_repos",
     "github-repos": "github_repos",
     "linux-do": "linuxdo",
     "linuxdo-api": "linuxdo_api",
+    "qianfan": "baidu",
     "reddit-oauth": "reddit_oauth",
 }
 
@@ -52,6 +54,7 @@ DEFAULT_ROUTE_META = {
     "title_url_only": False,
     "degrade_to": set(),
     "primary_success_sources": set(),
+    "search_depth": "auto",
 }
 
 ROUTE_META = {
@@ -61,6 +64,7 @@ ROUTE_META = {
         "show_snippet": True,
         "count": 8,
         "timeout": 60,
+        "search_depth": "auto",
     },
     "web": {
         "scrape_top": 8,
@@ -68,6 +72,7 @@ ROUTE_META = {
         "show_snippet": True,
         "count": 8,
         "timeout": 60,
+        "search_depth": "auto",
     },
     "fast": {
         "scrape_top": 0,
@@ -77,6 +82,7 @@ ROUTE_META = {
         "timeout": 30,
         "degrade_to": {"tavily", "exa"},
         "primary_success_sources": {"deepseek-web", "glm-web", "deepseek_web_answer", "glm_web_answer"},
+        "search_depth": "fast",
     },
     "expert": {
         "scrape_top": 20,
@@ -84,6 +90,7 @@ ROUTE_META = {
         "show_snippet": True,
         "count": 12,
         "timeout": 90,
+        "search_depth": "deep",
     },
     "social": {
         "scrape_top": 0,
@@ -155,6 +162,7 @@ class SearchRunnerConfig:
     timeout: int
     serpapi_engine: str
     keys: dict
+    search_depth: str = "normal"
 
 
 @dataclass
@@ -171,15 +179,20 @@ def missing(source: str, message: str) -> list[dict]:
     return [{"source": source, "error": f"skipped: {message}"}]
 
 
-def call_optional_timeout(fn, *positional, timeout: float):
+def call_optional_timeout(fn, *positional, timeout: float, **keyword_options):
     try:
         params = inspect.signature(fn).parameters
         accepts_timeout = "timeout" in params
     except (TypeError, ValueError):
         accepts_timeout = False
+        params = {}
+    accepted_options = {
+        key: value for key, value in keyword_options.items()
+        if key in params
+    }
     if accepts_timeout:
-        return fn(*positional, timeout=timeout)
-    return fn(*positional)
+        accepted_options["timeout"] = timeout
+    return fn(*positional, **accepted_options)
 
 
 def run_keyed_source(source: str, key_value, call_with_key, deadline: float | None = None, key_manager=None) -> list[dict]:

@@ -352,6 +352,125 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(captured[1]["counts"]["tavily"], 6)
         self.assertEqual(captured[1]["scrape_top"], 3)
 
+    def test_search_depth_flows_to_runner_and_diagnostics(self):
+        captured = {}
+
+        class FakeRunner:
+            def __init__(self, config, providers, route_resolver=None, key_manager=None):
+                captured["search_depth"] = config.search_depth
+
+            def run(self, query, lite=False):
+                return [{"source": "baidu_answer", "answer": "summary"}]
+
+        with mock.patch("src.service._load_config_safe", return_value={}), \
+             mock.patch("src.service.load_keys", return_value={}), \
+             mock.patch("src.service.SearchRunner", FakeRunner), \
+             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+            response = run_multi_search(MultiSearchRequest(
+                query="q", sources=["baidu"], search_depth="deep", use_state=False,
+            ))
+
+        self.assertEqual(captured["search_depth"], "deep")
+        self.assertEqual(response["diagnostics"]["route_meta"]["search_depth"], "deep")
+
+    def test_auto_search_depth_classifies_prompt_complexity(self):
+        captured = []
+
+        class FakeRunner:
+            def __init__(self, config, providers, route_resolver=None, key_manager=None):
+                self.config = config
+
+            def run(self, query, lite=False):
+                captured.append(self.config.search_depth)
+                return [{"source": "baidu_answer", "answer": self.config.search_depth}]
+
+        with mock.patch("src.service._load_config_safe", return_value={}), \
+             mock.patch("src.service.load_keys", return_value={}), \
+             mock.patch("src.service.SearchRunner", FakeRunner), \
+             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+            fast_response = run_multi_search(MultiSearchRequest(
+                query="Vue 官网链接", sources=["baidu"], search_depth="auto", use_state=False,
+            ))
+            deep_response = run_multi_search(MultiSearchRequest(
+                query="对比 Codex 和 Claude Code 的优缺点，需要多来源证据", sources=["baidu"], search_depth="auto", use_state=False,
+            ))
+
+        self.assertEqual(captured, ["fast", "deep"])
+        self.assertEqual(fast_response["diagnostics"]["route_meta"]["search_depth"], "fast")
+        self.assertEqual(deep_response["diagnostics"]["route_meta"]["search_depth"], "deep")
+        self.assertIn("auto:", deep_response["diagnostics"]["route_meta"]["search_depth_reason"])
+
+    def test_route_pinned_depth_beats_config_auto(self):
+        # Config says "auto" but a route that pins a concrete depth (fast/expert)
+        # must keep that depth regardless of how the query would classify.
+        class FakeRunner:
+            def __init__(self, config, providers, route_resolver=None, key_manager=None):
+                self.config = config
+
+            def run(self, query, lite=False):
+                return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
+
+        # Config says "auto" but a route that pins a concrete depth (fast/expert)
+        # must keep that depth regardless of how the query would classify.
+        with mock.patch("src.service._load_config_safe", return_value={"search_depth": "auto"}), \
+             mock.patch("src.service.load_keys", return_value={}), \
+             mock.patch("src.service.SearchRunner", FakeRunner), \
+             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+            # expert + a simple "fast-looking" query must stay deep.
+            expert_response = run_multi_search(MultiSearchRequest(
+                query="Vue 官网链接", route="expert", use_state=False,
+            ))
+            # fast + a complex "deep-looking" query must stay fast.
+            fast_response = run_multi_search(MultiSearchRequest(
+                query="对比 Codex 和 Claude Code 的优缺点，需要多来源证据", route="fast", use_state=False,
+            ))
+            # explicit request value still wins over the route's pinned depth.
+            override_response = run_multi_search(MultiSearchRequest(
+                query="x", route="expert", search_depth="fast", use_state=False,
+            ))
+
+        self.assertEqual(expert_response["diagnostics"]["route_meta"]["search_depth"], "deep")
+        self.assertEqual(expert_response["diagnostics"]["route_meta"]["search_depth_reason"], "route")
+        self.assertEqual(fast_response["diagnostics"]["route_meta"]["search_depth"], "fast")
+        self.assertEqual(override_response["diagnostics"]["route_meta"]["search_depth"], "fast")
+        self.assertEqual(override_response["diagnostics"]["route_meta"]["search_depth_reason"], "explicit")
+
+    def test_status_ok_is_reserved_for_provider_status_meta_rows(self):
+        # Contract guard: `status == "ok"` marks a ProviderStatus *meta* row
+        # (raw_hits accounting), NOT a real search result. The result-counting
+        # and degradation logic excludes such rows. If a future searcher emits
+        # `status: "ok"` on a genuine result row, that result would be silently
+        # dropped from counts and could trigger a false degradation. This test
+        # pins the convention so such a regression is caught early.
+        real_result = {"source": "tavily", "title": "t", "url": "https://e.com"}
+        meta_row = {"source": "tavily", "status": "ok", "raw_hits": 0}
+
+        self.assertEqual(service_module._valid_result_count([real_result, meta_row]), 1)
+
+        # A meta-only result set (no real results) for a route with primary
+        # sources must report degradation; adding a real primary result clears it.
+        meta = route_meta("fast")
+        only_meta = [{"source": "deepseek-web", "status": "ok", "raw_hits": 0}]
+        self.assertIsNotNone(service_module._route_degradation("fast", only_meta, None, meta))
+        with_real = only_meta + [{"source": "deepseek-web", "title": "t", "url": "https://e.com"}]
+        self.assertIsNone(service_module._route_degradation("fast", with_real, None, meta))
+
+    def test_classify_search_depth_is_script_aware_for_short_queries(self):
+        classify = service_module._classify_search_depth
+        # A short, space-free Chinese query without strong terms is no longer
+        # mis-judged as "fast" purely because of its low character count.
+        self.assertEqual(classify("Vue和React哪个好")[0], "normal")
+        # Chinese research/comparison intent still upgrades to deep.
+        self.assertEqual(classify("比较一下Vue和React的SSR方案")[0], "deep")
+        # Genuinely tiny lookups still classify as fast.
+        self.assertEqual(classify("python")[0], "fast")
+        self.assertEqual(classify("Vue 官网链接")[0], "fast")
+        # Whitespace-only / empty input is handled gracefully.
+        self.assertEqual(classify("   ")[0], "normal")
+
     def test_expert_route_uses_route_count_default(self):
         captured = {}
 
@@ -698,6 +817,24 @@ class PluginCanonicalSourceTests(unittest.TestCase):
         ])
         self.assertEqual(deduped[0]["source"], "brave")
         self.assertIn("tavily", deduped[0].get("also_from", []))
+
+
+class PluginRegistryConsistencyTests(unittest.TestCase):
+    def test_route_meta_covers_every_route_profile(self):
+        from src.search.search_runner import ROUTE_META
+        missing = set(ROUTE_PROFILES) - set(ROUTE_META)
+        self.assertEqual(missing, set(), f"routes without ROUTE_META entry: {sorted(missing)}")
+
+    def test_count_caps_cover_every_default_count(self):
+        from src.service import COUNT_CAPS, DEFAULT_COUNTS
+        missing = set(DEFAULT_COUNTS) - set(COUNT_CAPS)
+        self.assertEqual(missing, set(), f"sources missing a COUNT_CAPS entry: {sorted(missing)}")
+
+    def test_route_profile_sources_are_known(self):
+        from src.search.search_runner import ALL_SOURCE_NAMES
+        profile_sources = {src for sources in ROUTE_PROFILES.values() for src in sources}
+        unknown = profile_sources - ALL_SOURCE_NAMES
+        self.assertEqual(unknown, set(), f"routes reference unknown sources: {sorted(unknown)}")
 
 
 if __name__ == "__main__":

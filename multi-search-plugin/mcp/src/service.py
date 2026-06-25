@@ -14,7 +14,7 @@ from .support.dedup import apply_scraped_content, deduplicate, rank_results
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
 from .state.keys import count_jina_keys, jina_config_keys, load_keys
-from .support.models import as_dicts
+from .support.models import ANSWER_SOURCES, as_dicts
 from .scrape.scrape import scrape_url_smart
 from .scrape.scrape_planner import add_to_content_pool, plan_scrapes
 from .search.search_runner import (
@@ -32,6 +32,7 @@ from .state.state_store import StateStore
 
 
 DEFAULT_COUNTS = {
+    "baidu": 10,
     "brave": 10,
     "tavily": 10,
     "exa": 10,
@@ -51,6 +52,7 @@ DEFAULT_COUNTS = {
 }
 
 COUNT_CAPS = {
+    "baidu": 50,
     "brave": 20,
     "tavily": 20,
     "exa": 100,
@@ -82,6 +84,7 @@ class MultiSearchRequest:
     scrape_timeout: int | None = None
     scrape_concurrency: int | None = None
     timeout: int | None = None
+    search_depth: str | None = None
     output: str = "both"
     config_path: str | None = None
     expand: list[str] = field(default_factory=list)
@@ -109,6 +112,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     config = _load_config_safe(request.config_path)
     route = str(_resolve_value(request.route, config, "type", "default"))
     meta = route_meta(route)
+    search_depth, depth_reason = _resolve_search_depth(request.query, request.search_depth, config, meta)
     if request.sources:
         source_names = {normalize_source_name(str(source)) for source in request.sources}
         unknown_sources = source_names - ALL_SOURCE_NAMES
@@ -148,7 +152,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     store = StateStore() if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
     site_memory = SiteScraperMemory(store) if store else None
-    runner_config = SearchRunnerConfig(route, counts, timeout, str(config.get("serpapi_engine", "google_light")), keys)
+    runner_config = SearchRunnerConfig(route, counts, timeout, str(config.get("serpapi_engine", "google_light")), keys, search_depth)
     route_resolver = (lambda _route, lite=False: source_names or resolve_route(_route, lite=lite))
     runner = SearchRunner(runner_config, build_provider_registry(), route_resolver=route_resolver, key_manager=key_manager)
 
@@ -229,6 +233,8 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
                 "show_snippet": bool(meta.get("show_snippet")),
                 "count": meta.get("count"),
                 "timeout": timeout,
+                "search_depth": search_depth,
+                "search_depth_reason": depth_reason,
             },
             "route_degradation": _route_degradation(route, all_results, source_names, meta),
         },
@@ -291,6 +297,9 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
             "env": [
                 "BRAVE_SEARCH_API_KEY",
                 "BRAVE_API_KEY",
+                "BAIDU_QIANFAN_API_KEY",
+                "QIANFAN_API_KEY",
+                "APPBUILDER_API_KEY",
                 "TAVILY_API_KEY",
                 "EXA_API_KEY",
                 "JINA_API_KEY",
@@ -504,7 +513,7 @@ def _valid_result_count(results: list[dict]) -> int:
     return len([
         row for row in as_dicts(results)
         if "error" not in row and row.get("status") != "ok"
-        and row.get("source") not in {"tavily_answer", "serpapi_answer", "exa_answer", "glm_web_answer", "deepseek_web_answer"}
+        and row.get("source") not in ANSWER_SOURCES
     ])
 
 
@@ -536,6 +545,100 @@ def _resolve_int(request_value: Any, config: dict, key: str, default: int) -> in
 
 def _resolve_nonnegative(request_value: Any, config: dict, key: str, default: int) -> int:
     return max(0, _resolve_int(request_value, config, key, default))
+
+
+def _resolve_search_depth(query: str, request_value: str | None, config: dict, meta: dict) -> tuple[str, str]:
+    # Priority: explicit request value > a route that pins a concrete depth
+    # (e.g. fast/expert) > config > the route's own "auto" default. A route
+    # like `expert` encodes a deliberate user choice, so its pinned depth must
+    # not be silently overridden by a config that merely says "auto".
+    route_depth = str(meta.get("search_depth") or "auto").strip().lower()
+    if request_value is not None:
+        value, origin = str(request_value).strip().lower(), "explicit"
+    elif route_depth not in {"", "auto"}:
+        value, origin = route_depth, "route"
+    elif config.get("search_depth") is not None:
+        value, origin = str(config.get("search_depth")).strip().lower(), "configured"
+    else:
+        value, origin = "auto", "default"
+    value = value or "auto"
+    if value not in {"auto", "fast", "normal", "deep"}:
+        raise ValueError("search_depth must be one of: auto, fast, normal, deep")
+    if value != "auto":
+        return value, origin
+    depth, reason = _classify_search_depth(query)
+    return depth, f"auto:{reason}"
+
+
+def _classify_search_depth(query: str) -> tuple[str, str]:
+    """Classify prompt complexity before provider routing.
+
+    This is intentionally conservative: deep mode costs more and can be slower,
+    so only clear research/comparison/fact-check signals upgrade to deep.
+    """
+    text = str(query or "").strip().lower()
+    compact = "".join(text.split())
+    if not compact:
+        return "normal", "empty-query"
+
+    fast_terms = (
+        "一句话", "简单", "快速", "简短", "链接", "官网", "地址", "endpoint",
+        "url", "是什么", "什么意思", "定义", "怎么读", "翻译",
+    )
+    deep_terms = (
+        "深入", "深度", "全面", "详细", "调研", "研究", "分析", "对比", "比较",
+        "区别", "差异", "优缺点", "选型", "方案", "架构", "评测", "测评",
+        "事实核查", "真假", "是否属实", "证据", "来源", "引用", "多来源",
+        "cross-check", "benchmark", "pricing comparison", "tradeoff", "trade-off",
+    )
+    recency_terms = (
+        "最新", "今天", "昨日", "昨天", "刚刚", "最近", "过去24小时",
+        "past 24", "latest", "breaking", "news",
+    )
+
+    if any(term in compact for term in fast_terms) and not any(term in compact for term in deep_terms):
+        return "fast", "simple-lookup"
+    if any(term in compact for term in deep_terms):
+        return "deep", "research-or-comparison"
+    # Length-based heuristics must be script-aware. English words are separated
+    # by spaces, but CJK text is not, so raw character count is not comparable
+    # across scripts (a 14-char Chinese research query and a 14-char English
+    # word carry very different amounts of information). Count CJK characters as
+    # individual tokens and ASCII runs as whitespace-delimited words instead.
+    tokens = _complexity_tokens(text)
+    if any(term in compact for term in recency_terms) and tokens > 6:
+        return "deep", "time-sensitive-research"
+    if tokens <= 4:
+        return "fast", "short-query"
+    return "normal", "default"
+
+
+def _complexity_tokens(text: str) -> int:
+    """Approximate the information content of a query across scripts.
+
+    Each CJK character counts as one token; contiguous non-CJK runs are split on
+    whitespace into word tokens. This keeps the short-query threshold meaningful
+    for both "Vue 官网链接" and "compare Vue and React SSR".
+    """
+    cjk = 0
+    buffer: list[str] = []
+    words = 0
+
+    def flush() -> None:
+        nonlocal words
+        chunk = "".join(buffer).strip()
+        if chunk:
+            words += len(chunk.split())
+        buffer.clear()
+
+    for ch in text:
+        if "\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf":
+            flush()
+            cjk += 1
+        else:
+            buffer.append(ch)
+    flush()
+    return cjk + words
 
 
 def _int_or_default(value: Any, default: int) -> int:

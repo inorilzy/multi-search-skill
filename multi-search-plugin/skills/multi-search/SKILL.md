@@ -20,6 +20,10 @@ cannot carry.
 - `fast` - quick summary / current background / "just tell me what's going on".
 - `expert` - evidence-heavy research, comparisons, technical decisions,
   architecture review, fact checking (searches broad, scrapes more).
+- Use `search_depth=auto` by default when available. The router first classifies
+  prompt complexity into internal `fast`, `normal`, or `deep` execution. General
+  web providers already map these levels to native depth parameters or synthetic
+  enrichment.
 - `social` - Twitter/X, Reddit feedback.
 - `dev` - GitHub, Stack Overflow, Hacker News.
 - `cn-community` - Zhihu, V2EX, Linux Do.

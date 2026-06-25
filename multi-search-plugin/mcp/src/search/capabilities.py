@@ -93,12 +93,24 @@ class ProviderCapability:
 
     def table_row(self) -> dict[str, object]:
         """Return a flat row suitable for Markdown/table rendering."""
+        # Product-facing aliases keep the capability table aligned with the
+        # normalized result contract without breaking older field names.
+        returns_summary = self.output.returns_answer
+        returns_title = self.search.can_search and self.output.returns_urls
+        returns_url = self.output.returns_urls
+        returns_result_content = self.output.returns_snippet
+        returns_prefetched_body = self.output.returns_content and self.scrape_policy == ScrapePolicy.PREFETCH
         return {
             "provider": self.public_name,
             "name": self.name,
             "kind": self.kind.value,
             "can_search": self.search.can_search,
             "can_scrape": self.scrape.can_scrape,
+            "returns_summary": returns_summary,
+            "returns_title": returns_title,
+            "returns_url": returns_url,
+            "returns_result_content": returns_result_content,
+            "returns_prefetched_body": returns_prefetched_body,
             "returns_urls": self.output.returns_urls,
             "returns_snippet": self.output.returns_snippet,
             "returns_content": self.output.returns_content,
@@ -131,6 +143,17 @@ def _op(
 
 
 PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
+    "baidu": ProviderCapability(
+        name="baidu",
+        public_name="baidu",
+        kind=ProviderKind.ANSWER_SEARCHER,
+        search=SearchCapability(can_search=True, supports_pagination=True, max_count=50),
+        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_content=True, returns_answer=True, returns_scores=True),
+        operation=_op(AuthMode.API_KEY, "baidu", quota_sensitive=True, rate_limit_sensitive=True),
+        scrape_policy=ScrapePolicy.PREFETCH,
+        best_for=("Baidu AI Search summaries", "Chinese web search with citations"),
+        notes="fast/normal use Qianfan web_summary; deep uses chat/completions with enable_deep_search=true.",
+    ),
     "brave": ProviderCapability(
         name="brave",
         public_name="brave",

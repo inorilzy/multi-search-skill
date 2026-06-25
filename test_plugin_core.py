@@ -41,6 +41,12 @@ from src.support.cache import JsonCache, make_scrape_cache_key
 from src.support.dedup import _norm_url, deduplicate
 from src.support.models import ProviderError, ScrapeResult, SearchResult
 from src.support.secrets import scrub_secrets
+from src.search.searchers import baidu as baidu_searcher
+from src.search.searchers import brave as brave_searcher
+from src.search.searchers import exa as exa_searcher
+from src.search.searchers import firecrawl as firecrawl_searcher
+from src.search.searchers import serpapi as serpapi_searcher
+from src.search.searchers import tavily as tavily_searcher
 
 
 class SecretTests(unittest.TestCase):
@@ -173,8 +179,198 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(rows[1]["returns_content"], True)
         self.assertIn("auth_mode", rows[0])
 
+    def test_capability_table_exposes_normalized_result_fields(self):
+        rows = {row["name"]: row for row in capability_table_rows(["baidu", "brave", "tavily"])}
+
+        self.assertTrue(rows["baidu"]["returns_summary"])
+        self.assertTrue(rows["baidu"]["returns_result_content"])
+        self.assertTrue(rows["baidu"]["returns_title"])
+        self.assertTrue(rows["baidu"]["returns_url"])
+        self.assertTrue(rows["baidu"]["returns_prefetched_body"])
+
+        self.assertFalse(rows["brave"]["returns_summary"])
+        self.assertTrue(rows["brave"]["returns_result_content"])
+        self.assertTrue(rows["brave"]["returns_title"])
+        self.assertTrue(rows["brave"]["returns_url"])
+        self.assertFalse(rows["brave"]["returns_prefetched_body"])
+
+        self.assertTrue(rows["tavily"]["returns_summary"])
+        self.assertTrue(rows["tavily"]["returns_prefetched_body"])
+
     def test_get_capability_resolves_public_name(self):
         self.assertEqual(get_capability("brave").public_name, "brave")
+
+    def test_baidu_capability_is_available_as_answer_searcher(self):
+        capability = get_capability("baidu")
+
+        self.assertEqual(capability.kind, ProviderKind.ANSWER_SEARCHER)
+        self.assertTrue(capability.output.returns_answer)
+        self.assertTrue(capability.output.returns_scores)
+
+
+class BaiduSearcherTests(unittest.TestCase):
+    class _FakeResp:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    def test_fast_and_normal_use_web_summary_endpoint(self):
+        calls = []
+
+        def fake_urlopen(req, timeout=0):
+            calls.append(req.full_url)
+            return self._FakeResp({
+                "request_id": "rid",
+                "choices": [{"message": {"content": "answer"}}],
+                "references": [{
+                    "id": 1,
+                    "title": "Doc",
+                    "url": "https://example.com",
+                    "snippet": "short",
+                    "content": "full",
+                    "rerank_score": 0.9,
+                    "authority_score": 0.7,
+                }],
+            })
+
+        with mock.patch.object(baidu_searcher, "urlopen_retry", side_effect=fake_urlopen):
+            rows = baidu_searcher.search_baidu("q", "key", count=3, search_depth="normal")
+
+        self.assertIn("/v2/ai_search/web_summary", calls[0])
+        self.assertEqual(rows[0]["source"], "baidu_answer")
+        self.assertEqual(rows[1]["source"], "baidu")
+        self.assertEqual(rows[1]["description"], "short")
+        self.assertEqual(rows[1]["authority_score"], 0.7)
+        # Reference rows must not carry the full raw payload (output bloat).
+        self.assertNotIn("raw_reference", rows[1])
+
+    def test_deep_uses_chat_completions_with_deep_search_enabled(self):
+        captured_payload = {}
+
+        def fake_urlopen(req, timeout=0):
+            captured_payload.update(json.loads(req.data.decode("utf-8")))
+            return self._FakeResp({
+                "request_id": "rid",
+                "choices": [{"message": {"content": "deep answer"}}],
+                "references": [],
+            })
+
+        with mock.patch.object(baidu_searcher, "urlopen_retry", side_effect=fake_urlopen):
+            rows = baidu_searcher.search_baidu("q", "key", count=3, search_depth="deep")
+
+        self.assertTrue(captured_payload["enable_deep_search"])
+        self.assertEqual(captured_payload["model"], "ernie-4.5-turbo-32k")
+        self.assertEqual(rows[0]["endpoint"], "/v2/ai_search/chat/completions")
+
+
+class GeneralSearchDepthTests(unittest.TestCase):
+    class _FakeResp:
+        def __init__(self, payload):
+            self.payload = payload
+            self.headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode("utf-8")
+
+    def test_tavily_maps_depth_to_provider_payload(self):
+        captured = []
+
+        def fake_urlopen(req, timeout=0):
+            captured.append(json.loads(req.data.decode("utf-8")))
+            return self._FakeResp({"results": [], "answer": "a"})
+
+        with mock.patch.object(tavily_searcher, "urlopen_retry", side_effect=fake_urlopen):
+            tavily_searcher.search_tavily("q", "key", search_depth="fast")
+            tavily_searcher.search_tavily("q", "key", search_depth="normal")
+            tavily_searcher.search_tavily("q", "key", search_depth="deep")
+
+        self.assertEqual(captured[0]["search_depth"], "fast")
+        self.assertFalse(captured[0]["include_answer"])
+        self.assertEqual(captured[1]["search_depth"], "basic")
+        self.assertEqual(captured[1]["include_answer"], "basic")
+        self.assertEqual(captured[2]["search_depth"], "advanced")
+        self.assertEqual(captured[2]["include_answer"], "advanced")
+        self.assertEqual(captured[2]["include_raw_content"], "markdown")
+
+    def test_exa_maps_depth_to_search_type_and_content(self):
+        captured = []
+
+        def fake_urlopen(req, timeout=0):
+            captured.append(json.loads(req.data.decode("utf-8")))
+            return self._FakeResp({"results": [{"title": "Doc", "url": "https://example.com", "highlights": ["h"]}]})
+
+        with mock.patch.object(exa_searcher, "urlopen_retry", side_effect=fake_urlopen):
+            rows = exa_searcher.search_exa("q", "key", search_depth="fast")
+            exa_searcher.search_exa("q", "key", search_depth="normal")
+            exa_searcher.search_exa("q", "key", search_depth="deep")
+
+        self.assertEqual(captured[0]["type"], "fast")
+        self.assertEqual(captured[1]["type"], "auto")
+        self.assertEqual(captured[2]["type"], "deep")
+        self.assertIn("text", captured[2]["contents"])
+        self.assertEqual(rows[0]["scraped_content"], "h")
+
+    def test_brave_fast_disables_extra_snippets(self):
+        urls = []
+
+        def fake_urlopen(req, timeout=0):
+            urls.append(req.full_url)
+            return self._FakeResp({"web": {"results": []}})
+
+        with mock.patch.object(brave_searcher, "urlopen_retry", side_effect=fake_urlopen):
+            brave_searcher.search_brave("q", "key", search_depth="fast")
+            brave_searcher.search_brave("q", "key", search_depth="deep")
+
+        self.assertIn("extra_snippets=false", urls[0])
+        self.assertIn("extra_snippets=true", urls[1])
+
+    def test_firecrawl_deep_requests_inline_markdown(self):
+        captured = []
+
+        def fake_urlopen(req, timeout=0):
+            body = json.loads(req.data.decode("utf-8"))
+            captured.append(body)
+            result = {"title": "Doc", "url": "https://example.com", "description": "d"}
+            if body.get("scrapeOptions"):
+                result["markdown"] = "md"
+            return self._FakeResp({"data": [result]})
+
+        with mock.patch.object(firecrawl_searcher, "urlopen_retry", side_effect=fake_urlopen):
+            normal = firecrawl_searcher.search_firecrawl("q", "key", search_depth="normal")
+            deep = firecrawl_searcher.search_firecrawl("q", "key", search_depth="deep")
+
+        self.assertNotIn("scrapeOptions", captured[0])
+        self.assertEqual(captured[1]["scrapeOptions"], {"formats": ["markdown"]})
+        self.assertNotIn("scraped_content", normal[0])
+        self.assertEqual(deep[0]["scraped_content"], "md")
+
+    def test_serpapi_fast_forces_google_light(self):
+        urls = []
+
+        def fake_urlopen(url, timeout=0):
+            urls.append(url)
+            return self._FakeResp({"organic_results": []})
+
+        with mock.patch.object(serpapi_searcher, "urlopen_retry", side_effect=fake_urlopen):
+            serpapi_searcher.search_serpapi("q", "key", engine="google", search_depth="fast")
+            serpapi_searcher.search_serpapi("q", "key", engine="google", search_depth="deep")
+
+        self.assertIn("engine=google_light", urls[0])
+        self.assertIn("engine=google", urls[1])
 
 
 class DedupTests(unittest.TestCase):

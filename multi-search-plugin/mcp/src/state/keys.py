@@ -93,6 +93,9 @@ def load_keys() -> dict:
     for env_name, key_name in [
         ("BRAVE_SEARCH_API_KEY", "brave"),
         ("BRAVE_API_KEY", "brave"),
+        ("BAIDU_QIANFAN_API_KEY", "baidu"),
+        ("QIANFAN_API_KEY", "baidu"),
+        ("APPBUILDER_API_KEY", "baidu"),
         ("TAVILY_API_KEY", "tavily"),
         ("EXA_API_KEY", "exa"),
         ("JINA_API_KEY", "jina"),

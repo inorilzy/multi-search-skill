@@ -10,6 +10,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+# Sources that return a synthesized answer/summary rather than ranked webpage
+# results. These rows are excluded from result counts, dedup, and raw-hit
+# accounting. Keep this as the single source of truth; importers must not
+# re-declare their own copies.
+ANSWER_SOURCES = frozenset({
+    "baidu_answer", "tavily_answer", "serpapi_answer",
+    "exa_answer", "glm_web_answer", "deepseek_web_answer",
+})
+
+
 def _without_none(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if value is not None}
 

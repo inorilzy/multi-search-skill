@@ -17,12 +17,15 @@ def search_serpapi(
     count: int = 10,
     engine: str = "google_light",
     timeout: float = 20,
+    search_depth: str = "normal",
 ) -> list:
     """Call SerpAPI to fetch SERP results.
     Default engine: google_light — 3x faster, 250 searches/month free (vs 100 for regular google).
     Switch to engine='google' for full knowledge_graph / shopping / things_to_know etc.
     """
     results = []
+    depth = (search_depth or "normal").lower()
+    engine = "google_light" if depth == "fast" else engine
     target_count = max(1, count)
     page_size = 10
     organic_count = 0
@@ -72,6 +75,8 @@ def search_serpapi(
                 "title": item.get("title", ""),
                 "url": item.get("link", ""),
                 "description": (item.get("snippet") or "")[:300],
+                "search_depth": depth,
+                "provider_depth": engine,
             })
             organic_count += 1
     return results

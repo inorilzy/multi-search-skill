@@ -1,10 +1,9 @@
 """URL normalization, content splitting, and cross-source deduplication."""
 import urllib.parse
 
-from .models import as_dict, as_dicts
+from .models import ANSWER_SOURCES, as_dict, as_dicts
 
 
-ANSWER_SOURCES = {"tavily_answer", "serpapi_answer", "exa_answer", "glm_web_answer", "deepseek_web_answer"}
 MIN_USEFUL_WEB_CONTENT_CHARS = 300
 
 # When the same URL is returned by multiple sources, prefer the source that is

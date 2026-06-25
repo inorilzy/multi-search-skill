@@ -18,30 +18,61 @@
 | 讨论模式 | 找社区/社交反馈 | 帖子、评论、热度、讨论链接 | 默认关闭或只使用 provider 预取内容 | 大家怎么说、用户反馈、社区评价、踩坑经验 |
 | 视频模式 | 找视频/教程 | 标题、URL、频道/平台元数据、摘要 | 关闭 | 视频、教程、演示内容 |
 
-## Provider 能力矩阵
+## 统一结果字段
 
-| Provider | 类型 | 可搜索 | 直接总结 | URL | 摘要/snippet | 正文/content | Scrape 策略 | 认证方式 | 当前 key 轮换 | 建议路由 | 说明 |
-|---|---|---:|---:|---:|---:|---:|---|---|---|---|---|
-| deepseek-web | answer_searcher | 是 | 是 | 是 | 是 | 否 | candidate | cookie/token | 不接入 SQLite key 轮换 | 快速、新闻、答案 | DeepSeek 原生联网回答，可返回总结和引用 URL。需要 `DEEPSEEK_WEB_TOKEN` + cookie/export。很适合快速模式，但总结是 provider 已经加工过的，严肃场景需要核查引用。 |
-| glm-web | answer_searcher | 是 | 是 | 是 | 是 | 是 | prefetch | 本地服务/可选 key | 不接入 SQLite key 轮换 | 快速、新闻、答案 | GLM 原生联网搜索回答，可返回总结、引用和部分正文。依赖本地 glm2api 服务。 |
-| tavily | content_searcher | 是 | 是 | 是 | 是 | 是 | prefetch | api_key | 接入 | 快速、专家 | 混合能力很强：能返回答案、URL、摘要、内置页面文本。既适合快速模式，也适合专家模式。 |
-| exa | content_searcher | 是 | 否 | 是 | 是 | 是 | prefetch | api_key | 接入 | 快速、专家、发现 | 语义搜索和内容获取较强。没有直接 answer 行，但经常能返回页面文本，减少额外 scrape 需求。 |
-| serpapi | answer_searcher | 是 | 是 | 是 | 是 | 否 | candidate | api_key | 接入 | 快速、新闻、发现 | Google SERP/Knowledge Graph 风格元数据，有时有 answer。完整证据仍需要 scrape。 |
-| brave | searcher | 是 | 否 | 是 | 是 | 否 | candidate | api_key | 接入 | 发现、专家 | 泛 Web 搜索，适合找新鲜 URL。不是直接总结源。 |
-| firecrawl | searcher | 是 | 否 | 是 | 是 | 否 | candidate | api_key | 接入 | 专家、域名搜索 | 适合域名限定搜索和后续抓取生态。search 结果仍需要 scrape 才有完整正文。 |
-| github-repos | platform_searcher | 是 | 否 | 是 | 是 | 否 | candidate | 可选 api_key | 不接入 | 发现、技术 | 找 GitHub 仓库和 repo 元数据，不是通用 Web 答案源。 |
-| twitter | platform_searcher | 是 | 否 | 是 | 否 | 是 | prefetch | cookie | 不接入 SQLite key 轮换 | 讨论 | 返回社交文本和元数据，不是中立事实证据。除非用户要社交反馈，否则不建议放进默认事实搜索。 |
-| reddit-oauth | platform_searcher | 是 | 否 | 是 | 否 | 是 | prefetch | token/CLI | 不接入 SQLite key 轮换 | 讨论 | 有授权时适合 Reddit 讨论内容，比纯网页搜索更直接。 |
-| reddit | platform_searcher | 是 | 否 | 是 | 是 | 否 | candidate | firecrawl api_key | 通过 firecrawl 轮换 | 讨论、专家 | 通过 Firecrawl 搜 Reddit。可能仍需要 scrape 抓 thread 正文。 |
-| hackernews | platform_searcher | 是 | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 讨论、技术 | 适合技术社区讨论、产品发布反馈。 |
-| stackoverflow | platform_searcher | 是 | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 技术 | 适合 Q&A 发现，不是直接总结源。 |
-| zhihu | platform_searcher | 是 | 否 | 是 | 是 | 否 | candidate | mixed | 部分接入 | 讨论、中文 Web | 有 Zhihu 凭证时用凭证，否则可走 Firecrawl fallback。 |
-| v2ex | platform_searcher | 是 | 否 | 是 | 是 | 否 | candidate | firecrawl api_key | 通过 firecrawl 轮换 | 讨论、中文技术 | 通过 Firecrawl 搜 V2EX 社区讨论。 |
-| linuxdo | platform_searcher | 是 | 否 | 是 | 是 | 否 | candidate | firecrawl api_key | 通过 firecrawl 轮换 | 讨论、中文技术 | 通过 Firecrawl 搜 Linux Do。 |
-| linuxdo-api | platform_searcher | 是 | 否 | 是 | 否 | 是 | prefetch | cookie | 不接入 SQLite key 轮换 | 讨论、中文技术 | 通过 API/cookie 获取 Linux Do 内容。 |
-| youtube | video_searcher | 是 | 否 | 是 | 是 | 否 | skip | api_key | 接入 | 视频 | 只做视频搜索，scrape 应关闭。 |
-| bilibili | video_searcher | 是 | 否 | 是 | 是 | 否 | skip | 可选 api_key/cookie | 不接入 SQLite key 轮换 | 视频 | 中文视频搜索，scrape 应关闭。 |
-| jina | scraper | 否 | 否 | 否 | 否 | 是 | scraper | 可选 api_key | 仅 active key 池 | 专家模式抓正文阶段 | 不是搜索 provider。用于把已知 URL 转成 Markdown/text。 |
+这部分是所有 search provider 的对外统一契约。不同官方文档会把字段叫作 `content`、`snippet`、`description`、`raw_content`、`markdown`，但进入 multi-search 后必须归一：
+
+| 统一字段 | 含义 | 当前代码字段 | 后续用途 |
+|---|---|---|---|
+| `summary` | provider 针对整个 query 生成的直接答案/总结 | answer 行的 `answer` | 快速搜索直接回答；作为深搜线索 |
+| `title` | 单条搜索结果标题 | `title` | 展示、去重辅助、抓正文标题 |
+| `url` | 单条搜索结果链接 | `url` | 后续 scrape 的入口 |
+| `content` | 单条搜索结果摘要/snippet/highlight，不是网页全文 | `description` | 快速预览、轻量引用、排序辅助 |
+| `body` / `full_content` | 已抓取或 provider 预取的页面正文/长文本 | `scraped_content` | 专家模式证据、最终综合总结 |
+
+## 通用搜索能力矩阵
+
+| Provider | Docs 原始字段 | `summary` | `content` | `title/url` | `body/full_content` | depth 适配 | Scrape 策略 | 建议路由 | 说明 |
+|---|---|---:|---:|---:|---:|---|---|---|---|
+| baidu | `choices[].message.content`、`references[].title/url/snippet/content/markdown_text` | 是 | 是 | 是 | 是 | `fast/normal` -> `web_summary`；`deep` -> `chat/completions + enable_deep_search` | prefetch | 快速、专家、中文 Web | 和刚才测试一致：answer 行作为 `summary`，references 作为结果；`snippet/content` 进 `content`，`markdown_text/content` 进 `body`。 |
+| tavily | `answer`、`results[].title/url/content/raw_content` | 是 | 是 | 是 | deep 是 | `fast` -> `search_depth=fast`；`normal` -> `basic answer`；`deep` -> `advanced answer + raw_content=markdown` | prefetch | 快速、专家 | docs 明确 `content` 是 short description，`raw_content` 才是 cleaned/parsed HTML content。 |
+| exa | `results[].title/url/highlights/text/summary`、Contents API `text/highlights/summary` | 否 | 是 | 是 | 是 | `fast` -> `type=fast + highlights`；`normal` -> `auto + highlights`；`deep` -> `deep + highlights + text` | prefetch | 快速、专家、发现 | Exa 的 highlights 很适合当 `content`；`text` 是正文。官方还支持 LLM summaries，但当前 searcher 没单独产 answer 行。 |
+| brave | `web.results[].title/url/description/extra_snippets` | 否 | 是 | 是 | 否 | `fast` 不开 extra snippets；`normal/deep` 开 `extra_snippets` | candidate | 发现、专家 | docs 的 `description` 和 `extra_snippets` 都是摘要/片段，不是正文。正文需要后续 scrape。 |
+| serpapi | `organic_results[].title/link/snippet`、`knowledge_graph.description` | 有时 | 是 | 是 | 否 | `fast` -> `google_light`；`normal/deep` -> 配置 engine | candidate | 快速、新闻、发现 | organic result 的 `link` 归一到 `url`，`snippet` 归一到 `content`；Knowledge Graph 可形成 `summary`。 |
+| firecrawl | `web[].title/url/description/snippet`、`markdown` with `scrapeOptions` | 否 | 是 | 是 | deep 是 | `fast/normal` 只 search；`deep` 加 `scrapeOptions.formats=["markdown"]` | candidate / deep prefetch | 专家、域名搜索 | docs 说明 search 默认返回 title/description/url，加 `scrapeOptions` 才返回 full-page markdown。 |
+| deepseek-web | answer、引用 URL、snippet | 是 | 是 | 是 | 否 | 不适配统一 depth 参数，作为 answer source | candidate | 快速、新闻、答案 | 原生联网回答，适合 fast；严肃任务要抓 URL 正文复核。 |
+| glm-web | answer、引用 URL、web_search_results | 是 | 是 | 是 | 是 | 不适配统一 depth 参数，作为 answer source | prefetch | 快速、新闻、答案 | 本地 glm2api 服务返回总结、引用和部分正文。 |
+
+## 专用搜索能力矩阵
+
+| Provider | `summary` | `content` | `title/url` | `body/full_content` | Scrape 策略 | 认证方式 | 当前 key 轮换 | 建议路由 | 说明 |
+|---|---:|---:|---:|---:|---|---|---|---|---|
+| github-repos | 否 | 是 | 是 | 否 | candidate | 可选 api_key | 不接入 | 发现、技术 | repo description/metadata 进 `content`，README 正文靠后续 scrape。 |
+| twitter | 否 | 是 | 是 | 是 | prefetch | cookie | 不接入 SQLite key 轮换 | 讨论 | tweet 文本本身就是平台内容，可作为 `body`；互动数据是元数据。 |
+| reddit-oauth | 否 | 是 | 是 | 是 | prefetch | token/CLI | 不接入 SQLite key 轮换 | 讨论 | API thread/post 文本可作为平台正文。 |
+| reddit | 否 | 是 | 是 | 否 | candidate | firecrawl api_key | 通过 firecrawl 轮换 | 讨论、专家 | Firecrawl 搜 Reddit，thread 正文仍建议 scrape。 |
+| hackernews | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 讨论、技术 | HN 标题、URL、points/comments 适合发现讨论源。 |
+| stackoverflow | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 技术 | Q&A 发现源，正文靠 scrape 或 StackExchange API 扩展。 |
+| zhihu | 否 | 是 | 是 | 否 | candidate | mixed | 部分接入 | 讨论、中文 Web | 有凭证时可取更好摘要，否则走 Firecrawl fallback。 |
+| v2ex | 否 | 是 | 是 | 否 | candidate | firecrawl api_key | 通过 firecrawl 轮换 | 讨论、中文技术 | 通过 Firecrawl 搜 V2EX。 |
+| linuxdo | 否 | 是 | 是 | 否 | candidate | firecrawl api_key | 通过 firecrawl 轮换 | 讨论、中文技术 | 通过 Firecrawl 搜 Linux Do。 |
+| linuxdo-api | 否 | 是 | 是 | 是 | prefetch | cookie | 不接入 SQLite key 轮换 | 讨论、中文技术 | API/cookie 可直接得到帖子内容。 |
+| youtube | 否 | 是 | 是 | 否 | skip | api_key | 接入 | 视频 | 只做视频搜索，scrape 默认关闭。 |
+| bilibili | 否 | 是 | 是 | 否 | skip | 可选 api_key/cookie | 不接入 SQLite key 轮换 | 视频 | 中文视频搜索，scrape 默认关闭。 |
+| jina | 否 | 否 | 否 | 是 | scraper | 可选 api_key | 仅 active key 池 | 专家模式抓正文阶段 | 不是搜索 provider，只负责 URL -> Markdown/text。 |
+
+## search_depth 行为与注意事项
+
+`search_depth` 取值 `auto / fast / normal / deep`，优先级为：
+**显式请求值 > 路由固定值（`fast`/`expert`）> 配置 `search_depth` > 路由 `auto` 默认**。
+`auto` 会按 prompt 复杂度自动分级（脚本感知的 token 计数，中英文一致）。
+
+- **仅通用 web 路由生效**：`search_depth` 只影响 `default/web/fast/expert` 用到的通用搜索 provider。专用搜索（github / hackernews / stackoverflow / twitter / youtube / bilibili / reddit / deepseek-web / glm-web 等）的 searcher 不接受 `search_depth`，会被 `call_optional_timeout` 按签名静默忽略，所以在 `dev/social/video/cn-community` 上设 `deep` 不会改变行为。
+- **Brave**：`normal` 与 `deep` 行为相同（都只开 `extra_snippets`），Brave 侧没有更深的检索模式；需要更深内容时依赖后续 scrape，而非 Brave 的 depth。
+- **SerpAPI**：`fast` 会把 engine 强制为 `google_light`，**覆盖**用户配置的 `serpapi_engine`（如 `google`）。这是有意的提速降级，实际使用的 engine 会写入诊断的 `provider_depth` 字段以便排查。
+- **Tavily**：`fast` 透传 `search_depth=fast`，这是较新的枚举值；个别账号/版本若不支持会在运行时报错。若遇到兼容问题，可回退为 `basic` + 关闭 `include_answer`（与 fast 语义一致）。
+- **Baidu**：`fast/normal` 走 `web_summary` 高性能端点，`deep` 走 `chat/completions + enable_deep_search`（独立端点，超时参数一致透传）。Baidu 当前不在任何 `ROUTE_PROFILES` 内，只能通过 `sources=["baidu"]` 显式调用，不参与 `auto/expert` 自动深度路由。
+- **Firecrawl**：仅 `deep` 追加 `scrapeOptions.formats=["markdown"]` 回填正文（`body`）；`fast/normal` 只做 search。因此能力矩阵中 Firecrawl 的 `body` 标注「deep 是」是 depth 相关的，静态能力表无法逐档展开，以本节为准。
 
 ## 最终 Route 设计
 

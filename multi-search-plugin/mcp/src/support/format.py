@@ -1,7 +1,7 @@
 """Markdown formatters for results + scraped content sections."""
 import re
 
-from .models import as_dicts
+from .models import ANSWER_SOURCES, as_dicts
 from .dedup import consensus_weight, rank_results
 
 SOURCE_ICONS = {
@@ -21,6 +21,7 @@ SOURCE_ICONS = {
     "twitter": "🐦",
     "glm-web": "GLM",
     "deepseek-web": "DS",
+    "baidu": "BD",
 }
 
 _SUMMARY_SKIP_PREFIXES = (
@@ -134,6 +135,7 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     """Format aggregated results for display."""
     results = as_dicts(results)
     lines = [f"## multi-search Results: `{query}`\n"]
+    baidu_answers = [r for r in results if r.get("source") == "baidu_answer"]
     tavily_answers = [r for r in results if r.get("source") == "tavily_answer"]
     exa_answers = [r for r in results if r.get("source") == "exa_answer"]
     serpapi_answers = [r for r in results if r.get("source") == "serpapi_answer"]
@@ -142,13 +144,15 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     status_items = [r for r in results if r.get("status") == "ok"]
     results = [
         r for r in results
-        if r.get("source") not in ("tavily_answer", "serpapi_answer", "exa_answer", "glm_web_answer", "deepseek_web_answer")
+        if r.get("source") not in ANSWER_SOURCES
         and r.get("status") != "ok"
     ]
     if degradation:
         lines.append(f"\n> ⚠️ {degradation.get('message', 'route degraded')}\n")
 
     show_answers = (show_answer or verbose) and not brief
+    if show_answers and baidu_answers:
+        lines.append(f"\n> **Baidu AI Search Answer:** {baidu_answers[0]['answer']}\n")
     if show_answers and tavily_answers:
         lines.append(f"\n> **Tavily AI Answer:** {tavily_answers[0]['answer']}\n")
     if show_answers and exa_answers:

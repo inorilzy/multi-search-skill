@@ -13,14 +13,18 @@ def search_firecrawl(
     timeout: float = 60,
     include_domains: list[str] | tuple[str, ...] | None = None,
     source: str = "firecrawl",
+    search_depth: str = "normal",
 ) -> list:
     """Search via Firecrawl /v2/search without inline scraping."""
+    depth = (search_depth or "normal").lower()
     body = {
         "query": query,
         "limit": count,
     }
     if include_domains:
         body["includeDomains"] = list(include_domains)
+    if depth == "deep":
+        body["scrapeOptions"] = {"formats": ["markdown"]}
     payload = json.dumps(body).encode()
     req = urllib.request.Request(
         "https://api.firecrawl.dev/v2/search",
@@ -60,7 +64,10 @@ def search_firecrawl(
             "title": result.get("title", ""),
             "url": result.get("url", ""),
             "description": (result.get("description") or "")[:300],
+            "search_depth": depth,
         }
+        if result.get("markdown"):
+            item["scraped_content"] = result.get("markdown")
         items.append(item)
     return items
 
@@ -71,7 +78,8 @@ ZHIHU_DOMAINS = ("www.zhihu.com", "zhuanlan.zhihu.com", "zhihu.com")
 LINUXDO_DOMAINS = ("linux.do",)
 
 
-def search_v2ex(query: str, api_key: str, count: int = 10, timeout: float = 60) -> list:
+def search_v2ex(query: str, api_key: str, count: int = 10, timeout: float = 60,
+                search_depth: str = "normal") -> list:
     """Search V2EX via Firecrawl domain-restricted web search."""
     return search_firecrawl(
         query,
@@ -80,22 +88,26 @@ def search_v2ex(query: str, api_key: str, count: int = 10, timeout: float = 60) 
         timeout=timeout,
         include_domains=V2EX_DOMAINS,
         source="v2ex",
+        search_depth=search_depth,
     )
 
 
-def search_reddit(query: str, api_key: str, count: int = 10, timeout: float = 60) -> list:
+def search_reddit(query: str, api_key: str, count: int = 10, timeout: float = 60,
+                  search_depth: str = "normal") -> list:
     """Search Reddit via Firecrawl domain-restricted web search."""
     return search_firecrawl(
         query,
         api_key,
         count,
         timeout=timeout,
-    include_domains=REDDIT_DOMAINS,
-    source="reddit",
+        include_domains=REDDIT_DOMAINS,
+        source="reddit",
+        search_depth=search_depth,
 )
 
 
-def search_zhihu(query: str, api_key: str, count: int = 10, timeout: float = 60) -> list:
+def search_zhihu(query: str, api_key: str, count: int = 10, timeout: float = 60,
+                 search_depth: str = "normal") -> list:
     """Search Zhihu via Firecrawl domain-restricted web search."""
     return search_firecrawl(
         query,
@@ -104,10 +116,12 @@ def search_zhihu(query: str, api_key: str, count: int = 10, timeout: float = 60)
         timeout=timeout,
         include_domains=ZHIHU_DOMAINS,
         source="zhihu",
+        search_depth=search_depth,
     )
 
 
-def search_linuxdo(query: str, api_key: str, count: int = 10, timeout: float = 60) -> list:
+def search_linuxdo(query: str, api_key: str, count: int = 10, timeout: float = 60,
+                   search_depth: str = "normal") -> list:
     """Search Linux.do via Firecrawl domain-restricted web search."""
     return search_firecrawl(
         query,
@@ -116,4 +130,5 @@ def search_linuxdo(query: str, api_key: str, count: int = 10, timeout: float = 6
         timeout=timeout,
         include_domains=LINUXDO_DOMAINS,
         source="linuxdo",
+        search_depth=search_depth,
     )
