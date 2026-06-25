@@ -5,11 +5,6 @@ description = "Aggregated search MCP server for the multi-search plugin."
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0",
-]
-
-[project.optional-dependencies]
-# Optional scrapers degrade gracefully when these are absent.
-scrapers = [
     "beautifulsoup4>=4.12",
-    "twikit-ng",
+    "twikit-ng>=2.5",
 ]
