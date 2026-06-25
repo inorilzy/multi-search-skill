@@ -11,9 +11,10 @@
 |------|------|---------|
 | **source（搜索源）** | 单个搜索后端，最小调用单位。如 `brave`、`github_repos`、`youtube`。 | `search_runner.py` → `ALL_SOURCE_NAMES` |
 | **source 别名** | source 的对外友好写法，调用时会被归一化。如 `github` → `github_repos`、`deepseek-web` → `deepseek_web`。 | `search_runner.py` → `SOURCE_ALIASES` |
-| **route（路由）** | 一组预设 source ＋ 一套行为参数的组合。用户用 `route="dev"` 这种粗粒度方式选源。 | `search_runner.py` → `ROUTE_PROFILES` |
+| **route（路由）** | 一组预设 source ＋ 一套源相关行为参数的组合，**只决定搜哪些源**。用户用 `route="dev"` 这种粗粒度方式选源。 | `search_runner.py` → `ROUTE_PROFILES` |
 | **profile（源集合）** | 某个 route 对应的那组 source 集合。`profile` 和 `route` 常被混用，但严格说 profile 只指「源集合」这一部分。 | `ROUTE_PROFILES` 的 value |
-| **route_meta（行为参数）** | route 除源之外的行为：抓不抓正文、给不给答案、超时、返回数量等。 | `search_runner.py` → `ROUTE_META` / `DEFAULT_ROUTE_META` |
+| **route_meta（行为参数）** | route 除源之外的**源相关**行为：默认抓几个、超时、返回数量、降级源等。**不含搜索深度**（深度归 `level` 管）。 | `search_runner.py` → `ROUTE_META` / `DEFAULT_ROUTE_META` |
+| **level（深度）** | 与 route **正交**的维度，**只控制搜索深度/抓取/是否要 provider answer**，不换源。`fast`=用 provider 自带 summary（不抓正文）；`normal`=返回 URL 抓取后由主模型总结（默认）；`expert`=用 provider deep 参数、多抓正文，但**已返回 summary 的源不重抓**（见下表）。 | `search_runner.py` → `LEVEL_META` / `DEFAULT_LEVEL` |
 
 ## 2. route 分类（概念性，非代码标签）
 
@@ -21,20 +22,28 @@
 
 | 类别 | 包含 route | 说明 |
 |------|-----------|------|
-| **通用搜索** | `default` / `web`、`fast`、`expert` | 用综合搜索引擎（brave/tavily/exa/serpapi 等），什么主题都能搜。 |
+| **通用搜索** | `default` / `web` | 用综合搜索引擎（brave/tavily/exa/serpapi 等），什么主题都能搜。 |
 | **专用搜索** | `social`、`dev`、`cn-community`、`video` | 绑定垂直平台，只搜特定领域。 |
+
+> 注意：`fast`/`expert` 现在**不再是 route**，已迁移为 `level`（深度维度）。
 
 各 route 当前定义（以 `ROUTE_PROFILES` 为准，可能随代码变动）：
 
 | route | 类别 | source 集合 |
 |-------|------|------------|
 | `default` / `web` | 通用 | brave + tavily + exa + serpapi |
-| `fast` | 通用 | deepseek_web + glm_web + tavily + exa |
-| `expert` | 通用 | brave + tavily + exa + serpapi + firecrawl |
 | `social` | 专用 | twitter + reddit_oauth |
 | `dev` | 专用 | stackoverflow + github_repos + hackernews |
 | `cn-community` | 专用 | zhihu + v2ex + linuxdo |
 | `video` | 专用 | youtube + bilibili |
+
+各 level 当前定义（以 `LEVEL_META` 为准）：
+
+| level | search_depth | provider answer | 抓取 |
+|-------|--------------|-----------------|------|
+| `fast` | fast | 是（show_answer） | 不抓（scrape_top=0） |
+| `normal`（默认） | normal | 否 | 走 route 默认，抓所有候选 |
+| `expert` | deep | 否 | 多抓（scrape_top=20），但**已给出 summary 的源（tavily/exa/baidu/serpapi/glm_web/deepseek_web）不重抓其 URL**，只抓无 summary 的源（github/zhihu/...）。由 `LEVEL_META["expert"]["skip_summarized_sources"]` 控制。 |
 
 ## 3. 选源方式
 
@@ -43,6 +52,7 @@
 | **route 选源** | 不传 `sources`，按 `route` 取一组预设源。粗粒度。 | `service.py` → `resolve_route` |
 | **sources 选源** | 调用时显式传 `sources=["github"]`，精确点名要哪些源。**优先级高于 route，会忽略 route。** | `service.py` `run_multi_search` |
 | **route 优先级** | 实际生效的 route：`request.route` → 配置 `type` → 默认 `"default"`。 | `service.py` `run_multi_search` |
+| **level 优先级** | 实际生效的 level：`request.level` → 配置 `level` → 默认 `"normal"`。 | `service.py` `run_multi_search` |
 
 ## 4. 抓取与结果处理
 
@@ -57,7 +67,7 @@
 | **scrape backend（抓取后端）** | 抓正文用的后端，与搜索源不同。已知集合：`jina`、`exa`、`tavily`、`firecrawl`。 | `scrape.py` → `KNOWN_BACKENDS` |
 | **site memory（站点抓取记忆）** | 记录每个站点用哪个 scraper 成功率高，下次优先用它。 | `state/site_memory.py` → `SiteScraperMemory` |
 | **dedup（去重）** | 跨源合并重复结果，并按共识排序。 | `support/dedup.py` → `deduplicate` |
-| **降级 / degradation** | route 的主源失败时，退回兜底源，并在结果里显式标注。如 `fast degraded to exa, tavily`。 | `ROUTE_META` 的 `degrade_to` ＋ `service.py` `_route_degradation` |
+| **降级 / degradation** | route 的主源失败时，退回兜底源，并在结果里显式标注。如 `social degraded to ...`。 | `ROUTE_META` 的 `degrade_to` ＋ `service.py` `_route_degradation` |
 
 ## 5. Key 与状态
 

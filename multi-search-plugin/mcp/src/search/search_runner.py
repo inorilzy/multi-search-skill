@@ -35,93 +35,74 @@ SOURCE_ALIASES = {
 }
 
 ROUTE_PROFILES = {
-    "default": {"brave", "tavily", "exa", "serpapi"},
-    "web": {"brave", "tavily", "exa", "serpapi"},
-    "fast": {"deepseek_web", "glm_web", "tavily", "exa"},
-    "expert": {"brave", "tavily", "exa", "serpapi", "firecrawl"},
+    "default": {"brave", "tavily", "exa", "serpapi", "firecrawl", "baidu", "glm_web", "deepseek_web"},
     "social": {"twitter", "reddit_oauth"},
     "dev": {"stackoverflow", "github_repos", "hackernews"},
     "cn-community": {"zhihu", "v2ex", "linuxdo"},
     "video": {"youtube", "bilibili"},
+    # Everything except the video sources (and excluding the bare reddit/
+    # linuxdo_api duplicates in favor of the route-canonical reddit_oauth/
+    # linuxdo).
+    "all": {
+        "brave", "tavily", "exa", "serpapi", "baidu", "glm_web", "deepseek_web",
+        "firecrawl", "twitter", "reddit_oauth", "stackoverflow", "github_repos",
+        "hackernews", "zhihu", "v2ex", "linuxdo",
+    },
 }
 
+# Route-level behavior. A route only decides *which sources* to fan out to and
+# source-shaped defaults (count/timeout/snippet rendering). Search *depth* is an
+# orthogonal concern owned by ``level`` (see LEVEL_META), so route meta no longer
+# pins ``search_depth``.
 DEFAULT_ROUTE_META = {
-    "scrape_top": 30,
-    "show_answer": False,
+    "scrape_top": 8,
     "show_snippet": True,
-    "count": 10,
+    "count": 8,
     "timeout": 60,
     "title_url_only": False,
     "degrade_to": set(),
     "primary_success_sources": set(),
-    "search_depth": "auto",
 }
 
 ROUTE_META = {
-    "default": {
-        "scrape_top": 8,
-        "show_answer": True,
-        "show_snippet": True,
-        "count": 8,
-        "timeout": 60,
-        "search_depth": "auto",
-    },
-    "web": {
-        "scrape_top": 8,
-        "show_answer": True,
-        "show_snippet": True,
-        "count": 8,
-        "timeout": 60,
-        "search_depth": "auto",
-    },
-    "fast": {
-        "scrape_top": 0,
-        "show_answer": True,
-        "show_snippet": True,
-        "count": 5,
-        "timeout": 30,
-        "degrade_to": {"tavily", "exa"},
-        "primary_success_sources": {"deepseek-web", "glm-web", "deepseek_web_answer", "glm_web_answer"},
-        "search_depth": "fast",
-    },
-    "expert": {
-        "scrape_top": 20,
-        "show_answer": False,
-        "show_snippet": True,
-        "count": 12,
-        "timeout": 90,
-        "search_depth": "deep",
-    },
+    "default": {"scrape_top": 8, "show_snippet": True, "count": 8, "timeout": 60},
+    "all": {"scrape_top": 8, "show_snippet": True, "count": 8, "timeout": 90},
     "social": {
         "scrape_top": 0,
-        "show_answer": False,
         "show_snippet": True,
         "count": 8,
         "timeout": 45,
         "degrade_to": set(),
         "primary_success_sources": {"twitter", "reddit-oauth"},
     },
-    "dev": {
-        "scrape_top": 5,
-        "show_answer": False,
-        "show_snippet": True,
-        "count": 8,
-        "timeout": 60,
-    },
-    "cn-community": {
-        "scrape_top": 5,
-        "show_answer": False,
-        "show_snippet": True,
-        "count": 8,
-        "timeout": 60,
-    },
+    "dev": {"scrape_top": 5, "show_snippet": True, "count": 8, "timeout": 60},
+    "cn-community": {"scrape_top": 5, "show_snippet": True, "count": 8, "timeout": 60},
     "video": {
         "scrape_top": 0,
-        "show_answer": False,
         "show_snippet": False,
         "count": 10,
         "timeout": 45,
         "title_url_only": True,
+    },
+}
+
+# Level controls *search depth* and how results are consumed, orthogonally to
+# the route's source selection.
+#   fast   -> use provider-native summary/answer, no scraping
+#   normal -> return URLs, scrape, and let the main model summarize
+#   expert -> use provider-native deep search and scrape more
+DEFAULT_LEVEL = "normal"
+
+LEVEL_META = {
+    "fast": {"search_depth": "fast", "show_answer": True, "scrape_top": 0},
+    "normal": {"search_depth": "normal", "show_answer": False},
+    "expert": {
+        "search_depth": "deep",
+        "show_answer": False,
+        "scrape_top": 20,
+        # Sources that already returned a summary are accepted as-is; only
+        # URL-only sources (github/zhihu/...) get scraped.
+        "skip_summarized_sources": True,
     },
 }
 
@@ -130,9 +111,17 @@ def available_routes() -> list[str]:
     return sorted(ROUTE_PROFILES)
 
 
+def available_levels() -> list[str]:
+    return list(LEVEL_META)
+
+
+def level_meta(level: str | None) -> dict[str, Any]:
+    return dict(LEVEL_META.get(str(level or DEFAULT_LEVEL).strip().lower(), LEVEL_META[DEFAULT_LEVEL]))
+
+
 def resolve_route(search_type: str, lite: bool = False) -> set[str]:
     if lite:
-        return ROUTE_PROFILES["fast"]
+        return ROUTE_PROFILES["default"]
     return ROUTE_PROFILES.get(search_type, set())
 
 

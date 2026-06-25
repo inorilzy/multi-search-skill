@@ -91,20 +91,32 @@ MCP plugin 是唯一入口，agent 按 plugin 的 `skills/multi-search/SKILL.md`
 | Twitter/X | 社交讨论、推文和 top replies | https://x.com | 无官方搜索 API 免费层；使用 `twikit-ng` + cookies，受账号状态和限流影响 | 20 |
 | Jina Reader | 额外网页正文抓取 | https://r.jina.ai/docs | 匿名可用，约 20 rpm；key 是固定额度，可作为匿名限流后的 fallback | scrape only |
 
-## 路由
+## 路由与深度：两个正交维度
+
+`route` 和 `level` 互相独立：`route` 决定**搜哪些源**，`level` 决定**搜多深**。任意 route 都可以搭配任意 level。
+
+### `route`（搜哪些源 / 场景）
 
 | Route | Sources | 适合场景 |
 |---|---|---|
 | `default` / `web` | Brave + Tavily + Exa + SerpAPI | 普通事实搜索；默认 route |
-| `fast` | DeepSeek Web + GLM Web + Tavily + Exa | 快速总结、新闻速览、当前背景；默认不额外抓正文 |
-| `expert` | Brave + Tavily + Exa + SerpAPI + Firecrawl | 需要证据的调研、比较、架构 review；默认抓取更多正文 |
 | `social` | Twitter/X + Reddit OAuth | 看社交反馈、口碑、讨论 |
 | `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
 | `cn-community` | Zhihu + V2EX + Linux Do | 中文社区讨论 |
 | `video` | YouTube + Bilibili | 搜视频；默认 title/url-only，不进入网页抓取 |
-| 单源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]`、`sources=["deepseek-web"]` | 控 quota 或调试；不再使用单源 route |
+| 指定源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]`、`sources=["deepseek-web"]` | 绕过 route，直接指定一个或多个源 |
 
-缺 key 的源会显示 error row，不会静默消失。`fast` 的 DeepSeek/GLM 这类 cookie/session 源不可用时会显式标注降级到 Tavily/Exa。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
+### `level`（搜多深 / 思考深度）
+
+| Level | 行为 | 适合场景 |
+|---|---|---|
+| `fast` | 用搜索 API 自带 summary/answer，不额外抓正文 | 快速总结、当前背景、"先告诉我大概" |
+| `normal`（默认） | 返回 URL，抓取 top 结果后交主模型总结 | 普通查询 |
+| `expert` | 用搜索 API 的 deep 参数，并抓取更多正文 | 证据充分的调研、比较、技术决策、事实核查 |
+
+`search_depth`（`auto`/`fast`/`normal`/`deep`）是更底层的覆盖项；不传时深度由 `level` 推导，`auto` 会按查询复杂度分类。
+
+缺 key 的源会显示 error row，不会静默消失。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
 
 ## Keys
 
@@ -208,8 +220,8 @@ flowchart LR
 // 默认 default route + 额外抓取缺正文 URL
 { "query": "epub to markdown" }
 
-// 快速总结源
-{ "query": "agent memory", "route": "fast" }
+// 快速总结（level=fast，用 provider 自带 summary）
+{ "query": "agent memory", "level": "fast" }
 
 // Twitter/X 讨论
 { "query": "Claude Code feedback", "route": "social" }
@@ -227,8 +239,11 @@ flowchart LR
 // 视频搜索（默认只输出 title + URL，不抓视频）
 { "query": "agent memory tutorial", "route": "video" }
 
+// route 与 level 正交组合：开发场景 + 深度调研
+{ "query": "vector database 选型", "route": "dev", "level": "expert" }
+
 // 中文技术查询可以手动加英文扩展查询
-{ "query": "agent 编排最佳实践", "expand": ["agent orchestration best practices multi-agent"], "route": "fast" }
+{ "query": "agent 编排最佳实践", "expand": ["agent orchestration best practices multi-agent"], "level": "fast" }
 
 // 指定单源
 { "query": "rust async runtime", "sources": ["brave", "exa"] }
@@ -243,12 +258,13 @@ flowchart LR
 | 参数 | 默认 | 说明 |
 |---|---:|---|
 | `query` | — | 搜索查询（必填） |
-| `route` | `default` | 语义 route：`web` / `fast` / `expert` / `social` / `dev` / `cn-community` / `video` |
+| `route` | `default` | 选源/场景：`web` / `social` / `dev` / `cn-community` / `video` |
+| `level` | `normal` | 搜索深度：`fast`（provider summary）/ `normal`（抓取后总结）/ `expert`（provider deep + 多抓取） |
 | `sources` | — | 直接指定一个或多个源，绕过 route |
 | `count` | per-source | 全局 count，会按各源上限 clamp |
 | `timeout` | 60 | 搜索阶段整批 deadline |
-| `search_depth` | `auto` | 搜索强度：对外推荐 `auto` / `fast` / `deep`；内部可解析为 `normal` 平衡档 |
-| `scrape_top` | 30 | 额外抓取缺正文 URL 数，上限 30；传 0 关闭 |
+| `search_depth` | 由 `level` 推导 | 底层覆盖：`auto` / `fast` / `normal` / `deep`；不传时跟随 `level` |
+| `scrape_top` | 由 `level`/`route` 推导 | 额外抓取缺正文 URL 数，上限 30；传 0 关闭 |
 | `scrape_chars` | provider | 单页抓取正文最大字符数 |
 | `expand` | — | 额外扩展查询（list），常用于给中文查询补英文 |
 | `use_state` | true | 是否使用 SQLite key 状态与站点抓取器记忆 |

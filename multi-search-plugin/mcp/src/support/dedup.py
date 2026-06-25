@@ -104,9 +104,39 @@ def _is_passthrough(item: dict) -> bool:
     )
 
 
-def split_by_content(results: list) -> tuple[list[dict], list[dict], list[dict], dict]:
-    """Split raw search results into content-bearing and metadata-only rows."""
+def _canonical_source(source: str) -> str:
+    # Answer rows use underscores (``glm_web_answer``) while the matching result
+    # rows use hyphens (``glm-web``); fold both so they compare equal.
+    return str(source or "").replace("-", "_")
+
+
+def _answer_provider_sources(results: list[dict]) -> set[str]:
+    """Sources that returned a synthesized answer/summary this search.
+
+    ``tavily_answer`` -> ``tavily``. Used by expert/deep to skip scraping the
+    concrete URLs of any source that already provided a summary, while still
+    scraping sources (github/zhihu/...) that returned URLs only.
+    """
+    providers: set[str] = set()
+    for item in results:
+        src = item.get("source")
+        if src in ANSWER_SOURCES and not item.get("error"):
+            providers.add(_canonical_source(str(src)[: -len("_answer")]))
+    return providers
+
+
+def split_by_content(
+    results: list,
+    skip_summarized_sources: bool = False,
+) -> tuple[list[dict], list[dict], list[dict], dict]:
+    """Split raw search results into content-bearing and metadata-only rows.
+
+    When ``skip_summarized_sources`` is true (expert/deep), a normal result is
+    treated as already having content if its source provided an answer/summary
+    row, so its URL is not scraped. Sources without a summary are unaffected.
+    """
     results = as_dicts(results)
+    summarized = _answer_provider_sources(results) if skip_summarized_sources else set()
     with_content: list[dict] = []
     without_content: list[dict] = []
     passthrough: list[dict] = []
@@ -123,6 +153,10 @@ def split_by_content(results: list) -> tuple[list[dict], list[dict], list[dict],
                 with_content.append(item)
             else:
                 without_content.append(item)
+        elif summarized and _canonical_source(item.get("source")) in summarized:
+            # Expert/deep: this source already returned a summary, so accept it
+            # as content-bearing and skip scraping its concrete URLs.
+            with_content.append(item)
         else:
             # For web sources, short/empty content should not satisfy
             # "already has content" — otherwise it blocks richer scraping.

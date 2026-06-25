@@ -45,6 +45,7 @@ def _safe_call(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
 def multi_search_tool(
     query: str,
     route: str | None = None,
+    level: str | None = None,
     count: int | None = None,
     sources: list[str] | None = None,
     scrape_top: int | None = None,
@@ -64,6 +65,7 @@ def multi_search_tool(
     return _safe_call(lambda: run_multi_search(MultiSearchRequest(
         query=query,
         route=route,
+        level=level,
         count=count,
         sources=sources,
         scrape_top=scrape_top,

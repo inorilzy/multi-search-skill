@@ -22,6 +22,8 @@ from .search.search_runner import (
     ROUTE_PROFILES,
     SearchRunner,
     SearchRunnerConfig,
+    available_levels,
+    level_meta,
     normalize_source_name,
     resolve_route,
     route_meta,
@@ -76,6 +78,7 @@ COUNT_CAPS = {
 class MultiSearchRequest:
     query: str
     route: str | None = None
+    level: str | None = None
     count: int | None = None
     sources: list[str] | None = None
     scrape_top: int | None = None
@@ -112,7 +115,15 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     config = _load_config_safe(request.config_path)
     route = str(_resolve_value(request.route, config, "type", "default"))
     meta = route_meta(route)
-    search_depth, depth_reason = _resolve_search_depth(request.query, request.search_depth, config, meta)
+    level = str(_resolve_value(request.level, config, "level", "normal")).strip().lower()
+    if level not in available_levels():
+        raise ValueError(
+            f"unknown level: {level}; valid levels: {', '.join(available_levels())}"
+        )
+    lmeta = level_meta(level)
+    search_depth, depth_reason = _resolve_search_depth(
+        request.query, request.search_depth, config, lmeta
+    )
     if request.sources:
         source_names = {normalize_source_name(str(source)) for source in request.sources}
         unknown_sources = source_names - ALL_SOURCE_NAMES
@@ -131,10 +142,13 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     keys = load_keys()
     counts = _build_counts(config, request.count, route_default=meta["count"])
     timeout = _resolve_nonnegative(request.timeout, config, "timeout", meta["timeout"])
+    # Level owns scrape behavior; fall back to the route's source-shaped default
+    # only when the level does not pin one (i.e. ``normal``).
+    scrape_top_default = lmeta["scrape_top"] if "scrape_top" in lmeta else meta["scrape_top"]
     if request.scrape_top is None and config_bool(config, "no_scrape", False):
         scrape_top = 0
     else:
-        scrape_top = _resolve_nonnegative(request.scrape_top, config, "scrape_top", meta["scrape_top"])
+        scrape_top = _resolve_nonnegative(request.scrape_top, config, "scrape_top", scrape_top_default)
     scrape_chars = max(1, _resolve_int(request.scrape_chars, config, "scrape_chars", 6000))
     scrape_per_source = max(1, _resolve_int(request.scrape_per_source, config, "scrape_per_source", 6))
     scrape_timeout = _resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
@@ -186,6 +200,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
         scrape_concurrency=scrape_concurrency,
         site_memory=site_memory,
         key_manager=key_manager,
+        skip_summarized_sources=bool(lmeta.get("skip_summarized_sources")),
     )
     final_results, _ = deduplicate(
         scrape_result["with_content"] + scrape_result["final_without_content"] + scrape_result["passthrough"]
@@ -204,7 +219,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             brief=request.brief,
             verbose=request.verbose,
             title_url_only=request.title_url_only,
-            show_answer=bool(meta.get("show_answer")) or request.verbose,
+            show_answer=bool(lmeta.get("show_answer")) or request.verbose,
             show_snippet=bool(meta.get("show_snippet")),
             degradation=_route_degradation(route, all_results, source_names, meta),
         )
@@ -215,6 +230,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     response = {
         "query": request.query,
         "route": route,
+        "level": level,
         "results": as_dicts(final_results),
         "scrapes": scrape_result["scrapes"],
         "provider_status": _provider_status(final_results),
@@ -229,12 +245,18 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             "state_path": str(store.path) if store else None,
             "route_meta": {
                 "scrape_top": scrape_top,
-                "show_answer": bool(meta.get("show_answer")) or request.verbose,
+                "show_answer": bool(lmeta.get("show_answer")) or request.verbose,
                 "show_snippet": bool(meta.get("show_snippet")),
                 "count": meta.get("count"),
                 "timeout": timeout,
                 "search_depth": search_depth,
                 "search_depth_reason": depth_reason,
+            },
+            "level_meta": {
+                "level": level,
+                "search_depth": search_depth,
+                "show_answer": bool(lmeta.get("show_answer")) or request.verbose,
+                "scrape_top": scrape_top,
             },
             "route_degradation": _route_degradation(route, all_results, source_names, meta),
         },
@@ -277,7 +299,7 @@ def run_scrape(request: ScrapeRequest | dict) -> dict:
 
 def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
     store = StateStore()
-    response = {"routes": sorted(ROUTE_PROFILES), "sources": sorted(ALL_SOURCE_NAMES)}
+    response = {"routes": sorted(ROUTE_PROFILES), "levels": available_levels(), "sources": sorted(ALL_SOURCE_NAMES)}
     if include_key_status:
         response["key_status"] = SQLiteKeyManager(store).status_rows()
     if include_scraper_stats:
@@ -322,6 +344,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
             "state": str(store.path),
         },
         "routes": sorted(ROUTE_PROFILES),
+        "levels": available_levels(),
         "network_checked": bool(include_network),
     }
     if include_keys:
@@ -334,7 +357,8 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
 def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, scrape_top: int,
                       scrape_per_source: int, scrape_timeout: int, scrape_concurrency: int,
                       site_memory: SiteScraperMemory | None, key_manager=None,
-                      scrape_url_timeout: int | None = None) -> dict:
+                      scrape_url_timeout: int | None = None,
+                      skip_summarized_sources: bool = False) -> dict:
     if scrape_url_timeout is None:
         scrape_url_timeout = scrape_timeout
     scrape_plan = plan_scrapes(
@@ -343,6 +367,7 @@ def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, 
         scrape_top=scrape_top,
         scrape_per_source=scrape_per_source,
         key_manager=key_manager,
+        skip_summarized_sources=skip_summarized_sources,
     )
     scrape_errors: list[dict] = []
     content_pool = scrape_plan.content_pool
@@ -547,16 +572,16 @@ def _resolve_nonnegative(request_value: Any, config: dict, key: str, default: in
     return max(0, _resolve_int(request_value, config, key, default))
 
 
-def _resolve_search_depth(query: str, request_value: str | None, config: dict, meta: dict) -> tuple[str, str]:
-    # Priority: explicit request value > a route that pins a concrete depth
-    # (e.g. fast/expert) > config > the route's own "auto" default. A route
-    # like `expert` encodes a deliberate user choice, so its pinned depth must
-    # not be silently overridden by a config that merely says "auto".
-    route_depth = str(meta.get("search_depth") or "auto").strip().lower()
+def _resolve_search_depth(query: str, request_value: str | None, config: dict, level_meta: dict) -> tuple[str, str]:
+    # Priority: explicit request value > the level's pinned depth
+    # (fast/normal/expert) > config > "auto". Depth is owned by ``level`` now,
+    # so a level like ``expert`` encodes a deliberate user choice that must not
+    # be silently overridden by a config that merely says "auto".
+    level_depth = str(level_meta.get("search_depth") or "auto").strip().lower()
     if request_value is not None:
         value, origin = str(request_value).strip().lower(), "explicit"
-    elif route_depth not in {"", "auto"}:
-        value, origin = route_depth, "route"
+    elif level_depth not in {"", "auto"}:
+        value, origin = level_depth, "level"
     elif config.get("search_depth") is not None:
         value, origin = str(config.get("search_depth")).strip().lower(), "configured"
     else:

@@ -38,7 +38,7 @@ from src.state.keys import (
 )
 from src.state.mark_exhausted import _mark_config_exhausted
 from src.support.cache import JsonCache, make_scrape_cache_key
-from src.support.dedup import _norm_url, deduplicate
+from src.support.dedup import _norm_url, deduplicate, split_by_content
 from src.support.models import ProviderError, ScrapeResult, SearchResult
 from src.support.secrets import scrub_secrets
 from src.search.searchers import baidu as baidu_searcher
@@ -125,14 +125,22 @@ class RouteTests(unittest.TestCase):
     """
 
     def test_named_routes_resolve_to_expected_profiles(self):
-        self.assertEqual(resolve_route("default"), {"brave", "exa", "tavily", "serpapi"})
-        self.assertEqual(resolve_route("web"), {"brave", "exa", "tavily", "serpapi"})
-        self.assertEqual(resolve_route("fast"), {"deepseek_web", "exa", "tavily", "glm_web"})
+        self.assertEqual(
+            resolve_route("default"),
+            {"brave", "exa", "tavily", "serpapi", "firecrawl", "baidu", "glm_web", "deepseek_web"},
+        )
         self.assertEqual(resolve_route("dev"), {"stackoverflow", "hackernews", "github_repos"})
         self.assertEqual(resolve_route("social"), {"twitter", "reddit_oauth"})
         self.assertEqual(resolve_route("video"), {"bilibili", "youtube"})
         self.assertEqual(resolve_route("cn-community"), {"zhihu", "v2ex", "linuxdo"})
-        self.assertEqual(resolve_route("expert"), {"firecrawl", "brave", "exa", "serpapi", "tavily"})
+        self.assertNotIn("youtube", resolve_route("all"))
+        self.assertNotIn("bilibili", resolve_route("all"))
+        self.assertTrue({"brave", "baidu", "github_repos", "zhihu"} <= resolve_route("all"))
+
+    def test_depth_routes_are_now_levels_not_routes(self):
+        # fast/expert moved from route (source selection) to level (search depth).
+        self.assertEqual(resolve_route("fast"), set())
+        self.assertEqual(resolve_route("expert"), set())
 
     def test_unknown_route_resolves_empty_for_validation(self):
         self.assertEqual(resolve_route("not-a-route"), set())
@@ -144,8 +152,11 @@ class RouteTests(unittest.TestCase):
 
     def test_available_routes_lists_semantic_profiles(self):
         routes = available_routes()
-        for name in ("default", "web", "fast", "dev", "social", "video", "cn-community", "expert"):
+        for name in ("default", "all", "dev", "social", "video", "cn-community"):
             self.assertIn(name, routes)
+        for name in ("fast", "expert"):
+            self.assertNotIn(name, routes)
+        self.assertNotIn("web", routes)
 
 
 class CapabilityTests(unittest.TestCase):
@@ -398,6 +409,40 @@ class DedupTests(unittest.TestCase):
         self.assertEqual(deduped[0]["title"], "Longer title")
         self.assertEqual(deduped[0]["scraped_content"], "full text")
 
+    def test_split_by_content_keeps_summarized_url_rows_when_skipping(self):
+        # An answer row's source uses underscores (``glm_web_answer``) while its
+        # matching URL row uses hyphens (``glm-web``); skip_summarized_sources
+        # must fold both so the URL row is accepted as content-bearing (not
+        # scraped), while a URL-only source (github) still needs scraping.
+        rows = [
+            {"source": "glm_web_answer", "answer": "synthesized summary"},
+            {"source": "glm-web", "title": "A", "url": "https://example.com/a"},
+            {"source": "github-repos", "title": "Y", "url": "https://github.com/x/y"},
+        ]
+
+        with_content, without_content, _passthrough, _raw = split_by_content(
+            rows, skip_summarized_sources=True
+        )
+        self.assertIn(
+            "https://example.com/a", {item.get("url") for item in with_content}
+        )
+        self.assertIn(
+            "https://github.com/x/y", {item.get("url") for item in without_content}
+        )
+
+    def test_split_by_content_scrapes_summarized_url_rows_by_default(self):
+        # Without skip_summarized_sources (normal level), a summarized source's
+        # URL row is still a scrape candidate.
+        rows = [
+            {"source": "glm_web_answer", "answer": "synthesized summary"},
+            {"source": "glm-web", "title": "A", "url": "https://example.com/a"},
+        ]
+
+        _with, without_content, _pass, _raw = split_by_content(rows)
+        self.assertIn(
+            "https://example.com/a", {item.get("url") for item in without_content}
+        )
+
 
 class ScrapePlannerTests(unittest.TestCase):
     def test_prefetched_content_does_not_enter_scrape_items(self):
@@ -420,6 +465,27 @@ class ScrapePlannerTests(unittest.TestCase):
         plan = plan_scrapes(rows, keys={}, scrape_top=5, scrape_per_source=6)
 
         self.assertEqual([item["url"] for item in plan.items_to_scrape], ["https://example.com/doc"])
+
+    def test_expert_skips_scraping_sources_that_returned_a_summary(self):
+        rows = [
+            {"source": "tavily_answer", "answer": "synthesized summary"},
+            {"source": "tavily", "title": "A", "url": "https://example.com/a", "description": "snippet"},
+            {"source": "github-repos", "title": "Y", "url": "https://github.com/x/y", "description": "snippet"},
+        ]
+
+        normal = plan_scrapes(rows, keys={}, scrape_top=5, scrape_per_source=6)
+        self.assertEqual(
+            {item["url"] for item in normal.items_to_scrape},
+            {"https://example.com/a", "https://github.com/x/y"},
+        )
+
+        expert = plan_scrapes(
+            rows, keys={}, scrape_top=5, scrape_per_source=6, skip_summarized_sources=True
+        )
+        # tavily provided a summary -> its URL is not scraped; github (URL-only) is.
+        self.assertEqual(
+            [item["url"] for item in expert.items_to_scrape], ["https://github.com/x/y"]
+        )
 
     def test_preferred_sources_and_source_quota_are_applied(self):
         rows = [

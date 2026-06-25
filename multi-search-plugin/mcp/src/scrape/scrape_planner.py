@@ -123,9 +123,12 @@ def plan_scrapes(
     scrape_top: int,
     scrape_per_source: int,
     key_manager=None,
+    skip_summarized_sources: bool = False,
 ) -> ScrapePlan:
     rows = as_dicts(all_results)
-    with_content, without_content, passthrough, raw_counts = split_by_content(rows)
+    with_content, without_content, passthrough, raw_counts = split_by_content(
+        rows, skip_summarized_sources=skip_summarized_sources
+    )
     content_urls = {
         _norm_url(item.get("url", ""))
         for item in with_content
