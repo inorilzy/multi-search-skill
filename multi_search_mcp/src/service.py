@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .support.cache import JsonCache, make_scrape_cache_key
-from .support.config import ConfigError, config_bool, config_list, load_config, resolve_config_path
+from .support.config import ConfigError, config_list, load_config, resolve_config_path
 from .support.dedup import apply_scraped_content, deduplicate, rank_results
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
@@ -22,54 +22,12 @@ from .search.search_runner import (
     ROUTE_PROFILES,
     SearchRunner,
     SearchRunnerConfig,
-    normalize_source_name,
     resolve_route,
-    route_meta,
 )
+from .search.resolve import COUNT_CAPS, DEFAULT_COUNTS, build_counts, resolve_search_plan
 from .support.secrets import scrub_secrets
 from .state.site_memory import SiteScraperMemory
 from .state.state_store import StateStore
-
-
-DEFAULT_COUNTS = {
-    "baidu": 10,
-    "brave": 10,
-    "tavily": 10,
-    "exa": 10,
-    "github": 10,
-    "hackernews": 10,
-    "serpapi": 10,
-    "youtube": 10,
-    "bilibili": 10,
-    "stackoverflow": 10,
-    "firecrawl": 10,
-    "zhihu": 10,
-    "linuxdo": 10,
-    "linuxdo_api": 10,
-    "twitter": 10,
-    "glm_web": 10,
-    "deepseek_web": 10,
-}
-
-COUNT_CAPS = {
-    "baidu": 50,
-    "brave": 20,
-    "tavily": 20,
-    "exa": 100,
-    "github": 100,
-    "hackernews": 100,
-    "serpapi": 100,
-    "youtube": 50,
-    "bilibili": 50,
-    "stackoverflow": 100,
-    "firecrawl": 100,
-    "zhihu": 10,
-    "linuxdo": 20,
-    "linuxdo_api": 10,
-    "twitter": 20,
-    "glm_web": 30,
-    "deepseek_web": 30,
-}
 
 
 @dataclass
@@ -109,53 +67,24 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     if not request.query:
         raise ValueError("query is required")
     config = _load_config_safe(request.config_path)
-    route = str(_resolve_value(request.route, config, "type", "default"))
-    meta = route_meta(route)
-    want_content = bool(meta.get("want_content", False))
-    if request.sources:
-        source_names = {normalize_source_name(str(source)) for source in request.sources}
-        unknown_sources = source_names - ALL_SOURCE_NAMES
-        if unknown_sources:
-            raise ValueError(
-                f"unknown source(s): {', '.join(sorted(unknown_sources))}; "
-                f"valid sources: {', '.join(sorted(ALL_SOURCE_NAMES))}"
-            )
-    elif route in ROUTE_PROFILES:
-        source_names = None
-    else:
-        raise ValueError(
-            f"unknown route: {route}; valid routes: {', '.join(sorted(ROUTE_PROFILES))}"
-        )
+    plan = resolve_search_plan(request, config)
 
     keys = load_keys()
-    counts = _build_counts(config, request.count, route_default=meta["count"])
-    timeout = _resolve_nonnegative(request.timeout, config, "timeout", meta["timeout"])
-    # The route owns scrape behavior. The ``fast`` route pins scrape_top=0 and
-    # asks providers to return body content inline.
-    scrape_top_default = meta["scrape_top"]
-    if request.scrape_top is None and config_bool(config, "no_scrape", False):
-        scrape_top = 0
-    else:
-        scrape_top = _resolve_nonnegative(request.scrape_top, config, "scrape_top", scrape_top_default)
-    scrape_chars = max(1, _resolve_int(request.scrape_chars, config, "scrape_chars", 6000))
-    scrape_per_source = max(1, _resolve_int(request.scrape_per_source, config, "scrape_per_source", 6))
-    scrape_timeout = _resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
-    # Per-URL scrape cap inside the orchestrator. Defaults to the stage timeout
-    # so a single slow URL cannot silently swallow the whole budget, but it is
-    # always additionally bounded by the remaining stage deadline at call time.
-    scrape_url_timeout = _resolve_nonnegative(None, config, "scrape_url_timeout", scrape_timeout)
-    scrape_concurrency = max(1, _resolve_int(request.scrape_concurrency, config, "scrape_concurrency", 5))
-    output_mode = request.output if request.output in {"json", "markdown", "both"} else "both"
-    if meta.get("title_url_only"):
-        request.title_url_only = True
 
     from .search.registry import build_provider_registry
 
     store = StateStore() if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
     site_memory = SiteScraperMemory(store) if store else None
-    runner_config = SearchRunnerConfig(route, counts, timeout, str(config.get("serpapi_engine", "google_light")), keys, want_content)
-    route_resolver = (lambda _route, lite=False: source_names or resolve_route(_route, lite=lite))
+    runner_config = SearchRunnerConfig(
+        plan.route,
+        plan.effective_counts,
+        plan.timeout,
+        plan.serpapi_engine,
+        keys,
+        plan.want_content,
+    )
+    route_resolver = (lambda _route, lite=False: plan.sources or resolve_route(_route, lite=lite))
     runner = SearchRunner(runner_config, build_provider_registry(), route_resolver=route_resolver, key_manager=key_manager)
 
     queries_to_run = [request.query] + list(request.expand or config_list(config, "expand") or config_list(config, "expand_queries"))
@@ -181,14 +110,14 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
         all_results,
         keys=keys,
         cache=cache,
-        scrape_top=scrape_top,
-        scrape_per_source=scrape_per_source,
-        scrape_timeout=scrape_timeout,
-        scrape_url_timeout=scrape_url_timeout,
-        scrape_concurrency=scrape_concurrency,
+        scrape_top=plan.scrape_top,
+        scrape_per_source=plan.scrape_per_source,
+        scrape_timeout=plan.scrape_timeout,
+        scrape_url_timeout=plan.scrape_url_timeout,
+        scrape_concurrency=plan.scrape_concurrency,
         site_memory=site_memory,
         key_manager=key_manager,
-        skip_summarized_sources=bool(meta.get("skip_summarized_sources")),
+        skip_summarized_sources=bool(plan.route_defaults.get("skip_summarized_sources")),
     )
     final_results, _ = deduplicate(
         scrape_result["with_content"] + scrape_result["final_without_content"] + scrape_result["passthrough"]
@@ -200,27 +129,27 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     _add_public_content_aliases(final_results)
     valid_count = _valid_result_count(final_results)
     markdown = ""
-    if output_mode in {"markdown", "both"}:
+    if plan.output_mode in {"markdown", "both"}:
         markdown = format_results(
             final_results,
             request.query,
             raw_counts=scrape_result["raw_counts"],
             brief=request.brief,
             verbose=request.verbose,
-            title_url_only=request.title_url_only,
-            show_answer=bool(meta.get("show_answer")) or request.verbose,
-            show_snippet=bool(meta.get("show_snippet")),
-            degradation=_route_degradation(route, all_results, source_names, meta),
+            title_url_only=plan.title_url_only,
+            show_answer=plan.show_answer or request.verbose,
+            show_snippet=plan.show_snippet,
+            degradation=_route_degradation(plan.route, all_results, plan.sources, plan.route_defaults),
         )
-        if scrape_top > 0:
-            markdown += format_scrapes(scrape_result["scrapes"], max_chars=scrape_chars)
+        if plan.scrape_top > 0:
+            markdown += format_scrapes(scrape_result["scrapes"], max_chars=plan.scrape_chars)
 
     errors = [row for row in as_dicts(final_results) + scrape_result["scrape_errors"] if row.get("error")]
     summaries = _extract_summaries(final_results)
     source_briefs = _extract_source_briefs(final_results)
     response = {
         "query": request.query,
-        "route": route,
+        "route": plan.route,
         "summary": summaries[0]["answer"] if summaries else None,
         "summaries": summaries,
         "source_briefs": source_briefs,
@@ -241,17 +170,21 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             "jina_keys_active_total": count_jina_keys(keys.get("jina")),
             "state_path": str(store.path) if store else None,
             "route_meta": {
-                "scrape_top": scrape_top,
-                "show_answer": bool(meta.get("show_answer")) or request.verbose,
-                "show_snippet": bool(meta.get("show_snippet")),
-                "count": meta.get("count"),
-                "timeout": timeout,
-                "want_content": want_content,
+                "scrape_top": plan.scrape_top,
+                "show_answer": plan.show_answer or request.verbose,
+                "show_snippet": plan.show_snippet,
+                "count": plan.route_defaults.get("count"),
+                "route_default_count": plan.route_defaults.get("count"),
+                "timeout": plan.timeout,
+                "route_default_timeout": plan.route_defaults.get("timeout"),
+                "want_content": plan.want_content,
             },
-            "route_degradation": _route_degradation(route, all_results, source_names, meta),
+            "effective_counts": plan.effective_counts,
+            "route_sources": sorted(plan.sources) if plan.sources is not None else sorted(resolve_route(plan.route)),
+            "route_degradation": _route_degradation(plan.route, all_results, plan.sources, plan.route_defaults),
         },
     }
-    if output_mode in {"markdown", "both"}:
+    if plan.output_mode in {"markdown", "both"}:
         response["markdown"] = markdown
     return response
 
@@ -459,17 +392,7 @@ def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, 
 
 
 def _build_counts(config: dict, global_count: int | None = None, route_default: int = 10) -> dict[str, int]:
-    counts_cfg = config.get("counts") if isinstance(config.get("counts"), dict) else {}
-    configured_global = global_count if global_count is not None else config.get("count")
-    counts = {}
-    for source, default in DEFAULT_COUNTS.items():
-        value = counts_cfg.get(source, config.get(f"{source}_count"))
-        if value is None and configured_global is not None:
-            value = configured_global
-        if value is None:
-            value = route_default
-        counts[source] = max(1, min(int(value), COUNT_CAPS[source]))
-    return counts
+    return build_counts(config, global_count, route_default=route_default)
 
 
 def _route_degradation(route: str, results: list[dict], source_names: set[str] | None, meta: dict) -> dict | None:

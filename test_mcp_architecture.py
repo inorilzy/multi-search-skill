@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest import mock
 
 
-PLUGIN_MCP = Path(__file__).resolve().parent / "multi-search-plugin" / "mcp"
-if str(PLUGIN_MCP) not in sys.path:
-    sys.path.insert(0, str(PLUGIN_MCP))
+MCP_ROOT = Path(__file__).resolve().parent / "multi_search_mcp"
+if str(MCP_ROOT) not in sys.path:
+    sys.path.insert(0, str(MCP_ROOT))
 
 from src.scrape.scrape import scrape_url_smart
 from src.search.search_runner import (
@@ -16,6 +16,7 @@ from src.search.search_runner import (
     resolve_route,
     route_meta,
 )
+from src.search.resolve import resolve_search_plan
 from src.service import MultiSearchRequest, ScrapeRequest, doctor_data, list_sources, run_multi_search, run_scrape
 from src.state.key_state import (
     COOLDOWN,
@@ -30,7 +31,7 @@ from src.state.key_state import (
 )
 from src.state.state_store import StateStore
 from src.support.format import format_results
-import tools
+from multi_search_mcp import tools
 from src.support import config as config_module
 from src.support.dedup import _norm_url, apply_scraped_content, deduplicate, rank_results
 from src import service as service_module
@@ -358,6 +359,8 @@ class PluginServiceConfigTests(unittest.TestCase):
         route_meta_out = response["diagnostics"]["route_meta"]
         self.assertTrue(route_meta_out["want_content"])
         self.assertEqual(route_meta_out["scrape_top"], 0)
+        self.assertEqual(response["diagnostics"]["effective_counts"]["tavily"], 8)
+        self.assertEqual(route_meta_out["route_default_count"], 8)
 
     def test_default_route_uses_route_scrape_top(self):
         # The default route does not pin scrape_top=0; it uses the route default (8).
@@ -433,6 +436,26 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(captured[1]["timeout"], 12)
         self.assertEqual(captured[1]["counts"]["tavily"], 6)
         self.assertEqual(captured[1]["scrape_top"], 3)
+
+    def test_request_count_overrides_configured_per_source_counts(self):
+        request = MultiSearchRequest(query="q", route="fast", count=6, use_state=False)
+        config = {"counts": {"tavily": 10, "exa": 99}, "count": 4}
+
+        plan = resolve_search_plan(request, config)
+
+        self.assertEqual(plan.effective_counts["tavily"], 6)
+        self.assertEqual(plan.effective_counts["exa"], 6)
+        self.assertEqual(plan.effective_counts["firecrawl"], 6)
+
+    def test_configured_counts_override_route_defaults_when_request_omits_count(self):
+        request = MultiSearchRequest(query="q", route="fast", use_state=False)
+        config = {"counts": {"tavily": 10}, "count": 4}
+
+        plan = resolve_search_plan(request, config)
+
+        self.assertEqual(plan.effective_counts["tavily"], 10)
+        self.assertEqual(plan.effective_counts["exa"], 4)
+        self.assertEqual(plan.route_defaults["count"], 8)
 
     def test_fast_route_want_content_flows_to_runner_and_diagnostics(self):
         captured = {}

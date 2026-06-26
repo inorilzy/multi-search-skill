@@ -4,8 +4,7 @@ description: >
   Routing layer for the multi-search MCP server. Trigger when the user wants to
   search, find, look up, compare, or gather recent web/social/dev/community
   context - including 搜一下, 查一下, 找方案, 找项目, 看讨论.
-  Speed cues: 快速搜索/快速查/简单搜/大概了解一下 -> route=fast; otherwise default route.
-argument-hint: "<query> [route/source preference]"
+  Speed cues: 快速搜索/快速查/简单搜/大概了解一下 mean route=fast; otherwise use the default route.
 ---
 
 # Multi-Search

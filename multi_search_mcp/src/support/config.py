@@ -6,7 +6,7 @@ from pathlib import Path
 
 CONFIG_ENV_VAR = "MULTI_SEARCH_CONFIG"
 USER_CONFIG_PATH = Path.home() / ".multi-search" / "multi-search-config.json"
-# Development fallback: the config file shipped next to the plugin source tree.
+# Development fallback: the config file shipped next to the MCP source tree.
 DEV_CONFIG_PATH = Path(__file__).resolve().parents[3] / "multi-search-config.json"
 
 
@@ -16,7 +16,7 @@ def resolve_config_path() -> Path:
     Order of precedence:
     1. ``MULTI_SEARCH_CONFIG`` environment variable (e.g. injected via .mcp.json).
     2. User-level config under ``~/.multi-search`` (matches the state DB location).
-    3. Development fallback next to the plugin source tree, only if it exists.
+    3. Development fallback next to the MCP source tree, only if it exists.
     """
     env_value = os.environ.get(CONFIG_ENV_VAR)
     if env_value:

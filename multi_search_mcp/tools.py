@@ -1,12 +1,12 @@
-"""MCP tool implementations for the multi-search plugin."""
+"""MCP tool implementations for multi-search."""
 from __future__ import annotations
 
 from typing import Any, Callable, Literal
 
-from pathing import add_plugin_to_path
+from .pathing import add_mcp_to_path
 
 
-add_plugin_to_path()
+add_mcp_to_path()
 
 from src.state.key_state import SQLiteKeyManager
 from src.scrape.scrape import KNOWN_BACKENDS

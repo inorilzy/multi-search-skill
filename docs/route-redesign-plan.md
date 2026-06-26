@@ -1,7 +1,7 @@
 # multi-search 路由重设计 · 实施方案
 
 > 状态：已实施 / 已验证
-> 适用代码：`multi-search-plugin/mcp/src/*`（canonical runtime）
+> 适用代码：`multi_search_mcp/src/*`（canonical runtime）
 > 关联文档：`docs/route-capability-table.md`（能力表）
 
 实施结果：本方案已落地到 canonical runtime。旧 `scripts/*` 不作为主运行路径处理。
@@ -9,9 +9,9 @@
 验证命令：
 
 ```powershell
-python -m pytest test_plugin_architecture.py -q
+python -m pytest test_mcp_architecture.py -q
 python -m pytest -q
-python -m compileall multi-search-plugin/mcp/src
+python -m compileall multi_search_mcp/src
 ```
 
 本方案综合 GPT 的三层心智模型、GLM 的落地层补强（`ROUTE_META` + 降级策略），并按"别过度工程"原则做了两处修正（不自动生成单 provider route、lite/fast 二选一）。

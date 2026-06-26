@@ -1,9 +1,9 @@
-"""Pure-logic and key/state tests migrated from the legacy test_core.py.
+"""Pure-logic and key/state tests for the multi-search MCP runtime.
 
-These exercise the packaged plugin modules under multi-search-plugin/mcp/src
-(dedup, scrape planner, routes, capabilities, models, secrets, cache, keys).
-The companion test_plugin_architecture.py covers the MCP/service wiring and
-the C' architecture fixes; this file covers the provider-agnostic core logic.
+These exercise the packaged MCP modules under multi_search_mcp/src (dedup, scrape planner,
+routes, capabilities, models, secrets, cache, keys). The companion
+test_mcp_architecture.py covers the MCP/service wiring and the C' architecture
+fixes; this file covers the provider-agnostic core logic.
 """
 
 import json
@@ -15,9 +15,9 @@ from pathlib import Path
 from unittest import mock
 
 
-PLUGIN_MCP = Path(__file__).resolve().parent / "multi-search-plugin" / "mcp"
-if str(PLUGIN_MCP) not in sys.path:
-    sys.path.insert(0, str(PLUGIN_MCP))
+MCP_ROOT = Path(__file__).resolve().parent / "multi_search_mcp"
+if str(MCP_ROOT) not in sys.path:
+    sys.path.insert(0, str(MCP_ROOT))
 
 from src.search.capabilities import (
     PROVIDER_CAPABILITIES,
@@ -118,7 +118,7 @@ class ModelTests(unittest.TestCase):
 
 
 class RouteTests(unittest.TestCase):
-    """Route assertions reflect the *plugin* semantic-profile redesign.
+    """Route assertions reflect the semantic-profile redesign.
 
     The legacy single-provider aliases (github/youtube/v2ex ...) were
     intentionally removed; routes are now multi-provider profiles.

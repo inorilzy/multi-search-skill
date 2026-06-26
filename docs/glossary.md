@@ -78,8 +78,8 @@
 
 | 术语 | 定义 | 代码出处 |
 |------|------|---------|
-| **MCP 工具** | 暴露给 agent 的入口函数：`multi_search`、`scrape_url`、`list_sources`、`doctor` 等。 | `mcp/server.py` |
-| **SKILL** | 给 agent 的薄自然语言触发层，告诉它何时调工具、传什么 route/sources。 | `multi-search-plugin/skills/multi-search/SKILL.md` |
+| **MCP 工具** | 暴露给 agent 的入口函数：`multi_search`、`scrape_url`、`list_sources`、`doctor` 等。 | `multi_search_mcp/server.py` |
+| **SKILL** | 给 agent 的薄自然语言触发层，告诉它何时调工具、传什么 route/sources。 | `skills/multi-search/SKILL.md` |
 | **config（行为配置）** | 非敏感的默认值（route/count/timeout 等）。解析顺序：env `MULTI_SEARCH_CONFIG` → `~/.multi-search/multi-search-config.json` → 源码树 fallback。 | `support/config.py` → `resolve_config_path` |
 | **keys file（密钥文件）** | 明文 API key / cookie，只从环境变量和 `~/.search-keys.json` 读取，**不**放进 config。 | `state/keys.py` |
 

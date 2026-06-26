@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""MCP stdio server entrypoint for the multi-search plugin."""
+"""MCP stdio server entrypoint for multi-search."""
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from pathing import add_plugin_to_path
+from .pathing import add_mcp_to_path
 
-add_plugin_to_path()
+add_mcp_to_path()
 
-from tools import (
+from .tools import (
     doctor_tool,
     get_key_status_tool,
     get_site_scraper_stats_tool,
@@ -109,4 +109,9 @@ def reset_site_scraper_stats(site: str | None = None) -> dict:
 
 
 if __name__ == "__main__":
+    mcp.run()
+
+
+def main() -> None:
+    """Console script entrypoint for uvx/pipx MCP launches."""
     mcp.run()

@@ -1,0 +1,23 @@
+[project]
+name = "multi-search-mcp"
+version = "0.2.2"
+description = "Aggregated search MCP server for the multi-search skill."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0",
+    "beautifulsoup4>=4.12",
+    "twikit-ng>=2.5",
+]
+
+[project.scripts]
+multi-search-mcp = "multi_search_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["multi_search_mcp*"]
+
+[tool.setuptools.package-data]
+multi_search_mcp = ["src/search/searchers/*.mjs", "src/support/*.ps1"]
