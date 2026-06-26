@@ -1,0 +1,20 @@
+{
+  "name": "multi-search-marketplace",
+  "interface": {
+    "displayName": "Multi Search Marketplace"
+  },
+  "plugins": [
+    {
+      "name": "multi-search",
+      "source": {
+        "source": "local",
+        "path": "./plugins/multi-search"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -1,12 +1,17 @@
 {
   "name": "multi-search",
-  "version": "0.2.1",
+  "version": "0.2.1+codex.20260626031524",
   "description": "Aggregated search MCP plugin with thin skill guidance, key health tracking, and site scraper memory.",
   "author": {
     "name": "multi-search contributors"
   },
   "license": "MIT",
-  "keywords": ["search", "mcp", "scraping", "research"],
+  "keywords": [
+    "search",
+    "mcp",
+    "scraping",
+    "research"
+  ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
@@ -15,7 +20,11 @@
     "longDescription": "Multi Search exposes MCP tools for aggregated search, URL scraping, key health tracking, and site-specific scraper memory, with a thin skill for natural-language routing guidance.",
     "developerName": "multi-search contributors",
     "category": "Productivity",
-    "capabilities": ["Search", "MCP", "Research"],
+    "capabilities": [
+      "Search",
+      "MCP",
+      "Research"
+    ],
     "defaultPrompt": [
       "Search recent discussion about an AI framework.",
       "Find implementation options for a technical problem.",
