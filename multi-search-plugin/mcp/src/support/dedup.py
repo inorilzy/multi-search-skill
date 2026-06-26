@@ -113,7 +113,7 @@ def _canonical_source(source: str) -> str:
 def _answer_provider_sources(results: list[dict]) -> set[str]:
     """Sources that returned a synthesized answer/summary this search.
 
-    ``tavily_answer`` -> ``tavily``. Used by expert/deep to skip scraping the
+    ``tavily_answer`` -> ``tavily``. Used to skip scraping the
     concrete URLs of any source that already provided a summary, while still
     scraping sources (github/zhihu/...) that returned URLs only.
     """
@@ -131,7 +131,7 @@ def split_by_content(
 ) -> tuple[list[dict], list[dict], list[dict], dict]:
     """Split raw search results into content-bearing and metadata-only rows.
 
-    When ``skip_summarized_sources`` is true (expert/deep), a normal result is
+    When ``skip_summarized_sources`` is true, a normal result is
     treated as already having content if its source provided an answer/summary
     row, so its URL is not scraped. Sources without a summary are unaffected.
     """
@@ -154,7 +154,7 @@ def split_by_content(
             else:
                 without_content.append(item)
         elif summarized and _canonical_source(item.get("source")) in summarized:
-            # Expert/deep: this source already returned a summary, so accept it
+            # This source already returned a summary, so accept it
             # as content-bearing and skip scraping its concrete URLs.
             with_content.append(item)
         else:

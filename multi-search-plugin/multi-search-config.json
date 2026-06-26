@@ -19,7 +19,6 @@
   },
   "serpapi_engine": "google_light",
   "timeout": 60,
-  "search_depth": "auto",
   "scrape_top": 30,
   "no_scrape": false,
   "scrape_chars": 6000,

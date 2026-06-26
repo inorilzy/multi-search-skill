@@ -11,33 +11,20 @@ def search_tavily(
     api_key: str,
     max_results: int = 10,
     timeout: float = 15,
-    search_depth: str = "normal",
+    want_content: bool = False,
 ) -> list:
     """Call Tavily Search API."""
-    depth = (search_depth or "normal").lower()
-    if depth == "fast":
-        tavily_depth = "fast"
-        include_answer: bool | str = False
-        include_raw_content: bool | str = False
-    elif depth == "deep":
-        tavily_depth = "advanced"
-        include_answer = "advanced"
-        include_raw_content = "markdown"
-    else:
-        tavily_depth = "basic"
-        include_answer = "basic"
-        include_raw_content = False
+    include_answer: bool | str = "basic"
+    include_raw_content: bool | str = "markdown" if want_content else False
 
     body = {
         "query": query,
         "max_results": max_results,
-        "search_depth": tavily_depth,
+        "search_depth": "basic",
         "include_answer": include_answer,
         "include_raw_content": include_raw_content,
         "include_usage": True,
     }
-    if tavily_depth == "advanced":
-        body["chunks_per_source"] = 3
     payload = json.dumps(
         body
     ).encode()
@@ -63,8 +50,6 @@ def search_tavily(
             "title": item.get("title", ""),
             "url": item.get("url", ""),
             "description": (item.get("content") or "")[:300],
-            "search_depth": depth,
-            "provider_depth": tavily_depth,
         }
         raw = item.get("raw_content") or ""
         if raw:

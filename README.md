@@ -28,9 +28,7 @@ MCP tools 包括：`multi_search`、`scrape_url`、`list_sources`、`doctor`、`
 
 边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置放在 `multi-search-plugin/multi-search-config.json`；运行状态默认保存在 `~/.multi-search/state.sqlite`。`.mcp.json` 和 plugin manifest 只负责启动 server，不保存 secret。
 
-当前默认行为：`default` 是 `web` 的兼容别名，跑 Brave、Tavily、Exa、SerpAPI；默认额外抓取最多 8 个缺正文 URL。Tavily / Exa 已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。需要快速总结用 `fast`，需要更深证据用 `expert`。
-
-`search_depth` 是跨通用搜索源的执行强度参数。对外推荐使用 `auto` / `fast` / `deep`；`auto` 会根据 prompt 复杂度在内部判定为 `fast` / `normal` / `deep`。当前已适配 Baidu、Tavily、Exa、Brave、SerpAPI、Firecrawl；没有原生 deep 参数的源会用更多上下文、额外片段或 inline markdown 做合成增强。
+当前默认行为：`default` 是 `web` 的兼容别名，跑 Brave、Tavily、Exa、SerpAPI；默认额外抓取最多 8 个缺正文 URL。Tavily / Exa 已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。需要快速总结用 `fast`，其余用默认 `normal`。
 
 ## 适用场景
 
@@ -91,32 +89,26 @@ MCP plugin 是唯一入口，agent 按 plugin 的 `skills/multi-search/SKILL.md`
 | Twitter/X | 社交讨论、推文和 top replies | https://x.com | 无官方搜索 API 免费层；使用 `twikit-ng` + cookies，受账号状态和限流影响 | 20 |
 | Jina Reader | 额外网页正文抓取 | https://r.jina.ai/docs | 匿名可用，约 20 rpm；key 是固定额度，可作为匿名限流后的 fallback | scrape only |
 
-## 路由与深度：两个正交维度
+## 路由：选择搜哪些源
 
-`route` 和 `level` 互相独立：`route` 决定**搜哪些源**，`level` 决定**搜多深**。任意 route 都可以搭配任意 level。
+`route` 决定**搜哪些源**以及是否让 provider 直接返回正文。
 
 ### `route`（搜哪些源 / 场景）
 
 | Route | Sources | 适合场景 |
 |---|---|---|
 | `default` / `web` | Brave + Tavily + Exa + SerpAPI | 普通事实搜索；默认 route |
+| `fast` | Baidu + Tavily + Firecrawl + Exa | 只跑“搜索 API 自带正文”的源，`scrape_top=0`、不额外抓取；快速总结、当前背景 |
 | `social` | Twitter/X + Reddit OAuth | 看社交反馈、口碑、讨论 |
 | `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
 | `cn-community` | Zhihu + V2EX + Linux Do | 中文社区讨论 |
 | `video` | YouTube + Bilibili | 搜视频；默认 title/url-only，不进入网页抓取 |
 | 指定源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]`、`sources=["deepseek-web"]` | 绕过 route，直接指定一个或多个源 |
 
-### `level`（搜多深 / 思考深度）
+`fast` 路由只跑那些搜索 API 直接返回正文的 provider（不再有独立的 `level` 参数）。
+若想“用 default 召回 + 再抓正文”，用 `route=default` 搭配 `scrape_top=N`。
 
-| Level | 行为 | 适合场景 |
-|---|---|---|
-| `fast` | 用搜索 API 自带 summary/answer，不额外抓正文 | 快速总结、当前背景、"先告诉我大概" |
-| `normal`（默认） | 返回 URL，抓取 top 结果后交主模型总结 | 普通查询 |
-| `expert` | 用搜索 API 的 deep 参数，并抓取更多正文 | 证据充分的调研、比较、技术决策、事实核查 |
-
-`search_depth`（`auto`/`fast`/`normal`/`deep`）是更底层的覆盖项；不传时深度由 `level` 推导，`auto` 会按查询复杂度分类。
-
-缺 key 的源会显示 error row，不会静默消失。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
+缺 key 的源会显示 error row，不会静默消失。`fast` 路由不会跨路由降级；缺 key 时只显示该源的 error row。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
 
 ## Keys
 
@@ -220,8 +212,8 @@ flowchart LR
 // 默认 default route + 额外抓取缺正文 URL
 { "query": "epub to markdown" }
 
-// 快速总结（level=fast，用 provider 自带 summary）
-{ "query": "agent memory", "level": "fast" }
+// 快速总结（route=fast，只跑自带正文的 provider，不额外抓取）
+{ "query": "agent memory", "route": "fast" }
 
 // Twitter/X 讨论
 { "query": "Claude Code feedback", "route": "social" }
@@ -239,11 +231,11 @@ flowchart LR
 // 视频搜索（默认只输出 title + URL，不抓视频）
 { "query": "agent memory tutorial", "route": "video" }
 
-// route 与 level 正交组合：开发场景 + 深度调研
-{ "query": "vector database 选型", "route": "dev", "level": "expert" }
+// default 召回 + 额外抓正文
+{ "query": "vector database 选型", "route": "default", "scrape_top": 5 }
 
 // 中文技术查询可以手动加英文扩展查询
-{ "query": "agent 编排最佳实践", "expand": ["agent orchestration best practices multi-agent"], "level": "fast" }
+{ "query": "agent 编排最佳实践", "expand": ["agent orchestration best practices multi-agent"], "route": "fast" }
 
 // 指定单源
 { "query": "rust async runtime", "sources": ["brave", "exa"] }
@@ -258,13 +250,11 @@ flowchart LR
 | 参数 | 默认 | 说明 |
 |---|---:|---|
 | `query` | — | 搜索查询（必填） |
-| `route` | `default` | 选源/场景：`web` / `social` / `dev` / `cn-community` / `video` |
-| `level` | `normal` | 搜索深度：`fast`（provider summary）/ `normal`（抓取后总结）/ `expert`（provider deep + 多抓取） |
+| `route` | `default` | 选源/场景：`web` / `fast` / `social` / `dev` / `cn-community` / `video`；`fast` 只跑自带正文的源且不抓取 |
 | `sources` | — | 直接指定一个或多个源，绕过 route |
 | `count` | per-source | 全局 count，会按各源上限 clamp |
 | `timeout` | 60 | 搜索阶段整批 deadline |
-| `search_depth` | 由 `level` 推导 | 底层覆盖：`auto` / `fast` / `normal` / `deep`；不传时跟随 `level` |
-| `scrape_top` | 由 `level`/`route` 推导 | 额外抓取缺正文 URL 数，上限 30；传 0 关闭 |
+| `scrape_top` | 由 `route` 推导 | 额外抓取缺正文 URL 数，上限 30；传 0 关闭。`fast` 路由固定为 0 |
 | `scrape_chars` | provider | 单页抓取正文最大字符数 |
 | `expand` | — | 额外扩展查询（list），常用于给中文查询补英文 |
 | `use_state` | true | 是否使用 SQLite key 状态与站点抓取器记忆 |
@@ -278,6 +268,7 @@ JSON 配置还支持缓存字段：`cache_enabled`、`no_cache`、`cache_ttl_sec
 
 输出包含：
 
+- JSON `summary`：首个 provider 原生 query-level answer/summary；`summaries` 保留全部 `*_answer` 来源及 metadata。`source_briefs` 为每个 provider 提供一条展示 brief，优先使用原生 answer，否则从该来源的 URL 结果 title/snippet/highlights 生成 brief；兼容字段 `source_summaries` 仍会返回，但新代码应使用 `source_briefs`，避免把 per-result snippet 误读成 query-level summary。每条 `results[]` 继续保留旧字段 `description`/`scraped_content`，同时补充公共别名 `content`/`body`/`full_content`。
 - `Sources (raw hits)`：各源原始命中数。
 - `Source Status`：OK / PARTIAL / ERROR。
 - `URL Inventory`：去重后的 URL 和共识权重。

@@ -36,6 +36,7 @@ SOURCE_ALIASES = {
 
 ROUTE_PROFILES = {
     "default": {"brave", "tavily", "exa", "serpapi", "firecrawl", "baidu", "glm_web", "deepseek_web"},
+    "fast": {"baidu", "tavily", "firecrawl", "exa"},
     "social": {"twitter", "reddit_oauth"},
     "dev": {"stackoverflow", "github_repos", "hackernews"},
     "cn-community": {"zhihu", "v2ex", "linuxdo"},
@@ -50,10 +51,9 @@ ROUTE_PROFILES = {
     },
 }
 
-# Route-level behavior. A route only decides *which sources* to fan out to and
-# source-shaped defaults (count/timeout/snippet rendering). Search *depth* is an
-# orthogonal concern owned by ``level`` (see LEVEL_META), so route meta no longer
-# pins ``search_depth``.
+# Route-level behavior. A route decides *which sources* to fan out to plus
+# source-shaped defaults (count/timeout/snippet rendering) and whether providers
+# should return body content inline (``want_content``).
 DEFAULT_ROUTE_META = {
     "scrape_top": 8,
     "show_snippet": True,
@@ -62,10 +62,23 @@ DEFAULT_ROUTE_META = {
     "title_url_only": False,
     "degrade_to": set(),
     "primary_success_sources": set(),
+    "show_answer": False,
+    "want_content": False,
 }
 
 ROUTE_META = {
     "default": {"scrape_top": 8, "show_snippet": True, "count": 8, "timeout": 60},
+    # ``fast`` is a self-contained route of providers whose search API returns
+    # body content inline. It never scrapes (scrape_top=0) and asks those
+    # providers to include full content via ``want_content``.
+    "fast": {
+        "scrape_top": 0,
+        "show_snippet": True,
+        "show_answer": True,
+        "want_content": True,
+        "count": 8,
+        "timeout": 60,
+    },
     "all": {"scrape_top": 8, "show_snippet": True, "count": 8, "timeout": 90},
     "social": {
         "scrape_top": 0,
@@ -86,37 +99,8 @@ ROUTE_META = {
     },
 }
 
-# Level controls *search depth* and how results are consumed, orthogonally to
-# the route's source selection.
-#   fast   -> use provider-native summary/answer, no scraping
-#   normal -> return URLs, scrape, and let the main model summarize
-#   expert -> use provider-native deep search and scrape more
-DEFAULT_LEVEL = "normal"
-
-LEVEL_META = {
-    "fast": {"search_depth": "fast", "show_answer": True, "scrape_top": 0},
-    "normal": {"search_depth": "normal", "show_answer": False},
-    "expert": {
-        "search_depth": "deep",
-        "show_answer": False,
-        "scrape_top": 20,
-        # Sources that already returned a summary are accepted as-is; only
-        # URL-only sources (github/zhihu/...) get scraped.
-        "skip_summarized_sources": True,
-    },
-}
-
-
 def available_routes() -> list[str]:
     return sorted(ROUTE_PROFILES)
-
-
-def available_levels() -> list[str]:
-    return list(LEVEL_META)
-
-
-def level_meta(level: str | None) -> dict[str, Any]:
-    return dict(LEVEL_META.get(str(level or DEFAULT_LEVEL).strip().lower(), LEVEL_META[DEFAULT_LEVEL]))
 
 
 def resolve_route(search_type: str, lite: bool = False) -> set[str]:
@@ -151,7 +135,7 @@ class SearchRunnerConfig:
     timeout: int
     serpapi_engine: str
     keys: dict
-    search_depth: str = "normal"
+    want_content: bool = False
 
 
 @dataclass

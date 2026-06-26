@@ -11,20 +11,15 @@ def search_exa(
     api_key: str,
     count: int = 10,
     timeout: float = 20,
-    search_depth: str = "normal",
+    want_content: bool = False,
 ) -> list:
-    """Search via Exa.ai with full text.
+    """Search via Exa.ai.
 
-    Uses Exa's latency/quality search types. Fast and normal use highlights,
-    while deep asks for fuller text for downstream evidence review.
+    ``want_content`` returns full webpage text inline; otherwise only relevant
+    highlight snippets are returned.
     """
-    depth = (search_depth or "normal").lower()
-    exa_type = {"fast": "fast", "deep": "deep"}.get(depth, "auto")
-    contents = (
-        {"text": {"maxCharacters": 8000}, "highlights": True}
-        if depth == "deep"
-        else {"highlights": True}
-    )
+    exa_type = "auto"
+    contents = {"text": True} if want_content else {"highlights": True}
     payload = json.dumps({
         "query": query,
         "numResults": count,
@@ -62,8 +57,6 @@ def search_exa(
             "title": r.get("title", ""),
             "url": r.get("url", ""),
             "description": description[:300],
-            "search_depth": depth,
-            "provider_depth": exa_type,
         }
         if text:
             result["scraped_content"] = text

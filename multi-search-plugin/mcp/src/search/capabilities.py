@@ -152,7 +152,7 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         operation=_op(AuthMode.API_KEY, "baidu", quota_sensitive=True, rate_limit_sensitive=True),
         scrape_policy=ScrapePolicy.PREFETCH,
         best_for=("Baidu AI Search summaries", "Chinese web search with citations"),
-        notes="fast/normal use Qianfan web_summary; deep uses chat/completions with enable_deep_search=true.",
+        notes="Uses Qianfan web_summary for AI answers.",
     ),
     "brave": ProviderCapability(
         name="brave",

@@ -22,8 +22,6 @@ from .search.search_runner import (
     ROUTE_PROFILES,
     SearchRunner,
     SearchRunnerConfig,
-    available_levels,
-    level_meta,
     normalize_source_name,
     resolve_route,
     route_meta,
@@ -78,7 +76,6 @@ COUNT_CAPS = {
 class MultiSearchRequest:
     query: str
     route: str | None = None
-    level: str | None = None
     count: int | None = None
     sources: list[str] | None = None
     scrape_top: int | None = None
@@ -87,7 +84,6 @@ class MultiSearchRequest:
     scrape_timeout: int | None = None
     scrape_concurrency: int | None = None
     timeout: int | None = None
-    search_depth: str | None = None
     output: str = "both"
     config_path: str | None = None
     expand: list[str] = field(default_factory=list)
@@ -115,15 +111,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     config = _load_config_safe(request.config_path)
     route = str(_resolve_value(request.route, config, "type", "default"))
     meta = route_meta(route)
-    level = str(_resolve_value(request.level, config, "level", "normal")).strip().lower()
-    if level not in available_levels():
-        raise ValueError(
-            f"unknown level: {level}; valid levels: {', '.join(available_levels())}"
-        )
-    lmeta = level_meta(level)
-    search_depth, depth_reason = _resolve_search_depth(
-        request.query, request.search_depth, config, lmeta
-    )
+    want_content = bool(meta.get("want_content", False))
     if request.sources:
         source_names = {normalize_source_name(str(source)) for source in request.sources}
         unknown_sources = source_names - ALL_SOURCE_NAMES
@@ -142,9 +130,9 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     keys = load_keys()
     counts = _build_counts(config, request.count, route_default=meta["count"])
     timeout = _resolve_nonnegative(request.timeout, config, "timeout", meta["timeout"])
-    # Level owns scrape behavior; fall back to the route's source-shaped default
-    # only when the level does not pin one (i.e. ``normal``).
-    scrape_top_default = lmeta["scrape_top"] if "scrape_top" in lmeta else meta["scrape_top"]
+    # The route owns scrape behavior. The ``fast`` route pins scrape_top=0 and
+    # asks providers to return body content inline.
+    scrape_top_default = meta["scrape_top"]
     if request.scrape_top is None and config_bool(config, "no_scrape", False):
         scrape_top = 0
     else:
@@ -166,7 +154,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     store = StateStore() if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
     site_memory = SiteScraperMemory(store) if store else None
-    runner_config = SearchRunnerConfig(route, counts, timeout, str(config.get("serpapi_engine", "google_light")), keys, search_depth)
+    runner_config = SearchRunnerConfig(route, counts, timeout, str(config.get("serpapi_engine", "google_light")), keys, want_content)
     route_resolver = (lambda _route, lite=False: source_names or resolve_route(_route, lite=lite))
     runner = SearchRunner(runner_config, build_provider_registry(), route_resolver=route_resolver, key_manager=key_manager)
 
@@ -200,7 +188,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
         scrape_concurrency=scrape_concurrency,
         site_memory=site_memory,
         key_manager=key_manager,
-        skip_summarized_sources=bool(lmeta.get("skip_summarized_sources")),
+        skip_summarized_sources=bool(meta.get("skip_summarized_sources")),
     )
     final_results, _ = deduplicate(
         scrape_result["with_content"] + scrape_result["final_without_content"] + scrape_result["passthrough"]
@@ -209,6 +197,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     # status — previously sorting only happened inside format_results, so the
     # JSON `results` order diverged from the markdown order.
     final_results = rank_results(final_results)
+    _add_public_content_aliases(final_results)
     valid_count = _valid_result_count(final_results)
     markdown = ""
     if output_mode in {"markdown", "both"}:
@@ -219,7 +208,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             brief=request.brief,
             verbose=request.verbose,
             title_url_only=request.title_url_only,
-            show_answer=bool(lmeta.get("show_answer")) or request.verbose,
+            show_answer=bool(meta.get("show_answer")) or request.verbose,
             show_snippet=bool(meta.get("show_snippet")),
             degradation=_route_degradation(route, all_results, source_names, meta),
         )
@@ -227,10 +216,18 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             markdown += format_scrapes(scrape_result["scrapes"], max_chars=scrape_chars)
 
     errors = [row for row in as_dicts(final_results) + scrape_result["scrape_errors"] if row.get("error")]
+    summaries = _extract_summaries(final_results)
+    source_briefs = _extract_source_briefs(final_results)
     response = {
         "query": request.query,
         "route": route,
-        "level": level,
+        "summary": summaries[0]["answer"] if summaries else None,
+        "summaries": summaries,
+        "source_briefs": source_briefs,
+        # Compatibility alias for older callers. New code should use
+        # source_briefs: these rows may be built from per-result snippets and
+        # are not necessarily provider-native query summaries.
+        "source_summaries": _compat_source_summaries(source_briefs),
         "results": as_dicts(final_results),
         "scrapes": scrape_result["scrapes"],
         "provider_status": _provider_status(final_results),
@@ -245,18 +242,11 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             "state_path": str(store.path) if store else None,
             "route_meta": {
                 "scrape_top": scrape_top,
-                "show_answer": bool(lmeta.get("show_answer")) or request.verbose,
+                "show_answer": bool(meta.get("show_answer")) or request.verbose,
                 "show_snippet": bool(meta.get("show_snippet")),
                 "count": meta.get("count"),
                 "timeout": timeout,
-                "search_depth": search_depth,
-                "search_depth_reason": depth_reason,
-            },
-            "level_meta": {
-                "level": level,
-                "search_depth": search_depth,
-                "show_answer": bool(lmeta.get("show_answer")) or request.verbose,
-                "scrape_top": scrape_top,
+                "want_content": want_content,
             },
             "route_degradation": _route_degradation(route, all_results, source_names, meta),
         },
@@ -299,7 +289,7 @@ def run_scrape(request: ScrapeRequest | dict) -> dict:
 
 def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
     store = StateStore()
-    response = {"routes": sorted(ROUTE_PROFILES), "levels": available_levels(), "sources": sorted(ALL_SOURCE_NAMES)}
+    response = {"routes": sorted(ROUTE_PROFILES), "sources": sorted(ALL_SOURCE_NAMES)}
     if include_key_status:
         response["key_status"] = SQLiteKeyManager(store).status_rows()
     if include_scraper_stats:
@@ -344,7 +334,6 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
             "state": str(store.path),
         },
         "routes": sorted(ROUTE_PROFILES),
-        "levels": available_levels(),
         "network_checked": bool(include_network),
     }
     if include_keys:
@@ -542,6 +531,128 @@ def _valid_result_count(results: list[dict]) -> int:
     ])
 
 
+def _add_public_content_aliases(results: list[dict]) -> None:
+    """Expose stable public field names without dropping legacy ones."""
+    for row in results:
+        if not isinstance(row, dict) or row.get("error"):
+            continue
+        description = row.get("description")
+        body = row.get("scraped_content")
+        if description and not row.get("content"):
+            row["content"] = description
+        if body:
+            row.setdefault("body", body)
+            row.setdefault("full_content", body)
+
+
+def _extract_summaries(results: list[dict]) -> list[dict]:
+    summaries = []
+    for row in as_dicts(results):
+        source = row.get("source")
+        answer = row.get("answer")
+        if source not in ANSWER_SOURCES or not answer or row.get("error"):
+            continue
+        summaries.append({
+            "source": source,
+            "answer": answer,
+            "endpoint": row.get("endpoint"),
+            "request_id": row.get("request_id"),
+        })
+    return summaries
+
+
+def _source_from_answer_source(source: str) -> str:
+    return source[: -len("_answer")] if source.endswith("_answer") else source
+
+
+def _compact_text(value: Any, limit: int = 600) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _extract_source_briefs(results: list[dict], *, max_items_per_source: int = 3) -> list[dict]:
+    """Return one display-ready brief per provider.
+
+    Provider-native answer rows are kept as the strongest signal. URL-only
+    providers still get a source brief built from their highest-ranked result
+    snippets so fast searches expose every participating provider, not only the
+    providers that happen to emit ``*_answer`` rows.
+    """
+    rows = as_dicts(results)
+    native_by_source: dict[str, dict] = {}
+    briefs: dict[str, dict[str, Any]] = {}
+
+    for row in rows:
+        if row.get("error") or row.get("status") == "ok":
+            continue
+        source = str(row.get("source") or "")
+        if not source:
+            continue
+        if source in ANSWER_SOURCES and row.get("answer"):
+            canonical = _source_from_answer_source(source)
+            native_by_source[canonical] = {
+                "source": canonical,
+                "answer_source": source,
+                "brief": row.get("answer"),
+                "brief_type": "native_answer",
+                "endpoint": row.get("endpoint"),
+                "request_id": row.get("request_id"),
+                "result_count": 0,
+                "top_urls": [],
+            }
+            continue
+        if source in ANSWER_SOURCES:
+            continue
+
+        entry = briefs.setdefault(source, {
+            "source": source,
+            "brief": "",
+            "brief_type": "result_brief",
+            "result_count": 0,
+            "top_urls": [],
+            "_parts": [],
+        })
+        entry["result_count"] += 1
+        if row.get("url") and len(entry["top_urls"]) < max_items_per_source:
+            entry["top_urls"].append(row.get("url"))
+        if len(entry["_parts"]) < max_items_per_source:
+            title = _compact_text(row.get("title"), 120)
+            description = _compact_text(row.get("description") or row.get("scraped_content"), 240)
+            if title and description:
+                entry["_parts"].append(f"{title}: {description}")
+            elif title or description:
+                entry["_parts"].append(title or description)
+
+    output: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        source = str(row.get("source") or "")
+        canonical = _source_from_answer_source(source)
+        if not canonical or canonical in seen:
+            continue
+        item = native_by_source.get(canonical) or briefs.get(canonical)
+        if not item:
+            continue
+        seen.add(canonical)
+        if item.get("_parts"):
+            item["brief"] = _compact_text(" | ".join(item["_parts"]), 900)
+        item.pop("_parts", None)
+        output.append(item)
+    return output
+
+
+def _compat_source_summaries(source_briefs: list[dict]) -> list[dict]:
+    rows = []
+    for item in source_briefs:
+        compat = dict(item)
+        compat.setdefault("summary", compat.get("brief", ""))
+        compat.setdefault("summary_type", compat.get("brief_type", "result_brief"))
+        rows.append(compat)
+    return rows
+
+
 def _load_config_safe(path: str | None) -> dict:
     try:
         return load_config(path)
@@ -570,100 +681,6 @@ def _resolve_int(request_value: Any, config: dict, key: str, default: int) -> in
 
 def _resolve_nonnegative(request_value: Any, config: dict, key: str, default: int) -> int:
     return max(0, _resolve_int(request_value, config, key, default))
-
-
-def _resolve_search_depth(query: str, request_value: str | None, config: dict, level_meta: dict) -> tuple[str, str]:
-    # Priority: explicit request value > the level's pinned depth
-    # (fast/normal/expert) > config > "auto". Depth is owned by ``level`` now,
-    # so a level like ``expert`` encodes a deliberate user choice that must not
-    # be silently overridden by a config that merely says "auto".
-    level_depth = str(level_meta.get("search_depth") or "auto").strip().lower()
-    if request_value is not None:
-        value, origin = str(request_value).strip().lower(), "explicit"
-    elif level_depth not in {"", "auto"}:
-        value, origin = level_depth, "level"
-    elif config.get("search_depth") is not None:
-        value, origin = str(config.get("search_depth")).strip().lower(), "configured"
-    else:
-        value, origin = "auto", "default"
-    value = value or "auto"
-    if value not in {"auto", "fast", "normal", "deep"}:
-        raise ValueError("search_depth must be one of: auto, fast, normal, deep")
-    if value != "auto":
-        return value, origin
-    depth, reason = _classify_search_depth(query)
-    return depth, f"auto:{reason}"
-
-
-def _classify_search_depth(query: str) -> tuple[str, str]:
-    """Classify prompt complexity before provider routing.
-
-    This is intentionally conservative: deep mode costs more and can be slower,
-    so only clear research/comparison/fact-check signals upgrade to deep.
-    """
-    text = str(query or "").strip().lower()
-    compact = "".join(text.split())
-    if not compact:
-        return "normal", "empty-query"
-
-    fast_terms = (
-        "一句话", "简单", "快速", "简短", "链接", "官网", "地址", "endpoint",
-        "url", "是什么", "什么意思", "定义", "怎么读", "翻译",
-    )
-    deep_terms = (
-        "深入", "深度", "全面", "详细", "调研", "研究", "分析", "对比", "比较",
-        "区别", "差异", "优缺点", "选型", "方案", "架构", "评测", "测评",
-        "事实核查", "真假", "是否属实", "证据", "来源", "引用", "多来源",
-        "cross-check", "benchmark", "pricing comparison", "tradeoff", "trade-off",
-    )
-    recency_terms = (
-        "最新", "今天", "昨日", "昨天", "刚刚", "最近", "过去24小时",
-        "past 24", "latest", "breaking", "news",
-    )
-
-    if any(term in compact for term in fast_terms) and not any(term in compact for term in deep_terms):
-        return "fast", "simple-lookup"
-    if any(term in compact for term in deep_terms):
-        return "deep", "research-or-comparison"
-    # Length-based heuristics must be script-aware. English words are separated
-    # by spaces, but CJK text is not, so raw character count is not comparable
-    # across scripts (a 14-char Chinese research query and a 14-char English
-    # word carry very different amounts of information). Count CJK characters as
-    # individual tokens and ASCII runs as whitespace-delimited words instead.
-    tokens = _complexity_tokens(text)
-    if any(term in compact for term in recency_terms) and tokens > 6:
-        return "deep", "time-sensitive-research"
-    if tokens <= 4:
-        return "fast", "short-query"
-    return "normal", "default"
-
-
-def _complexity_tokens(text: str) -> int:
-    """Approximate the information content of a query across scripts.
-
-    Each CJK character counts as one token; contiguous non-CJK runs are split on
-    whitespace into word tokens. This keeps the short-query threshold meaningful
-    for both "Vue 官网链接" and "compare Vue and React SSR".
-    """
-    cjk = 0
-    buffer: list[str] = []
-    words = 0
-
-    def flush() -> None:
-        nonlocal words
-        chunk = "".join(buffer).strip()
-        if chunk:
-            words += len(chunk.split())
-        buffer.clear()
-
-    for ch in text:
-        if "\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf":
-            flush()
-            cjk += 1
-        else:
-            buffer.append(ch)
-    flush()
-    return cjk + words
 
 
 def _int_or_default(value: Any, default: int) -> int:

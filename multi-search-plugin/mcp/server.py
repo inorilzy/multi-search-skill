@@ -31,26 +31,25 @@ mcp = FastMCP(
 
 
 @mcp.tool(name="multi_search")
-def multi_search(query: str, route: str | None = None, level: str | None = None,
-                 count: int | None = None,
-                 sources: list[str] | None = None, scrape_top: int | None = None,
-                 scrape_chars: int | None = None, timeout: int | None = None,
-                 search_depth: str | None = None,
-                 expand: list[str] | None = None, use_state: bool = True,
-                 output: str = "both") -> dict:
+def multi_search(query: str, route: str | None = None,
+                  count: int | None = None,
+                  sources: list[str] | None = None, scrape_top: int | None = None,
+                  scrape_chars: int | None = None, timeout: int | None = None,
+                  expand: list[str] | None = None, use_state: bool = True,
+                  output: str = "both") -> dict:
     """Search across configured sources, optionally scrape top URLs, and return structured results.
 
-    `route` selects which sources to fan out to (default/social/dev/cn-community/video/all).
-    `level` controls search depth orthogonally: `fast` uses provider-native
-    summaries (no scrape), `normal` returns URLs and scrapes for the main model to
-    summarize, `expert` uses provider deep search and scrapes more.
+    `route` selects which sources to fan out to
+    (default/fast/social/dev/cn-community/video/all). The `fast` route runs only
+    providers that return body content inline (baidu/tavily/firecrawl/exa) and
+    never scrapes. For "recall then scrape", use `route=default` with `scrape_top=N`.
     `timeout` is the search-provider timeout in seconds. `expand` adds extra query
     variants to run alongside `query`. Set `use_state=False` to skip the SQLite
     state DB, key-health rotation, and site scraper memory (clean test path).
     On invalid input the tool returns a structured {"error", "error_type"} dict.
     """
-    return multi_search_tool(query, route, level, count, sources, scrape_top, scrape_chars,
-                             timeout, search_depth, expand, use_state, output)  # type: ignore[arg-type]
+    return multi_search_tool(query, route, count, sources, scrape_top, scrape_chars,
+                             timeout, expand, use_state, output)  # type: ignore[arg-type]
 
 
 @mcp.tool(name="scrape_url")

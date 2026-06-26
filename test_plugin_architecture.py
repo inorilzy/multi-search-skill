@@ -13,8 +13,6 @@ if str(PLUGIN_MCP) not in sys.path:
 from src.scrape.scrape import scrape_url_smart
 from src.search.search_runner import (
     ROUTE_PROFILES,
-    available_levels,
-    level_meta,
     resolve_route,
     route_meta,
 )
@@ -50,32 +48,29 @@ class PluginRouteRedesignTests(unittest.TestCase):
         self.assertEqual(resolve_route("video"), {"youtube", "bilibili"})
         self.assertEqual(resolve_route("brave"), set())
         self.assertNotIn("lite", ROUTE_PROFILES)
-        # fast/expert are now levels (search depth), not routes (source selection).
-        self.assertNotIn("fast", ROUTE_PROFILES)
-        self.assertNotIn("expert", ROUTE_PROFILES)
+        # ``fast`` is a route of providers that return body content inline.
+        self.assertEqual(resolve_route("fast"), {"baidu", "tavily", "firecrawl", "exa"})
+        self.assertNotIn("normal", ROUTE_PROFILES)
         self.assertEqual(resolve_route("ignored", lite=True), resolve_route("default"))
 
     def test_route_meta_carries_source_shaped_behavior(self):
-        # Routes only carry source-shaped defaults; depth/answer live on levels.
+        # Routes carry source-shaped defaults plus inline-content behavior.
         self.assertTrue(route_meta("video")["title_url_only"])
         self.assertEqual(route_meta("default")["scrape_top"], 8)
         self.assertNotIn("search_depth", route_meta("default"))
+        self.assertFalse(route_meta("default")["want_content"])
 
-    def test_level_meta_carries_search_depth_and_answer_behavior(self):
-        self.assertEqual(set(available_levels()), {"fast", "normal", "expert"})
-        self.assertEqual(level_meta("fast")["search_depth"], "fast")
-        self.assertTrue(level_meta("fast")["show_answer"])
-        self.assertEqual(level_meta("fast")["scrape_top"], 0)
-        self.assertEqual(level_meta("normal")["search_depth"], "normal")
-        self.assertFalse(level_meta("normal")["show_answer"])
-        self.assertEqual(level_meta("expert")["search_depth"], "deep")
-        self.assertEqual(level_meta("expert")["scrape_top"], 20)
+    def test_fast_route_pins_inline_content_and_no_scrape(self):
+        meta = route_meta("fast")
+        self.assertTrue(meta["want_content"])
+        self.assertTrue(meta["show_answer"])
+        self.assertEqual(meta["scrape_top"], 0)
 
     def test_list_sources_exposes_all_sources_after_single_provider_routes_removed(self):
         data = list_sources()
         self.assertIn("default", data["routes"])
-        self.assertNotIn("fast", data["routes"])
-        self.assertEqual(set(data["levels"]), {"fast", "normal", "expert"})
+        self.assertIn("fast", data["routes"])
+        self.assertNotIn("levels", data)
         self.assertIn("brave", data["sources"])
         self.assertIn("github_repos", data["sources"])
         self.assertNotIn("brave", data["routes"])
@@ -315,7 +310,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             "scrapes": [],
         }
 
-    def test_level_meta_supplies_scrape_and_formatter_defaults(self):
+    def test_fast_route_supplies_scrape_and_formatter_defaults(self):
         captured = {}
 
         class FakeRunner:
@@ -335,16 +330,16 @@ class PluginServiceConfigTests(unittest.TestCase):
              mock.patch("src.service.SearchRunner", FakeRunner), \
              mock.patch("src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
-            response = run_multi_search(MultiSearchRequest(query="q", level="fast", use_state=False))
+            response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False))
 
-        # route defaults to "default" (timeout 60, count 8); level=fast pins scrape_top=0.
+        # The ``fast`` route pins scrape_top=0 (timeout 60, count 8).
         self.assertEqual(captured["timeout"], 60)
         self.assertEqual(captured["counts"]["tavily"], 8)
         self.assertEqual(captured["scrape_top"], 0)
         self.assertIn("DeepSeek Web Answer", response["markdown"])
         self.assertEqual(response["diagnostics"]["route_meta"]["scrape_top"], 0)
 
-    def test_level_is_echoed_in_response_and_diagnostics(self):
+    def test_fast_route_is_echoed_in_diagnostics(self):
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
@@ -356,17 +351,16 @@ class PluginServiceConfigTests(unittest.TestCase):
              mock.patch("src.service.load_keys", return_value={}), \
              mock.patch("src.service.SearchRunner", FakeRunner), \
              mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
-            response = run_multi_search(MultiSearchRequest(query="q", level="expert", use_state=False))
+            mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+            response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False))
 
-        self.assertEqual(response["level"], "expert")
-        level_meta_out = response["diagnostics"]["level_meta"]
-        self.assertEqual(level_meta_out["level"], "expert")
-        self.assertEqual(level_meta_out["search_depth"], "deep")
-        self.assertEqual(level_meta_out["scrape_top"], 20)
+        self.assertEqual(response["route"], "fast")
+        route_meta_out = response["diagnostics"]["route_meta"]
+        self.assertTrue(route_meta_out["want_content"])
+        self.assertEqual(route_meta_out["scrape_top"], 0)
 
-    def test_level_defaults_to_normal_and_uses_route_scrape_top(self):
-        # normal does not pin scrape_top, so it falls back to the route default (8).
+    def test_default_route_uses_route_scrape_top(self):
+        # The default route does not pin scrape_top=0; it uses the route default (8).
         captured = {}
 
         class FakeRunner:
@@ -387,53 +381,29 @@ class PluginServiceConfigTests(unittest.TestCase):
              mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
-        self.assertEqual(response["level"], "normal")
+        self.assertEqual(response["route"], "default")
         self.assertEqual(captured["scrape_top"], 8)
 
-    def test_expert_level_wires_skip_summarized_into_scrape_stage(self):
+    def test_config_supplies_route_when_request_omits_it(self):
         captured = {}
 
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
-                pass
+                captured["want_content"] = config.want_content
 
             def run(self, query, lite=False):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
-        def fake_scrape_stage(all_results, **kwargs):
-            captured["skip_summarized_sources"] = kwargs["skip_summarized_sources"]
-            return self._fake_scrape_stage(all_results, **kwargs)
-
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
-            run_multi_search(MultiSearchRequest(query="q", level="expert", use_state=False))
-            self.assertTrue(captured["skip_summarized_sources"])
-            run_multi_search(MultiSearchRequest(query="q", level="normal", use_state=False))
-            self.assertFalse(captured["skip_summarized_sources"])
-
-    def test_config_supplies_level_when_request_omits_it(self):
-        captured = {}
-
-        class FakeRunner:
-            def __init__(self, config, providers, route_resolver=None, key_manager=None):
-                captured["search_depth"] = config.search_depth
-
-            def run(self, query, lite=False):
-                return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
-
-        with mock.patch("src.service._load_config_safe", return_value={"level": "fast"}), \
+        with mock.patch("src.service._load_config_safe", return_value={"type": "fast"}), \
              mock.patch("src.service.load_keys", return_value={}), \
              mock.patch("src.service.SearchRunner", FakeRunner), \
              mock.patch("src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
-        # config-provided level drives both the echoed level and the depth.
-        self.assertEqual(response["level"], "fast")
-        self.assertEqual(captured["search_depth"], "fast")
+        # config-provided route drives both the echoed route and want_content.
+        self.assertEqual(response["route"], "fast")
+        self.assertTrue(captured["want_content"])
 
     def test_config_and_request_still_override_route_meta(self):
         captured = []
@@ -464,12 +434,12 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(captured[1]["counts"]["tavily"], 6)
         self.assertEqual(captured[1]["scrape_top"], 3)
 
-    def test_search_depth_flows_to_runner_and_diagnostics(self):
+    def test_fast_route_want_content_flows_to_runner_and_diagnostics(self):
         captured = {}
 
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
-                captured["search_depth"] = config.search_depth
+                captured["want_content"] = config.want_content
 
             def run(self, query, lite=False):
                 return [{"source": "baidu_answer", "answer": "summary"}]
@@ -480,73 +450,94 @@ class PluginServiceConfigTests(unittest.TestCase):
              mock.patch("src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(
-                query="q", sources=["baidu"], search_depth="deep", use_state=False,
+                query="q", sources=["baidu"], route="fast", use_state=False,
             ))
 
-        self.assertEqual(captured["search_depth"], "deep")
-        self.assertEqual(response["diagnostics"]["route_meta"]["search_depth"], "deep")
+        self.assertTrue(captured["want_content"])
+        self.assertTrue(response["diagnostics"]["route_meta"]["want_content"])
 
-    def test_auto_search_depth_classifies_prompt_complexity(self):
-        captured = []
-
+    def test_answer_rows_are_exposed_as_top_level_summary(self):
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
-                self.config = config
+                pass
 
             def run(self, query, lite=False):
-                captured.append(self.config.search_depth)
-                return [{"source": "baidu_answer", "answer": self.config.search_depth}]
+                return [
+                    {
+                        "source": "baidu_answer",
+                        "answer": "provider summary",
+                        "endpoint": "/v2/ai_search/web_summary",
+                        "request_id": "rid",
+                    },
+                    {"source": "baidu", "title": "Doc", "url": "https://example.com"},
+                ]
 
         with mock.patch("src.service._load_config_safe", return_value={}), \
              mock.patch("src.service.load_keys", return_value={}), \
              mock.patch("src.service.SearchRunner", FakeRunner), \
              mock.patch("src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
-            fast_response = run_multi_search(MultiSearchRequest(
-                query="Vue 官网链接", sources=["baidu"], search_depth="auto", use_state=False,
-            ))
-            deep_response = run_multi_search(MultiSearchRequest(
-                query="对比 Codex 和 Claude Code 的优缺点，需要多来源证据", sources=["baidu"], search_depth="auto", use_state=False,
-            ))
+            response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["baidu"], use_state=False))
 
-        self.assertEqual(captured, ["fast", "deep"])
-        self.assertEqual(fast_response["diagnostics"]["route_meta"]["search_depth"], "fast")
-        self.assertEqual(deep_response["diagnostics"]["route_meta"]["search_depth"], "deep")
-        self.assertIn("auto:", deep_response["diagnostics"]["route_meta"]["search_depth_reason"])
+        self.assertEqual(response["summary"], "provider summary")
+        self.assertEqual(response["summaries"][0]["source"], "baidu_answer")
+        self.assertEqual(response["summaries"][0]["endpoint"], "/v2/ai_search/web_summary")
+        self.assertEqual(response["source_briefs"][0]["source"], "baidu")
+        self.assertEqual(response["source_briefs"][0]["brief_type"], "native_answer")
+        self.assertEqual(response["source_summaries"][0]["summary_type"], "native_answer")
 
-    def test_level_pinned_depth_beats_config_auto(self):
-        # Config says "auto" but a level that pins a concrete depth (fast/expert)
-        # must keep that depth regardless of how the query would classify.
+    def test_source_briefs_cover_url_only_providers(self):
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
-                self.config = config
+                pass
 
             def run(self, query, lite=False):
-                return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
+                return [
+                    {"source": "baidu_answer", "answer": "baidu summary"},
+                    {"source": "baidu", "title": "Baidu result", "url": "https://baidu.example", "description": "baidu snippet"},
+                    {"source": "brave", "title": "Brave result", "url": "https://brave.example", "description": "brave snippet"},
+                    {"source": "exa", "title": "Exa result", "url": "https://exa.example", "scraped_content": "exa highlights"},
+                ]
 
-        with mock.patch("src.service._load_config_safe", return_value={"search_depth": "auto"}), \
+        with mock.patch("src.service._load_config_safe", return_value={}), \
              mock.patch("src.service.load_keys", return_value={}), \
              mock.patch("src.service.SearchRunner", FakeRunner), \
              mock.patch("src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
-            # level=expert + a simple "fast-looking" query must stay deep.
-            expert_response = run_multi_search(MultiSearchRequest(
-                query="Vue 官网链接", level="expert", use_state=False,
-            ))
-            # level=fast + a complex "deep-looking" query must stay fast.
-            fast_response = run_multi_search(MultiSearchRequest(
-                query="对比 Codex 和 Claude Code 的优缺点，需要多来源证据", level="fast", use_state=False,
-            ))
-            # explicit request value still wins over the level's pinned depth.
-            override_response = run_multi_search(MultiSearchRequest(
-                query="x", level="expert", search_depth="fast", use_state=False,
-            ))
+            response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False))
 
-        self.assertEqual(expert_response["diagnostics"]["route_meta"]["search_depth"], "deep")
-        self.assertEqual(expert_response["diagnostics"]["route_meta"]["search_depth_reason"], "level")
-        self.assertEqual(fast_response["diagnostics"]["route_meta"]["search_depth"], "fast")
-        self.assertEqual(override_response["diagnostics"]["route_meta"]["search_depth"], "fast")
-        self.assertEqual(override_response["diagnostics"]["route_meta"]["search_depth_reason"], "explicit")
+        by_source = {row["source"]: row for row in response["source_briefs"]}
+        self.assertEqual(by_source["baidu"]["brief_type"], "native_answer")
+        self.assertEqual(by_source["baidu"]["brief"], "baidu summary")
+        self.assertEqual(by_source["brave"]["brief_type"], "result_brief")
+        self.assertIn("brave snippet", by_source["brave"]["brief"])
+        self.assertEqual(by_source["exa"]["top_urls"], ["https://exa.example"])
+
+    def test_results_expose_public_content_and_body_aliases(self):
+        class FakeRunner:
+            def __init__(self, config, providers, route_resolver=None, key_manager=None):
+                pass
+
+            def run(self, query, lite=False):
+                return [{
+                    "source": "exa",
+                    "title": "Doc",
+                    "url": "https://example.com",
+                    "description": "short result content",
+                    "scraped_content": "full page body",
+                }]
+
+        with mock.patch("src.service._load_config_safe", return_value={}), \
+             mock.patch("src.service.load_keys", return_value={}), \
+             mock.patch("src.service.SearchRunner", FakeRunner), \
+             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+            response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["exa"], use_state=False))
+
+        row = response["results"][0]
+        self.assertEqual(row["content"], "short result content")
+        self.assertEqual(row["body"], "full page body")
+        self.assertEqual(row["full_content"], "full page body")
 
     def test_status_ok_is_reserved_for_provider_status_meta_rows(self):
         # Contract guard: `status == "ok"` marks a ProviderStatus *meta* row
@@ -567,19 +558,6 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertIsNotNone(service_module._route_degradation("social", only_meta, None, meta))
         with_real = only_meta + [{"source": "twitter", "title": "t", "url": "https://e.com"}]
         self.assertIsNone(service_module._route_degradation("social", with_real, None, meta))
-
-    def test_classify_search_depth_is_script_aware_for_short_queries(self):
-        classify = service_module._classify_search_depth
-        # A short, space-free Chinese query without strong terms is no longer
-        # mis-judged as "fast" purely because of its low character count.
-        self.assertEqual(classify("Vue和React哪个好")[0], "normal")
-        # Chinese research/comparison intent still upgrades to deep.
-        self.assertEqual(classify("比较一下Vue和React的SSR方案")[0], "deep")
-        # Genuinely tiny lookups still classify as fast.
-        self.assertEqual(classify("python")[0], "fast")
-        self.assertEqual(classify("Vue 官网链接")[0], "fast")
-        # Whitespace-only / empty input is handled gracefully.
-        self.assertEqual(classify("   ")[0], "normal")
 
     def test_route_uses_route_count_default(self):
         captured = {}
@@ -692,6 +670,34 @@ class PluginServiceConfigTests(unittest.TestCase):
 
         self.assertEqual(captured["jina_keys"], ["j1"])
 
+    def test_tavily_requests_provider_answer(self):
+        from src.search.searchers import tavily as tavily_mod
+
+        captured = {}
+
+        class _FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'{"answer":"fast answer","results":[]}'
+
+        def fake_urlopen(req, timeout=0):
+            import json as _json
+            captured.update(_json.loads(req.data))
+            return _FakeResp()
+
+        with mock.patch.object(tavily_mod, "urlopen_retry", side_effect=fake_urlopen):
+            rows = tavily_mod.search_tavily("q", "tk", want_content=True)
+
+        self.assertEqual(captured["search_depth"], "basic")
+        self.assertEqual(captured["include_answer"], "basic")
+        self.assertEqual(captured["include_raw_content"], "markdown")
+        self.assertEqual(rows[0]["source"], "tavily_answer")
+
     def test_doctor_reports_config_key_and_state_boundaries(self):
         data = doctor_data(include_keys=False)
 
@@ -699,7 +705,7 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(data["key_sources"]["file"], "~/.search-keys.json")
         self.assertIn("TAVILY_API_KEY", data["key_sources"]["env"])
         self.assertEqual(data["key_sources"]["state"], data["state_path"])
-        self.assertEqual(set(data["levels"]), {"fast", "normal", "expert"})
+        self.assertNotIn("levels", data)
 
 
 class PluginEntryLayerTests(unittest.TestCase):
@@ -707,13 +713,6 @@ class PluginEntryLayerTests(unittest.TestCase):
         result = tools.multi_search_tool("q", route="discussion", use_state=False)
         self.assertEqual(result["error_type"], "invalid_request")
         self.assertIn("valid routes", result["error"])
-        self.assertNotIn("markdown", result)
-
-    def test_multi_search_unknown_level_returns_structured_error(self):
-        result = tools.multi_search_tool("q", level="turbo", use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("unknown level", result["error"])
-        self.assertIn("valid levels", result["error"])
         self.assertNotIn("markdown", result)
 
     def test_multi_search_empty_query_returns_structured_error(self):
@@ -905,7 +904,7 @@ class PluginRankingTests(unittest.TestCase):
              mock.patch("src.service.SearchRunner", FakeRunner), \
              mock.patch("src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
-            response = run_multi_search(MultiSearchRequest(query="q", level="fast", use_state=False, output="both"))
+            response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False, output="both"))
 
         json_urls = [r["url"] for r in response["results"] if r.get("url")]
         markdown = response["markdown"]
@@ -952,17 +951,6 @@ class PluginRegistryConsistencyTests(unittest.TestCase):
         profile_sources = {src for sources in ROUTE_PROFILES.values() for src in sources}
         unknown = profile_sources - ALL_SOURCE_NAMES
         self.assertEqual(unknown, set(), f"routes reference unknown sources: {sorted(unknown)}")
-
-    def test_default_level_is_a_known_level(self):
-        from src.search.search_runner import DEFAULT_LEVEL, LEVEL_META
-        self.assertIn(DEFAULT_LEVEL, LEVEL_META)
-        self.assertIn(DEFAULT_LEVEL, available_levels())
-
-    def test_every_level_pins_a_search_depth(self):
-        from src.search.search_runner import LEVEL_META
-        for name, meta in LEVEL_META.items():
-            self.assertTrue(str(meta.get("search_depth") or "").strip(), name)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,20 +12,17 @@ from ...support.secrets import scrub_secrets
 QIANFAN_BASE = "https://qianfan.baidubce.com"
 
 
-def search_baidu(query: str, api_key: str, count: int = 10, search_depth: str = "normal",
+def search_baidu(query: str, api_key: str, count: int = 10,
                  timeout: float = 30) -> list[dict[str, Any]]:
     """Search via Baidu AI Search.
 
-    ``fast`` and ``normal`` use the high-performance web_summary endpoint.
-    ``deep`` uses the chat/completions endpoint with enable_deep_search=true.
+    Uses the high-performance web_summary endpoint, which returns answer plus
+    per-reference body content inline.
     """
-    depth = (search_depth or "normal").lower()
-    if depth == "deep":
-        return _search_baidu_deep(query, api_key, count, timeout)
-    return _search_baidu_summary(query, api_key, count, depth, timeout)
+    return _search_baidu_summary(query, api_key, count, timeout)
 
 
-def _search_baidu_summary(query: str, api_key: str, count: int, depth: str, timeout: float) -> list[dict[str, Any]]:
+def _search_baidu_summary(query: str, api_key: str, count: int, timeout: float) -> list[dict[str, Any]]:
     payload = {
         "messages": [{"role": "user", "content": query}],
         "resource_type_filter": [{"type": "web", "top_k": count}],
@@ -34,25 +31,7 @@ def _search_baidu_summary(query: str, api_key: str, count: int, depth: str, time
         "top_p": 0.5,
     }
     data = _post_json("/v2/ai_search/web_summary", api_key, payload, timeout)
-    return _rows_from_response(data, search_depth=depth, endpoint="/v2/ai_search/web_summary", max_references=count)
-
-
-def _search_baidu_deep(query: str, api_key: str, count: int, timeout: float) -> list[dict[str, Any]]:
-    payload = {
-        "messages": [{"role": "user", "content": query}],
-        "search_source": "baidu_search_v1",
-        "resource_type_filter": [{"type": "web", "top_k": count}],
-        "stream": False,
-        "model": "ernie-4.5-turbo-32k",
-        "enable_deep_search": True,
-        "enable_followup_query": False,
-        "temperature": 0.1,
-        "top_p": 0.5,
-        "search_mode": "auto",
-        "enable_reasoning": False,
-    }
-    data = _post_json("/v2/ai_search/chat/completions", api_key, payload, timeout)
-    return _rows_from_response(data, search_depth="deep", endpoint="/v2/ai_search/chat/completions", max_references=count)
+    return _rows_from_response(data, endpoint="/v2/ai_search/web_summary", max_references=count)
 
 
 def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
@@ -72,7 +51,7 @@ def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float)
         return {"error": scrub_secrets(exc, api_key)}
 
 
-def _rows_from_response(data: dict[str, Any], *, search_depth: str, endpoint: str,
+def _rows_from_response(data: dict[str, Any], *, endpoint: str,
                         max_references: int) -> list[dict[str, Any]]:
     if data.get("error"):
         return [{"source": "baidu", "error": str(data["error"])}]
@@ -91,7 +70,6 @@ def _rows_from_response(data: dict[str, Any], *, search_depth: str, endpoint: st
             "source": "baidu_answer",
             "answer": answer,
             "request_id": request_id,
-            "search_depth": search_depth,
             "endpoint": endpoint,
         })
 
@@ -107,7 +85,6 @@ def _rows_from_response(data: dict[str, Any], *, search_depth: str, endpoint: st
             "description": (snippet or content)[:300],
             "score": ref.get("rerank_score"),
             "request_id": request_id,
-            "search_depth": search_depth,
             "endpoint": endpoint,
             "reference_id": ref.get("id"),
             "date": ref.get("date"),

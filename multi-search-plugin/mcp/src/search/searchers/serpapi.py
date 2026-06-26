@@ -11,6 +11,17 @@ def _scrub(msg: str, api_key: str = "") -> str:
     return scrub_secrets(msg, api_key, limit=300)
 
 
+def _answer_box_text(answer_box: dict) -> str:
+    for key in ("answer", "snippet", "snippet_highlighted_words", "list"):
+        value = answer_box.get(key)
+        if isinstance(value, list):
+            value = "\n".join(str(item) for item in value if item)
+        if value:
+            title = answer_box.get("title") or answer_box.get("type") or "Answer Box"
+            return f"[{title}] {value}"
+    return ""
+
+
 def search_serpapi(
     query: str,
     api_key: str,
@@ -58,11 +69,20 @@ def search_serpapi(
             return _return_error(str(data["error"]))
 
         if start == 0:
+            answer_box = data.get("answer_box") or {}
+            answer_text = _answer_box_text(answer_box)
+            if answer_text:
+                results.append({
+                    "source": "serpapi_answer",
+                    "answer": answer_text,
+                    "answer_type": "answer_box",
+                })
             kg = data.get("knowledge_graph") or {}
             if kg.get("description"):
                 results.append({
                     "source": "serpapi_answer",
                     "answer": f"[{kg.get('title', '')}] {kg['description']}",
+                    "answer_type": "knowledge_graph",
                 })
         organic = data.get("organic_results") or []
         if not organic:

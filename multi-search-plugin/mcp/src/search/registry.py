@@ -65,7 +65,7 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             name="brave", public_name="brave", key_name="brave",
             missing_message="missing BRAVE_SEARCH_API_KEY / BRAVE_API_KEY", timeout_default=15,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_brave, q, key, cfg.counts["brave"], timeout=ctx.timeout, search_depth=cfg.search_depth,
+                search_brave, q, key, cfg.counts["brave"], timeout=ctx.timeout,
             ),
         ),
         "baidu": ProviderSpec(
@@ -73,21 +73,21 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             missing_message="missing BAIDU_QIANFAN_API_KEY / QIANFAN_API_KEY / APPBUILDER_API_KEY",
             timeout_default=60,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_baidu, q, key, cfg.counts["baidu"], cfg.search_depth, timeout=ctx.timeout,
+                search_baidu, q, key, cfg.counts["baidu"], timeout=ctx.timeout,
             ),
         ),
         "tavily": ProviderSpec(
             name="tavily", public_name="tavily", key_name="tavily",
             missing_message="missing TAVILY_API_KEY", timeout_default=15,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_tavily, q, key, cfg.counts["tavily"], timeout=ctx.timeout, search_depth=cfg.search_depth,
+                search_tavily, q, key, cfg.counts["tavily"], timeout=ctx.timeout, want_content=cfg.want_content,
             ),
         ),
         "exa": ProviderSpec(
             name="exa", public_name="exa", key_name="exa",
             missing_message="missing EXA_API_KEY", timeout_default=20,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_exa, q, key, cfg.counts["exa"], timeout=ctx.timeout, search_depth=cfg.search_depth,
+                search_exa, q, key, cfg.counts["exa"], timeout=ctx.timeout, want_content=cfg.want_content,
             ),
         ),
         "serpapi": ProviderSpec(
@@ -95,7 +95,7 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             missing_message="missing SERPAPI_API_KEY / SERPAPI_KEY", timeout_default=20,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_serpapi, q, key, cfg.counts["serpapi"], cfg.serpapi_engine,
-                timeout=ctx.timeout, search_depth=cfg.search_depth,
+                timeout=ctx.timeout,
             ),
         ),
         "youtube": ProviderSpec(
@@ -113,21 +113,21 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             name="firecrawl", public_name="firecrawl", key_name="firecrawl",
             missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, search_depth=cfg.search_depth,
+                search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, want_content=cfg.want_content,
             ),
         ),
         "v2ex": ProviderSpec(
             name="v2ex", public_name="v2ex", key_name="firecrawl",
             missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_v2ex, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, search_depth=cfg.search_depth,
+                search_v2ex, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout,
             ),
         ),
         "linuxdo": ProviderSpec(
             name="linuxdo", public_name="linuxdo", key_name="firecrawl",
             missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_linuxdo, q, key, cfg.counts["linuxdo"], timeout=ctx.timeout, search_depth=cfg.search_depth,
+                search_linuxdo, q, key, cfg.counts["linuxdo"], timeout=ctx.timeout,
             ),
         ),
         "linuxdo_api": ProviderSpec(
@@ -199,7 +199,7 @@ def _search_zhihu_with_fallback(query, cfg, ctx, _key):
             cfg.keys.get("firecrawl"),
             lambda api_key: call_optional_timeout(
                 search_zhihu_firecrawl, query, api_key, cfg.counts["firecrawl"],
-                timeout=ctx.timeout, search_depth=cfg.search_depth,
+                timeout=ctx.timeout,
             ),
             deadline=ctx.deadline,
         )

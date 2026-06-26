@@ -61,26 +61,24 @@
 | bilibili | 否 | 是 | 是 | 否 | skip | 可选 api_key/cookie | 不接入 SQLite key 轮换 | 视频 | 中文视频搜索，scrape 默认关闭。 |
 | jina | 否 | 否 | 否 | 是 | scraper | 可选 api_key | 仅 active key 池 | 专家模式抓正文阶段 | 不是搜索 provider，只负责 URL -> Markdown/text。 |
 
-## search_depth 行为与注意事项
+## want_content 行为与注意事项
 
-`search_depth` 取值 `auto / fast / normal / deep`，优先级为：
-**显式请求值 > 路由固定值（`fast`/`expert`）> 配置 `search_depth` > 路由 `auto` 默认**。
-`auto` 会按 prompt 复杂度自动分级（脚本感知的 token 计数，中英文一致）。
+`level`（fast/normal）维度已删除。是否让 provider 在搜索响应里直接返回正文，
+由 route_meta 的 `want_content` 控制，目前只有 `fast` 路由开启（`want_content=True`、`scrape_top=0`）。
 
-- **仅通用 web 路由生效**：`search_depth` 只影响 `default/web/fast/expert` 用到的通用搜索 provider。专用搜索（github / hackernews / stackoverflow / twitter / youtube / bilibili / reddit / deepseek-web / glm-web 等）的 searcher 不接受 `search_depth`，会被 `call_optional_timeout` 按签名静默忽略，所以在 `dev/social/video/cn-community` 上设 `deep` 不会改变行为。
-- **Brave**：`normal` 与 `deep` 行为相同（都只开 `extra_snippets`），Brave 侧没有更深的检索模式；需要更深内容时依赖后续 scrape，而非 Brave 的 depth。
-- **SerpAPI**：`fast` 会把 engine 强制为 `google_light`，**覆盖**用户配置的 `serpapi_engine`（如 `google`）。这是有意的提速降级，实际使用的 engine 会写入诊断的 `provider_depth` 字段以便排查。
-- **Tavily**：`fast` 透传 `search_depth=fast`，这是较新的枚举值；个别账号/版本若不支持会在运行时报错。若遇到兼容问题，可回退为 `basic` + 关闭 `include_answer`（与 fast 语义一致）。
-- **Baidu**：`fast/normal` 走 `web_summary` 高性能端点，`deep` 走 `chat/completions + enable_deep_search`（独立端点，超时参数一致透传）。Baidu 当前不在任何 `ROUTE_PROFILES` 内，只能通过 `sources=["baidu"]` 显式调用，不参与 `auto/expert` 自动深度路由。
-- **Firecrawl**：仅 `deep` 追加 `scrapeOptions.formats=["markdown"]` 回填正文（`body`）；`fast/normal` 只做 search。因此能力矩阵中 Firecrawl 的 `body` 标注「deep 是」是 depth 相关的，静态能力表无法逐档展开，以本节为准。
+- **作用范围**：`want_content` 只传给支持内联正文的 4 个 provider（baidu / tavily / exa / firecrawl）。其它 searcher 不接受该参数，会被 `call_optional_timeout` 按签名静默忽略。
+- **Tavily**：`want_content=True` 时设 `include_raw_content="markdown"` 回填正文；`search_depth` 固定为 `basic`。
+- **Exa**：`want_content=True` 时请求 `contents={"text": True}` 拿全文，否则只取 `highlights`；`type` 固定为 `auto`。
+- **Firecrawl**：`want_content=True` 时追加 `scrapeOptions.formats=["markdown"]` 回填正文（`body`），否则只做 search。
+- **Baidu**：走 `web_summary` 端点，原生返回 answer + 引用 snippet/正文。
+- **想“召回 + 再抓正文”**：用 `route=default` 搭配 `scrape_top=N`，由 scrape 阶段统一抓正文。
 
 ## 最终 Route 设计
 
 | Route | Provider 组合 | 默认 scrape | 行为目标 |
 |---|---|---:|---|
 | `default` / `web` | `brave`, `tavily`, `exa`, `serpapi` | 8 | 保守默认事实搜索，不混入平台源。 |
-| `fast` | `deepseek_web`, `glm_web`, `tavily`, `exa` | 0 | 优先使用 provider 直接总结、URL 和摘要。快速返回“总结 + 来源”。DeepSeek/GLM 不可用时显式降级到 Tavily/Exa。 |
-| `expert` | `brave`, `tavily`, `exa`, `firecrawl`, `serpapi` | 20 | 广泛搜索 URL，抓取正文，然后让主模型基于正文综合总结。 |
+| `fast` | `baidu`, `tavily`, `firecrawl`, `exa` | 0 | 只跑“搜索 API 自带正文”的 provider（`want_content=True`），不额外抓取。缺 key 时只显示该源的 error row，不跨路由降级。 |
 | `social` | `twitter`, `reddit_oauth` | 0 | 社交反馈、用户评价、讨论热度。 |
 | `dev` | `github_repos`, `stackoverflow`, `hackernews` | 5 | 技术资料、项目、实现方案搜索。默认不要混入纯社交源。 |
 | `cn-community` | `zhihu`, `v2ex`, `linuxdo` | 5 | 中文社区反馈、中文技术讨论。 |
