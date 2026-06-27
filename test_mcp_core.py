@@ -36,10 +36,11 @@ from src.state.keys import (
     load_keys,
     pick_key,
 )
+from src.state.key_state import BasicKeyManager
 from src.state.mark_exhausted import _mark_config_exhausted
 from src.support.cache import JsonCache, make_scrape_cache_key
 from src.support.dedup import _norm_url, deduplicate, split_by_content
-from src.support.models import ProviderError, ScrapeResult, SearchResult
+from src.support.models import ProviderError, ScrapeResult, SearchResult, empty_result_row, is_empty_result
 from src.support.secrets import scrub_secrets
 from src.search.searchers import baidu as baidu_searcher
 from src.search.searchers import brave as brave_searcher
@@ -116,6 +117,14 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(result["error"], "quota")
         self.assertTrue(result["retryable"])
 
+    def test_empty_result_sentinel_does_not_confuse_real_status_fields(self):
+        real = {"source": "brave", "url": "https://example.com", "title": "Doc", "status": "ok"}
+
+        self.assertFalse(is_empty_result(real))
+        self.assertTrue(is_empty_result(empty_result_row("baidu")))
+        self.assertTrue(is_empty_result({"source": "legacy", "status": "ok", "raw_hits": 0}))
+        self.assertFalse(is_empty_result({"source": "exa", "url": "https://example.com"}))
+
 
 class RouteTests(unittest.TestCase):
     """Route assertions reflect the semantic-profile redesign.
@@ -130,7 +139,7 @@ class RouteTests(unittest.TestCase):
             {"brave", "exa", "tavily", "serpapi", "firecrawl", "baidu", "glm_web", "deepseek_web"},
         )
         self.assertEqual(resolve_route("dev"), {"stackoverflow", "hackernews", "github_repos"})
-        self.assertEqual(resolve_route("social"), {"twitter", "reddit_oauth"})
+        self.assertEqual(resolve_route("social"), {"twitter"})
         self.assertEqual(resolve_route("video"), {"bilibili", "youtube"})
         self.assertEqual(resolve_route("cn-community"), {"zhihu", "v2ex", "linuxdo"})
         self.assertNotIn("youtube", resolve_route("all"))
@@ -146,6 +155,9 @@ class RouteTests(unittest.TestCase):
     def test_unknown_route_resolves_empty_for_validation(self):
         self.assertEqual(resolve_route("not-a-route"), set())
         self.assertEqual(resolve_route(""), set())
+
+    def test_web_route_is_default_compatibility_alias(self):
+        self.assertEqual(resolve_route("web"), resolve_route("default"))
 
     def test_removed_single_provider_aliases_no_longer_resolve(self):
         for alias in ("github", "youtube", "bilibili", "v2ex", "zhihu", "reddit", "hackernews", "stackoverflow", "lite", "discussion"):
@@ -532,6 +544,15 @@ class KeyTests(unittest.TestCase):
             pool = key_pool(["k1", "", "k2"])
         self.assertEqual(pool, ["k1", "k2"])
         shuffle.assert_called_once_with(pool)
+
+    def test_basic_key_manager_preserves_configured_order(self):
+        manager = BasicKeyManager()
+
+        first = [candidate.key for candidate in manager.candidates("exa", ["k1", "k2", "k3"])]
+        second = [candidate.key for candidate in manager.candidates("exa", ["k1", "k2", "k3"])]
+
+        self.assertEqual(first, ["k1", "k2", "k3"])
+        self.assertEqual(second, ["k1", "k2", "k3"])
 
     def test_load_keys_preserves_json_key_pool_arrays(self):
         with tempfile.TemporaryDirectory() as tmp:

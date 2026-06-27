@@ -20,6 +20,30 @@ ANSWER_SOURCES = frozenset({
 })
 
 
+# Sentinel key marking a "provider ran but returned zero results" placeholder
+# row. Kept separate from any business field so a real result row that happens
+# to carry a ``status`` value is never mistaken for an empty placeholder.
+EMPTY_RESULT_FLAG = "_empty"
+
+
+def empty_result_row(source: str, **extra: Any) -> dict:
+    """Build a zero-result placeholder row for a provider that ran cleanly."""
+    row = {"source": source, "status": "ok", "raw_hits": 0, EMPTY_RESULT_FLAG: True}
+    row.update(extra)
+    return row
+
+
+def is_empty_result(row: Any) -> bool:
+    """True for provider zero-result placeholder rows (not real results)."""
+    data = row if isinstance(row, dict) else as_dict(row)
+    if data.get(EMPTY_RESULT_FLAG):
+        return True
+    # Backward compatibility: older rows used ``status == "ok"`` as the sole
+    # empty-result marker. Only treat it as a placeholder when no URL is present
+    # so a real result row carrying a stray ``status`` field is not dropped.
+    return data.get("status") == "ok" and not data.get("url")
+
+
 def _without_none(data: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in data.items() if value is not None}
 

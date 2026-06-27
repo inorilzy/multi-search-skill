@@ -27,7 +27,7 @@ content inline. There is no separate `level` / depth parameter.
   (baidu/tavily/firecrawl/exa); pins `scrape_top=0`, no extra scraping. Quick
   background, "just tell me what's going on". Missing keys show an error row;
   `fast` does not fall back to other routes.
-- `social` - Twitter/X, Reddit feedback.
+- `social` - Twitter/X feedback.
 - `dev` - GitHub, Stack Overflow, Hacker News.
 - `cn-community` - Zhihu, V2EX, Linux Do.
 - `video` - video / tutorial requests.
@@ -49,13 +49,35 @@ Pick the speed from the user's wording (cues, not exact matches):
 When the user gives no speed signal, use the `default` route; do not force
 `fast` just because they said "搜一下".
 
+## Query Expansion
+
+- By default, provide up to 3 `expand` query variants when the user's request is
+  broad, ambiguous, or likely to benefit from alternate wording. Keep variants
+  close to the user's intent: synonyms, English/Chinese equivalents, key entity
+  names, or likely technical terms.
+- Do not use `expand` for exact-match lookups, URLs, quoted strings, IDs,
+  error codes, or when the user asks for a quick/simple search.
+- The MCP server does not generate these variants itself; the caller supplies
+  `expand=[...]` at call time. Leave `expand` empty when no useful variant is
+  needed.
+
 ## Output Expectations
 
 - Distinguish search results, scraped page content, provider errors, and
   key/setup warnings.
+- For news/current-events queries, always show clickable source links: include
+  title, source/provider, and URL for the main results before or alongside any
+  summary. Do not replace verifiable URLs with a linkless narrative summary.
 - If a provider fails or lacks a key, keep using the others and note the failure
   briefly; if a route degrades to weaker providers, say so explicitly.
 - Prefer cross-source agreement over isolated hits when forming conclusions.
+
+## Engineering Judgment
+
+- When analyzing bugs, reason from first principles before changing behavior.
+- Do not add fallback implementations that can hide errors in the main flow.
+- If GitHub has a mature open-source solution for the problem, reuse it instead
+  of implementing the same core logic from scratch.
 
 ## Safety
 

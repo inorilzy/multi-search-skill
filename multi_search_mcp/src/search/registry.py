@@ -31,7 +31,6 @@ from .searchers.exa import search_exa
 from .searchers.firecrawl import (
     search_firecrawl,
     search_linuxdo,
-    search_reddit,
     search_v2ex,
     search_zhihu as search_zhihu_firecrawl,
 )
@@ -44,7 +43,6 @@ from .searchers.serpapi import search_serpapi
 from .searchers.stackoverflow import search_stackoverflow
 from .searchers.tavily import search_tavily
 from .searchers.twitter import search_twitter
-from .searchers.reddit import search_reddit_oauth
 from .searchers.youtube import search_youtube
 from .searchers.zhihu import search_zhihu
 
@@ -134,17 +132,6 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             name="linuxdo_api", public_name="linuxdo-api", timeout_default=20,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_linuxdo_api, q, cfg.keys.get("linuxdo", ""), cfg.counts["linuxdo_api"], timeout=ctx.timeout,
-            ),
-        ),
-        "reddit": ProviderSpec(
-            name="reddit", public_name="reddit", key_name="firecrawl",
-            missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
-            call=lambda q, cfg, ctx, key: call_optional_timeout(search_reddit, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout),
-        ),
-        "reddit_oauth": ProviderSpec(
-            name="reddit_oauth", public_name="reddit-oauth", timeout_default=20,
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_reddit_oauth, q, cfg.keys.get("reddit_token", ""), 10, timeout=ctx.timeout,
             ),
         ),
         "github_repos": ProviderSpec(

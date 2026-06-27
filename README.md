@@ -24,7 +24,7 @@ python mcp/server.py
     "command": "uvx",
     "args": [
       "--from",
-      "git+https://github.com/inorilzy/multi-search-skill.git@v0.2.2",
+      "git+https://github.com/inorilzy/multi-search-skill.git@v0.2.3",
       "multi-search-mcp"
     ],
     "timeoutMs": 60000
@@ -48,13 +48,19 @@ MCP tools 包括：`multi_search`、`scrape_url`、`list_sources`、`doctor`、`
 
 边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置放在 `multi-search-config.json`；运行状态默认保存在 `~/.multi-search/state.sqlite`。`.mcp.json` 只负责启动 server，不保存 secret。
 
-当前默认行为：`default` 是 `web` 的兼容别名，跑 Brave、Tavily、Exa、SerpAPI、Firecrawl、Baidu、GLM Web、DeepSeek Web；默认额外抓取最多 8 个缺正文 URL。Tavily / Exa 已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。需要快速总结用 `fast`，其余使用默认 `default` route。
+当前默认行为：`default` 是 `web` 的兼容别名，跑 Brave、Tavily、Exa、SerpAPI、Firecrawl、Baidu、GLM Web、DeepSeek Web；默认额外抓取最多 20 个缺正文 URL。Tavily / Exa 已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。需要快速总结用 `fast`，其余使用默认 `default` route。
 
 ## 适用场景
 
 - 让 agent 一次性查多个来源，而不是只依赖单一搜索 API。
 - 对技术方案、开源项目、社区讨论、踩坑反馈做交叉验证。
 - 把搜索结果和可抓取网页正文整理成适合 agent 阅读的 Markdown。
+
+## 工程判断约定
+
+- 分析 bug 时先从第一性原理出发，不急着改症状。
+- 不要搞兜底实现，兜底实现会掩盖主流程的错误。
+- 如果 GitHub 上有成熟的开源方案，直接复用，不要自己实现。
 
 不适合：
 
@@ -99,7 +105,6 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 | Exa | 搜索 + `contents.text`，也是抓取后端 | https://exa.ai | 约 1,000 次/月；邮箱注册 | 100 |
 | Firecrawl | Web metadata search；有 key 时可作为抓取 fallback | https://firecrawl.dev | 约 1,000 次/月；CLI 默认 count 10；搜索默认只取 metadata，抓取阶段仅在配置 key 后进入 fallback 链 | 100 |
 | Zhihu | Zhihu OpenAPI search | https://developer.zhihu.com | 优先用官方 `zhihu_search` API；无 `zhihu` key 时可 fallback 到 Firecrawl `includeDomains` | 10 |
-| Reddit | Reddit domain-restricted search + remote-first 抓取 | https://firecrawl.dev | 搜索用 Firecrawl `includeDomains`；`www.reddit.com` 优先 Jina，`old.reddit.com` 优先 Tavily，本地 old.reddit 只做最后兜底 | 100 |
 | YouTube | YouTube video search | https://console.cloud.google.com/apis/library/youtube.googleapis.com | 官方 YouTube Data API；metadata only，不抓视频正文 | 50 |
 | Bilibili | Bilibili video search | https://search.bilibili.com | 公开视频搜索接口；cookie 可选；metadata only，不抓视频正文 | 50 |
 | SerpAPI Google Light | Google SERP | https://serpapi.com/users/sign_up?plan=free | 250 次/月；`google_light` 默认更省 | 100 |
@@ -117,9 +122,9 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 
 | Route | Sources | 适合场景 |
 |---|---|---|
-| `default` / `web` | Brave + Tavily + Exa + SerpAPI | 普通事实搜索；默认 route |
+| `default` / `web` | Brave + Tavily + Exa + SerpAPI + Firecrawl + Baidu + GLM Web + DeepSeek Web | 普通事实搜索；默认 route |
 | `fast` | Baidu + Tavily + Firecrawl + Exa | 只跑“搜索 API 自带正文”的源，`scrape_top=0`、不额外抓取；快速总结、当前背景 |
-| `social` | Twitter/X + Reddit OAuth | 看社交反馈、口碑、讨论 |
+| `social` | Twitter/X | 看社交反馈、口碑、讨论 |
 | `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
 | `cn-community` | Zhihu + V2EX + Linux Do | 中文社区讨论 |
 | `video` | YouTube + Bilibili | 搜视频；默认 title/url-only，不进入网页抓取 |
@@ -127,6 +132,22 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 
 `fast` 路由只跑那些搜索 API 直接返回正文的 provider（不再有独立的 `level` 参数）。
 若想“用 default 召回 + 再抓正文”，用 `route=default` 搭配 `scrape_top=N`。
+
+> 实际生效的源以响应里的 `diagnostics.active_sources` 为准：`multi-search-config.json`
+> 通过 `disabled_sources` 全局关闭的源（仓库内默认关闭了 `glm_web`、`deepseek_web`）
+> 会从 route 中减去，不会执行。
+
+### Route 默认参数
+
+| Route | count | scrape_top | timeout |
+|---|---:|---:|---:|
+| `default` / `web` | 10 | 20 | 60s |
+| `fast` | 10 | 0 | 45s |
+| `all` | 10 | 30 | 90s |
+| `social` | 10 | 0 | 60s |
+| `dev` | 10 | 20 | 60s |
+| `cn-community` | 10 | 20 | 60s |
+| `video` | 10 | 0 | 45s |
 
 缺 key 的源会显示 error row，不会静默消失。`fast` 路由不会跨路由降级；缺 key 时只显示该源的 error row。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
 
@@ -171,7 +192,9 @@ TWITTER_COOKIES_PATH
 多数 key 字段支持 string 或 string array。Jina 支持 `{ "key": "...", "exhausted": true|false }`；只有余额接口确认 `wallet.total_balance <= 0` 时才会自动标记 exhausted。需要手动软删除 Jina key：
 
 ```powershell
-python -m scripts.mark_exhausted <jina-key>
+# 在 multi_search_mcp/ 目录下运行（该目录会被加入 sys.path）
+cd multi_search_mcp
+python -m src.state.mark_exhausted <jina-key>
 ```
 
 ## 架构和术语
@@ -282,6 +305,8 @@ flowchart LR
 
 `count` 解析优先级：tool 入参 `count` > 配置文件 `counts{}` / `*_count` > 配置文件全局 `count` > route 默认值，最后按各 provider 的上限 clamp。响应里的 `diagnostics.effective_counts` 会回显最终每个 provider 使用的数量；`diagnostics.route_meta.route_default_count` 只表示 route 默认值。
 
+JSON 配置支持 `disabled_sources`（默认 `[]`）用来全局关闭某些搜索源。route 正常解析后会从结果里减去这些源，对 tool 显式传入的 `sources` 同样生效。它只是调度开关：不删除 API key、不改变 provider 能力，被禁用源在 `counts{}` 里的配置保留但不生效。支持源别名（如 `deepseek-web`、`github`），只接受搜索源，不接受 scrape backend（如 `jina`）；填入未知名称会报错。若某次请求的全部源都被禁用，会返回明确错误而不是静默返回空结果。响应的 `diagnostics` 会回显 `route_sources`（原始选择）、`disabled_sources`（已关闭）、`active_sources`（实际执行）。
+
 `scrape_url` tool 用于单独抓取一个 URL，支持 `backends`、`scrape_chars`、`scrape_timeout`、`use_state` 等参数。
 
 JSON 配置还支持缓存字段：`cache_enabled`、`no_cache`、`cache_ttl_seconds`、`cache_dir`。缓存默认关闭；启用后 scrape 文件写到 `.cache/multi-search/scrape/{hash}.json`，cache key 只包含 normalized URL、backend 顺序和重要 options，不写入 API key。
@@ -291,6 +316,7 @@ JSON 配置还支持缓存字段：`cache_enabled`、`no_cache`、`cache_ttl_sec
 输出包含：
 
 - JSON `summary`：首个 provider 原生 query-level answer/summary；`summaries` 保留全部 `*_answer` 来源及 metadata。`source_briefs` 为每个 provider 提供一条展示 brief，优先使用原生 answer，否则从该来源的 URL 结果 title/snippet/highlights 生成 brief；兼容字段 `source_summaries` 仍会返回，但新代码应使用 `source_briefs`，避免把 per-result snippet 误读成 query-level summary。每条 `results[]` 继续保留旧字段 `description`/`scraped_content`，同时补充公共别名 `content`/`body`/`full_content`。
+- `display_results[]`：从最终排序后的有效 `results[]` 抽取的展示清单，固定包含 title、source、URL 和 snippet，供 UI / agent 优先展示。新闻、时事和需要核验的查询必须先列出这些可点击来源链接，再给摘要；不能只输出无链接的叙述性总结。
 - `Sources (raw hits)`：各源原始命中数。
 - `Source Status`：OK / PARTIAL / ERROR。
 - `URL Inventory`：去重后的 URL 和共识权重。

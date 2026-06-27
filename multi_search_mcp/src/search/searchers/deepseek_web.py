@@ -13,6 +13,7 @@ from typing import Any
 
 from ...support.http import urlopen_retry
 from ...support.secrets import scrub_secrets
+from ...support.models import empty_result_row
 
 
 BASE_URL = "https://chat.deepseek.com"
@@ -370,5 +371,5 @@ def search_deepseek_web(
         rows.append({"source": "deepseek_web_answer", "answer": answer})
     rows.extend(citations)
     if not rows:
-        rows.append({"source": "deepseek-web", "status": "ok", "raw_hits": 0})
+        rows.append(empty_result_row("deepseek-web"))
     return rows

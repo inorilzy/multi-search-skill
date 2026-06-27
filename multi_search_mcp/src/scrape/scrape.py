@@ -277,12 +277,17 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         return None
 
     enabled = list(policy["backends"])
+    # Honor the planner's per-URL ``primary`` for load spreading: lift it to the
+    # front before site memory reorders. With ``use_state=True`` (the default)
+    # ``site_memory`` is non-None, so previously the primary was dropped and
+    # every URL collapsed onto ``enabled[0]``. Site memory still wins for pinned
+    # or learned backends because its ranking outranks the input order, only
+    # using this order as the tie-breaker for cold sites.
+    if primary in enabled:
+        enabled = [primary] + [backend for backend in enabled if backend != primary]
     if site_memory is not None:
         enabled = site_memory.reorder_backends(url, enabled)
-    order = []
-    if primary in enabled and primary not in order:
-        order.append(primary)
-    order += [backend for backend in enabled if backend not in order]
+    order = list(enabled)
     last: dict | None = None
     for backend in order:
         if deadline is not None and time.monotonic() >= deadline:

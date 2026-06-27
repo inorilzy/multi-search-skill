@@ -1,5 +1,6 @@
 {
   "type": "default",
+  "disabled_sources": ["glm_web", "deepseek_web"],
   "count": null,
   "counts": {
     "baidu": 10,
@@ -29,7 +30,6 @@
   "cache_ttl_seconds": 86400,
   "cache_dir": ".cache/multi-search",
   "no_cache": false,
-  "expand": [],
   "brief": false,
   "title_url_only": false,
   "verbose": false

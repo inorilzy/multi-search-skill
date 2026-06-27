@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..support.auth import is_key_retryable_error
-from .keys import key_pool
 from ..support.secrets import scrub_secrets
 from .state_store import StateStore
 
@@ -77,7 +76,7 @@ class BasicKeyManager:
     def candidates(self, provider: str, key_value: Any) -> list[KeyCandidate]:
         return [
             KeyCandidate(key=key, key_id=key_id_for(provider, key), fingerprint=key_fingerprint(key))
-            for key in key_pool(key_value)
+            for key in _ordered_key_pool(key_value)
         ]
 
     def classify_result(self, provider: str, results: list | dict | None) -> KeyOutcome:
@@ -86,6 +85,10 @@ class BasicKeyManager:
         if not error_rows:
             return KeyOutcome(success=True, retryable=False)
         message = "; ".join(str(row.get("error", "")) for row in error_rows)
+        if any(row.get("exhausted") or row.get("key_exhausted") for row in error_rows):
+            return KeyOutcome(False, True, "quota_exhausted", message)
+        if any(row.get("rate_limited") for row in error_rows):
+            return KeyOutcome(False, True, "rate_limit", message)
         return KeyOutcome(False, is_key_retryable_error(rows), classify_error(message), message)
 
     def record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:

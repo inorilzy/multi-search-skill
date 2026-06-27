@@ -5,7 +5,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/inorilzy/multi-search-skill.git@v0.2.2",
+        "git+https://github.com/inorilzy/multi-search-skill.git@v0.2.3",
         "multi-search-mcp"
       ],
       "timeoutMs": 60000

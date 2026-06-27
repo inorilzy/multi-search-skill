@@ -14,7 +14,7 @@ from .support.dedup import apply_scraped_content, deduplicate, rank_results
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
 from .state.keys import count_jina_keys, jina_config_keys, load_keys
-from .support.models import ANSWER_SOURCES, as_dicts
+from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result
 from .scrape.scrape import scrape_url_smart
 from .scrape.scrape_planner import add_to_content_pool, plan_scrapes
 from .search.search_runner import (
@@ -22,12 +22,27 @@ from .search.search_runner import (
     ROUTE_PROFILES,
     SearchRunner,
     SearchRunnerConfig,
-    resolve_route,
+    normalize_source_name,
 )
-from .search.resolve import COUNT_CAPS, DEFAULT_COUNTS, build_counts, resolve_search_plan
+from .search.resolve import (
+    COUNT_CAPS,
+    DEFAULT_COUNTS,
+    build_counts,
+    resolve_active_sources,
+    resolve_search_plan,
+)
 from .support.secrets import scrub_secrets
 from .state.site_memory import SiteScraperMemory
 from .state.state_store import StateStore
+
+
+MAX_EXPAND_CONCURRENCY = 5
+
+# Upper bound for the snippet shown in ``display_results``. Without this, scraped
+# page bodies written back onto result rows (``scraped_content``) leak full text
+# into the compact display list, defeating the response-size cap that already
+# applies to ``scrapes[]``.
+DISPLAY_SNIPPET_CHARS = 600
 
 
 @dataclass
@@ -84,7 +99,20 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
         keys,
         plan.want_content,
     )
-    route_resolver = (lambda _route, lite=False: plan.sources or resolve_route(_route, lite=lite))
+    base_sources, active_sources = resolve_active_sources(
+        plan.route, plan.sources, plan.disabled_sources,
+    )
+    if base_sources and not active_sources:
+        raise ValueError(
+            f"all selected sources are disabled: {', '.join(sorted(base_sources))}"
+        )
+
+    def route_resolver(_route, lite=False):
+        _selected, active = resolve_active_sources(
+            _route, plan.sources, plan.disabled_sources, lite=lite,
+        )
+        return active
+
     runner = SearchRunner(runner_config, build_provider_registry(), route_resolver=route_resolver, key_manager=key_manager)
 
     queries_to_run = [request.query] + list(request.expand or config_list(config, "expand") or config_list(config, "expand_queries"))
@@ -92,7 +120,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     if len(queries_to_run) == 1:
         all_results = runner.run(request.query)
     else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(queries_to_run)) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(queries_to_run), MAX_EXPAND_CONCURRENCY)) as pool:
             futures = {pool.submit(runner.run, q, idx > 0): q for idx, q in enumerate(queries_to_run)}
             for fut in concurrent.futures.as_completed(futures):
                 q = futures[fut]
@@ -157,8 +185,9 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
         # source_briefs: these rows may be built from per-result snippets and
         # are not necessarily provider-native query summaries.
         "source_summaries": _compat_source_summaries(source_briefs),
+        "display_results": _display_results(final_results),
         "results": as_dicts(final_results),
-        "scrapes": scrape_result["scrapes"],
+        "scrapes": _limit_scrape_rows(scrape_result["scrapes"], plan.scrape_chars),
         "provider_status": _provider_status(final_results),
         "key_status_summary": _summarize_key_status(key_manager.status_rows() if hasattr(key_manager, "status_rows") else []),
         "site_scraper_updates": site_memory.consume_updates() if site_memory else [],
@@ -180,7 +209,9 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
                 "want_content": plan.want_content,
             },
             "effective_counts": plan.effective_counts,
-            "route_sources": sorted(plan.sources) if plan.sources is not None else sorted(resolve_route(plan.route)),
+            "route_sources": sorted(base_sources),
+            "disabled_sources": sorted(plan.disabled_sources),
+            "active_sources": sorted(active_sources),
             "route_degradation": _route_degradation(plan.route, all_results, plan.sources, plan.route_defaults),
         },
     }
@@ -212,12 +243,24 @@ def run_scrape(request: ScrapeRequest | dict) -> dict:
     )
     response = {
         "url": request.url,
-        "result": result,
+        "result": _limit_scrape_row(result, scrape_chars),
         "site_scraper_updates": site_memory.consume_updates() if site_memory else [],
     }
     if request.output in {"markdown", "both"}:
         response["markdown"] = format_scrapes([result], max_chars=scrape_chars)
     return response
+
+
+def _limit_scrape_row(row: dict, max_chars: int) -> dict:
+    limited = dict(row)
+    markdown = limited.get("markdown")
+    if isinstance(markdown, str) and len(markdown) > max_chars:
+        limited["markdown"] = markdown[:max_chars]
+    return limited
+
+
+def _limit_scrape_rows(rows: list[dict], max_chars: int) -> list[dict]:
+    return [_limit_scrape_row(row, max_chars) for row in rows]
 
 
 def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
@@ -348,10 +391,10 @@ def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, 
                     finally:
                         task_queue.task_done()
 
-            for _ in range(min(scrape_concurrency, len(items_to_scrape))):
+            for _ in range(min(scrape_concurrency, len(scrape_plan.plan_items))):
                 threading.Thread(target=worker, daemon=True).start()
             completed: set[int] = set()
-            while len(completed) < len(items_to_scrape):
+            while len(completed) < len(scrape_plan.plan_items):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
@@ -370,9 +413,9 @@ def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, 
                     add_to_content_pool(content_pool, scrape_result)
                 else:
                     scrape_errors.append({"url": item.get("url", ""), "error": "empty scrape result"})
-            for i, item in enumerate(items_to_scrape):
-                if i not in completed:
-                    scrape_errors.append(timeout_row(item))
+            for plan_item in scrape_plan.plan_items:
+                if plan_item.index not in completed:
+                    scrape_errors.append(timeout_row(plan_item.item))
 
     # Write freshly scraped content back onto the result records so JSON results,
     # markdown ranking, and the standalone scrapes view all see enriched rows
@@ -402,10 +445,15 @@ def _route_degradation(route: str, results: list[dict], source_names: set[str] |
     if not primary_sources:
         return None
     rows = as_dicts(results)
+    # Result rows carry public source names (e.g. ``deepseek-web``,
+    # ``github-repos``) while ``primary_success_sources`` uses internal names
+    # (``deepseek_web``). Normalize before comparing so a genuine primary
+    # success is not misread as a degradation.
+    primary_sources = {normalize_source_name(src) for src in primary_sources}
     has_primary_success = any(
-        row.get("source") in primary_sources
+        normalize_source_name(str(row.get("source") or "")) in primary_sources
         and "error" not in row
-        and row.get("status") != "ok"
+        and not is_empty_result(row)
         for row in rows
     )
     if has_primary_success:
@@ -429,7 +477,7 @@ def _provider_status(results: list[dict]) -> list[dict]:
     for source in sources:
         source_rows = [row for row in rows if row.get("source") == source]
         errors = [row.get("error") for row in source_rows if row.get("error")]
-        hits = len([row for row in source_rows if not row.get("error") and row.get("status") != "ok"])
+        hits = len([row for row in source_rows if not row.get("error") and not is_empty_result(row)])
         status.append({"source": source, "raw_hits": hits, "status": "error" if errors and not hits else "ok", "errors": errors})
     return status
 
@@ -449,9 +497,29 @@ def _summarize_key_status(rows: list[dict]) -> list[dict]:
 def _valid_result_count(results: list[dict]) -> int:
     return len([
         row for row in as_dicts(results)
-        if "error" not in row and row.get("status") != "ok"
+        if "error" not in row and not is_empty_result(row)
         and row.get("source") not in ANSWER_SOURCES
     ])
+
+
+def _display_results(results: list[dict]) -> list[dict]:
+    rows = []
+    for row in as_dicts(results):
+        if row.get("error") or is_empty_result(row) or row.get("source") in ANSWER_SOURCES:
+            continue
+        url = row.get("url")
+        if not url:
+            continue
+        rows.append({
+            "title": row.get("title") or url,
+            "url": url,
+            "source": row.get("source"),
+            "snippet": _compact_text(
+                row.get("description") or row.get("content") or row.get("scraped_content") or "",
+                DISPLAY_SNIPPET_CHARS,
+            ),
+        })
+    return rows
 
 
 def _add_public_content_aliases(results: list[dict]) -> None:
@@ -508,7 +576,7 @@ def _extract_source_briefs(results: list[dict], *, max_items_per_source: int = 3
     briefs: dict[str, dict[str, Any]] = {}
 
     for row in rows:
-        if row.get("error") or row.get("status") == "ok":
+        if row.get("error") or is_empty_result(row):
             continue
         source = str(row.get("source") or "")
         if not source:

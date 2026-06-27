@@ -53,7 +53,7 @@ def _mark_config_exhausted(key_to_mark: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 1 or not args[0].strip():
-        print("Usage: python -m src.mark_exhausted <jina-key>", file=sys.stderr)
+        print("Usage: python -m src.state.mark_exhausted <jina-key>", file=sys.stderr)
         return 2
 
     if _mark_config_exhausted(args[0].strip()):

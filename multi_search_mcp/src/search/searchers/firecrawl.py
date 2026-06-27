@@ -75,7 +75,6 @@ def search_firecrawl(
 
 
 V2EX_DOMAINS = ("www.v2ex.com", "v2ex.com", "global.v2ex.com")
-REDDIT_DOMAINS = ("www.reddit.com", "old.reddit.com", "new.reddit.com", "reddit.com")
 ZHIHU_DOMAINS = ("www.zhihu.com", "zhuanlan.zhihu.com", "zhihu.com")
 LINUXDO_DOMAINS = ("linux.do",)
 
@@ -92,20 +91,6 @@ def search_v2ex(query: str, api_key: str, count: int = 10, timeout: float = 60,
         source="v2ex",
         want_content=want_content,
     )
-
-
-def search_reddit(query: str, api_key: str, count: int = 10, timeout: float = 60,
-                  want_content: bool = False) -> list:
-    """Search Reddit via Firecrawl domain-restricted web search."""
-    return search_firecrawl(
-        query,
-        api_key,
-        count,
-        timeout=timeout,
-        include_domains=REDDIT_DOMAINS,
-        source="reddit",
-        want_content=want_content,
-)
 
 
 def search_zhihu(query: str, api_key: str, count: int = 10, timeout: float = 60,

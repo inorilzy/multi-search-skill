@@ -1,7 +1,7 @@
 """URL normalization, content splitting, and cross-source deduplication."""
 import urllib.parse
 
-from .models import ANSWER_SOURCES, as_dict, as_dicts
+from .models import ANSWER_SOURCES, as_dict, as_dicts, is_empty_result
 
 
 MIN_USEFUL_WEB_CONTENT_CHARS = 300
@@ -81,7 +81,7 @@ def _norm_url(url: str) -> str:
 def _raw_counts(results: list) -> dict:
     raw_counts: dict = {}
     for item in results:
-        if (item.get("status") == "ok"
+        if (is_empty_result(item)
                 or "error" in item
                 or item.get("source") in ANSWER_SOURCES):
             continue
@@ -97,7 +97,7 @@ def is_usable_web_content(content: str, min_chars: int = MIN_USEFUL_WEB_CONTENT_
 
 def _is_passthrough(item: dict) -> bool:
     return (
-        item.get("status") == "ok"
+        is_empty_result(item)
         or "error" in item
         or item.get("source") in ANSWER_SOURCES
         or not item.get("url")
@@ -259,7 +259,7 @@ def deduplicate(results: list) -> tuple:
     deduped: list = []
     for item in results:
         url = item.get("url", "")
-        if item.get("status") == "ok":
+        if is_empty_result(item):
             deduped.append(item)
             continue
         if not url:

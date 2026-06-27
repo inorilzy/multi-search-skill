@@ -7,6 +7,7 @@ from typing import Any
 
 from ...support.http import urlopen_retry
 from ...support.secrets import scrub_secrets
+from ...support.models import empty_result_row
 
 
 QIANFAN_BASE = "https://qianfan.baidubce.com"
@@ -97,7 +98,7 @@ def _rows_from_response(data: dict[str, Any], *, endpoint: str,
             row["scraped_content"] = content
         rows.append(row)
     if not rows:
-        return [{"source": "baidu", "status": "ok", "raw_hits": 0, "request_id": request_id}]
+        return [empty_result_row("baidu", request_id=request_id)]
     return rows
 
 

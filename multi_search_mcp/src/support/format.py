@@ -1,7 +1,7 @@
 """Markdown formatters for results + scraped content sections."""
 import re
 
-from .models import ANSWER_SOURCES, as_dicts
+from .models import ANSWER_SOURCES, as_dicts, is_empty_result
 from .dedup import consensus_weight, rank_results
 
 SOURCE_ICONS = {
@@ -141,11 +141,11 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     serpapi_answers = [r for r in results if r.get("source") == "serpapi_answer"]
     glm_web_answers = [r for r in results if r.get("source") == "glm_web_answer"]
     deepseek_web_answers = [r for r in results if r.get("source") == "deepseek_web_answer"]
-    status_items = [r for r in results if r.get("status") == "ok"]
+    status_items = [r for r in results if is_empty_result(r)]
     results = [
         r for r in results
         if r.get("source") not in ANSWER_SOURCES
-        and r.get("status") != "ok"
+        and not is_empty_result(r)
     ]
     if degradation:
         lines.append(f"\n> ⚠️ {degradation.get('message', 'route degraded')}\n")

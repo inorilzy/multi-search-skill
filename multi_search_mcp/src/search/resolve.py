@@ -4,8 +4,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..support.config import config_bool
-from .search_runner import ALL_SOURCE_NAMES, ROUTE_PROFILES, normalize_source_name, route_meta
+from ..support.config import config_bool, config_list
+from .search_runner import (
+    ALL_SOURCE_NAMES,
+    ROUTE_PROFILES,
+    normalize_route,
+    normalize_source_name,
+    resolve_route,
+    route_meta,
+)
 
 
 DEFAULT_COUNTS = {
@@ -53,6 +60,7 @@ COUNT_CAPS = {
 class ResolvedSearchPlan:
     route: str
     sources: set[str] | None
+    disabled_sources: set[str]
     route_defaults: dict[str, Any]
     effective_counts: dict[str, int]
     timeout: int
@@ -71,7 +79,7 @@ class ResolvedSearchPlan:
 
 
 def resolve_search_plan(request: Any, config: dict) -> ResolvedSearchPlan:
-    route = str(_resolve_value(request.route, config, "type", "default"))
+    route = normalize_route(str(_resolve_value(request.route, config, "type", "default")))
     meta = route_meta(route)
     source_names = _resolve_sources(route, request.sources)
 
@@ -82,6 +90,7 @@ def resolve_search_plan(request: Any, config: dict) -> ResolvedSearchPlan:
     return ResolvedSearchPlan(
         route=route,
         sources=source_names,
+        disabled_sources=resolve_disabled_sources(config),
         route_defaults=meta,
         effective_counts=build_counts(config, request.count, route_default=meta["count"]),
         timeout=timeout,
@@ -133,6 +142,33 @@ def _resolve_sources(route: str, requested_sources: list[str] | None) -> set[str
         f"unknown route: {route}; valid routes: {', '.join(sorted(ROUTE_PROFILES))}"
     )
 
+
+def resolve_disabled_sources(config: dict) -> set[str]:
+    """Resolve the globally disabled search sources from config.
+
+    Only search sources are accepted; scrape backends (e.g. ``jina``) are not
+    valid here. Unknown names fail loudly instead of being silently ignored.
+    """
+    disabled = {normalize_source_name(source) for source in config_list(config, "disabled_sources")}
+    unknown = disabled - ALL_SOURCE_NAMES
+    if unknown:
+        raise ValueError(
+            f"unknown disabled source(s): {', '.join(sorted(unknown))}; "
+            f"valid sources: {', '.join(sorted(ALL_SOURCE_NAMES))}"
+        )
+    return disabled
+
+
+def resolve_active_sources(
+    route: str,
+    requested_sources: set[str] | None,
+    disabled_sources: set[str],
+    *,
+    lite: bool = False,
+) -> tuple[set[str], set[str]]:
+    """Return (selected, active) sources, where active drops disabled ones."""
+    selected = requested_sources or resolve_route(route, lite=lite)
+    return selected, selected - disabled_sources
 
 def _resolve_scrape_top(request: Any, config: dict, meta: dict[str, Any]) -> int:
     if request.scrape_top is None and config_bool(config, "no_scrape", False):

@@ -46,6 +46,11 @@ def multi_search(query: str, route: str | None = None,
     `timeout` is the search-provider timeout in seconds. `expand` adds extra query
     variants to run alongside `query`. Set `use_state=False` to skip the SQLite
     state DB, key-health rotation, and site scraper memory (clean test path).
+    The response includes `results[]` with full rows and `display_results[]` as a
+    compact title/source/url/snippet list for UI or chat presentation. For
+    news/current-events queries, preserve verifiability: show `display_results[]`
+    links before or alongside any narrative summary. Do not replace URLs with a
+    linkless summary.
     On invalid input the tool returns a structured {"error", "error_type"} dict.
     """
     return multi_search_tool(query, route, count, sources, scrape_top, scrape_chars,

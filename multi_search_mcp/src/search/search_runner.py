@@ -11,14 +11,14 @@ from typing import Any, Callable
 from ..support.auth import is_key_retryable_error
 from ..state.key_state import BasicKeyManager, KeyCandidate
 from ..state.keys import key_pool
-from ..support.models import as_dicts
+from ..support.models import as_dicts, empty_result_row
 from ..support.secrets import scrub_secrets
 
 
 ALL_SOURCE_NAMES = {
     "baidu", "bilibili", "brave", "deepseek_web", "exa", "firecrawl",
     "github_repos", "glm_web", "hackernews", "linuxdo", "linuxdo_api",
-    "reddit", "reddit_oauth", "serpapi", "stackoverflow", "tavily",
+    "serpapi", "stackoverflow", "tavily",
     "twitter", "v2ex", "youtube", "zhihu",
 }
 
@@ -31,33 +31,35 @@ SOURCE_ALIASES = {
     "linux-do": "linuxdo",
     "linuxdo-api": "linuxdo_api",
     "qianfan": "baidu",
-    "reddit-oauth": "reddit_oauth",
 }
 
 ROUTE_PROFILES = {
     "default": {"brave", "tavily", "exa", "serpapi", "firecrawl", "baidu", "glm_web", "deepseek_web"},
     "fast": {"baidu", "tavily", "firecrawl", "exa"},
-    "social": {"twitter", "reddit_oauth"},
+    "social": {"twitter"},
     "dev": {"stackoverflow", "github_repos", "hackernews"},
     "cn-community": {"zhihu", "v2ex", "linuxdo"},
     "video": {"youtube", "bilibili"},
-    # Everything except the video sources (and excluding the bare reddit/
-    # linuxdo_api duplicates in favor of the route-canonical reddit_oauth/
-    # linuxdo).
+    # Everything except the video sources (and excluding linuxdo_api duplicate
+    # in favor of the route-canonical linuxdo).
     "all": {
         "brave", "tavily", "exa", "serpapi", "baidu", "glm_web", "deepseek_web",
-        "firecrawl", "twitter", "reddit_oauth", "stackoverflow", "github_repos",
+        "firecrawl", "twitter", "stackoverflow", "github_repos",
         "hackernews", "zhihu", "v2ex", "linuxdo",
     },
+}
+
+ROUTE_ALIASES = {
+    "web": "default",
 }
 
 # Route-level behavior. A route decides *which sources* to fan out to plus
 # source-shaped defaults (count/timeout/snippet rendering) and whether providers
 # should return body content inline (``want_content``).
 DEFAULT_ROUTE_META = {
-    "scrape_top": 8,
+    "scrape_top": 20,
     "show_snippet": True,
-    "count": 8,
+    "count": 10,
     "timeout": 60,
     "title_url_only": False,
     "degrade_to": set(),
@@ -67,7 +69,13 @@ DEFAULT_ROUTE_META = {
 }
 
 ROUTE_META = {
-    "default": {"scrape_top": 8, "show_snippet": True, "count": 8, "timeout": 60},
+    "default": {
+        "scrape_top": 20,
+        "show_snippet": True,
+        "count": 10,
+        "timeout": 60,
+        "primary_success_sources": ROUTE_PROFILES["default"],
+    },
     # ``fast`` is a self-contained route of providers whose search API returns
     # body content inline. It never scrapes (scrape_top=0) and asks those
     # providers to include full content via ``want_content``.
@@ -76,26 +84,46 @@ ROUTE_META = {
         "show_snippet": True,
         "show_answer": True,
         "want_content": True,
-        "count": 8,
-        "timeout": 60,
+        "count": 10,
+        "timeout": 45,
+        "primary_success_sources": ROUTE_PROFILES["fast"],
     },
-    "all": {"scrape_top": 8, "show_snippet": True, "count": 8, "timeout": 90},
+    "all": {
+        "scrape_top": 30,
+        "show_snippet": True,
+        "count": 10,
+        "timeout": 90,
+        "primary_success_sources": ROUTE_PROFILES["all"],
+    },
     "social": {
         "scrape_top": 0,
         "show_snippet": True,
-        "count": 8,
-        "timeout": 45,
+        "count": 10,
+        "timeout": 60,
         "degrade_to": set(),
-        "primary_success_sources": {"twitter", "reddit-oauth"},
+        "primary_success_sources": {"twitter"},
     },
-    "dev": {"scrape_top": 5, "show_snippet": True, "count": 8, "timeout": 60},
-    "cn-community": {"scrape_top": 5, "show_snippet": True, "count": 8, "timeout": 60},
+    "dev": {
+        "scrape_top": 20,
+        "show_snippet": True,
+        "count": 10,
+        "timeout": 60,
+        "primary_success_sources": ROUTE_PROFILES["dev"],
+    },
+    "cn-community": {
+        "scrape_top": 20,
+        "show_snippet": True,
+        "count": 10,
+        "timeout": 60,
+        "primary_success_sources": ROUTE_PROFILES["cn-community"],
+    },
     "video": {
         "scrape_top": 0,
         "show_snippet": False,
         "count": 10,
         "timeout": 45,
         "title_url_only": True,
+        "primary_success_sources": ROUTE_PROFILES["video"],
     },
 }
 
@@ -103,13 +131,19 @@ def available_routes() -> list[str]:
     return sorted(ROUTE_PROFILES)
 
 
+def normalize_route(route: str) -> str:
+    return ROUTE_ALIASES.get(route, route)
+
+
 def resolve_route(search_type: str, lite: bool = False) -> set[str]:
     if lite:
         return ROUTE_PROFILES["default"]
+    search_type = normalize_route(search_type)
     return ROUTE_PROFILES.get(search_type, set())
 
 
 def route_meta(route: str) -> dict[str, Any]:
+    route = normalize_route(route)
     meta = dict(DEFAULT_ROUTE_META)
     meta.update(ROUTE_META.get(route, {}))
     return meta
@@ -285,7 +319,7 @@ class SearchRunner:
             elif source_results:
                 results.extend(as_dicts(source_results))
             else:
-                results.append({"source": source, "status": "ok", "raw_hits": 0})
+                results.append(empty_result_row(source))
 
         for source in sorted(pending):
             results.append({"source": source, "error": f"timeout after {timeout_seconds}s"})

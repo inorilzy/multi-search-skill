@@ -5,6 +5,8 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+.pytest_cache/
+*.egg-info/
 .vscode/
 .idea/
 .DS_Store
@@ -15,3 +17,7 @@ Thumbs.db
 *.key
 .env
 .env.local
+
+# Local provider research/debug dumps
+qianfan_*.json
+qianfan_*.md
