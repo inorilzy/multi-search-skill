@@ -1,7 +1,7 @@
 """Pure-logic and key/state tests for the multi-search MCP runtime.
 
 These exercise the packaged MCP modules under multi_search_mcp/src (dedup, scrape planner,
-routes, capabilities, models, secrets, cache, keys). The companion
+routes, capabilities, models, secrets, keys). The companion
 test_mcp_architecture.py covers the MCP/service wiring and the C' architecture
 fixes; this file covers the provider-agnostic core logic.
 """
@@ -38,7 +38,6 @@ from src.state.keys import (
 )
 from src.state.key_state import BasicKeyManager
 from src.state.mark_exhausted import _mark_config_exhausted
-from src.support.cache import JsonCache, make_scrape_cache_key
 from src.support.dedup import _norm_url, deduplicate, split_by_content
 from src.support.models import ProviderError, ScrapeResult, SearchResult, empty_result_row, is_empty_result
 from src.support.secrets import scrub_secrets
@@ -99,14 +98,14 @@ class ModelTests(unittest.TestCase):
             "markdown": "body",
             "length": 99,
             "via": "jina",
-            "cache": "hit",
+            "backend_chain": ["jina"],
         }
 
         result = ScrapeResult.from_dict(row).to_dict()
 
         self.assertEqual(result["length"], 99)
         self.assertEqual(result["via"], "jina")
-        self.assertEqual(result["cache"], "hit")
+        self.assertEqual(result["backend_chain"], ["jina"])
 
     def test_provider_error_round_trip_keeps_source_error_and_raw(self):
         row = {"source": "exa", "error": "quota", "retryable": True}
@@ -229,6 +228,85 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(capability.kind, ProviderKind.ANSWER_SEARCHER)
         self.assertTrue(capability.output.returns_answer)
         self.assertTrue(capability.output.returns_scores)
+
+
+class ProviderMetadataDriftTests(unittest.TestCase):
+    """Guard against the four-files-out-of-sync drift for provider metadata.
+
+    capabilities.py is the single source of truth for per-provider count caps
+    and search timeouts. These tests fail loudly if the runtime COUNT_CAPS /
+    DEFAULT_COUNTS / registry timeouts ever diverge from it.
+    """
+
+    # The count key each provider's ProviderSpec actually reads from
+    # ``cfg.counts[...]`` (hand-verified against build_provider_registry).
+    # github_repos reads ``counts["github"]``; v2ex rides firecrawl's quota and
+    # has no count of its own (capability.count_key is None).
+    REGISTRY_COUNT_KEYS = {
+        "baidu": "baidu", "brave": "brave", "tavily": "tavily", "exa": "exa",
+        "serpapi": "serpapi", "youtube": "youtube", "bilibili": "bilibili",
+        "firecrawl": "firecrawl", "v2ex": None, "linuxdo": "linuxdo",
+        "linuxdo_api": "linuxdo_api", "github_repos": "github",
+        "hackernews": "hackernews", "stackoverflow": "stackoverflow",
+        "twitter": "twitter", "zhihu": "zhihu", "glm_web": "glm_web",
+        "deepseek_web": "deepseek_web",
+    }
+
+    # Frozen snapshot of current count membership, so derivation cannot silently
+    # add/drop a source (e.g. accidentally giving v2ex its own count). Both dicts
+    # currently share the same 17 keys (v2ex excluded -- it rides firecrawl).
+    COUNT_CAPS_KEYS = {
+        "baidu", "brave", "tavily", "exa", "github", "hackernews", "serpapi",
+        "youtube", "bilibili", "stackoverflow", "firecrawl", "zhihu", "linuxdo",
+        "linuxdo_api", "twitter", "glm_web", "deepseek_web",
+    }
+    DEFAULT_COUNTS_KEYS = COUNT_CAPS_KEYS
+
+    def test_count_membership_matches_frozen_snapshot(self):
+        from src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
+        self.assertEqual(set(DEFAULT_COUNTS), self.DEFAULT_COUNTS_KEYS)
+        self.assertEqual(set(COUNT_CAPS), self.COUNT_CAPS_KEYS)
+
+    def test_derived_counts_match_original_literal_values(self):
+        # The derivation must reproduce the historical literal dicts exactly,
+        # not just stay internally consistent with capabilities.
+        from src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
+        expected_caps = {
+            "baidu": 50, "brave": 20, "tavily": 20, "exa": 100, "github": 100,
+            "hackernews": 100, "serpapi": 100, "youtube": 50, "bilibili": 50,
+            "stackoverflow": 100, "firecrawl": 100, "zhihu": 10, "linuxdo": 20,
+            "linuxdo_api": 10, "twitter": 20, "glm_web": 30, "deepseek_web": 30,
+        }
+        self.assertEqual(COUNT_CAPS, expected_caps)
+        self.assertEqual(DEFAULT_COUNTS, {k: 10 for k in expected_caps})
+
+    def test_capability_count_key_matches_registry_read_key(self):
+        for name, expected in self.REGISTRY_COUNT_KEYS.items():
+            cap = PROVIDER_CAPABILITIES[name]
+            self.assertEqual(
+                cap.count_key, expected,
+                f"{name}: capability.count_key out of sync with registry read key",
+            )
+
+    def test_count_caps_values_match_capabilities(self):
+        from src.search.resolve import COUNT_CAPS
+        for cap in PROVIDER_CAPABILITIES.values():
+            if cap.count_key and cap.search.can_search and cap.search.max_count:
+                self.assertIn(cap.count_key, COUNT_CAPS, cap.name)
+                self.assertEqual(
+                    COUNT_CAPS[cap.count_key], cap.search.max_count,
+                    f"{cap.name}: COUNT_CAPS value diverges from capability.max_count",
+                )
+
+    def test_registry_timeouts_match_capabilities(self):
+        from src.search.registry import build_provider_registry
+        registry = build_provider_registry()
+        for name, spec in registry.items():
+            cap = PROVIDER_CAPABILITIES[name]
+            self.assertEqual(
+                cap.timeout_default, spec.timeout_default,
+                f"{name}: registry timeout_default diverges from capability",
+            )
 
 
 class BaiduSearcherTests(unittest.TestCase):
@@ -508,29 +586,16 @@ class ScrapePlannerTests(unittest.TestCase):
             ["jina", "exa", "tavily"],
         )
 
+    def test_anonymous_firecrawl_is_fallback_not_primary(self):
+        rows = [
+            {"source": "brave", "title": f"Doc {idx}", "url": f"https://example.com/{idx}"}
+            for idx in range(4)
+        ]
 
-class CacheTests(unittest.TestCase):
-    def test_json_cache_hit_miss_and_disable(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            key = make_scrape_cache_key("https://example.com", ["jina"], {"primary": "jina"})
-            disabled = JsonCache(tmp, enabled=False)
-            self.assertFalse(disabled.set("scrape", key, {"url": "https://example.com"}))
-            self.assertIsNone(disabled.get("scrape", key))
+        plan = plan_scrapes(rows, keys={}, scrape_top=4, scrape_per_source=6)
 
-            cache = JsonCache(tmp, ttl_seconds=60, enabled=True)
-            self.assertTrue(cache.set("scrape", key, {"url": "https://example.com", "via": "jina"}))
-            self.assertEqual(cache.get("scrape", key)["via"], "jina")
-
-    def test_json_cache_ignores_corrupt_and_expired_files(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            cache = JsonCache(tmp, ttl_seconds=0, enabled=True)
-            key = "abc"
-            path = cache.path_for("scrape", key)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("not json", encoding="utf-8")
-            self.assertIsNone(cache.get("scrape", key))
-            path.write_text(json.dumps({"created": 1, "value": {"url": "x"}}), encoding="utf-8")
-            self.assertIsNone(cache.get("scrape", key))
+        self.assertEqual(plan.backend_order, ["jina", "firecrawl"])
+        self.assertEqual([item.primary_backend for item in plan.plan_items], ["jina"] * 4)
 
 
 class KeyTests(unittest.TestCase):

@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-并行聚合搜索 skill + MCP server：一条请求同时调用 Web 搜索、Google SERP、代码仓库、Twitter/X 讨论，并按需要补抓网页正文，最后输出适合 agent 阅读的 Markdown。
+并行聚合搜索 skill + MCP server：一条请求同时调用 Web 搜索、Google SERP、代码仓库、中文社区、视频平台、Twitter/X 讨论，并按需要补抓网页正文，最后输出适合 agent 阅读的 Markdown。
 
 > 当前 canonical 形态是 **一个 skill + 一个 MCP**：`skills/multi-search/SKILL.md` 负责自然语言触发与 route 选择策略；`multi_search_mcp/` 承载搜索、抓取、key 状态管理和站点抓取器记忆。仓库不再以 Codex plugin 形式存储，也不再保留 `.codex-plugin/plugin.json`。
 
@@ -24,7 +24,7 @@ python mcp/server.py
     "command": "uvx",
     "args": [
       "--from",
-      "git+https://github.com/inorilzy/multi-search-skill.git@v0.2.3",
+      "git+https://github.com/inorilzy/multi-search-skill.git@v0.2.4",
       "multi-search-mcp"
     ],
     "timeoutMs": 60000
@@ -42,13 +42,14 @@ python mcp/server.py
 - `multi_search_mcp/tools.py`：MCP tool wrapper。
 - `multi_search_mcp/src/`：自包含搜索、抓取、状态、key 与 service 实现。
 - `mcp/server.py`：兼容本地 `python mcp/server.py` 的薄 wrapper。
-- `multi-search-config.json`：非敏感默认配置。
+- `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
+- `package.json`：可选 Node 依赖，主要服务 `linuxdo_api.mjs` 的 Patchright 路径；默认 MCP 启动不需要 Node。
 
 MCP tools 包括：`multi_search`、`scrape_url`、`list_sources`、`doctor`、`get_key_status`、`reset_key_state`、`get_site_scraper_stats`、`set_site_scraper_preference`、`reset_site_scraper_stats`。
 
-边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置放在 `multi-search-config.json`；运行状态默认保存在 `~/.multi-search/state.sqlite`。`.mcp.json` 只负责启动 server，不保存 secret。
+边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。`.mcp.json` 只负责启动 server，不保存 secret。
 
-当前默认行为：`default` 是 `web` 的兼容别名，跑 Brave、Tavily、Exa、SerpAPI、Firecrawl、Baidu、GLM Web、DeepSeek Web；默认额外抓取最多 20 个缺正文 URL。Tavily / Exa 已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。需要快速总结用 `fast`，其余使用默认 `default` route。
+当前默认行为：`default` 是 `web` 的兼容别名，route 本身包含 Brave、Tavily、Exa、SerpAPI、Firecrawl、Baidu、GLM Web、DeepSeek Web；仓库自带 `multi-search-config.json` 默认关闭了 `glm_web`、`deepseek_web`，所以开发态实际会跑 Brave、Tavily、Exa、SerpAPI、Firecrawl、Baidu。route 默认额外抓取最多 20 个缺正文 URL；如果使用仓库自带配置，会被其中的 `scrape_top: 30` 覆盖。Tavily / Exa / Baidu 等已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。需要快速总结用 `fast`，其余使用默认 `default` route。
 
 ## 适用场景
 
@@ -78,11 +79,13 @@ cd multi-search-skill
 # MCP server 入口见 .mcp.json（python mcp/server.py），uvx 入口是 multi-search-mcp
 ```
 
-核心搜索只依赖 Python 3.10+ 标准库。Twitter/X 需要额外安装：
+Python 包依赖由 `pyproject.toml` 管理，包含 `mcp`、`beautifulsoup4`、`twikit-ng`。用 `uvx --from ... multi-search-mcp` 或 pip 安装时会自动安装。若是直接从源码运行，先安装项目依赖：
 
 ```powershell
-python -m pip install twikit-ng
+python -m pip install -e .
 ```
+
+Twitter/X 还需要 cookies；`twikit-ng` 只是客户端依赖。`linuxdo_api` 的浏览器路径需要 Node 18+ 和 `package.json` 里的 Patchright 依赖，但默认 `cn-community` route 使用的是 Firecrawl 域名搜索版 `linuxdo`，不走这个可选路径。
 
 ## Agent 安装和使用
 
@@ -101,10 +104,13 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 | 源 | 用途 | 注册地址 | 免费额度 / 说明 | 本地请求上限 |
 |---|---|---|---|---:|
 | Brave Search | Web 搜索，snippet，额外抓取优先源 | https://brave.com/search/api/ | 约 1,000 次/月；通常需要邮箱 + 信用卡 | 20 |
+| Baidu AI Search | 中文 Web 搜索 + AI summary + 引用正文 | https://cloud.baidu.com/product-s/qianfan_home | 千帆 / AppBuilder API；需要 `BAIDU_QIANFAN_API_KEY` 等 | 50 |
 | Tavily | Web 搜索 + answer，可带 raw markdown，也是抓取后端 | https://tavily.com | 约 1,000 次/月；邮箱注册 | 20 |
 | Exa | 搜索 + `contents.text`，也是抓取后端 | https://exa.ai | 约 1,000 次/月；邮箱注册 | 100 |
-| Firecrawl | Web metadata search；有 key 时可作为抓取 fallback | https://firecrawl.dev | 约 1,000 次/月；CLI 默认 count 10；搜索默认只取 metadata，抓取阶段仅在配置 key 后进入 fallback 链 | 100 |
+| Firecrawl | Web metadata search；抓取 backend | https://firecrawl.dev | 搜索仍需要 API key；`/v2/scrape` 无 key 可匿名使用但有 IP 级免费日额度，配置 key 后额度和限流更高 | 100 |
 | Zhihu | Zhihu OpenAPI search | https://developer.zhihu.com | 优先用官方 `zhihu_search` API；无 `zhihu` key 时可 fallback 到 Firecrawl `includeDomains` | 10 |
+| V2EX | V2EX 域名限制搜索 | https://firecrawl.dev | 通过 Firecrawl `includeDomains` 搜索 V2EX | 100 |
+| Linux Do | Linux Do 域名限制搜索 | https://firecrawl.dev | 默认 route 使用 Firecrawl `includeDomains`；另有可选 `linuxdo_api` cookie + Patchright 路径 | 20 |
 | YouTube | YouTube video search | https://console.cloud.google.com/apis/library/youtube.googleapis.com | 官方 YouTube Data API；metadata only，不抓视频正文 | 50 |
 | Bilibili | Bilibili video search | https://search.bilibili.com | 公开视频搜索接口；cookie 可选；metadata only，不抓视频正文 | 50 |
 | SerpAPI Google Light | Google SERP | https://serpapi.com/users/sign_up?plan=free | 250 次/月；`google_light` 默认更省 | 100 |
@@ -112,6 +118,8 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 | Hacker News | Hacker News story search | https://hn.algolia.com/api | 匿名可用，使用 Hacker News Algolia 搜索接口 | 100 |
 | Stack Overflow | Stack Overflow question search | https://api.stackexchange.com/docs/advanced-search | 匿名可用，使用 Stack Exchange advanced search | 100 |
 | Twitter/X | 社交讨论、推文和 top replies | https://x.com | 无官方搜索 API 免费层；使用 `twikit-ng` + cookies，受账号状态和限流影响 | 20 |
+| GLM Web | GLM native web-search answers | local `glm2api` compatible service | 反向/本地兼容服务路径，仓库默认禁用 | 30 |
+| DeepSeek Web | DeepSeek web-search answers | https://chat.deepseek.com | 需要用户 token/cookie/export，仓库默认禁用 | 30 |
 | Jina Reader | 额外网页正文抓取 | https://r.jina.ai/docs | 匿名可用，约 20 rpm；key 是固定额度，可作为匿名限流后的 fallback | scrape only |
 
 ## 路由：选择搜哪些源
@@ -123,14 +131,15 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 | Route | Sources | 适合场景 |
 |---|---|---|
 | `default` / `web` | Brave + Tavily + Exa + SerpAPI + Firecrawl + Baidu + GLM Web + DeepSeek Web | 普通事实搜索；默认 route |
-| `fast` | Baidu + Tavily + Firecrawl + Exa | 只跑“搜索 API 自带正文”的源，`scrape_top=0`、不额外抓取；快速总结、当前背景 |
+| `fast` | Baidu + Tavily + Firecrawl + Exa | 只跑“搜索 API 自带正文”的源，默认 `scrape_top=0`；快速总结、当前背景 |
 | `social` | Twitter/X | 看社交反馈、口碑、讨论 |
 | `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
 | `cn-community` | Zhihu + V2EX + Linux Do | 中文社区讨论 |
 | `video` | YouTube + Bilibili | 搜视频；默认 title/url-only，不进入网页抓取 |
+| `all` | default + social + dev + cn-community（不含 video，且不含 `linuxdo_api` 重复路径） | 尽可能广的非视频召回 |
 | 指定源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]`、`sources=["deepseek-web"]` | 绕过 route，直接指定一个或多个源 |
 
-`fast` 路由只跑那些搜索 API 直接返回正文的 provider（不再有独立的 `level` 参数）。
+`fast` 路由只跑那些搜索 API 直接返回正文的 provider（不再有独立的 `level` 参数），route 默认不额外抓取；显式传入 `scrape_top` 或配置文件里的 `scrape_top` 仍会覆盖默认值。
 若想“用 default 召回 + 再抓正文”，用 `route=default` 搭配 `scrape_top=N`。
 
 > 实际生效的源以响应里的 `diagnostics.active_sources` 为准：`multi-search-config.json`
@@ -158,6 +167,7 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 ```json
 {
   "brave": "BSAxxxx",
+  "baidu": "qianfan-or-appbuilder-key",
   "tavily": ["tvly-key1", "tvly-key2"],
   "exa": ["exa-key1", "exa-key2"],
   "jina": [
@@ -169,7 +179,9 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
   "bilibili": "optional_cookie",
   "serpapi": "xxxx",
   "github": "ghp_xxxx",
-  "twitter": {"auth_token": "...", "ct0": "..."}
+  "twitter": {"auth_token": "...", "ct0": "..."},
+  "linuxdo": "optional_linuxdo_cookie",
+  "deepseek_web": {"token": "...", "cookie": "..."}
 }
 ```
 
@@ -177,6 +189,7 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 
 ```text
 BRAVE_SEARCH_API_KEY / BRAVE_API_KEY
+BAIDU_QIANFAN_API_KEY / QIANFAN_API_KEY / APPBUILDER_API_KEY
 TAVILY_API_KEY
 EXA_API_KEY
 JINA_API_KEY / JINA_KEY
@@ -187,7 +200,12 @@ BILIBILI_COOKIE
 SERPAPI_API_KEY / SERPAPI_KEY
 GITHUB_TOKEN / GH_TOKEN
 TWITTER_COOKIES_PATH
+DEEPSEEK_WEB_TOKEN / DEEPSEEK_USER_TOKEN
+DEEPSEEK_WEB_COOKIE
+DEEPSEEK_WEB_AUTH_EXPORT
 ```
+
+GLM Web 由 `glm_web.py` 直接读取环境变量：`GLM_WEB_BASE_URL`、`GLM_WEB_MODEL`、`GLM_WEB_API_KEY`。仓库默认禁用 `glm_web`，启用前需要先准备本地兼容服务。
 
 多数 key 字段支持 string 或 string array。Jina 支持 `{ "key": "...", "exhausted": true|false }`；只有余额接口确认 `wallet.total_balance <= 0` 时才会自动标记 exhausted。需要手动软删除 Jina key：
 
@@ -226,14 +244,13 @@ flowchart LR
 - **Scraper 抓取器 backend**：`multi_search_mcp/src/scrape/scrapers/*`，负责 url -> 正文。Jina、Exa、Tavily、Firecrawl、old.reddit 都是 backend。
 - **Scrape orchestration 抓取调度执行器**：`multi_search_mcp/src/scrape/scrape.py`，负责单 URL fallback 链、站点策略和 key 使用结果记录。
 - **Renderer 渲染器**：`multi_search_mcp/src/support/format.py`，负责诊断信息、搜索结果、抓取正文和 untrusted 安全围栏。
-- **Cache 缓存**：`multi_search_mcp/src/support/cache.py`，默认关闭；启用后先缓存 scrape 结果。
 
 ## 抓取流程
 
 关键规则：
 
 - `scrape_top` 只计算额外抓取的缺正文 URL；已有正文不占额度。
-- 默认抓取后端从可用能力构建：Jina 匿名优先；Exa / Tavily / Firecrawl 只有配置对应 key 后才进入 fallback 链。Reddit URL remote-first：`www.reddit.com` 走 Jina / Tavily / Exa / Firecrawl / old.reddit fallback，`old.reddit.com` 走 Tavily / Jina / Exa / Firecrawl / old.reddit fallback。Zhihu 搜索优先使用官方摘要结果，后续抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
+- 默认抓取后端从可用能力构建：Jina 匿名优先；Exa / Tavily 只有配置对应 key 后才进入 fallback 链；Firecrawl `/v2/scrape` 无 key 也会作为最后 fallback，但匿名额度是 IP 级免费日额度，不参与批量抓取 primary 轮换。Reddit URL remote-first：`www.reddit.com` 走 Jina / Tavily / Exa / Firecrawl / old.reddit fallback，`old.reddit.com` 走 Tavily / Jina / Exa / Firecrawl / old.reddit fallback。Zhihu 搜索优先使用官方摘要结果，后续抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
 - Exa / Tavily / Firecrawl 在 search 和 scrape 中都走 SQLite key state：跳过 invalid / disabled / cooldown 未过期 / quota_exhausted 未过期；从未使用过的 key 优先；同等情况下按 `last_used_at` 最早优先；每次选中会更新 `last_used_at` 和 `use_count`。
 - 每个候选 URL 只走一次完整 fallback 链；失败或 `scrape_timeout` 后记录 Errors，不自动补位。
 - GitHub repo 根 URL 抓取时会改写到 raw README。
@@ -243,7 +260,7 @@ flowchart LR
 代码仍兼容 dict，但核心边界已经有 dataclass：`SearchResult`、`ScrapeResult`、`ProviderStatus`、`ProviderError`，定义在 `multi_search_mcp/src/support/models.py`。
 
 - `SearchResult`/dict：`source`、`title`、`url`、`description`、`scraped_content`、`also_from`、`stars`、`score`、`raw`。
-- `ScrapeResult`/dict：`url`、`title`、`markdown`、`length`、`via`，可带 `cache`、backend chain 等 raw metadata。
+- `ScrapeResult`/dict：`url`、`title`、`markdown`、`length`、`via`，可带 backend chain 等 raw metadata。
 - `ProviderStatus`/dict：`source`、`status`、`raw_hits`。
 - `ProviderError`/dict：`source`、`error`，错误输出会尽量脱敏。
 
@@ -255,7 +272,7 @@ flowchart LR
 // 默认 default route + 额外抓取缺正文 URL
 { "query": "epub to markdown" }
 
-// 快速总结（route=fast，只跑自带正文的 provider，不额外抓取）
+// 快速总结（route=fast，只跑自带正文的 provider，默认不额外抓取）
 { "query": "agent memory", "route": "fast" }
 
 // Twitter/X 讨论
@@ -293,11 +310,11 @@ flowchart LR
 | 参数 | 默认 | 说明 |
 |---|---:|---|
 | `query` | — | 搜索查询（必填） |
-| `route` | `default` | 选源/场景：`web` / `fast` / `social` / `dev` / `cn-community` / `video`；`fast` 只跑自带正文的源且不抓取 |
+| `route` | `default` | 选源/场景：`web` / `fast` / `social` / `dev` / `cn-community` / `video` / `all`；`fast` 只跑自带正文的源，默认不抓取 |
 | `sources` | — | 直接指定一个或多个源，绕过 route |
 | `count` | per-source | 全局 count，会按各源上限 clamp |
 | `timeout` | 60 | 搜索阶段整批 deadline |
-| `scrape_top` | 由 `route` 推导 | 额外抓取缺正文 URL 数，上限 30；传 0 关闭。`fast` 路由固定为 0 |
+| `scrape_top` | 由 `route` 推导，可被配置覆盖 | 额外抓取缺正文 URL 数，上限 30；传 0 关闭。`fast` 路由默认是 0，但 tool 入参或配置文件可覆盖；仓库开发配置当前写了 `scrape_top: 30` |
 | `scrape_chars` | provider | 单页抓取正文最大字符数 |
 | `expand` | — | 额外扩展查询（list），常用于给中文查询补英文 |
 | `use_state` | true | 是否使用 SQLite key 状态与站点抓取器记忆 |
@@ -305,11 +322,9 @@ flowchart LR
 
 `count` 解析优先级：tool 入参 `count` > 配置文件 `counts{}` / `*_count` > 配置文件全局 `count` > route 默认值，最后按各 provider 的上限 clamp。响应里的 `diagnostics.effective_counts` 会回显最终每个 provider 使用的数量；`diagnostics.route_meta.route_default_count` 只表示 route 默认值。
 
-JSON 配置支持 `disabled_sources`（默认 `[]`）用来全局关闭某些搜索源。route 正常解析后会从结果里减去这些源，对 tool 显式传入的 `sources` 同样生效。它只是调度开关：不删除 API key、不改变 provider 能力，被禁用源在 `counts{}` 里的配置保留但不生效。支持源别名（如 `deepseek-web`、`github`），只接受搜索源，不接受 scrape backend（如 `jina`）；填入未知名称会报错。若某次请求的全部源都被禁用，会返回明确错误而不是静默返回空结果。响应的 `diagnostics` 会回显 `route_sources`（原始选择）、`disabled_sources`（已关闭）、`active_sources`（实际执行）。
+JSON 配置支持 `disabled_sources`（没有配置时默认为 `[]`；仓库自带配置为 `["glm_web", "deepseek_web"]`）用来全局关闭某些搜索源。route 正常解析后会从结果里减去这些源，对 tool 显式传入的 `sources` 同样生效。它只是调度开关：不删除 API key、不改变 provider 能力，被禁用源在 `counts{}` 里的配置保留但不生效。支持源别名（如 `deepseek-web`、`github`），只接受搜索源，不接受 scrape backend（如 `jina`）；填入未知名称会报错。若某次请求的全部源都被禁用，会返回明确错误而不是静默返回空结果。响应的 `diagnostics` 会回显 `route_sources`（原始选择）、`disabled_sources`（已关闭）、`active_sources`（实际执行）。
 
 `scrape_url` tool 用于单独抓取一个 URL，支持 `backends`、`scrape_chars`、`scrape_timeout`、`use_state` 等参数。
-
-JSON 配置还支持缓存字段：`cache_enabled`、`no_cache`、`cache_ttl_seconds`、`cache_dir`。缓存默认关闭；启用后 scrape 文件写到 `.cache/multi-search/scrape/{hash}.json`，cache key 只包含 normalized URL、backend 顺序和重要 options，不写入 API key。
 
 ## 输出
 
@@ -340,7 +355,7 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-se
 
 ### 为什么结果里没有 Twitter/X？
 
-Twitter/X 需要额外依赖和 cookies。确认已安装 `twikit-ng`，并配置 `TWITTER_COOKIES_PATH` 或 `~/.search-keys.json` 中的 `twitter` 字段。
+Twitter/X 需要 cookies。确认依赖已安装，并配置 `TWITTER_COOKIES_PATH` 或 `~/.search-keys.json` 中的 `twitter` 字段；源码直接运行时先执行 `python -m pip install -e .`。
 
 ### 抓取正文太慢怎么办？
 

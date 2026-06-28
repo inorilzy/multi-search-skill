@@ -32,7 +32,7 @@ KNOWN_BACKENDS = ("jina", "exa", "tavily", "firecrawl", "reddit")
 # Keyed backends whose only requirement to run is a configured key. Used to
 # distinguish "no key configured" from "backend unknown" when a caller forces
 # a specific backend list.
-KEYED_BACKENDS = ("exa", "tavily", "firecrawl")
+KEYED_BACKENDS = ("exa", "tavily")
 
 
 DEFAULT_SCRAPE_POLICY = {
@@ -139,6 +139,14 @@ def _scrape_with_key_pool(provider: str, keys: list[str], call, deadline: float 
     return last
 
 
+def _scrape_with_optional_key_pool(provider: str, keys: list[str], call, deadline: float | None = None, key_manager=None) -> dict | None:
+    if keys:
+        return _scrape_with_key_pool(provider, keys, call, deadline=deadline, key_manager=key_manager)
+    if deadline is not None and time.monotonic() >= deadline:
+        return None
+    return call("")
+
+
 def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
                      exa_key: str = "", tavily_key: str = "",
@@ -153,6 +161,7 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      deadline: float | None = None,
                      site_memory=None,
                      key_manager=None,
+                     scrape_chars: int | None = None,
                      jina_prefer_keyed: bool = False) -> dict:
     """Scrape `url` starting with `primary` backend, falling back through the others."""
 
@@ -261,13 +270,13 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             return _scrape_with_key_pool(
                 "exa",
                 candidates,
-                lambda key: scrape_url_exa(scrape_url, key, timeout=_remaining_timeout()),
+                lambda key: scrape_url_exa(scrape_url, key, timeout=_remaining_timeout(), max_chars=scrape_chars),
                 deadline=deadline,
                 key_manager=key_manager,
             )
         if backend == "firecrawl":
             candidates = _key_candidates(firecrawl_key or "", firecrawl_keys)
-            return _scrape_with_key_pool(
+            return _scrape_with_optional_key_pool(
                 "firecrawl",
                 candidates,
                 lambda key: scrape_url_firecrawl(scrape_url, key, timeout=_remaining_timeout()),

@@ -77,7 +77,7 @@ ROUTE_META = {
         "primary_success_sources": ROUTE_PROFILES["default"],
     },
     # ``fast`` is a self-contained route of providers whose search API returns
-    # body content inline. It never scrapes (scrape_top=0) and asks those
+    # body content inline. Its route default is scrape_top=0, and it asks those
     # providers to include full content via ``want_content``.
     "fast": {
         "scrape_top": 0,

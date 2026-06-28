@@ -7,7 +7,7 @@ from ...support.secrets import scrub_secrets
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
 
 
-def scrape_url_firecrawl(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS) -> dict:
+def scrape_url_firecrawl(url: str, api_key: str = "", timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS) -> dict:
     """Fetch main page markdown via Firecrawl /v2/scrape."""
     if not _safe_http_url(url):
         return {"url": url, "error": "rejected non-http(s) URL"}
@@ -17,13 +17,13 @@ def scrape_url_firecrawl(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_
         "onlyMainContent": True,
         "timeout": int(max(1.0, min(float(timeout), 60.0)) * 1000),
     }).encode()
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
         "https://api.firecrawl.dev/v2/scrape",
         data=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         method="POST",
     )
     try:

@@ -42,7 +42,8 @@ def multi_search(query: str, route: str | None = None,
     `route` selects which sources to fan out to
     (default/fast/social/dev/cn-community/video/all). The `fast` route runs only
     providers that return body content inline (baidu/tavily/firecrawl/exa) and
-    never scrapes. For "recall then scrape", use `route=default` with `scrape_top=N`.
+    defaults to `scrape_top=0`; explicit tool/config `scrape_top` values still
+    override that default. For "recall then scrape", use `route=default` with `scrape_top=N`.
     `timeout` is the search-provider timeout in seconds. `expand` adds extra query
     variants to run alongside `query`. Set `use_state=False` to skip the SQLite
     state DB, key-health rotation, and site scraper memory (clean test path).

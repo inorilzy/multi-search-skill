@@ -129,7 +129,7 @@ class PluginKeyStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             manager = SQLiteKeyManager(StateStore(Path(tmp) / "state.sqlite"))
 
-            def fake_exa(url, key, timeout):
+            def fake_exa(url, key, timeout=0, max_chars=None):
                 if key == "bad":
                     return {"url": url, "error": "HTTP 429 rate limit"}
                 return {"url": url, "markdown": "ok", "via": "exa"}
@@ -268,6 +268,110 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
 
         missing = scrape_url_smart("https://example.com", backends=("exa",))
         self.assertEqual(missing["error"], "missing key for backend: exa")
+
+    def test_firecrawl_backend_allows_anonymous_scrape(self):
+        calls: list[tuple[str, str]] = []
+
+        def fake_firecrawl(url, key="", timeout=0):
+            calls.append((url, key))
+            return {"url": url, "title": "f", "markdown": "f" * 1000, "via": "firecrawl"}
+
+        with mock.patch("src.scrape.scrape.scrape_url_firecrawl", side_effect=fake_firecrawl):
+            result = scrape_url_smart(
+                "https://example.com",
+                primary="firecrawl",
+                backends=("firecrawl",),
+            )
+
+        self.assertEqual(result["via"], "firecrawl")
+        self.assertEqual(calls, [("https://example.com", "")])
+
+    def test_exa_scrape_respects_scrape_chars_max(self):
+        from src.scrape.scrapers import exa as exa_mod
+
+        captured = {}
+
+        class _FakeResp:
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+            def read(self):
+                import json as _json
+                return _json.dumps({
+                    "results": [{"title": "T", "text": "body"}],
+                    "statuses": [{"status": "success"}],
+                }).encode()
+
+        def fake_urlopen(req, timeout=0):
+            import json as _json
+            captured["payload"] = _json.loads(req.data)
+            return _FakeResp()
+
+        with mock.patch.object(exa_mod, "urlopen_retry", side_effect=fake_urlopen):
+            exa_mod.scrape_url_exa("https://example.com", "ek", max_chars=1234)
+
+        self.assertEqual(captured["payload"]["text"]["maxCharacters"], 1234)
+
+    def test_scrape_chars_flows_into_exa_backend(self):
+        captured = {}
+
+        def fake_exa(url, key, timeout=0, max_chars=None):
+            captured["max_chars"] = max_chars
+            return {"url": url, "title": "T", "markdown": "x" * 1000, "via": "exa"}
+
+        with mock.patch("src.scrape.scrape.scrape_url_exa", side_effect=fake_exa):
+            result = scrape_url_smart(
+                "https://example.com",
+                primary="exa",
+                backends=("exa",),
+                exa_keys=["ek"],
+                scrape_chars=2048,
+            )
+
+        self.assertEqual(result["via"], "exa")
+        self.assertEqual(captured["max_chars"], 2048)
+
+    def test_backfill_scrape_title_uses_search_title_when_missing(self):
+        url = "https://example.com/article"
+        search_titles = {_norm_url(url): "Real Article Title"}
+
+        # Backend returned the URL as a placeholder title (Tavily behavior).
+        result = {"url": url, "title": url, "markdown": "body"}
+        service_module._backfill_scrape_title(result, search_titles)
+        self.assertEqual(result["title"], "Real Article Title")
+
+        # A real backend title is left untouched.
+        result2 = {"url": url, "title": "Backend Title", "markdown": "body"}
+        service_module._backfill_scrape_title(result2, search_titles)
+        self.assertEqual(result2["title"], "Backend Title")
+
+    def test_firecrawl_anonymous_request_omits_authorization_header(self):
+        from src.scrape.scrapers import firecrawl as firecrawl_mod
+
+        captured = {}
+
+        class _FakeResp:
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+            def read(self):
+                import json as _json
+                return _json.dumps({
+                    "success": True,
+                    "data": {"markdown": "ok", "metadata": {"title": "Example"}},
+                }).encode()
+
+        def fake_urlopen(req, timeout=0):
+            captured["headers"] = dict(req.header_items())
+            return _FakeResp()
+
+        with mock.patch.object(firecrawl_mod, "urlopen_retry", side_effect=fake_urlopen):
+            result = firecrawl_mod.scrape_url_firecrawl("https://example.com", "")
+
+        self.assertEqual(result["via"], "firecrawl")
+        self.assertNotIn("Authorization", captured["headers"])
 
     def test_jina_routes_through_state_aware_manager_without_shuffle(self):
         # P1-C: Jina key selection now flows through the SQLite key manager LRU
@@ -1234,11 +1338,9 @@ class PluginScrapeWritebackTests(unittest.TestCase):
         def fake_scrape(url, *a, **k):
             return {"url": url, "markdown": "BODY " * 100, "via": "jina"}
 
-        from src.support.cache import JsonCache
-        cache = JsonCache(tempfile.mkdtemp(), ttl_seconds=60, enabled=False)
-        with mock.patch("src.service.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
             stage = service_module._run_scrape_stage(
-                all_results, keys={"jina": "k"}, cache=cache, scrape_top=3,
+                all_results, keys={"jina": "k"}, scrape_top=3,
                 scrape_per_source=6, scrape_timeout=30, scrape_concurrency=2,
                 site_memory=None, key_manager=None,
             )
@@ -1256,11 +1358,9 @@ class PluginScrapeWritebackTests(unittest.TestCase):
             seen.append(k.get("timeout"))
             return {"url": url, "markdown": "BODY " * 100, "via": "jina"}
 
-        from src.support.cache import JsonCache
-        cache = JsonCache(tempfile.mkdtemp(), ttl_seconds=60, enabled=False)
-        with mock.patch("src.service.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
             service_module._run_scrape_stage(
-                all_results, keys={"jina": "k"}, cache=cache, scrape_top=3,
+                all_results, keys={"jina": "k"}, scrape_top=3,
                 scrape_per_source=6, scrape_timeout=120, scrape_concurrency=2,
                 site_memory=None, key_manager=None, scrape_url_timeout=7,
             )
@@ -1270,8 +1370,6 @@ class PluginScrapeWritebackTests(unittest.TestCase):
 
     def test_scrape_stage_completion_is_driven_by_plan_items_not_candidates(self):
         from src.scrape.scrape_planner import ScrapeKeyPools, ScrapePlan, ScrapePlanItem
-        from src.support.cache import JsonCache
-
         candidates = [
             {"source": "brave", "url": "https://x.com/a", "title": "A"},
             {"source": "brave", "url": "https://x.com/b", "title": "B"},
@@ -1292,12 +1390,11 @@ class PluginScrapeWritebackTests(unittest.TestCase):
         def fake_scrape(url, *a, **k):
             return {"url": url, "markdown": "BODY " * 100, "via": "jina"}
 
-        cache = JsonCache(tempfile.mkdtemp(), ttl_seconds=60, enabled=False)
         started = time.monotonic()
-        with mock.patch("src.service.plan_scrapes", return_value=fake_plan), \
-             mock.patch("src.service.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("src.scrape.stage.plan_scrapes", return_value=fake_plan), \
+             mock.patch("src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
             stage = service_module._run_scrape_stage(
-                candidates, keys={"jina": "jk"}, cache=cache, scrape_top=2,
+                candidates, keys={"jina": "jk"}, scrape_top=2,
                 scrape_per_source=6, scrape_timeout=1, scrape_concurrency=1,
                 site_memory=None, key_manager=None,
             )

@@ -49,6 +49,19 @@ Pick the speed from the user's wording (cues, not exact matches):
 When the user gives no speed signal, use the `default` route; do not force
 `fast` just because they said "搜一下".
 
+## Timeout Discipline
+
+- Do not pass the `timeout` parameter by default. Let the MCP server use the
+  user's configured timeout (for example `multi-search-config.json` or route
+  defaults). Per-call `timeout` has higher priority than config and will
+  override the user's global setting.
+- Only pass a shorter `timeout` when the user explicitly asks for a quick search
+  or says not to wait long (e.g. "快速搜", "简单搜", "quick search").
+- Be especially conservative with `route=social`: Twitter/X can be slow or
+  rate-limited, so shortening timeout often creates avoidable failures.
+- If a timeout occurs, mention whether it came from an explicit per-call timeout
+  or from the configured/default timeout when that is visible in diagnostics.
+
 ## Query Expansion
 
 - By default, provide up to 3 `expand` query variants when the user's request is

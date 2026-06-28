@@ -151,10 +151,6 @@ Keys are loaded from `~/.search-keys.json` first, then environment variables ove
   "scrape_per_source": 6,
   "scrape_timeout": 60,
   "scrape_concurrency": 5,
-  "cache_enabled": false,
-  "cache_ttl_seconds": 86400,
-  "cache_dir": ".cache/multi-search",
-  "no_cache": false,
   "expand": [],
   "brief": false,
   "title_url_only": false,
@@ -196,10 +192,6 @@ python search.py "agent memory" --config ./multi-search-config.json
 | `scrape_per_source` | `--scrape-per-source` | `6` | Positive extra scrape quota per original source |
 | `scrape_timeout` | `--scrape-timeout` | `60` | Non-negative batch deadline for extra scraping; timed-out URLs are reported as error rows |
 | `scrape_concurrency` | `--scrape-concurrency` | `5` | Positive extra scrape worker count; key pools are offset per URL while retaining per-URL fallback |
-| `cache_enabled` | JSON only | `false` | Enable JSON file cache; default remains off for CLI compatibility |
-| `cache_ttl_seconds` | JSON only | `86400` | Cache TTL for scrape/search cache entries |
-| `cache_dir` | JSON only | `.cache/multi-search` | Cache root; scrape entries use `scrape/{hash}.json` |
-| `no_cache` | JSON only | `false` | Force cache disabled even when `cache_enabled` is true |
 | `expand` | `--expand` | `[]` | Extra query list; expanded queries use the `lite` route; `expand_queries` also works |
 | `brief` | `--brief` | `false` | Compact output with title + URL |
 | `title_url_only` | `--title-url-only` | `false` | Emit only title + URL list; forced on for `--type video` |
@@ -312,14 +304,13 @@ flowchart LR
 - **Scraper 抓取器 backend**：`scripts/scrapers/*`，负责 url -> 正文内容；Jina、Exa、Tavily、Firecrawl、old.reddit 都是 backend。
 - **Scrape orchestration 抓取调度执行器**：`scripts/scrape.py`，负责单 URL fallback 链和站点策略，不直接叫抓取器。
 - **Renderer 渲染器**：`scripts/format.py`，只负责 Markdown 输出、诊断信息和 untrusted 安全围栏。
-- **Cache 缓存**：`scripts/cache.py`，默认关闭；启用后优先缓存 scrape 结果，cache 文件不写入 API key。
 
 ### Public Data Contract
 
 The CLI remains dict-compatible, but boundary models live in `scripts/models.py`:
 
 - `SearchResult`: `source`, `title`, `url`, `description`, `scraped_content`, `also_from`, `stars`, `score`, `raw`
-- `ScrapeResult`: `url`, `title`, `markdown`, `length`, `via`, optional raw metadata such as `cache`
+- `ScrapeResult`: `url`, `title`, `markdown`, `length`, `via`, optional raw metadata such as backend chain
 - `ProviderStatus`: `source`, `status`, `raw_hits`
 - `ProviderError`: `source`, `error`
 

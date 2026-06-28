@@ -26,10 +26,6 @@
   "scrape_per_source": 6,
   "scrape_timeout": 60,
   "scrape_concurrency": 5,
-  "cache_enabled": false,
-  "cache_ttl_seconds": 86400,
-  "cache_dir": ".cache/multi-search",
-  "no_cache": false,
   "brief": false,
   "title_url_only": false,
   "verbose": false

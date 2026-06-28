@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..support.config import config_bool, config_list
+from .capabilities import PROVIDER_CAPABILITIES
 from .search_runner import (
     ALL_SOURCE_NAMES,
     ROUTE_PROFILES,
@@ -15,45 +16,21 @@ from .search_runner import (
 )
 
 
-DEFAULT_COUNTS = {
-    "baidu": 10,
-    "brave": 10,
-    "tavily": 10,
-    "exa": 10,
-    "github": 10,
-    "hackernews": 10,
-    "serpapi": 10,
-    "youtube": 10,
-    "bilibili": 10,
-    "stackoverflow": 10,
-    "firecrawl": 10,
-    "zhihu": 10,
-    "linuxdo": 10,
-    "linuxdo_api": 10,
-    "twitter": 10,
-    "glm_web": 10,
-    "deepseek_web": 10,
-}
+# Per-provider count metadata is derived from the single source of truth in
+# capabilities.py. A provider participates in the count system only when it has
+# its own count key (``count_key``), can search, and declares a ``max_count``.
+# This excludes scrapers (jina/reddit) and providers that ride another quota
+# (v2ex -> firecrawl, count_key=None). ProviderMetadataDriftTests pins the
+# resulting membership and values to the historical snapshot.
+DEFAULT_SOURCE_COUNT = 10
 
-COUNT_CAPS = {
-    "baidu": 50,
-    "brave": 20,
-    "tavily": 20,
-    "exa": 100,
-    "github": 100,
-    "hackernews": 100,
-    "serpapi": 100,
-    "youtube": 50,
-    "bilibili": 50,
-    "stackoverflow": 100,
-    "firecrawl": 100,
-    "zhihu": 10,
-    "linuxdo": 20,
-    "linuxdo_api": 10,
-    "twitter": 20,
-    "glm_web": 30,
-    "deepseek_web": 30,
-}
+_COUNT_PROVIDERS = [
+    cap for cap in PROVIDER_CAPABILITIES.values()
+    if cap.count_key and cap.search.can_search and cap.search.max_count
+]
+
+COUNT_CAPS = {cap.count_key: cap.search.max_count for cap in _COUNT_PROVIDERS}
+DEFAULT_COUNTS = {cap.count_key: DEFAULT_SOURCE_COUNT for cap in _COUNT_PROVIDERS}
 
 
 @dataclass(frozen=True)

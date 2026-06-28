@@ -91,7 +91,8 @@ def rotated_key_pool(pool: list[str], offset: int) -> list[str]:
 
 
 def _primary_for(backends: list[str], index: int) -> str:
-    return backends[index % len(backends)]
+    primary_backends = [backend for backend in backends if backend != "firecrawl"] or backends
+    return primary_backends[index % len(primary_backends)]
 
 
 def _managed_keys(key_manager, provider: str, value: Any) -> list[str]:
@@ -111,8 +112,7 @@ def build_scrape_backends(keys: dict, key_manager=None) -> tuple[list[str], Scra
         backends.append("exa")
     if pools.tavily:
         backends.append("tavily")
-    if pools.firecrawl:
-        backends.append("firecrawl")
+    backends.append("firecrawl")
     return backends, pools
 
 

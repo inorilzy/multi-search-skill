@@ -2,21 +2,20 @@
 from __future__ import annotations
 
 import concurrent.futures
-import queue
-import threading
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .support.cache import JsonCache, make_scrape_cache_key
 from .support.config import ConfigError, config_list, load_config, resolve_config_path
-from .support.dedup import apply_scraped_content, deduplicate, rank_results
+from .support.dedup import deduplicate, rank_results
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
 from .state.keys import count_jina_keys, jina_config_keys, load_keys
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result
 from .scrape.scrape import scrape_url_smart
-from .scrape.scrape_planner import add_to_content_pool, plan_scrapes
+from .scrape.stage import (
+    _backfill_scrape_title,
+    run_scrape_stage as _run_scrape_stage,
+)
 from .search.search_runner import (
     ALL_SOURCE_NAMES,
     ROUTE_PROFILES,
@@ -27,7 +26,8 @@ from .search.search_runner import (
 from .search.resolve import (
     COUNT_CAPS,
     DEFAULT_COUNTS,
-    build_counts,
+    _resolve_int,
+    _resolve_nonnegative,
     resolve_active_sources,
     resolve_search_plan,
 )
@@ -129,20 +129,15 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
                 except Exception as exc:
                     all_results.append({"source": "multi-search", "error": f"query '{q}' failed: {scrub_secrets(exc, keys)}"})
 
-    cache = JsonCache(
-        str(config.get("cache_dir", ".cache/multi-search")),
-        ttl_seconds=int(config.get("cache_ttl_seconds", 86400) or 86400),
-        enabled=bool(config.get("cache_enabled", False)) and not bool(config.get("no_cache", False)),
-    )
     scrape_result = _run_scrape_stage(
         all_results,
         keys=keys,
-        cache=cache,
         scrape_top=plan.scrape_top,
         scrape_per_source=plan.scrape_per_source,
         scrape_timeout=plan.scrape_timeout,
         scrape_url_timeout=plan.scrape_url_timeout,
         scrape_concurrency=plan.scrape_concurrency,
+        scrape_chars=plan.scrape_chars,
         site_memory=site_memory,
         key_manager=key_manager,
         skip_summarized_sources=bool(plan.route_defaults.get("skip_summarized_sources")),
@@ -240,6 +235,7 @@ def run_scrape(request: ScrapeRequest | dict) -> dict:
         tavily_keys=[candidate.key for candidate in key_manager.candidates("tavily", keys.get("tavily"))],
         site_memory=site_memory,
         key_manager=key_manager,
+        scrape_chars=scrape_chars,
     )
     response = {
         "url": request.url,
@@ -317,125 +313,6 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         data["key_status"] = SQLiteKeyManager(store).status_rows()
         data["jina_keys_active_total"] = count_jina_keys(keys.get("jina"))
     return data
-
-
-def _run_scrape_stage(all_results: list[dict], *, keys: dict, cache: JsonCache, scrape_top: int,
-                      scrape_per_source: int, scrape_timeout: int, scrape_concurrency: int,
-                      site_memory: SiteScraperMemory | None, key_manager=None,
-                      scrape_url_timeout: int | None = None,
-                      skip_summarized_sources: bool = False) -> dict:
-    if scrape_url_timeout is None:
-        scrape_url_timeout = scrape_timeout
-    scrape_plan = plan_scrapes(
-        all_results,
-        keys=keys,
-        scrape_top=scrape_top,
-        scrape_per_source=scrape_per_source,
-        key_manager=key_manager,
-        skip_summarized_sources=skip_summarized_sources,
-    )
-    scrape_errors: list[dict] = []
-    content_pool = scrape_plan.content_pool
-    if scrape_top > 0:
-        scrape_top = min(scrape_top, 30)
-        items_to_scrape = scrape_plan.items_to_scrape
-        scrape_backends = scrape_plan.backend_order
-
-        def timeout_row(item: dict) -> dict:
-            return {"url": item.get("url", ""), "error": f"scrape timeout after {scrape_timeout}s"}
-
-        if items_to_scrape and scrape_timeout <= 0:
-            scrape_errors.extend(timeout_row(item) for item in items_to_scrape)
-        elif items_to_scrape:
-            task_queue: queue.Queue = queue.Queue()
-            result_queue: queue.Queue = queue.Queue()
-            deadline = time.monotonic() + scrape_timeout
-            for plan_item in scrape_plan.plan_items:
-                task_queue.put(plan_item)
-
-            def worker() -> None:
-                while True:
-                    if time.monotonic() >= deadline:
-                        return
-                    try:
-                        plan_item = task_queue.get_nowait()
-                    except queue.Empty:
-                        return
-                    item = plan_item.item
-                    try:
-                        backends = list(scrape_backends)
-                        if site_memory is not None:
-                            backends = site_memory.reorder_backends(item["url"], backends)
-                        cache_key = make_scrape_cache_key(item["url"], backends, {"primary": plan_item.primary_backend})
-                        cached = cache.get("scrape", cache_key)
-                        if cached is not None:
-                            scrape_result = dict(cached)
-                            scrape_result.setdefault("cache", "hit")
-                        else:
-                            pools = plan_item.key_pools
-                            per_url_timeout = scrape_url_timeout
-                            remaining = deadline - time.monotonic()
-                            if remaining < per_url_timeout:
-                                per_url_timeout = max(0, int(remaining))
-                            scrape_result = scrape_url_smart(
-                                item["url"], timeout=per_url_timeout, primary=plan_item.primary_backend,
-                                backends=tuple(backends), jina_keys=pools.jina, exa_keys=pools.exa,
-                                firecrawl_keys=pools.firecrawl, tavily_keys=pools.tavily,
-                                deadline=deadline, site_memory=site_memory, key_manager=key_manager,
-                            )
-                            if scrape_result and "error" not in scrape_result:
-                                cache.set("scrape", cache_key, scrape_result)
-                        result_queue.put((plan_item.index, item, scrape_result, None))
-                    except Exception as exc:
-                        result_queue.put((plan_item.index, item, None, exc))
-                    finally:
-                        task_queue.task_done()
-
-            for _ in range(min(scrape_concurrency, len(scrape_plan.plan_items))):
-                threading.Thread(target=worker, daemon=True).start()
-            completed: set[int] = set()
-            while len(completed) < len(scrape_plan.plan_items):
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-                try:
-                    i, item, scrape_result, error = result_queue.get(timeout=remaining)
-                except queue.Empty:
-                    break
-                if i in completed:
-                    continue
-                completed.add(i)
-                if error is not None:
-                    scrape_errors.append({"url": item.get("url", ""), "error": scrub_secrets(error, keys)})
-                elif scrape_result and scrape_result.get("error"):
-                    scrape_errors.append(scrape_result)
-                elif scrape_result:
-                    add_to_content_pool(content_pool, scrape_result)
-                else:
-                    scrape_errors.append({"url": item.get("url", ""), "error": "empty scrape result"})
-            for plan_item in scrape_plan.plan_items:
-                if plan_item.index not in completed:
-                    scrape_errors.append(timeout_row(plan_item.item))
-
-    # Write freshly scraped content back onto the result records so JSON results,
-    # markdown ranking, and the standalone scrapes view all see enriched rows
-    # instead of leaving final_without_content as empty skeletons.
-    apply_scraped_content(scrape_plan.final_without_content, content_pool)
-    apply_scraped_content(scrape_plan.with_content, content_pool)
-
-    return {
-        "with_content": scrape_plan.with_content,
-        "final_without_content": scrape_plan.final_without_content,
-        "passthrough": scrape_plan.passthrough,
-        "raw_counts": scrape_plan.raw_counts,
-        "items_to_scrape": scrape_plan.items_to_scrape,
-        "scrape_errors": scrape_errors,
-        "scrapes": list(content_pool.values()) + scrape_errors,
-    }
-
-
-def _build_counts(config: dict, global_count: int | None = None, route_default: int = 10) -> dict[str, int]:
-    return build_counts(config, global_count, route_default=route_default)
 
 
 def _route_degradation(route: str, results: list[dict], source_names: set[str] | None, meta: dict) -> dict | None:
@@ -651,31 +528,3 @@ def _load_config_safe(path: str | None) -> dict:
         raise ValueError(str(exc)) from exc
 
 
-def _nonnegative(value: Any, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return max(0, parsed)
-
-
-def _resolve_value(request_value: Any, config: dict, key: str, default: Any) -> Any:
-    if request_value is not None:
-        return request_value
-    value = config.get(key)
-    return default if value is None else value
-
-
-def _resolve_int(request_value: Any, config: dict, key: str, default: int) -> int:
-    return _int_or_default(_resolve_value(request_value, config, key, default), default)
-
-
-def _resolve_nonnegative(request_value: Any, config: dict, key: str, default: int) -> int:
-    return max(0, _resolve_int(request_value, config, key, default))
-
-
-def _int_or_default(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default

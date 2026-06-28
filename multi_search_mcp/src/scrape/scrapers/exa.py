@@ -7,13 +7,18 @@ from ...support.secrets import scrub_secrets
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
 
 
-def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS) -> dict:
+_EXA_DEFAULT_MAX_CHARS = 8000
+
+
+def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
+                   max_chars: int | None = None) -> dict:
     """Fetch page content via Exa /contents API. Returns full text."""
     if not _safe_http_url(url):
         return {"url": url, "error": "rejected non-http(s) URL"}
+    char_cap = _EXA_DEFAULT_MAX_CHARS if not max_chars or max_chars <= 0 else int(max_chars)
     payload = json.dumps({
         "urls": [url],
-        "text": {"maxCharacters": 8000},
+        "text": {"maxCharacters": char_cap},
         "maxAgeHours": 0,
         "livecrawlTimeout": int(max(1.0, min(float(timeout), 60.0)) * 1000),
     }).encode()

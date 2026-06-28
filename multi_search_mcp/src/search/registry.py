@@ -1,27 +1,7 @@
 """Provider registry and zhihu fallback used by the search service."""
-from ..support.cache import JsonCache, make_scrape_cache_key
-from ..support.config import ConfigError, load_config, config_bool, config_list
-from ..support.dedup import (
-    deduplicate,
-)
-from ..support.format import format_results, format_scrapes
-from ..state.keys import count_jina_keys, load_keys
-from ..scrape.scrape import scrape_url_smart
-from ..scrape.scrape_planner import (
-    add_to_content_pool,
-    has_preferred_scrape_source,
-    is_video_result,
-    plan_scrapes,
-)
-from ..support.secrets import scrub_secrets
 from .search_runner import (
-    ROUTE_PROFILES,
     ProviderSpec,
-    SearchRunner,
-    SearchRunnerConfig,
-    available_routes,
     call_optional_timeout,
-    resolve_route,
     run_keyed_source,
 )
 from .searchers.baidu import search_baidu
@@ -45,10 +25,6 @@ from .searchers.tavily import search_tavily
 from .searchers.twitter import search_twitter
 from .searchers.youtube import search_youtube
 from .searchers.zhihu import search_zhihu
-
-
-_has_preferred_scrape_source = has_preferred_scrape_source
-_is_video_result = is_video_result
 
 
 def build_provider_registry() -> dict[str, ProviderSpec]:
