@@ -18,7 +18,7 @@ from ..support.secrets import scrub_secrets
 ALL_SOURCE_NAMES = {
     "baidu", "bilibili", "brave", "deepseek_web", "exa", "firecrawl",
     "github_repos", "glm_web", "hackernews", "linuxdo", "linuxdo_api",
-    "serpapi", "stackoverflow", "tavily",
+    "reddit_browser", "serpapi", "stackoverflow", "tavily",
     "twitter", "v2ex", "youtube", "zhihu",
 }
 
@@ -31,6 +31,7 @@ SOURCE_ALIASES = {
     "linux-do": "linuxdo",
     "linuxdo-api": "linuxdo_api",
     "qianfan": "baidu",
+    "reddit-browser": "reddit_browser",
 }
 
 ROUTE_PROFILES = {
@@ -40,6 +41,9 @@ ROUTE_PROFILES = {
     "dev": {"stackoverflow", "github_repos", "hackernews"},
     "cn-community": {"zhihu", "v2ex", "linuxdo"},
     "video": {"youtube", "bilibili"},
+    # Browser-backed vertical sources. Kept out of ``default`` because they
+    # drive a logged-in CloakBrowser session and are slower than API providers.
+    "vertical": {"reddit_browser"},
     # Everything except the video sources (and excluding linuxdo_api duplicate
     # in favor of the route-canonical linuxdo).
     "all": {
@@ -117,6 +121,14 @@ ROUTE_META = {
         "timeout": 60,
         "primary_success_sources": ROUTE_PROFILES["cn-community"],
     },
+    "vertical": {
+        # Content arrives inline from the browser provider, so no scrape stage.
+        "scrape_top": 0,
+        "show_snippet": True,
+        "count": 10,
+        "timeout": 90,
+        "primary_success_sources": ROUTE_PROFILES["vertical"],
+    },
     "video": {
         "scrape_top": 0,
         "show_snippet": False,
@@ -135,9 +147,7 @@ def normalize_route(route: str) -> str:
     return ROUTE_ALIASES.get(route, route)
 
 
-def resolve_route(search_type: str, lite: bool = False) -> set[str]:
-    if lite:
-        return ROUTE_PROFILES["default"]
+def resolve_route(search_type: str) -> set[str]:
     search_type = normalize_route(search_type)
     return ROUTE_PROFILES.get(search_type, set())
 
@@ -241,10 +251,10 @@ class SearchRunner:
         self.route_resolver = route_resolver or resolve_route
         self.key_manager = key_manager or BasicKeyManager()
 
-    def run(self, query: str, lite: bool = False) -> list[dict]:
+    def run(self, query: str) -> list[dict]:
         results: list[dict] = []
         jobs: list[tuple[str, Callable[[], list]]] = []
-        source_names = self.route_resolver(self.config.route, lite=lite)
+        source_names = self.route_resolver(self.config.route)
         timeout_seconds = max(0, self.config.timeout if self.config.timeout is not None else 60)
         source_deadline = time.monotonic() + timeout_seconds
 

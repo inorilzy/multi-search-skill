@@ -1,16 +1,28 @@
 # multi-search 路由重设计 · 实施方案
 
-> 状态：已实施 / 已验证
+> 状态：已实施（部分偏离原方案）
 > 适用代码：`multi_search_mcp/src/*`（canonical runtime）
-> 关联文档：`docs/route-capability-table.md`（能力表）
+> 关联文档：`docs/route-capability-table.md`（能力表）、`docs/glossary.md`（术语单一事实来源）
+
+> ⚠️ **以代码为准（route A）**：本文是历史设计方案，落地时与原稿有出入。route
+> 的权威定义见 `search_runner.py` 的 `ROUTE_PROFILES` / `ROUTE_META` 与
+> `docs/glossary.md`。下方「实际落地差异」记录与本方案正文不一致的地方；正文其余
+> 部分保留作设计背景，不再逐行更新。
+>
+> **实际落地差异：**
+> - `default` / `web` 实际是 `brave + tavily + exa + serpapi + firecrawl + baidu + glm_web + deepseek_web`（未按原稿收窄到 4 源）。
+> - `fast` 实际是 `baidu + tavily + firecrawl + exa`（`want_content=True`、`scrape_top=0`），不是原稿的 `deepseek_web + glm_web + tavily + exa`。
+> - `expert` route **未实现**：用 `route=default` + `scrape_top=N` 覆盖「召回 + 深抓」场景。
+> - `social` 实际只有 `twitter`；`reddit_oauth` **未实现**。
+> - 新增 `all` route（default 源 + social/dev/cn-community 源，不含 video）。
+> - 降级（§4）：`_route_degradation` 已实现，但所有 route 的 `degrade_to` 均为空，因此只会显式标注「primary providers unavailable」，不会自动切到兜底源。
 
 实施结果：本方案已落地到 canonical runtime。旧 `scripts/*` 不作为主运行路径处理。
 
 验证命令：
 
 ```powershell
-python -m pytest test_mcp_architecture.py -q
-python -m pytest -q
+uv run --with pytest python -m pytest -q
 python -m compileall multi_search_mcp/src
 ```
 

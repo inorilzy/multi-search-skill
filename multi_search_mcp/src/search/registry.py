@@ -19,12 +19,19 @@ from .searchers.glm_web import search_glm_web
 from .searchers.deepseek_web import search_deepseek_web
 from .searchers.hackernews import search_hackernews
 from .searchers.linuxdo import search_linuxdo_api
+from .searchers.reddit_browser import search_reddit_browser
 from .searchers.serpapi import search_serpapi
 from .searchers.stackoverflow import search_stackoverflow
 from .searchers.tavily import search_tavily
 from .searchers.twitter import search_twitter
 from .searchers.youtube import search_youtube
 from .searchers.zhihu import search_zhihu
+
+
+# The official Zhihu API is fast when it works but hangs hard when credentials
+# are stale; cap its timeout aggressively so a bad zhihu key cannot eat the
+# whole search-stage deadline before the Firecrawl fallback can run.
+ZHIHU_OFFICIAL_API_TIMEOUT = 5
 
 
 def build_provider_registry() -> dict[str, ProviderSpec]:
@@ -134,6 +141,17 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
                 timeout=ctx.timeout,
             ),
         ),
+        "reddit_browser": ProviderSpec(
+            name="reddit_browser", public_name="reddit-browser", timeout_default=45,
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_reddit_browser,
+                q,
+                cfg.counts["reddit_browser"],
+                cfg.keys.get("reddit_browser") or {},
+                timeout=ctx.timeout,
+                want_content=True,
+            ),
+        ),
         "zhihu": ProviderSpec(name="zhihu", public_name="zhihu", timeout_default=60, call=_search_zhihu_with_fallback),
         "glm_web": ProviderSpec(
             name="glm_web", public_name="glm-web", timeout_default=120,
@@ -153,7 +171,7 @@ def _search_zhihu_with_fallback(query, cfg, ctx, _key):
         return run_keyed_source(
             "zhihu",
             cfg.keys.get("zhihu"),
-            lambda api_key: call_optional_timeout(search_zhihu, query, api_key, cfg.counts["zhihu"], timeout=min(ctx.timeout, 5)),
+            lambda api_key: call_optional_timeout(search_zhihu, query, api_key, cfg.counts["zhihu"], timeout=min(ctx.timeout, ZHIHU_OFFICIAL_API_TIMEOUT)),
             deadline=ctx.deadline,
         )
     if cfg.keys.get("firecrawl"):

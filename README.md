@@ -12,7 +12,7 @@
 MCP server 入口在仓库根目录：
 
 ```powershell
-python mcp/server.py
+python -m multi_search_mcp.server
 ```
 
 在支持 `uvx --from` 的 MCP 配置界面中使用：
@@ -36,18 +36,16 @@ python mcp/server.py
 
 仓库关键文件：
 
-- `.mcp.json`：MCP server 启动配置。
 - `skills/multi-search/SKILL.md`：薄 skill，自然语言触发和使用策略。
 - `multi_search_mcp/server.py`：MCP stdio 入口和 `multi-search-mcp` console script。
 - `multi_search_mcp/tools.py`：MCP tool wrapper。
 - `multi_search_mcp/src/`：自包含搜索、抓取、状态、key 与 service 实现。
-- `mcp/server.py`：兼容本地 `python mcp/server.py` 的薄 wrapper。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
 - `package.json`：可选 Node 依赖，主要服务 `linuxdo_api.mjs` 的 Patchright 路径；默认 MCP 启动不需要 Node。
 
 MCP tools 包括：`multi_search`、`scrape_url`、`list_sources`、`doctor`、`get_key_status`、`reset_key_state`、`get_site_scraper_stats`、`set_site_scraper_preference`、`reset_site_scraper_stats`。
 
-边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。`.mcp.json` 只负责启动 server，不保存 secret。
+边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。MCP 客户端启动配置只负责启动 server，不保存 secret。
 
 当前默认行为：`default` 是 `web` 的兼容别名，route 本身包含 Brave、Tavily、Exa、SerpAPI、Firecrawl、Baidu、GLM Web、DeepSeek Web；仓库自带 `multi-search-config.json` 默认关闭了 `glm_web`、`deepseek_web`，所以开发态实际会跑 Brave、Tavily、Exa、SerpAPI、Firecrawl、Baidu。route 默认额外抓取最多 20 个缺正文 URL；如果使用仓库自带配置，会被其中的 `scrape_top: 30` 覆盖。Tavily / Exa / Baidu 等已带回的正文会直接复用，不重复抓、不消耗 `scrape_top`。需要快速总结用 `fast`，其余使用默认 `default` route。
 
@@ -76,7 +74,7 @@ MCP tools 包括：`multi_search`、`scrape_url`、`list_sources`、`doctor`、`
 ```powershell
 git clone https://github.com/inorilzy/multi-search-skill.git
 cd multi-search-skill
-# MCP server 入口见 .mcp.json（python mcp/server.py），uvx 入口是 multi-search-mcp
+# 本地源码入口是 python -m multi_search_mcp.server，uvx 入口是 multi-search-mcp
 ```
 
 Python 包依赖由 `pyproject.toml` 管理，包含 `mcp`、`beautifulsoup4`、`twikit-ng`。用 `uvx --from ... multi-search-mcp` 或 pip 安装时会自动安装。若是直接从源码运行，先安装项目依赖：

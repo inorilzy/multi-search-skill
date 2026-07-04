@@ -49,7 +49,7 @@
 |---|---:|---:|---:|---:|---|---|---|---|---|
 | github-repos | 否 | 是 | 是 | 否 | candidate | 可选 api_key | 不接入 | 发现、技术 | repo description/metadata 进 `content`，README 正文靠后续 scrape。 |
 | twitter | 否 | 是 | 是 | 是 | prefetch | cookie | 不接入 SQLite key 轮换 | 讨论 | tweet 文本本身就是平台内容，可作为 `body`；互动数据是元数据。 |
-| reddit-oauth | 否 | 是 | 是 | 是 | prefetch | token/CLI | 不接入 SQLite key 轮换 | 讨论 | API thread/post 文本可作为平台正文。 |
+| reddit-oauth | 否 | 是 | 是 | 是 | prefetch | token/CLI | 不接入 SQLite key 轮换 | 讨论 | **未实现**（设计预留）。当前 reddit 仅作为 scrape backend，无 OAuth 搜索源。 |
 | reddit | 否 | 是 | 是 | 否 | candidate | firecrawl api_key | 通过 firecrawl 轮换 | 讨论、专家 | Firecrawl 搜 Reddit，thread 正文仍建议 scrape。 |
 | hackernews | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 讨论、技术 | HN 标题、URL、points/comments 适合发现讨论源。 |
 | stackoverflow | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 技术 | Q&A 发现源，正文靠 scrape 或 StackExchange API 扩展。 |
@@ -75,13 +75,18 @@
 
 ## 最终 Route 设计
 
+> 以代码为准（route A）：下表已同步到 `search_runner.py` 的 `ROUTE_PROFILES` /
+> `ROUTE_META` 实际值。原设计稿（收窄 `default`、`expert`、`reddit_oauth` 等）见
+> `docs/route-redesign-plan.md` 顶部「实际落地差异」。
+
 | Route | Provider 组合 | 默认 scrape | 行为目标 |
 |---|---|---:|---|
-| `default` / `web` | `brave`, `tavily`, `exa`, `serpapi` | 8 | 保守默认事实搜索，不混入平台源。 |
+| `default` / `web` | `brave`, `tavily`, `exa`, `serpapi`, `firecrawl`, `baidu`, `glm_web`, `deepseek_web` | 20 | 默认事实搜索；广 web 召回。 |
 | `fast` | `baidu`, `tavily`, `firecrawl`, `exa` | 0 | 只跑“搜索 API 自带正文”的 provider（`want_content=True`），不额外抓取。缺 key 时只显示该源的 error row，不跨路由降级。 |
-| `social` | `twitter`, `reddit_oauth` | 0 | 社交反馈、用户评价、讨论热度。 |
-| `dev` | `github_repos`, `stackoverflow`, `hackernews` | 5 | 技术资料、项目、实现方案搜索。默认不要混入纯社交源。 |
-| `cn-community` | `zhihu`, `v2ex`, `linuxdo` | 5 | 中文社区反馈、中文技术讨论。 |
+| `all` | `default` 的源 + `twitter`, `stackoverflow`, `github_repos`, `hackernews`, `zhihu`, `v2ex`, `linuxdo` | 30 | 尽可能广的非视频召回（不含 video）。 |
+| `social` | `twitter` | 0 | 社交反馈、用户评价、讨论热度。 |
+| `dev` | `github_repos`, `stackoverflow`, `hackernews` | 20 | 技术资料、项目、实现方案搜索。默认不要混入纯社交源。 |
+| `cn-community` | `zhihu`, `v2ex`, `linuxdo` | 20 | 中文社区反馈、中文技术讨论。 |
 | `video` | `youtube`, `bilibili` | 0 | 视频/教程搜索。 |
 
 单 provider 调用不再放进 `ROUTE_PROFILES`，统一走 `sources` 参数，例如 `sources=["brave"]` 或 `sources=["github"]`。
@@ -139,7 +144,7 @@
 实践规则：
 
 - 用户问“发生了什么 / 快速总结 / 最新情况 / news”：走 `fast`。
-- 用户问“比较 / 决策 / 验证 / 架构 review / 为什么 / 给证据”：走 `expert`。
+- 用户问“比较 / 决策 / 验证 / 架构 review / 为什么 / 给证据”：走 `default` 并显式加 `scrape_top=N` 深抓正文（无独立 `expert` route）。
 - 用户问“给我链接 / 找来源”：走 `web`；明确找 repo/Q&A/HN 时走 `dev`。
 - 用户问“大家怎么说 / 评价 / 社区反馈 / 踩坑”：走 `social` 或 `cn-community`。
 

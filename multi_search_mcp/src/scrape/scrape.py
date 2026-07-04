@@ -16,19 +16,13 @@ from .scrapers.jina import (
     _reset_jina_anonymous_rate_limit,
     scrape_url_jina,
 )
-from .scrapers.reddit import (
-    is_old_reddit_url,
-    is_reddit_blocked_text,
-    is_reddit_url,
-    scrape_url_reddit,
-)
 from .scrapers.tavily import scrape_url_tavily
 from .url_classify import is_zhihu_blocked_text, is_zhihu_url
 from ..state.site_memory import ScrapeAttempt
 
 
 # Backends that have a real dispatch implementation in scrape_url_smart.
-KNOWN_BACKENDS = ("jina", "exa", "tavily", "firecrawl", "reddit")
+KNOWN_BACKENDS = ("jina", "exa", "tavily", "firecrawl")
 # Keyed backends whose only requirement to run is a configured key. Used to
 # distinguish "no key configured" from "backend unknown" when a caller forces
 # a specific backend list.
@@ -44,20 +38,6 @@ DEFAULT_SCRAPE_POLICY = {
 }
 
 SCRAPE_POLICIES = (
-    {
-        "name": "old-reddit",
-        "match": is_old_reddit_url,
-        "backends": ("tavily", "jina", "exa", "firecrawl", "reddit"),
-        "ensure_backends": ("reddit",),
-        "blocked": is_reddit_blocked_text,
-    },
-    {
-        "name": "reddit",
-        "match": is_reddit_url,
-        "backends": ("jina", "tavily", "exa", "firecrawl", "reddit"),
-        "ensure_backends": ("reddit",),
-        "blocked": is_reddit_blocked_text,
-    },
     {
         "name": "zhihu",
         "match": is_zhihu_url,
@@ -243,8 +223,6 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                 return anon
             keyed = keyed_pool()
             return keyed if keyed is not None else anon
-        if backend == "reddit":
-            return scrape_url_reddit(scrape_url, timeout=call_timeout)
         if backend == "tavily":
             candidates = _key_candidates(tavily_key, tavily_keys)
             def _scrape_tavily(key: str) -> dict:

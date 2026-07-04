@@ -9,7 +9,7 @@ from .support.config import ConfigError, config_list, load_config, resolve_confi
 from .support.dedup import deduplicate, rank_results
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
-from .state.keys import count_jina_keys, jina_config_keys, load_keys
+from .state.keys import KeysError, count_jina_keys, jina_config_keys, load_keys
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result
 from .scrape.scrape import scrape_url_smart
 from .scrape.stage import (
@@ -18,9 +18,9 @@ from .scrape.stage import (
 )
 from .search.search_runner import (
     ALL_SOURCE_NAMES,
-    ROUTE_PROFILES,
     SearchRunner,
     SearchRunnerConfig,
+    available_routes,
     normalize_source_name,
 )
 from .search.resolve import (
@@ -107,9 +107,9 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             f"all selected sources are disabled: {', '.join(sorted(base_sources))}"
         )
 
-    def route_resolver(_route, lite=False):
+    def route_resolver(_route):
         _selected, active = resolve_active_sources(
-            _route, plan.sources, plan.disabled_sources, lite=lite,
+            _route, plan.sources, plan.disabled_sources,
         )
         return active
 
@@ -121,7 +121,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
         all_results = runner.run(request.query)
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(queries_to_run), MAX_EXPAND_CONCURRENCY)) as pool:
-            futures = {pool.submit(runner.run, q, idx > 0): q for idx, q in enumerate(queries_to_run)}
+            futures = {pool.submit(runner.run, q): q for q in queries_to_run}
             for fut in concurrent.futures.as_completed(futures):
                 q = futures[fut]
                 try:
@@ -261,7 +261,7 @@ def _limit_scrape_rows(rows: list[dict], max_chars: int) -> list[dict]:
 
 def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
     store = StateStore()
-    response = {"routes": sorted(ROUTE_PROFILES), "sources": sorted(ALL_SOURCE_NAMES)}
+    response = {"routes": available_routes(), "sources": sorted(ALL_SOURCE_NAMES)}
     if include_key_status:
         response["key_status"] = SQLiteKeyManager(store).status_rows()
     if include_scraper_stats:
@@ -270,7 +270,15 @@ def list_sources(include_key_status: bool = False, include_scraper_stats: bool =
 
 
 def doctor_data(include_keys: bool = True, include_network: bool = False) -> dict:
-    keys = load_keys()
+    keys: dict = {}
+    keys_error: str | None = None
+    try:
+        keys = load_keys()
+    except KeysError as exc:
+        # doctor exists to diagnose key problems, so a corrupt keys file must be
+        # reported, not raised — otherwise the one tool that could explain the
+        # failure becomes unusable.
+        keys_error = str(exc)
     store = StateStore()
     data = {
         "server": "multi-search-mcp",
@@ -305,14 +313,47 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
             "file": "~/.search-keys.json",
             "state": str(store.path),
         },
-        "routes": sorted(ROUTE_PROFILES),
+        "routes": available_routes(),
         "network_checked": bool(include_network),
     }
+    if keys_error:
+        data["keys_error"] = keys_error
     if include_keys:
         data["configured_keys"] = {name: bool(value) for name, value in keys.items()}
         data["key_status"] = SQLiteKeyManager(store).status_rows()
         data["jina_keys_active_total"] = count_jina_keys(keys.get("jina"))
+    data["cloak"] = _cloak_health(keys)
     return data
+
+
+def _cloak_health(keys: dict) -> dict:
+    """Report CloakBrowser availability without importing/launching it.
+
+    Uses importlib spec lookup so a missing optional dependency is reported as a
+    boolean rather than raising. Also surfaces whether a Reddit cookie export is
+    configured, since that is the common reason the browser source returns an
+    error row.
+    """
+    import importlib.util
+
+    def _installed(module: str) -> bool:
+        try:
+            return importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            return False
+
+    reddit_cfg = keys.get("reddit_browser")
+    if isinstance(reddit_cfg, dict):
+        reddit_cookie = bool(reddit_cfg.get("cookie_export"))
+    elif isinstance(reddit_cfg, str):
+        reddit_cookie = bool(reddit_cfg)
+    else:
+        reddit_cookie = False
+    return {
+        "cloakbrowser_installed": _installed("cloakbrowser"),
+        "playwright_installed": _installed("playwright"),
+        "reddit_cookie_configured": reddit_cookie,
+    }
 
 
 def _route_degradation(route: str, results: list[dict], source_names: set[str] | None, meta: dict) -> dict | None:

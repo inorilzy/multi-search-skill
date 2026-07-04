@@ -5,6 +5,14 @@ import random
 from pathlib import Path
 
 
+class KeysError(ValueError):
+    """Raised when the keys file exists but cannot be parsed safely.
+
+    Carries only the file path, never the file contents, so a malformed keys
+    file cannot leak secrets into a user-visible error.
+    """
+
+
 def pick_key(value) -> str:
     """Return a single key string. If `value` is a list, pick one at random.
 
@@ -86,10 +94,14 @@ def load_keys() -> dict:
         try:
             # utf-8-sig tolerates BOM (PowerShell 5.1 writes BOM by default)
             keys = json.loads(keys_file.read_text(encoding="utf-8-sig"))
-            if not isinstance(keys, dict):
-                keys = {}
-        except Exception:
-            pass
+        except Exception as exc:
+            # Fail loudly instead of silently returning zero keys: a corrupt
+            # keys file otherwise surfaces as every provider "missing key",
+            # hiding the real cause. Reference only the path, never the
+            # (secret-bearing) file contents or parser detail.
+            raise KeysError(f"keys file is not valid JSON: {keys_file}") from None
+        if not isinstance(keys, dict):
+            keys = {}
     for env_name, key_name in [
         ("BRAVE_SEARCH_API_KEY", "brave"),
         ("BRAVE_API_KEY", "brave"),
@@ -113,6 +125,8 @@ def load_keys() -> dict:
         ("DEEPSEEK_USER_TOKEN", "deepseek_web_token"),
         ("DEEPSEEK_WEB_COOKIE", "deepseek_web_cookie"),
         ("DEEPSEEK_WEB_AUTH_EXPORT", "deepseek_web_auth_export"),
+        ("REDDIT_COOKIE_EXPORT", "reddit_cookie_export"),
+        ("REDDIT_BROWSER_PROFILE", "reddit_browser_profile"),
     ]:
         val = os.getenv(env_name)
         if val:
@@ -129,4 +143,12 @@ def load_keys() -> dict:
         if keys.get("deepseek_web_auth_export"):
             merged["auth_export"] = keys.get("deepseek_web_auth_export")
         keys["deepseek_web"] = merged
+    reddit_browser = keys.get("reddit_browser") if isinstance(keys.get("reddit_browser"), dict) else {}
+    if keys.get("reddit_cookie_export") or keys.get("reddit_browser_profile"):
+        merged = dict(reddit_browser)
+        if keys.get("reddit_cookie_export"):
+            merged["cookie_export"] = keys.get("reddit_cookie_export")
+        if keys.get("reddit_browser_profile"):
+            merged["profile"] = keys.get("reddit_browser_profile")
+        keys["reddit_browser"] = merged
     return keys

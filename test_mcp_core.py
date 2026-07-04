@@ -31,6 +31,7 @@ from src.scrape.scrape_planner import plan_scrapes
 from src.scrape.scrape import KNOWN_BACKENDS
 from src.state.keys import (
     count_jina_keys,
+    KeysError,
     jina_config_keys,
     key_pool,
     load_keys,
@@ -249,7 +250,7 @@ class ProviderMetadataDriftTests(unittest.TestCase):
         "linuxdo_api": "linuxdo_api", "github_repos": "github",
         "hackernews": "hackernews", "stackoverflow": "stackoverflow",
         "twitter": "twitter", "zhihu": "zhihu", "glm_web": "glm_web",
-        "deepseek_web": "deepseek_web",
+        "deepseek_web": "deepseek_web", "reddit_browser": "reddit_browser",
     }
 
     # Frozen snapshot of current count membership, so derivation cannot silently
@@ -258,7 +259,7 @@ class ProviderMetadataDriftTests(unittest.TestCase):
     COUNT_CAPS_KEYS = {
         "baidu", "brave", "tavily", "exa", "github", "hackernews", "serpapi",
         "youtube", "bilibili", "stackoverflow", "firecrawl", "zhihu", "linuxdo",
-        "linuxdo_api", "twitter", "glm_web", "deepseek_web",
+        "linuxdo_api", "twitter", "glm_web", "deepseek_web", "reddit_browser",
     }
     DEFAULT_COUNTS_KEYS = COUNT_CAPS_KEYS
 
@@ -276,6 +277,7 @@ class ProviderMetadataDriftTests(unittest.TestCase):
             "hackernews": 100, "serpapi": 100, "youtube": 50, "bilibili": 50,
             "stackoverflow": 100, "firecrawl": 100, "zhihu": 10, "linuxdo": 20,
             "linuxdo_api": 10, "twitter": 20, "glm_web": 30, "deepseek_web": 30,
+            "reddit_browser": 25,
         }
         self.assertEqual(COUNT_CAPS, expected_caps)
         self.assertEqual(DEFAULT_COUNTS, {k: 10 for k in expected_caps})
@@ -642,6 +644,19 @@ class KeyTests(unittest.TestCase):
 
         self.assertEqual(keys["exa"], "env-exa")
 
+    def test_load_keys_raises_on_corrupt_json_without_leaking_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keys_path = Path(tmp) / ".search-keys.json"
+            # Valid-looking but malformed JSON (missing closing brace) that also
+            # contains a secret-like value. A silent {} here would make every
+            # provider report "missing key" instead of the real cause.
+            keys_path.write_text('{"brave": "SUPERSECRET123"', encoding="utf-8")
+            with mock.patch("pathlib.Path.home", return_value=Path(tmp)):
+                with self.assertRaises(KeysError) as ctx:
+                    load_keys()
+        self.assertIn(str(keys_path), str(ctx.exception))
+        self.assertNotIn("SUPERSECRET123", str(ctx.exception))
+
     def test_twitter_cookies_path_env_overrides_json_twitter_dict(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             keys_path = Path(tmpdir) / ".search-keys.json"
@@ -704,6 +719,14 @@ class KeyTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertFalse(saved["jina"][0].get("exhausted", False))
         self.assertTrue(saved["jina"][1]["exhausted"])
+
+    def test_mark_config_exhausted_raises_on_corrupt_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            keys_path = Path(tmpdir) / ".search-keys.json"
+            keys_path.write_text('{"jina": ["j1"', encoding="utf-8")
+            with mock.patch("pathlib.Path.home", return_value=Path(tmpdir)):
+                with self.assertRaises(KeysError):
+                    _mark_config_exhausted("j1")
 
 
 if __name__ == "__main__":

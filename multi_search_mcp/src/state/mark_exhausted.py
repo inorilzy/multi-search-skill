@@ -10,6 +10,8 @@ import json
 import sys
 from pathlib import Path
 
+from .keys import KeysError
+
 
 def _mark_config_exhausted(key_to_mark: str) -> bool:
     keys_file = Path.home() / ".search-keys.json"
@@ -18,7 +20,10 @@ def _mark_config_exhausted(key_to_mark: str) -> bool:
     try:
         data = json.loads(keys_file.read_text(encoding="utf-8-sig"))
     except Exception:
-        return False
+        # Distinguish "corrupt file" from "key not found": silently returning
+        # False here would tell the user the key was missing when the file is
+        # actually unparseable. Reference only the path, never the contents.
+        raise KeysError(f"keys file is not valid JSON: {keys_file}") from None
     if not isinstance(data, dict) or not data.get("jina"):
         return False
 
@@ -56,7 +61,12 @@ def main(argv: list[str] | None = None) -> int:
         print("Usage: python -m src.state.mark_exhausted <jina-key>", file=sys.stderr)
         return 2
 
-    if _mark_config_exhausted(args[0].strip()):
+    try:
+        marked = _mark_config_exhausted(args[0].strip())
+    except KeysError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if marked:
         print("Marked Jina key as exhausted.")
         return 0
 

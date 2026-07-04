@@ -22,7 +22,7 @@
 
 | 类别 | 包含 route | 说明 |
 |------|-----------|------|
-| **通用搜索** | `default` / `web`、`fast` | 用综合搜索引擎，什么主题都能搜。`fast` 只跑“搜索 API 自带正文”的 provider 且不抓取。 |
+| **通用搜索** | `default` / `web`、`fast`、`all` | 用综合搜索引擎，什么主题都能搜。`fast` 只跑“搜索 API 自带正文”的 provider 且不抓取；`all` 是尽可能广的非视频召回。 |
 | **专用搜索** | `social`、`dev`、`cn-community`、`video` | 绑定垂直平台，只搜特定领域。 |
 
 > 注意：旧的 `level`（fast/normal）维度已删除。`fast` 现在是一个 route。
@@ -31,9 +31,10 @@
 
 | route | 类别 | source 集合 |
 |-------|------|------------|
-| `default` / `web` | 通用 | brave + tavily + exa + serpapi |
+| `default` / `web` | 通用 | brave + tavily + exa + serpapi + firecrawl + baidu + glm_web + deepseek_web |
 | `fast` | 通用 | baidu + tavily + firecrawl + exa（`scrape_top=0`、`want_content=True`） |
-| `social` | 专用 | twitter + reddit_oauth |
+| `all` | 通用 | default 的源 + twitter + stackoverflow + github_repos + hackernews + zhihu + v2ex + linuxdo（不含 video） |
+| `social` | 专用 | twitter |
 | `dev` | 专用 | stackoverflow + github_repos + hackernews |
 | `cn-community` | 专用 | zhihu + v2ex + linuxdo |
 | `video` | 专用 | youtube + bilibili |
@@ -59,7 +60,7 @@
 | **scrape backend（抓取后端）** | 抓正文用的后端，与搜索源不同。已知集合：`jina`、`exa`、`tavily`、`firecrawl`。 | `scrape.py` → `KNOWN_BACKENDS` |
 | **site memory（站点抓取记忆）** | 记录每个站点用哪个 scraper 成功率高，下次优先用它。 | `state/site_memory.py` → `SiteScraperMemory` |
 | **dedup（去重）** | 跨源合并重复结果，并按共识排序。 | `support/dedup.py` → `deduplicate` |
-| **降级 / degradation** | route 的主源失败时，退回兜底源，并在结果里显式标注。如 `social degraded to ...`。 | `ROUTE_META` 的 `degrade_to` ＋ `service.py` `_route_degradation` |
+| **降级 / degradation** | route 的主源全部失败或无可用结果时，在结果里**显式标注**。当前所有 route 的 `degrade_to` 都为空，所以只会输出「primary providers unavailable」提示，不会自动切换到兜底源（兜底机制保留但未启用）。 | `ROUTE_META` 的 `degrade_to` ＋ `service.py` `_route_degradation` |
 
 ## 5. Key 与状态
 

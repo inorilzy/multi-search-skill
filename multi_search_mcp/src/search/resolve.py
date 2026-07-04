@@ -140,11 +140,9 @@ def resolve_active_sources(
     route: str,
     requested_sources: set[str] | None,
     disabled_sources: set[str],
-    *,
-    lite: bool = False,
 ) -> tuple[set[str], set[str]]:
     """Return (selected, active) sources, where active drops disabled ones."""
-    selected = requested_sources or resolve_route(route, lite=lite)
+    selected = requested_sources or resolve_route(route)
     return selected, selected - disabled_sources
 
 def _resolve_scrape_top(request: Any, config: dict, meta: dict[str, Any]) -> int:

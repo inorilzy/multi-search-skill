@@ -54,7 +54,6 @@ class PluginRouteRedesignTests(unittest.TestCase):
         # ``fast`` is a route of providers that return body content inline.
         self.assertEqual(resolve_route("fast"), {"baidu", "tavily", "firecrawl", "exa"})
         self.assertNotIn("normal", ROUTE_PROFILES)
-        self.assertEqual(resolve_route("ignored", lite=True), resolve_route("default"))
 
     def test_route_meta_carries_source_shaped_behavior(self):
         # Routes carry source-shaped defaults plus inline-content behavior.
@@ -246,19 +245,6 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             self.assertEqual(outcome.error_type, "rate_limit")
             self.assertEqual(row["status"], COOLDOWN)
             self.assertIsNotNone(row["cooldown_until"])
-
-    def test_explicit_backends_still_append_reddit_fallback(self):
-        # P1-B: an explicit backend order from the orchestrator must not drop the
-        # policy-mandated reddit fallback for reddit URLs.
-        from src.scrape.scrape import _resolve_scrape_policy
-
-        policy = _resolve_scrape_policy(
-            "https://www.reddit.com/r/python/comments/abc/title/",
-            backends=["jina", "tavily"],
-        )
-        self.assertEqual(policy["name"], "reddit")
-        self.assertEqual(policy["backends"][:2], ["jina", "tavily"])
-        self.assertIn("reddit", policy["backends"])
 
     def test_unknown_and_missing_key_backends_error_eagerly(self):
         # P2-I: forcing an unknown or unconfigured keyed backend yields a clear
@@ -542,7 +528,7 @@ class PluginServiceConfigTests(unittest.TestCase):
                 captured["timeout"] = config.timeout
                 captured["counts"] = config.counts
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [{"source": "deepseek_web_answer", "answer": "fast answer"}]
 
         def fake_scrape_stage(all_results, **kwargs):
@@ -568,7 +554,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
         with mock.patch("src.service._load_config_safe", return_value={}), \
@@ -593,7 +579,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
         def fake_scrape_stage(all_results, **kwargs):
@@ -617,7 +603,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["want_content"] = config.want_content
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
         with mock.patch("src.service._load_config_safe", return_value={"type": "fast"}), \
@@ -638,7 +624,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured.append({"timeout": config.timeout, "counts": config.counts})
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return []
 
         def fake_scrape_stage(all_results, **kwargs):
@@ -687,7 +673,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["want_content"] = config.want_content
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [{"source": "baidu_answer", "answer": "summary"}]
 
         with mock.patch("src.service._load_config_safe", return_value={}), \
@@ -707,7 +693,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [
                     {
                         "source": "baidu_answer",
@@ -737,7 +723,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [
                     {"source": "baidu_answer", "answer": "baidu summary"},
                     {"source": "baidu", "title": "Baidu result", "url": "https://baidu.example", "description": "baidu snippet"},
@@ -764,7 +750,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [{
                     "source": "exa",
                     "title": "Doc",
@@ -790,7 +776,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [
                     {"source": "baidu_answer", "answer": "summary"},
                     {"source": "baidu", "title": "News", "url": "https://example.com/news", "description": "snippet"},
@@ -819,7 +805,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [
                     {
                         "source": "baidu",
@@ -869,7 +855,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["counts"] = config.counts
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return []
 
         with mock.patch("src.service._load_config_safe", return_value={}), \
@@ -889,8 +875,8 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 self.route_resolver = route_resolver
 
-            def run(self, query, lite=False):
-                captured["sources"] = self.route_resolver("default", lite=lite)
+            def run(self, query):
+                captured["sources"] = self.route_resolver("default")
                 return []
 
         with mock.patch("src.service._load_config_safe", return_value={}), \
@@ -910,7 +896,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [{"source": "brave", "title": query, "url": f"https://example.com/{query}"}]
 
         def tracking_executor(*args, **kwargs):
@@ -937,7 +923,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [
                     {"source": "twitter", "error": "missing session"},
                     {"source": "twitter", "error": "service unavailable"},
@@ -958,7 +944,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [
                     {"source": "brave", "error": "down"},
                     {"source": "tavily", "error": "down"},
@@ -983,7 +969,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [
                     {"source": "brave", "error": "down"},
                     {"source": "tavily", "error": "down"},
@@ -1005,7 +991,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 self.config = config
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return []
 
         def fake_scrape_stage(all_results, **kwargs):
@@ -1104,6 +1090,18 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(data["key_sources"]["state"], data["state_path"])
         self.assertNotIn("levels", data)
 
+    def test_doctor_reports_corrupt_keys_file_instead_of_crashing(self):
+        from src.state.keys import KeysError
+
+        with mock.patch(
+            "src.service.load_keys",
+            side_effect=KeysError("keys file is not valid JSON: /home/u/.search-keys.json"),
+        ):
+            data = doctor_data(include_keys=True)
+
+        self.assertIn("keys file is not valid JSON", data["keys_error"])
+        self.assertEqual(data["configured_keys"], {})
+
 
 class PluginDisabledSourcesTests(unittest.TestCase):
     def _fake_scrape_stage(self, all_results, **kwargs):
@@ -1127,8 +1125,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 self.route_resolver = route_resolver
 
-            def run(self, query, lite=False):
-                captured["sources"] = self.route_resolver("default", lite=lite)
+            def run(self, query):
+                captured["sources"] = self.route_resolver("default")
                 return []
 
         response = self._run(
@@ -1158,8 +1156,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 self.route_resolver = route_resolver
 
-            def run(self, query, lite=False):
-                captured["sources"] = self.route_resolver("default", lite=lite)
+            def run(self, query):
+                captured["sources"] = self.route_resolver("default")
                 return []
 
         self._run(
@@ -1182,20 +1180,20 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             config_list({"disabled_sources": "brave"}, "disabled_sources")
 
-    def test_expand_lite_queries_skip_disabled_without_error(self):
+    def test_expand_queries_skip_disabled_without_error(self):
         runs = []
 
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 self.route_resolver = route_resolver
 
-            def run(self, query, lite=False):
-                runs.append((query, sorted(self.route_resolver("default", lite=lite))))
+            def run(self, query):
+                runs.append((query, sorted(self.route_resolver("default"))))
                 return [{"source": "baidu", "title": "t", "url": "https://e.com"}]
 
-        # Disable everything the lite/default route would use except baidu so the
-        # primary query still has an active source and expand queries (lite=True)
-        # do not raise even if their set shrinks.
+        # Disable everything the default route would use except baidu so the
+        # primary query still has an active source and expand queries do not
+        # raise even if their set shrinks.
         response = self._run(
             {"disabled_sources": ["brave", "tavily", "exa", "serpapi", "firecrawl", "glm_web", "deepseek_web"]},
             MultiSearchRequest(query="q", route="default", expand=["q2"], use_state=False),
@@ -1205,6 +1203,30 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         self.assertTrue(runs)
         for _query, sources in runs:
             self.assertEqual(sources, ["baidu"])
+
+    def test_expand_queries_use_requested_route_not_default(self):
+        # Regression: expand queries must fan out to the SAME route as the
+        # primary query. Previously the service reused a `lite` flag (idx > 0)
+        # that forced every expand query onto the default web route.
+        runs = []
+
+        class FakeRunner:
+            def __init__(self, config, providers, route_resolver=None, key_manager=None):
+                self.config = config
+                self.route_resolver = route_resolver
+
+            def run(self, query):
+                runs.append((query, sorted(self.route_resolver(self.config.route))))
+                return [{"source": "github-repos", "title": "t", "url": f"https://e.com/{query}"}]
+
+        self._run(
+            {},
+            MultiSearchRequest(query="q", route="dev", expand=["q2"], use_state=False),
+            FakeRunner,
+        )
+        self.assertEqual(len(runs), 2)
+        for _query, sources in runs:
+            self.assertEqual(sources, ["github_repos", "hackernews", "stackoverflow"])
 
 
 class PluginEntryLayerTests(unittest.TestCase):
@@ -1221,7 +1243,7 @@ class PluginEntryLayerTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["route"] = config.route
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return []
 
         with mock.patch("src.service._load_config_safe", return_value={}), \
@@ -1260,7 +1282,7 @@ class PluginEntryLayerTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["key_manager"] = type(key_manager).__name__
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return []
 
         def fake_scrape_stage(all_results, **kwargs):
@@ -1440,7 +1462,7 @@ class PluginRankingTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query, lite=False):
+            def run(self, query):
                 return [
                     {"source": "brave", "url": "https://x.com/lo", "title": "Lo", "description": "d"},
                     {"source": "tavily", "url": "https://x.com/hi", "title": "Hi", "also_from": ["exa"]},

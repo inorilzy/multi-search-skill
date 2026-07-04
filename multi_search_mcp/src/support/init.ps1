@@ -70,4 +70,4 @@ Invoke-Native "uv" @("run", "python", "-c", "import sys; sys.path.insert(0, r'$m
 
 Write-Output ""
 Write-Output "Done. Run the MCP server with:"
-Write-Output '  python mcp/server.py'
+Write-Output '  python -m multi_search_mcp.server'

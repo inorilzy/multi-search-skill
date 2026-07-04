@@ -17,6 +17,7 @@ Thumbs.db
 *.key
 .env
 .env.local
+mcp.local.json
 
 # Local provider research/debug dumps
 qianfan_*.json
