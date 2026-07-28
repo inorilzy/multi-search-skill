@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import inspect
-import queue
-import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .capabilities import PROVIDER_CAPABILITIES
+from ..support.concurrency import BoundedDaemonExecutor
 from ..support.auth import is_key_retryable_error
 from ..state.key_state import BasicKeyManager, KeyCandidate
 from ..state.keys import key_pool
@@ -16,10 +17,9 @@ from ..support.secrets import scrub_secrets
 
 
 ALL_SOURCE_NAMES = {
-    "baidu", "bilibili", "brave", "deepseek_web", "exa", "firecrawl",
-    "github_repos", "glm_web", "hackernews", "linuxdo", "linuxdo_api",
-    "reddit_browser", "serpapi", "stackoverflow", "tavily",
-    "twitter", "v2ex", "youtube", "zhihu",
+    name
+    for name, capability in PROVIDER_CAPABILITIES.items()
+    if capability.search.can_search
 }
 
 SOURCE_ALIASES = {
@@ -242,6 +242,12 @@ def run_keyed_source(source: str, key_value, call_with_key, deadline: float | No
     return partial_rows + [{"source": source, "error": f"key pool exhausted after {len(candidates)} key(s): {err}"}]
 
 
+_SEARCH_POOL = BoundedDaemonExecutor(
+    max_workers=max(1, len(ALL_SOURCE_NAMES)),
+    thread_name_prefix="multi-search-search",
+)
+
+
 class SearchRunner:
     """Run configured searchers in parallel with source-level deadlines."""
 
@@ -301,35 +307,38 @@ class SearchRunner:
                 results.append({"source": name, "error": f"timeout after {timeout_seconds}s"})
             return results
 
-        result_queue: queue.Queue = queue.Queue()
-
-        def worker(source: str, call) -> None:
-            try:
-                result_queue.put((source, call(), None))
-            except Exception as exc:
-                result_queue.put((source, None, exc))
-
         pending = {name for name, _ in jobs}
+        future_sources: dict[Future, str] = {}
         for name, call in jobs:
-            threading.Thread(target=worker, args=(name, call), daemon=True).start()
+            future = _SEARCH_POOL.submit_before(source_deadline, call)
+            if future is not None:
+                future_sources[future] = name
 
-        while pending:
+        while future_sources:
             remaining = source_deadline - time.monotonic()
             if remaining <= 0:
                 break
-            try:
-                source, source_results, error = result_queue.get(timeout=remaining)
-            except queue.Empty:
+            done, _ = wait(
+                tuple(future_sources),
+                timeout=remaining,
+                return_when=FIRST_COMPLETED,
+            )
+            if not done:
                 break
-            if source not in pending:
-                continue
-            pending.remove(source)
-            if error is not None:
-                results.append({"source": source, "error": scrub_secrets(error, self.config.keys)})
-            elif source_results:
-                results.extend(as_dicts(source_results))
-            else:
-                results.append(empty_result_row(source))
+            for future in done:
+                source = future_sources.pop(future)
+                if source not in pending:
+                    continue
+                pending.remove(source)
+                try:
+                    source_results = future.result()
+                except Exception as exc:
+                    results.append({"source": source, "error": scrub_secrets(exc, self.config.keys)})
+                else:
+                    if source_results:
+                        results.extend(as_dicts(source_results))
+                    else:
+                        results.append(empty_result_row(source))
 
         for source in sorted(pending):
             results.append({"source": source, "error": f"timeout after {timeout_seconds}s"})

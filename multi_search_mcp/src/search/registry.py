@@ -1,4 +1,5 @@
 """Provider registry and zhihu fallback used by the search service."""
+from .capabilities import AuthMode, get_capability
 from .search_runner import (
     ProviderSpec,
     call_optional_timeout,
@@ -34,105 +35,131 @@ from .searchers.zhihu import search_zhihu
 ZHIHU_OFFICIAL_API_TIMEOUT = 5
 
 
+def _capability_metadata(name: str) -> tuple[str, str | None, int]:
+    cap = get_capability(name)
+    if cap.timeout_default is None:
+        raise ValueError(f"{name} is missing capability.timeout_default")
+    # SearchRunner only knows one preflight key gate. Reuse capability key_name
+    # only for strictly-required API-key providers so optional/cookie/fallback
+    # providers keep their current runtime behavior.
+    key_name = cap.operation.key_name if cap.operation.auth_mode == AuthMode.API_KEY else None
+    return cap.public_name, key_name, cap.timeout_default
+
+
+def _provider_spec(
+    name: str,
+    call,
+    *,
+    missing_message: str = "missing API key",
+) -> ProviderSpec:
+    public_name, key_name, timeout_default = _capability_metadata(name)
+    return ProviderSpec(
+        name=name,
+        public_name=public_name,
+        key_name=key_name,
+        missing_message=missing_message,
+        timeout_default=timeout_default,
+        call=call,
+    )
+
+
 def build_provider_registry() -> dict[str, ProviderSpec]:
     """Build searcher registry from current module symbols.
 
-    Tests and legacy callers often monkeypatch ``src.main.search_*``. Keeping
-    this registry dynamic preserves that compatibility while moving fanout logic
-    into SearchRunner.
+    Build from current module symbols so tests and callers can monkeypatch a
+    provider function without rebuilding a static registry at import time.
     """
     return {
-        "brave": ProviderSpec(
-            name="brave", public_name="brave", key_name="brave",
-            missing_message="missing BRAVE_SEARCH_API_KEY / BRAVE_API_KEY", timeout_default=15,
+        "brave": _provider_spec(
+            "brave",
+            missing_message="missing BRAVE_SEARCH_API_KEY / BRAVE_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_brave, q, key, cfg.counts["brave"], timeout=ctx.timeout,
             ),
         ),
-        "baidu": ProviderSpec(
-            name="baidu", public_name="baidu", key_name="baidu",
+        "baidu": _provider_spec(
+            "baidu",
             missing_message="missing BAIDU_QIANFAN_API_KEY / QIANFAN_API_KEY / APPBUILDER_API_KEY",
-            timeout_default=60,
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_baidu, q, key, cfg.counts["baidu"], timeout=ctx.timeout,
             ),
         ),
-        "tavily": ProviderSpec(
-            name="tavily", public_name="tavily", key_name="tavily",
-            missing_message="missing TAVILY_API_KEY", timeout_default=15,
+        "tavily": _provider_spec(
+            "tavily",
+            missing_message="missing TAVILY_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_tavily, q, key, cfg.counts["tavily"], timeout=ctx.timeout, want_content=cfg.want_content,
             ),
         ),
-        "exa": ProviderSpec(
-            name="exa", public_name="exa", key_name="exa",
-            missing_message="missing EXA_API_KEY", timeout_default=20,
+        "exa": _provider_spec(
+            "exa",
+            missing_message="missing EXA_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_exa, q, key, cfg.counts["exa"], timeout=ctx.timeout, want_content=cfg.want_content,
             ),
         ),
-        "serpapi": ProviderSpec(
-            name="serpapi", public_name="serpapi", key_name="serpapi",
-            missing_message="missing SERPAPI_API_KEY / SERPAPI_KEY", timeout_default=20,
+        "serpapi": _provider_spec(
+            "serpapi",
+            missing_message="missing SERPAPI_API_KEY / SERPAPI_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_serpapi, q, key, cfg.counts["serpapi"], cfg.serpapi_engine,
                 timeout=ctx.timeout,
             ),
         ),
-        "youtube": ProviderSpec(
-            name="youtube", public_name="youtube", key_name="youtube",
-            missing_message="missing YOUTUBE_API_KEY", timeout_default=20,
+        "youtube": _provider_spec(
+            "youtube",
+            missing_message="missing YOUTUBE_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(search_youtube, q, key, cfg.counts["youtube"], timeout=ctx.timeout),
         ),
-        "bilibili": ProviderSpec(
-            name="bilibili", public_name="bilibili", timeout_default=20,
+        "bilibili": _provider_spec(
+            "bilibili",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_bilibili, q, cfg.keys.get("bilibili", ""), cfg.counts["bilibili"], timeout=ctx.timeout,
             ),
         ),
-        "firecrawl": ProviderSpec(
-            name="firecrawl", public_name="firecrawl", key_name="firecrawl",
-            missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
+        "firecrawl": _provider_spec(
+            "firecrawl",
+            missing_message="missing FIRECRAWL_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, want_content=cfg.want_content,
             ),
         ),
-        "v2ex": ProviderSpec(
-            name="v2ex", public_name="v2ex", key_name="firecrawl",
-            missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
+        "v2ex": _provider_spec(
+            "v2ex",
+            missing_message="missing FIRECRAWL_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_v2ex, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout,
             ),
         ),
-        "linuxdo": ProviderSpec(
-            name="linuxdo", public_name="linuxdo", key_name="firecrawl",
-            missing_message="missing FIRECRAWL_API_KEY", timeout_default=60,
+        "linuxdo": _provider_spec(
+            "linuxdo",
+            missing_message="missing FIRECRAWL_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_linuxdo, q, key, cfg.counts["linuxdo"], timeout=ctx.timeout,
             ),
         ),
-        "linuxdo_api": ProviderSpec(
-            name="linuxdo_api", public_name="linuxdo-api", timeout_default=20,
+        "linuxdo_api": _provider_spec(
+            "linuxdo_api",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_linuxdo_api, q, cfg.keys.get("linuxdo", ""), cfg.counts["linuxdo_api"], timeout=ctx.timeout,
             ),
         ),
-        "github_repos": ProviderSpec(
-            name="github_repos", public_name="github-repos", timeout_default=20,
+        "github_repos": _provider_spec(
+            "github_repos",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_github_repos, q, cfg.counts["github"], cfg.keys.get("github", ""), timeout=ctx.timeout,
             ),
         ),
-        "hackernews": ProviderSpec(
-            name="hackernews", public_name="hackernews", timeout_default=20,
+        "hackernews": _provider_spec(
+            "hackernews",
             call=lambda q, cfg, ctx, key: call_optional_timeout(search_hackernews, q, cfg.counts["hackernews"], timeout=ctx.timeout),
         ),
-        "stackoverflow": ProviderSpec(
-            name="stackoverflow", public_name="stackoverflow", timeout_default=20,
+        "stackoverflow": _provider_spec(
+            "stackoverflow",
             call=lambda q, cfg, ctx, key: call_optional_timeout(search_stackoverflow, q, cfg.counts["stackoverflow"], timeout=ctx.timeout),
         ),
-        "twitter": ProviderSpec(
-            name="twitter", public_name="twitter", timeout_default=20,
+        "twitter": _provider_spec(
+            "twitter",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_twitter,
                 q,
@@ -141,8 +168,8 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
                 timeout=ctx.timeout,
             ),
         ),
-        "reddit_browser": ProviderSpec(
-            name="reddit_browser", public_name="reddit-browser", timeout_default=45,
+        "reddit_browser": _provider_spec(
+            "reddit_browser",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_reddit_browser,
                 q,
@@ -152,13 +179,13 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
                 want_content=True,
             ),
         ),
-        "zhihu": ProviderSpec(name="zhihu", public_name="zhihu", timeout_default=60, call=_search_zhihu_with_fallback),
-        "glm_web": ProviderSpec(
-            name="glm_web", public_name="glm-web", timeout_default=120,
+        "zhihu": _provider_spec("zhihu", call=_search_zhihu_with_fallback),
+        "glm_web": _provider_spec(
+            "glm_web",
             call=lambda q, cfg, ctx, key: call_optional_timeout(search_glm_web, q, cfg.counts["glm_web"], timeout=ctx.timeout),
         ),
-        "deepseek_web": ProviderSpec(
-            name="deepseek_web", public_name="deepseek-web", timeout_default=120,
+        "deepseek_web": _provider_spec(
+            "deepseek_web",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_deepseek_web, q, cfg.counts["deepseek_web"], cfg.keys.get("deepseek_web"), timeout=ctx.timeout,
             ),

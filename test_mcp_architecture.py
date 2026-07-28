@@ -1,24 +1,18 @@
-import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
-
-MCP_ROOT = Path(__file__).resolve().parent / "multi_search_mcp"
-if str(MCP_ROOT) not in sys.path:
-    sys.path.insert(0, str(MCP_ROOT))
-
-from src.scrape.scrape import scrape_url_smart
-from src.search.search_runner import (
+from multi_search_mcp.src.scrape.scrape import scrape_url_smart
+from multi_search_mcp.src.search.search_runner import (
     ROUTE_PROFILES,
     resolve_route,
     route_meta,
 )
-from src.search.resolve import resolve_search_plan
-from src.service import MultiSearchRequest, ScrapeRequest, doctor_data, list_sources, run_multi_search, run_scrape
-from src.state.key_state import (
+from multi_search_mcp.src.search.resolve import resolve_search_plan
+from multi_search_mcp.src.service import MultiSearchRequest, ScrapeRequest, doctor_data, list_sources, run_multi_search, run_scrape
+from multi_search_mcp.src.state.key_state import (
     COOLDOWN,
     INVALID,
     INVALID_STRIKE_LIMIT,
@@ -30,13 +24,13 @@ from src.state.key_state import (
     key_fingerprint,
     key_id_for,
 )
-from src.state.state_store import StateStore
-from src.state.site_memory import ScrapeAttempt, SiteScraperMemory
-from src.support.format import format_results
+from multi_search_mcp.src.state.state_store import StateStore
+from multi_search_mcp.src.state.site_memory import ScrapeAttempt, SiteScraperMemory
+from multi_search_mcp.src.support.format import format_results
 from multi_search_mcp import tools
-from src.support import config as config_module
-from src.support.dedup import _norm_url, apply_scraped_content, deduplicate, rank_results
-from src import service as service_module
+from multi_search_mcp.src.support import config as config_module
+from multi_search_mcp.src.support.dedup import _norm_url, apply_scraped_content, deduplicate, rank_results
+from multi_search_mcp.src import service as service_module
 
 
 class PluginRouteRedesignTests(unittest.TestCase):
@@ -133,7 +127,7 @@ class PluginKeyStateTests(unittest.TestCase):
                     return {"url": url, "error": "HTTP 429 rate limit"}
                 return {"url": url, "markdown": "ok", "via": "exa"}
 
-            with mock.patch("src.scrape.scrape.scrape_url_exa", side_effect=fake_exa):
+            with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_exa", side_effect=fake_exa):
                 result = scrape_url_smart(
                     "https://example.com",
                     primary="exa",
@@ -262,7 +256,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             calls.append((url, key))
             return {"url": url, "title": "f", "markdown": "f" * 1000, "via": "firecrawl"}
 
-        with mock.patch("src.scrape.scrape.scrape_url_firecrawl", side_effect=fake_firecrawl):
+        with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl", side_effect=fake_firecrawl):
             result = scrape_url_smart(
                 "https://example.com",
                 primary="firecrawl",
@@ -273,7 +267,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
         self.assertEqual(calls, [("https://example.com", "")])
 
     def test_exa_scrape_respects_scrape_chars_max(self):
-        from src.scrape.scrapers import exa as exa_mod
+        from multi_search_mcp.src.scrape.scrapers import exa as exa_mod
 
         captured = {}
 
@@ -306,7 +300,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             captured["max_chars"] = max_chars
             return {"url": url, "title": "T", "markdown": "x" * 1000, "via": "exa"}
 
-        with mock.patch("src.scrape.scrape.scrape_url_exa", side_effect=fake_exa):
+        with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_exa", side_effect=fake_exa):
             result = scrape_url_smart(
                 "https://example.com",
                 primary="exa",
@@ -333,7 +327,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
         self.assertEqual(result2["title"], "Backend Title")
 
     def test_firecrawl_anonymous_request_omits_authorization_header(self):
-        from src.scrape.scrapers import firecrawl as firecrawl_mod
+        from multi_search_mcp.src.scrape.scrapers import firecrawl as firecrawl_mod
 
         captured = {}
 
@@ -372,7 +366,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     return {"url": url, "error": "Jina: anonymous blocked"}
                 return {"url": url, "markdown": "ok", "via": "jina"}
 
-            with mock.patch("src.scrape.scrape.scrape_url_jina", side_effect=fake_jina):
+            with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", side_effect=fake_jina):
                 result = scrape_url_smart(
                     "https://example.com",
                     primary="jina",
@@ -390,7 +384,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
     def test_tavily_skips_basic_fallback_once_deadline_passed(self):
         # P2-F: the internal advanced->basic fallback must respect the stage
         # deadline instead of issuing a second blind HTTP round-trip.
-        from src.scrape.scrapers import tavily as tavily_mod
+        from multi_search_mcp.src.scrape.scrapers import tavily as tavily_mod
 
         calls: list[str] = []
 
@@ -441,8 +435,8 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 calls.append("tavily")
                 return {"url": url, "title": "t", "markdown": "t" * 1000, "via": "tavily"}
 
-            with mock.patch("src.scrape.scrape.scrape_url_jina", side_effect=fake_jina), \
-                 mock.patch("src.scrape.scrape.scrape_url_tavily", side_effect=fake_tavily):
+            with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", side_effect=fake_jina), \
+                 mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_tavily", side_effect=fake_tavily):
                 result = scrape_url_smart(
                     url,
                     primary="jina",
@@ -465,8 +459,8 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             calls.append("tavily")
             return {"url": url, "title": "t", "markdown": "t" * 1000, "via": "tavily"}
 
-        with mock.patch("src.scrape.scrape.scrape_url_jina", side_effect=fake_jina), \
-             mock.patch("src.scrape.scrape.scrape_url_tavily", side_effect=fake_tavily):
+        with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", side_effect=fake_jina), \
+             mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_tavily", side_effect=fake_tavily):
             result = scrape_url_smart(
                 "https://example.com/article",
                 primary="tavily",
@@ -494,8 +488,8 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 calls.append("tavily")
                 return {"url": url, "title": "t", "markdown": "t" * 1000, "via": "tavily"}
 
-            with mock.patch("src.scrape.scrape.scrape_url_jina", side_effect=fake_jina), \
-                 mock.patch("src.scrape.scrape.scrape_url_tavily", side_effect=fake_tavily):
+            with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", side_effect=fake_jina), \
+                 mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_tavily", side_effect=fake_tavily):
                 result = scrape_url_smart(
                     "https://cold-example.com/article",
                     primary="tavily",
@@ -535,11 +529,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured["scrape_top"] = kwargs["scrape_top"]
             return self._fake_scrape_stage(all_results, **kwargs)
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False))
 
         # The ``fast`` route pins scrape_top=0 (timeout 45, count 10).
@@ -557,11 +551,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-            mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+            mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False))
 
         self.assertEqual(response["route"], "fast")
@@ -586,11 +580,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured["scrape_top"] = kwargs["scrape_top"]
             return self._fake_scrape_stage(all_results, **kwargs)
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
         self.assertEqual(response["route"], "default")
@@ -606,11 +600,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
-        with mock.patch("src.service._load_config_safe", return_value={"type": "fast"}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"type": "fast"}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
         # config-provided route drives both the echoed route and want_content.
@@ -631,11 +625,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured[-1]["scrape_top"] = kwargs["scrape_top"]
             return self._fake_scrape_stage(all_results, **kwargs)
 
-        with mock.patch("src.service._load_config_safe", return_value={"type": "default", "timeout": 11, "scrape_top": 2, "count": 4}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"type": "default", "timeout": 11, "scrape_top": 2, "count": 4}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=fake_scrape_stage):
             run_multi_search(MultiSearchRequest(query="q", use_state=False))
             run_multi_search(MultiSearchRequest(query="q", scrape_top=3, timeout=12, count=6, use_state=False))
 
@@ -676,11 +670,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query):
                 return [{"source": "baidu_answer", "answer": "summary"}]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(
                 query="q", sources=["baidu"], route="fast", use_state=False,
             ))
@@ -704,11 +698,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "baidu", "title": "Doc", "url": "https://example.com"},
                 ]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["baidu"], use_state=False))
 
         self.assertEqual(response["summary"], "provider summary")
@@ -731,11 +725,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "exa", "title": "Exa result", "url": "https://exa.example", "scraped_content": "exa highlights"},
                 ]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False))
 
         by_source = {row["source"]: row for row in response["source_briefs"]}
@@ -759,11 +753,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     "scraped_content": "full page body",
                 }]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["exa"], use_state=False))
 
         row = response["results"][0]
@@ -784,11 +778,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "tavily", "error": "boom"},
                 ]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["baidu"], use_state=False))
 
         self.assertEqual(response["display_results"], [{
@@ -799,7 +793,7 @@ class PluginServiceConfigTests(unittest.TestCase):
         }])
 
     def test_display_results_snippet_is_truncated(self):
-        from src.service import DISPLAY_SNIPPET_CHARS
+        from multi_search_mcp.src.service import DISPLAY_SNIPPET_CHARS
 
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
@@ -815,11 +809,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     },
                 ]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["baidu"], use_state=False))
 
         snippet = response["display_results"][0]["snippet"]
@@ -858,11 +852,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query):
                 return []
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             run_multi_search(MultiSearchRequest(query="q", route="default", use_state=False))
 
         self.assertEqual(captured["counts"]["brave"], 10)
@@ -879,11 +873,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                 captured["sources"] = self.route_resolver("default")
                 return []
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             run_multi_search(MultiSearchRequest(query="q", sources=["github", "deepseek-web"], use_state=False))
 
         self.assertEqual(captured["sources"], {"github_repos", "deepseek_web"})
@@ -903,12 +897,12 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured["max_workers"] = kwargs.get("max_workers", args[0] if args else None)
             return original_executor(*args, **kwargs)
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage), \
-             mock.patch("src.service.concurrent.futures.ThreadPoolExecutor", side_effect=tracking_executor):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage), \
+             mock.patch("multi_search_mcp.src.service.concurrent.futures.ThreadPoolExecutor", side_effect=tracking_executor):
             run_multi_search(MultiSearchRequest(
                 query="q",
                 route="default",
@@ -929,11 +923,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "twitter", "error": "service unavailable"},
                 ]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="social", use_state=False))
 
         self.assertIn("social primary providers unavailable", response["markdown"])
@@ -951,11 +945,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "exa", "error": "down"},
                 ]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="default", use_state=False))
 
         self.assertIn("default primary providers unavailable", response["markdown"])
@@ -976,10 +970,10 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "deepseek-web", "title": "ok", "url": "https://x.example/a", "description": "d"},
                 ]
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="default", use_state=False))
 
         self.assertIsNone(response["diagnostics"]["route_degradation"])
@@ -1007,11 +1001,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             }
 
         patches = [
-            mock.patch("src.service._load_config_safe", return_value={"type": "default", "timeout": 7, "no_scrape": True, "scrape_top": 9}),
-            mock.patch("src.service.load_keys", return_value={}),
-            mock.patch("src.service.SearchRunner", FakeRunner),
-            mock.patch("src.search.registry.build_provider_registry", return_value={}),
-            mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage),
+            mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"type": "default", "timeout": 7, "no_scrape": True, "scrape_top": 9}),
+            mock.patch("multi_search_mcp.src.service.load_keys", return_value={}),
+            mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner),
+            mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}),
+            mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=fake_scrape_stage),
         ]
         with patches[0], patches[1], patches[2], patches[3], patches[4]:
             run_multi_search(MultiSearchRequest(query="q", use_state=False))
@@ -1027,9 +1021,9 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured.update(kwargs)
             return {"url": url, "markdown": "ok", "via": "jina"}
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={"jina": ["j1"]}), \
-             mock.patch("src.service.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={"jina": ["j1"]}), \
+             mock.patch("multi_search_mcp.src.service.scrape_url_smart", side_effect=fake_scrape):
             run_scrape(ScrapeRequest(url="https://example.com", use_state=False))
 
         self.assertEqual(captured["jina_keys"], ["j1"])
@@ -1040,9 +1034,9 @@ class PluginServiceConfigTests(unittest.TestCase):
         def fake_scrape(url, **kwargs):
             return {"url": url, "title": "Doc", "markdown": body, "length": len(body), "via": "jina"}
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.scrape_url_smart", side_effect=fake_scrape):
             response = run_scrape(ScrapeRequest(
                 url="https://example.com",
                 scrape_chars=12,
@@ -1054,7 +1048,7 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(response["result"]["length"], 100)
 
     def test_tavily_requests_provider_answer(self):
-        from src.search.searchers import tavily as tavily_mod
+        from multi_search_mcp.src.search.searchers import tavily as tavily_mod
 
         captured = {}
 
@@ -1091,10 +1085,10 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertNotIn("levels", data)
 
     def test_doctor_reports_corrupt_keys_file_instead_of_crashing(self):
-        from src.state.keys import KeysError
+        from multi_search_mcp.src.state.keys import KeysError
 
         with mock.patch(
-            "src.service.load_keys",
+            "multi_search_mcp.src.service.load_keys",
             side_effect=KeysError("keys file is not valid JSON: /home/u/.search-keys.json"),
         ):
             data = doctor_data(include_keys=True)
@@ -1111,11 +1105,11 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         }
 
     def _run(self, config, request, runner_cls):
-        with mock.patch("src.service._load_config_safe", return_value=config), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", runner_cls), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value=config), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", runner_cls), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
             return run_multi_search(request)
 
     def test_route_default_sources_exclude_disabled(self):
@@ -1143,8 +1137,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         self.assertIn("brave", response["diagnostics"]["route_sources"])
 
     def test_explicit_source_fully_disabled_returns_structured_error(self):
-        with mock.patch("src.service._load_config_safe", return_value={"disabled_sources": ["brave"]}), \
-             mock.patch("src.service.load_keys", return_value={}):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"disabled_sources": ["brave"]}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}):
             result = tools.multi_search_tool("q", sources=["brave"], use_state=False)
         self.assertEqual(result["error_type"], "invalid_request")
         self.assertIn("all selected sources are disabled", result["error"])
@@ -1168,15 +1162,15 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         self.assertNotIn("deepseek_web", captured["sources"])
 
     def test_unknown_disabled_source_is_invalid_request(self):
-        with mock.patch("src.service._load_config_safe", return_value={"disabled_sources": ["not-a-source"]}), \
-             mock.patch("src.service.load_keys", return_value={}):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"disabled_sources": ["not-a-source"]}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}):
             result = tools.multi_search_tool("q", use_state=False)
         self.assertEqual(result["error_type"], "invalid_request")
         self.assertIn("unknown disabled source", result["error"])
 
     def test_disabled_sources_non_list_is_invalid_request(self):
         # Exercise the real config_list ConfigError -> ValueError -> invalid_request path.
-        from src.support.config import config_list, ConfigError
+        from multi_search_mcp.src.support.config import config_list, ConfigError
         with self.assertRaises(ConfigError):
             config_list({"disabled_sources": "brave"}, "disabled_sources")
 
@@ -1246,11 +1240,11 @@ class PluginEntryLayerTests(unittest.TestCase):
             def run(self, query):
                 return []
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=lambda all_results, **kwargs: {
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=lambda all_results, **kwargs: {
                  "with_content": [], "final_without_content": [], "passthrough": [],
                  "raw_counts": {}, "items_to_scrape": [], "scrape_errors": [], "scrapes": [],
              }):
@@ -1291,11 +1285,11 @@ class PluginEntryLayerTests(unittest.TestCase):
                 "raw_counts": {}, "items_to_scrape": [], "scrape_errors": [], "scrapes": [],
             }
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=fake_scrape_stage):
             tools.multi_search_tool("q", use_state=False)
 
         self.assertEqual(captured["key_manager"], "BasicKeyManager")
@@ -1360,7 +1354,7 @@ class PluginScrapeWritebackTests(unittest.TestCase):
         def fake_scrape(url, *a, **k):
             return {"url": url, "markdown": "BODY " * 100, "via": "jina"}
 
-        with mock.patch("src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("multi_search_mcp.src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
             stage = service_module._run_scrape_stage(
                 all_results, keys={"jina": "k"}, scrape_top=3,
                 scrape_per_source=6, scrape_timeout=30, scrape_concurrency=2,
@@ -1380,7 +1374,7 @@ class PluginScrapeWritebackTests(unittest.TestCase):
             seen.append(k.get("timeout"))
             return {"url": url, "markdown": "BODY " * 100, "via": "jina"}
 
-        with mock.patch("src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("multi_search_mcp.src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
             service_module._run_scrape_stage(
                 all_results, keys={"jina": "k"}, scrape_top=3,
                 scrape_per_source=6, scrape_timeout=120, scrape_concurrency=2,
@@ -1391,7 +1385,7 @@ class PluginScrapeWritebackTests(unittest.TestCase):
         self.assertTrue(all(0 < t <= 7 for t in seen), seen)
 
     def test_scrape_stage_completion_is_driven_by_plan_items_not_candidates(self):
-        from src.scrape.scrape_planner import ScrapeKeyPools, ScrapePlan, ScrapePlanItem
+        from multi_search_mcp.src.scrape.scrape_planner import ScrapeKeyPools, ScrapePlan, ScrapePlanItem
         candidates = [
             {"source": "brave", "url": "https://x.com/a", "title": "A"},
             {"source": "brave", "url": "https://x.com/b", "title": "B"},
@@ -1413,8 +1407,8 @@ class PluginScrapeWritebackTests(unittest.TestCase):
             return {"url": url, "markdown": "BODY " * 100, "via": "jina"}
 
         started = time.monotonic()
-        with mock.patch("src.scrape.stage.plan_scrapes", return_value=fake_plan), \
-             mock.patch("src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("multi_search_mcp.src.scrape.stage.plan_scrapes", return_value=fake_plan), \
+             mock.patch("multi_search_mcp.src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
             stage = service_module._run_scrape_stage(
                 candidates, keys={"jina": "jk"}, scrape_top=2,
                 scrape_per_source=6, scrape_timeout=1, scrape_concurrency=1,
@@ -1476,11 +1470,11 @@ class PluginRankingTests(unittest.TestCase):
                 "raw_counts": {}, "items_to_scrape": [], "scrape_errors": [], "scrapes": [],
             }
 
-        with mock.patch("src.service._load_config_safe", return_value={}), \
-             mock.patch("src.service.load_keys", return_value={}), \
-             mock.patch("src.service.SearchRunner", FakeRunner), \
-             mock.patch("src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("src.service._run_scrape_stage", side_effect=fake_scrape_stage):
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False, output="both"))
 
         json_urls = [r["url"] for r in response["results"] if r.get("url")]
@@ -1514,17 +1508,17 @@ class PluginCanonicalSourceTests(unittest.TestCase):
 
 class PluginRegistryConsistencyTests(unittest.TestCase):
     def test_route_meta_covers_every_route_profile(self):
-        from src.search.search_runner import ROUTE_META
+        from multi_search_mcp.src.search.search_runner import ROUTE_META
         missing = set(ROUTE_PROFILES) - set(ROUTE_META)
         self.assertEqual(missing, set(), f"routes without ROUTE_META entry: {sorted(missing)}")
 
     def test_count_caps_cover_every_default_count(self):
-        from src.service import COUNT_CAPS, DEFAULT_COUNTS
+        from multi_search_mcp.src.service import COUNT_CAPS, DEFAULT_COUNTS
         missing = set(DEFAULT_COUNTS) - set(COUNT_CAPS)
         self.assertEqual(missing, set(), f"sources missing a COUNT_CAPS entry: {sorted(missing)}")
 
     def test_route_profile_sources_are_known(self):
-        from src.search.search_runner import ALL_SOURCE_NAMES
+        from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES
         profile_sources = {src for sources in ROUTE_PROFILES.values() for src in sources}
         unknown = profile_sources - ALL_SOURCE_NAMES
         self.assertEqual(unknown, set(), f"routes reference unknown sources: {sorted(unknown)}")

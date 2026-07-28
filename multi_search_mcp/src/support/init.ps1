@@ -7,7 +7,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 $skillRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)))
-$mcpRoot = Join-Path $skillRoot "mcp"
 $venvPython = Join-Path $skillRoot ".venv\Scripts\python.exe"
 
 function Write-Step {
@@ -66,7 +65,7 @@ if (-not $SkipTwitter) {
 }
 
 Write-Step "Running multi-search doctor"
-Invoke-Native "uv" @("run", "python", "-c", "import sys; sys.path.insert(0, r'$mcpRoot'); from src.service import doctor_data; import json; print(json.dumps(doctor_data(include_keys=True, include_network=False), ensure_ascii=False, indent=2))")
+Invoke-Native "uv" @("run", "python", "-c", "import sys; sys.path.insert(0, r'$skillRoot'); from multi_search_mcp.src.service import doctor_data; import json; print(json.dumps(doctor_data(include_keys=True, include_network=False), ensure_ascii=False, indent=2))")
 
 Write-Output ""
 Write-Output "Done. Run the MCP server with:"

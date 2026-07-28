@@ -6,16 +6,23 @@ the request service god-object.
 """
 from __future__ import annotations
 
-import queue
-import threading
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, wait
+from typing import Any
 
 from ..support.dedup import _norm_url, apply_scraped_content
+from ..support.concurrency import BoundedDaemonExecutor
 from ..support.models import as_dicts
 from ..support.secrets import scrub_secrets
 from ..state.site_memory import SiteScraperMemory
 from .scrape import scrape_url_smart
 from .scrape_planner import add_to_content_pool, plan_scrapes
+
+
+_SCRAPE_POOL = BoundedDaemonExecutor(
+    max_workers=30,
+    thread_name_prefix="multi-search-scrape",
+)
 
 
 def _backfill_scrape_title(scrape_result: dict, search_titles: dict[str, str]) -> None:
@@ -71,67 +78,75 @@ def run_scrape_stage(all_results: list[dict], *, keys: dict, scrape_top: int,
         if items_to_scrape and scrape_timeout <= 0:
             scrape_errors.extend(timeout_row(item) for item in items_to_scrape)
         elif items_to_scrape:
-            task_queue: queue.Queue = queue.Queue()
-            result_queue: queue.Queue = queue.Queue()
             deadline = time.monotonic() + scrape_timeout
-            for plan_item in scrape_plan.plan_items:
-                task_queue.put(plan_item)
+            request_limit = max(0, min(scrape_concurrency, len(scrape_plan.plan_items)))
 
-            def worker() -> None:
-                while True:
-                    if time.monotonic() >= deadline:
-                        return
-                    try:
-                        plan_item = task_queue.get_nowait()
-                    except queue.Empty:
-                        return
-                    item = plan_item.item
-                    try:
-                        backends = list(scrape_backends)
-                        if site_memory is not None:
-                            backends = site_memory.reorder_backends(item["url"], backends)
-                        pools = plan_item.key_pools
-                        per_url_timeout = scrape_url_timeout
-                        remaining = deadline - time.monotonic()
-                        if remaining < per_url_timeout:
-                            per_url_timeout = max(0, int(remaining))
-                        scrape_result = scrape_url_smart(
-                            item["url"], timeout=per_url_timeout, primary=plan_item.primary_backend,
-                            backends=tuple(backends), jina_keys=pools.jina, exa_keys=pools.exa,
-                            firecrawl_keys=pools.firecrawl, tavily_keys=pools.tavily,
-                            deadline=deadline, site_memory=site_memory, key_manager=key_manager,
-                            scrape_chars=scrape_chars,
-                        )
-                        if scrape_result and "error" not in scrape_result:
-                            _backfill_scrape_title(scrape_result, search_titles)
-                        result_queue.put((plan_item.index, item, scrape_result, None))
-                    except Exception as exc:
-                        result_queue.put((plan_item.index, item, None, exc))
-                    finally:
-                        task_queue.task_done()
+            def scrape_plan_item(plan_item):
+                item = plan_item.item
+                backends = list(scrape_backends)
+                if site_memory is not None:
+                    backends = site_memory.reorder_backends(item["url"], backends)
+                pools = plan_item.key_pools
+                per_url_timeout = scrape_url_timeout
+                remaining = deadline - time.monotonic()
+                if remaining < per_url_timeout:
+                    per_url_timeout = max(0, int(remaining))
+                scrape_result = scrape_url_smart(
+                    item["url"], timeout=per_url_timeout, primary=plan_item.primary_backend,
+                    backends=tuple(backends), jina_keys=pools.jina, exa_keys=pools.exa,
+                    firecrawl_keys=pools.firecrawl, tavily_keys=pools.tavily,
+                    deadline=deadline, site_memory=site_memory, key_manager=key_manager,
+                    scrape_chars=scrape_chars,
+                )
+                if scrape_result and "error" not in scrape_result:
+                    _backfill_scrape_title(scrape_result, search_titles)
+                return plan_item.index, item, scrape_result
 
-            for _ in range(min(scrape_concurrency, len(scrape_plan.plan_items))):
-                threading.Thread(target=worker, daemon=True).start()
             completed: set[int] = set()
-            while len(completed) < len(scrape_plan.plan_items):
+            future_items: dict[Future, Any] = {}
+            plan_iter = iter(scrape_plan.plan_items)
+
+            def fill_active_workers() -> None:
+                while len(future_items) < request_limit:
+                    try:
+                        plan_item = next(plan_iter)
+                    except StopIteration:
+                        return
+                    future = _SCRAPE_POOL.submit_before(deadline, scrape_plan_item, plan_item)
+                    if future is None:
+                        return
+                    future_items[future] = plan_item
+
+            fill_active_workers()
+            while future_items:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
-                try:
-                    i, item, scrape_result, error = result_queue.get(timeout=remaining)
-                except queue.Empty:
+                done, _ = wait(
+                    tuple(future_items),
+                    timeout=remaining,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not done:
                     break
-                if i in completed:
-                    continue
-                completed.add(i)
-                if error is not None:
-                    scrape_errors.append({"url": item.get("url", ""), "error": scrub_secrets(error, keys)})
-                elif scrape_result and scrape_result.get("error"):
-                    scrape_errors.append(scrape_result)
-                elif scrape_result:
-                    add_to_content_pool(content_pool, scrape_result)
-                else:
-                    scrape_errors.append({"url": item.get("url", ""), "error": "empty scrape result"})
+                for future in done:
+                    plan_item = future_items.pop(future)
+                    item = plan_item.item
+                    if plan_item.index in completed:
+                        continue
+                    completed.add(plan_item.index)
+                    try:
+                        _i, _item, scrape_result = future.result()
+                    except Exception as exc:
+                        scrape_errors.append({"url": item.get("url", ""), "error": scrub_secrets(exc, keys)})
+                    else:
+                        if scrape_result and scrape_result.get("error"):
+                            scrape_errors.append(scrape_result)
+                        elif scrape_result:
+                            add_to_content_pool(content_pool, scrape_result)
+                        else:
+                            scrape_errors.append({"url": item.get("url", ""), "error": "empty scrape result"})
+                fill_active_workers()
             for plan_item in scrape_plan.plan_items:
                 if plan_item.index not in completed:
                     scrape_errors.append(timeout_row(plan_item.item))

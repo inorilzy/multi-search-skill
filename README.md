@@ -133,8 +133,9 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 | `social` | Twitter/X | 看社交反馈、口碑、讨论 |
 | `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
 | `cn-community` | Zhihu + V2EX + Linux Do | 中文社区讨论 |
+| `vertical` | Reddit Browser（`reddit-browser`） | 需要帖子正文和评论的垂直社区线程；当前走登录态浏览器搜索，默认不额外抓取 |
 | `video` | YouTube + Bilibili | 搜视频；默认 title/url-only，不进入网页抓取 |
-| `all` | default + social + dev + cn-community（不含 video，且不含 `linuxdo_api` 重复路径） | 尽可能广的非视频召回 |
+| `all` | default + social + dev + cn-community（不含 `video`、`vertical`，且不含 `linuxdo_api` 重复路径） | 尽可能广的非视频 API 召回 |
 | 指定源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]`、`sources=["deepseek-web"]` | 绕过 route，直接指定一个或多个源 |
 
 `fast` 路由只跑那些搜索 API 直接返回正文的 provider（不再有独立的 `level` 参数），route 默认不额外抓取；显式传入 `scrape_top` 或配置文件里的 `scrape_top` 仍会覆盖默认值。
@@ -154,6 +155,7 @@ MCP 是唯一运行入口，agent 按 `skills/multi-search/SKILL.md` 调用 MCP 
 | `social` | 10 | 0 | 60s |
 | `dev` | 10 | 20 | 60s |
 | `cn-community` | 10 | 20 | 60s |
+| `vertical` | 10 | 0 | 90s |
 | `video` | 10 | 0 | 45s |
 
 缺 key 的源会显示 error row，不会静默消失。`fast` 路由不会跨路由降级；缺 key 时只显示该源的 error row。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
@@ -208,9 +210,8 @@ GLM Web 由 `glm_web.py` 直接读取环境变量：`GLM_WEB_BASE_URL`、`GLM_WE
 多数 key 字段支持 string 或 string array。Jina 支持 `{ "key": "...", "exhausted": true|false }`；只有余额接口确认 `wallet.total_balance <= 0` 时才会自动标记 exhausted。需要手动软删除 Jina key：
 
 ```powershell
-# 在 multi_search_mcp/ 目录下运行（该目录会被加入 sys.path）
-cd multi_search_mcp
-python -m src.state.mark_exhausted <jina-key>
+# 在仓库根目录或已安装环境中运行
+python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 ```
 
 ## 架构和术语
@@ -276,6 +277,9 @@ flowchart LR
 // Twitter/X 讨论
 { "query": "Claude Code feedback", "route": "social" }
 
+// Reddit 线程（帖子正文 + 评论）
+{ "query": "claude code reddit", "route": "vertical" }
+
 // 关闭额外抓取
 { "query": "latest Rust features", "scrape_top": 0 }
 
@@ -308,7 +312,7 @@ flowchart LR
 | 参数 | 默认 | 说明 |
 |---|---:|---|
 | `query` | — | 搜索查询（必填） |
-| `route` | `default` | 选源/场景：`web` / `fast` / `social` / `dev` / `cn-community` / `video` / `all`；`fast` 只跑自带正文的源，默认不抓取 |
+| `route` | `default` | 选源/场景：`web` / `fast` / `social` / `dev` / `cn-community` / `vertical` / `video` / `all`；`fast` 只跑自带正文的源，默认不抓取；`vertical` 当前是 `reddit-browser` |
 | `sources` | — | 直接指定一个或多个源，绕过 route |
 | `count` | per-source | 全局 count，会按各源上限 clamp |
 | `timeout` | 60 | 搜索阶段整批 deadline |

@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
-from .pathing import add_mcp_to_path
-
-add_mcp_to_path()
-
 from .tools import (
     doctor_tool,
     get_key_status_tool,
@@ -40,7 +36,7 @@ def multi_search(query: str, route: str | None = None,
     """Search across configured sources, optionally scrape top URLs, and return structured results.
 
     `route` selects which sources to fan out to
-    (default/fast/social/dev/cn-community/video/all). The `fast` route runs only
+    (default/fast/social/dev/cn-community/vertical/video/all). The `fast` route runs only
     providers that return body content inline (baidu/tavily/firecrawl/exa) and
     defaults to `scrape_top=0`; explicit tool/config `scrape_top` values still
     override that default. For "recall then scrape", use `route=default` with `scrape_top=N`.

@@ -30,8 +30,9 @@ content inline. There is no separate `level` / depth parameter.
 - `social` - Twitter/X feedback.
 - `dev` - GitHub, Stack Overflow, Hacker News.
 - `cn-community` - Zhihu, V2EX, Linux Do.
+- `vertical` - browser-backed Reddit threads when the user wants post bodies or comments inline.
 - `video` - video / tutorial requests.
-- `all` - every source except video; broadest coverage, slower.
+- `all` - every API-backed route except video/vertical; broadest coverage, slower.
 - Use `sources=[...]` for explicit sources (e.g. `["github"]`) to bypass routes.
 
 ### Recall then scrape
@@ -43,6 +44,7 @@ Pick the speed from the user's wording (cues, not exact matches):
 
 | route | 中文触发词 | English cues |
 |-------|-----------|--------------|
+| `vertical` | Reddit、帖子评论、版块讨论、subreddit | reddit thread, subreddit discussion, comments |
 | `fast` | 快速搜索、快速查、简单搜、大概了解一下 | quick search, quick look, just a summary |
 | `default` (default) | 搜一下、查一下、找一下（无修饰词时） | search, look up, find |
 

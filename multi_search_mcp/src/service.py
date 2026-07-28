@@ -9,7 +9,7 @@ from .support.config import ConfigError, config_list, load_config, resolve_confi
 from .support.dedup import deduplicate, rank_results
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
-from .state.keys import KeysError, count_jina_keys, jina_config_keys, load_keys
+from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, load_keys
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result
 from .scrape.scrape import scrape_url_smart
 from .scrape.stage import (
@@ -260,8 +260,10 @@ def _limit_scrape_rows(rows: list[dict], max_chars: int) -> list[dict]:
 
 
 def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
-    store = StateStore()
     response = {"routes": available_routes(), "sources": sorted(ALL_SOURCE_NAMES)}
+    store = None
+    if include_key_status or include_scraper_stats:
+        store = StateStore()
     if include_key_status:
         response["key_status"] = SQLiteKeyManager(store).status_rows()
     if include_scraper_stats:
@@ -286,30 +288,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         "config_path": str(resolve_config_path()),
         "config_loaded": resolve_config_path().exists(),
         "key_sources": {
-            "env": [
-                "BRAVE_SEARCH_API_KEY",
-                "BRAVE_API_KEY",
-                "BAIDU_QIANFAN_API_KEY",
-                "QIANFAN_API_KEY",
-                "APPBUILDER_API_KEY",
-                "TAVILY_API_KEY",
-                "EXA_API_KEY",
-                "JINA_API_KEY",
-                "JINA_KEY",
-                "GITHUB_TOKEN",
-                "GH_TOKEN",
-                "FIRECRAWL_API_KEY",
-                "SERPAPI_API_KEY",
-                "SERPAPI_KEY",
-                "ZHIHU_ACCESS_SECRET",
-                "YOUTUBE_API_KEY",
-                "BILIBILI_COOKIE",
-                "TWITTER_COOKIES_PATH",
-                "DEEPSEEK_WEB_TOKEN",
-                "DEEPSEEK_USER_TOKEN",
-                "DEEPSEEK_WEB_COOKIE",
-                "DEEPSEEK_WEB_AUTH_EXPORT",
-            ],
+            "env": KEY_ENV_NAMES,
             "file": "~/.search-keys.json",
             "state": str(store.path),
         },

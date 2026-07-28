@@ -2,6 +2,7 @@
 import json
 import os
 import random
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -11,6 +12,36 @@ class KeysError(ValueError):
     Carries only the file path, never the file contents, so a malformed keys
     file cannot leak secrets into a user-visible error.
     """
+
+
+KEY_ENV_PAIRS = (
+    ("BRAVE_SEARCH_API_KEY", "brave"),
+    ("BRAVE_API_KEY", "brave"),
+    ("BAIDU_QIANFAN_API_KEY", "baidu"),
+    ("QIANFAN_API_KEY", "baidu"),
+    ("APPBUILDER_API_KEY", "baidu"),
+    ("TAVILY_API_KEY", "tavily"),
+    ("EXA_API_KEY", "exa"),
+    ("JINA_API_KEY", "jina"),
+    ("JINA_KEY", "jina"),
+    ("GITHUB_TOKEN", "github"),
+    ("GH_TOKEN", "github"),
+    ("FIRECRAWL_API_KEY", "firecrawl"),
+    ("SERPAPI_API_KEY", "serpapi"),
+    ("SERPAPI_KEY", "serpapi"),
+    ("ZHIHU_ACCESS_SECRET", "zhihu"),
+    ("YOUTUBE_API_KEY", "youtube"),
+    ("BILIBILI_COOKIE", "bilibili"),
+    ("TWITTER_COOKIES_PATH", "twitter_cookies"),
+    ("DEEPSEEK_WEB_TOKEN", "deepseek_web_token"),
+    ("DEEPSEEK_USER_TOKEN", "deepseek_web_token"),
+    ("DEEPSEEK_WEB_COOKIE", "deepseek_web_cookie"),
+    ("DEEPSEEK_WEB_AUTH_EXPORT", "deepseek_web_auth_export"),
+    ("REDDIT_COOKIE_EXPORT", "reddit_cookie_export"),
+    ("REDDIT_BROWSER_PROFILE", "reddit_browser_profile"),
+)
+
+KEY_ENV_NAMES = [env_name for env_name, _key_name in KEY_ENV_PAIRS]
 
 
 def pick_key(value) -> str:
@@ -86,9 +117,13 @@ def count_jina_keys(value) -> tuple[int, int]:
     return active, total
 
 
-def load_keys() -> dict:
+def load_keys(
+    keys_file: str | Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> dict:
     """Load API keys from ~/.search-keys.json or environment variables."""
-    keys_file = Path.home() / ".search-keys.json"
+    keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
+    environ = os.environ if environ is None else environ
     keys: dict = {}
     if keys_file.exists():
         try:
@@ -102,33 +137,8 @@ def load_keys() -> dict:
             raise KeysError(f"keys file is not valid JSON: {keys_file}") from None
         if not isinstance(keys, dict):
             keys = {}
-    for env_name, key_name in [
-        ("BRAVE_SEARCH_API_KEY", "brave"),
-        ("BRAVE_API_KEY", "brave"),
-        ("BAIDU_QIANFAN_API_KEY", "baidu"),
-        ("QIANFAN_API_KEY", "baidu"),
-        ("APPBUILDER_API_KEY", "baidu"),
-        ("TAVILY_API_KEY", "tavily"),
-        ("EXA_API_KEY", "exa"),
-        ("JINA_API_KEY", "jina"),
-        ("JINA_KEY", "jina"),
-        ("GITHUB_TOKEN", "github"),
-        ("GH_TOKEN", "github"),
-        ("FIRECRAWL_API_KEY", "firecrawl"),
-        ("SERPAPI_API_KEY", "serpapi"),
-        ("SERPAPI_KEY", "serpapi"),
-        ("ZHIHU_ACCESS_SECRET", "zhihu"),
-        ("YOUTUBE_API_KEY", "youtube"),
-        ("BILIBILI_COOKIE", "bilibili"),
-        ("TWITTER_COOKIES_PATH", "twitter_cookies"),
-        ("DEEPSEEK_WEB_TOKEN", "deepseek_web_token"),
-        ("DEEPSEEK_USER_TOKEN", "deepseek_web_token"),
-        ("DEEPSEEK_WEB_COOKIE", "deepseek_web_cookie"),
-        ("DEEPSEEK_WEB_AUTH_EXPORT", "deepseek_web_auth_export"),
-        ("REDDIT_COOKIE_EXPORT", "reddit_cookie_export"),
-        ("REDDIT_BROWSER_PROFILE", "reddit_browser_profile"),
-    ]:
-        val = os.getenv(env_name)
+    for env_name, key_name in KEY_ENV_PAIRS:
+        val = environ.get(env_name)
         if val:
             keys[key_name] = val
             if env_name == "TWITTER_COOKIES_PATH":

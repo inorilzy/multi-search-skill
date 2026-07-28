@@ -3,14 +3,9 @@ from __future__ import annotations
 
 from typing import Any, Callable, Literal
 
-from .pathing import add_mcp_to_path
-
-
-add_mcp_to_path()
-
-from src.state.key_state import SQLiteKeyManager
-from src.scrape.scrape import KNOWN_BACKENDS
-from src.service import (
+from .src.state.key_state import SQLiteKeyManager
+from .src.scrape.scrape import KNOWN_BACKENDS
+from .src.service import (
     MultiSearchRequest,
     ScrapeRequest,
     doctor_data,
@@ -18,9 +13,9 @@ from src.service import (
     run_multi_search,
     run_scrape,
 )
-from src.search.search_runner import ALL_SOURCE_NAMES, ROUTE_PROFILES
-from src.state.site_memory import SiteScraperMemory
-from src.state.state_store import StateStore
+from .src.search.search_runner import ALL_SOURCE_NAMES, ROUTE_PROFILES
+from .src.state.site_memory import SiteScraperMemory
+from .src.state.state_store import StateStore
 
 
 _VALID_OUTPUT = {"json", "markdown", "both"}

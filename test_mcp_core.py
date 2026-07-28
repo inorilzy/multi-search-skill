@@ -8,28 +8,22 @@ fixes; this file covers the provider-agnostic core logic.
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-
-MCP_ROOT = Path(__file__).resolve().parent / "multi_search_mcp"
-if str(MCP_ROOT) not in sys.path:
-    sys.path.insert(0, str(MCP_ROOT))
-
-from src.search.capabilities import (
+from multi_search_mcp.src.search.capabilities import (
     PROVIDER_CAPABILITIES,
     ProviderKind,
     ScrapePolicy,
     capability_table_rows,
     get_capability,
 )
-from src.search.search_runner import ROUTE_PROFILES, available_routes, resolve_route
-from src.scrape.scrape_planner import plan_scrapes
-from src.scrape.scrape import KNOWN_BACKENDS
-from src.state.keys import (
+from multi_search_mcp.src.search.search_runner import ROUTE_PROFILES, available_routes, resolve_route
+from multi_search_mcp.src.scrape.scrape_planner import plan_scrapes
+from multi_search_mcp.src.scrape.scrape import KNOWN_BACKENDS
+from multi_search_mcp.src.state.keys import (
     count_jina_keys,
     KeysError,
     jina_config_keys,
@@ -37,17 +31,17 @@ from src.state.keys import (
     load_keys,
     pick_key,
 )
-from src.state.key_state import BasicKeyManager
-from src.state.mark_exhausted import _mark_config_exhausted
-from src.support.dedup import _norm_url, deduplicate, split_by_content
-from src.support.models import ProviderError, ScrapeResult, SearchResult, empty_result_row, is_empty_result
-from src.support.secrets import scrub_secrets
-from src.search.searchers import baidu as baidu_searcher
-from src.search.searchers import brave as brave_searcher
-from src.search.searchers import exa as exa_searcher
-from src.search.searchers import firecrawl as firecrawl_searcher
-from src.search.searchers import serpapi as serpapi_searcher
-from src.search.searchers import tavily as tavily_searcher
+from multi_search_mcp.src.state.key_state import BasicKeyManager
+from multi_search_mcp.src.state.mark_exhausted import _mark_config_exhausted
+from multi_search_mcp.src.support.dedup import _norm_url, deduplicate, split_by_content
+from multi_search_mcp.src.support.models import ProviderError, ScrapeResult, SearchResult, empty_result_row, is_empty_result
+from multi_search_mcp.src.support.secrets import scrub_secrets
+from multi_search_mcp.src.search.searchers import baidu as baidu_searcher
+from multi_search_mcp.src.search.searchers import brave as brave_searcher
+from multi_search_mcp.src.search.searchers import exa as exa_searcher
+from multi_search_mcp.src.search.searchers import firecrawl as firecrawl_searcher
+from multi_search_mcp.src.search.searchers import serpapi as serpapi_searcher
+from multi_search_mcp.src.search.searchers import tavily as tavily_searcher
 
 
 class SecretTests(unittest.TestCase):
@@ -264,14 +258,14 @@ class ProviderMetadataDriftTests(unittest.TestCase):
     DEFAULT_COUNTS_KEYS = COUNT_CAPS_KEYS
 
     def test_count_membership_matches_frozen_snapshot(self):
-        from src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
+        from multi_search_mcp.src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
         self.assertEqual(set(DEFAULT_COUNTS), self.DEFAULT_COUNTS_KEYS)
         self.assertEqual(set(COUNT_CAPS), self.COUNT_CAPS_KEYS)
 
     def test_derived_counts_match_original_literal_values(self):
         # The derivation must reproduce the historical literal dicts exactly,
         # not just stay internally consistent with capabilities.
-        from src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
+        from multi_search_mcp.src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
         expected_caps = {
             "baidu": 50, "brave": 20, "tavily": 20, "exa": 100, "github": 100,
             "hackernews": 100, "serpapi": 100, "youtube": 50, "bilibili": 50,
@@ -291,7 +285,7 @@ class ProviderMetadataDriftTests(unittest.TestCase):
             )
 
     def test_count_caps_values_match_capabilities(self):
-        from src.search.resolve import COUNT_CAPS
+        from multi_search_mcp.src.search.resolve import COUNT_CAPS
         for cap in PROVIDER_CAPABILITIES.values():
             if cap.count_key and cap.search.can_search and cap.search.max_count:
                 self.assertIn(cap.count_key, COUNT_CAPS, cap.name)
@@ -301,7 +295,7 @@ class ProviderMetadataDriftTests(unittest.TestCase):
                 )
 
     def test_registry_timeouts_match_capabilities(self):
-        from src.search.registry import build_provider_registry
+        from multi_search_mcp.src.search.registry import build_provider_registry
         registry = build_provider_registry()
         for name, spec in registry.items():
             cap = PROVIDER_CAPABILITIES[name]
@@ -571,7 +565,7 @@ class ScrapePlannerTests(unittest.TestCase):
             for idx in range(3)
         ]
 
-        with mock.patch("src.state.keys.random.shuffle", side_effect=lambda xs: None):
+        with mock.patch("multi_search_mcp.src.state.keys.random.shuffle", side_effect=lambda xs: None):
             plan = plan_scrapes(
                 rows,
                 keys={"exa": ["e1", "e2"], "tavily": ["t1", "t2"]},
@@ -602,12 +596,12 @@ class ScrapePlannerTests(unittest.TestCase):
 
 class KeyTests(unittest.TestCase):
     def test_pick_key_supports_key_pool_arrays(self):
-        with mock.patch("src.state.keys.random.choice", return_value="k2") as choice:
+        with mock.patch("multi_search_mcp.src.state.keys.random.choice", return_value="k2") as choice:
             self.assertEqual(pick_key(["k1", "k2", ""]), "k2")
         choice.assert_called_once_with(["k1", "k2"])
 
     def test_key_pool_shuffles_non_empty_candidates(self):
-        with mock.patch("src.state.keys.random.shuffle") as shuffle:
+        with mock.patch("multi_search_mcp.src.state.keys.random.shuffle") as shuffle:
             pool = key_pool(["k1", "", "k2"])
         self.assertEqual(pool, ["k1", "k2"])
         shuffle.assert_called_once_with(pool)
@@ -628,8 +622,7 @@ class KeyTests(unittest.TestCase):
                 json.dumps({"serpapi": ["s1", "s2"], "exa": ["e1", "e2"]}),
                 encoding="utf-8",
             )
-            with mock.patch("pathlib.Path.home", return_value=Path(tmp)):
-                keys = load_keys()
+            keys = load_keys(keys_file=keys_path, environ={})
 
         self.assertEqual(keys["serpapi"], ["s1", "s2"])
         self.assertEqual(keys["exa"], ["e1", "e2"])

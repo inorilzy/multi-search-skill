@@ -3,7 +3,6 @@ param()
 
 $ErrorActionPreference = "Continue"
 $skillRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)))
-$mcpRoot = Join-Path $skillRoot "mcp"
 $venvPython = Join-Path $skillRoot ".venv\Scripts\python.exe"
 
 function Write-Check {
@@ -93,7 +92,7 @@ try {
     if ($python.Length -gt 1) {
         $pythonArgs = $python[1..($python.Length - 1)]
     }
-    $doctorScript = "import sys; sys.path.insert(0, r'$mcpRoot'); from src.service import doctor_data; import json; print(json.dumps(doctor_data(include_keys=True, include_network=False), ensure_ascii=False, indent=2))"
+    $doctorScript = "import sys; sys.path.insert(0, r'$skillRoot'); from multi_search_mcp.src.service import doctor_data; import json; print(json.dumps(doctor_data(include_keys=True, include_network=False), ensure_ascii=False, indent=2))"
     & $python[0] @pythonArgs -c $doctorScript
     $doctorExit = $LASTEXITCODE
 } catch {

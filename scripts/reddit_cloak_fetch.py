@@ -1,6 +1,6 @@
 r"""Debug CLI for the browser-backed Reddit content searcher.
 
-Thin wrapper over ``src.search.searchers.reddit_browser.search_reddit_browser``
+Thin wrapper over ``multi_search_mcp.src.search.searchers.reddit_browser.search_reddit_browser``
 so the script and the MCP provider share one implementation (no drift). Use it
 to validate cookies/profile and measure latency outside the MCP.
 
@@ -16,9 +16,9 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "multi_search_mcp"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.search.searchers.reddit_browser import resolve_reddit_config, search_reddit_browser
+from multi_search_mcp.src.search.searchers.reddit_browser import resolve_reddit_config, search_reddit_browser
 
 
 def parse_args() -> argparse.Namespace:

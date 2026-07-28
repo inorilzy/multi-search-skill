@@ -23,7 +23,7 @@
 | 类别 | 包含 route | 说明 |
 |------|-----------|------|
 | **通用搜索** | `default` / `web`、`fast`、`all` | 用综合搜索引擎，什么主题都能搜。`fast` 只跑“搜索 API 自带正文”的 provider 且不抓取；`all` 是尽可能广的非视频召回。 |
-| **专用搜索** | `social`、`dev`、`cn-community`、`video` | 绑定垂直平台，只搜特定领域。 |
+| **专用搜索** | `social`、`dev`、`cn-community`、`vertical`、`video` | 绑定垂直平台，只搜特定领域。 |
 
 > 注意：旧的 `level`（fast/normal）维度已删除。`fast` 现在是一个 route。
 
@@ -37,6 +37,7 @@
 | `social` | 专用 | twitter |
 | `dev` | 专用 | stackoverflow + github_repos + hackernews |
 | `cn-community` | 专用 | zhihu + v2ex + linuxdo |
+| `vertical` | 专用 | reddit_browser（浏览器登录态 Reddit 搜索，正文/评论内联，`scrape_top=0`） |
 | `video` | 专用 | youtube + bilibili |
 
 ## 3. 选源方式

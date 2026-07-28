@@ -1,31 +1,21 @@
-"""Tests for the browser-backed Reddit content searcher and its helpers.
-
-Mirrors the sys.path convention used by test_mcp_core.py so the packaged
-modules under multi_search_mcp/src import cleanly.
-"""
+"""Tests for the browser-backed Reddit content searcher and its helpers."""
 import json
 import os
 import tempfile
 import threading
 import time as _time
-import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
-
-MCP_ROOT = Path(__file__).resolve().parent / "multi_search_mcp"
-if str(MCP_ROOT) not in sys.path:
-    sys.path.insert(0, str(MCP_ROOT))
-
-from src.browser.cookie_export import load_cookie_export, to_playwright_cookies
-from src.search.capabilities import PROVIDER_CAPABILITIES, ProviderKind, ScrapePolicy
-from src.search.search_runner import (
+from multi_search_mcp.src.browser.cookie_export import load_cookie_export, to_playwright_cookies
+from multi_search_mcp.src.search.capabilities import PROVIDER_CAPABILITIES, ProviderKind, ScrapePolicy
+from multi_search_mcp.src.search.search_runner import (
     ALL_SOURCE_NAMES,
     ROUTE_PROFILES,
     normalize_source_name,
 )
-from src.search.searchers.reddit_browser import (
+from multi_search_mcp.src.search.searchers.reddit_browser import (
     build_search_url,
     is_blocked_text,
     resolve_reddit_config,
@@ -302,7 +292,7 @@ class RedditWiringTests(unittest.TestCase):
         self.assertEqual(cap.search.max_count, 25)
 
     def test_registry_has_provider_with_matching_timeout(self):
-        from src.search.registry import build_provider_registry
+        from multi_search_mcp.src.search.registry import build_provider_registry
         registry = build_provider_registry()
         self.assertIn("reddit_browser", registry)
         self.assertEqual(registry["reddit_browser"].public_name, "reddit-browser")
@@ -315,11 +305,11 @@ class RedditWiringTests(unittest.TestCase):
 
 class RedditKeysLoadingTests(unittest.TestCase):
     def test_env_cookie_export_populates_reddit_browser_key(self):
-        from src.state.keys import load_keys
+        from multi_search_mcp.src.state.keys import load_keys
         with mock.patch.dict(os.environ, {
             "REDDIT_COOKIE_EXPORT": "C:/auth/reddit.json",
             "REDDIT_BROWSER_PROFILE": "C:/profiles/reddit",
-        }, clear=False), mock.patch("src.state.keys.Path.home", return_value=Path("/no/such/home")):
+        }, clear=False), mock.patch("multi_search_mcp.src.state.keys.Path.home", return_value=Path("/no/such/home")):
             keys = load_keys()
 
         self.assertIsInstance(keys["reddit_browser"], dict)
@@ -329,7 +319,7 @@ class RedditKeysLoadingTests(unittest.TestCase):
 
 class CloakRuntimeConcurrencyTests(unittest.TestCase):
     def test_fetch_reddit_serializes_access_to_shared_profile(self):
-        from src.browser import cloak_runtime
+        from multi_search_mcp.src.browser import cloak_runtime
 
         active = {"now": 0, "max": 0}
         lock = threading.Lock()
@@ -361,7 +351,7 @@ class CloakRuntimeConcurrencyTests(unittest.TestCase):
 
 class DoctorCloakHealthTests(unittest.TestCase):
     def test_doctor_reports_cloak_section(self):
-        from src.service import doctor_data
+        from multi_search_mcp.src.service import doctor_data
         data = doctor_data(include_keys=False, include_network=False)
         self.assertIn("cloak", data)
         self.assertIn("cloakbrowser_installed", data["cloak"])
@@ -370,18 +360,18 @@ class DoctorCloakHealthTests(unittest.TestCase):
 
 class OldRedditScraperRemovalTests(unittest.TestCase):
     def test_reddit_is_not_a_scrape_backend(self):
-        from src.scrape.scrape import KNOWN_BACKENDS
+        from multi_search_mcp.src.scrape.scrape import KNOWN_BACKENDS
         self.assertNotIn("reddit", KNOWN_BACKENDS)
 
     def test_reddit_scraper_module_is_removed(self):
         import importlib.util
         self.assertIsNone(
-            importlib.util.find_spec("src.scrape.scrapers.reddit"),
+            importlib.util.find_spec("multi_search_mcp.src.scrape.scrapers.reddit"),
             "old reddit scraper module should be deleted",
         )
 
     def test_reddit_scraper_capability_is_removed(self):
-        from src.search.capabilities import PROVIDER_CAPABILITIES
+        from multi_search_mcp.src.search.capabilities import PROVIDER_CAPABILITIES
         self.assertNotIn("reddit", PROVIDER_CAPABILITIES)
 
 
