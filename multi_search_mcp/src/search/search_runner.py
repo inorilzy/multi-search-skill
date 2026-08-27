@@ -12,7 +12,7 @@ from ..support.concurrency import BoundedDaemonExecutor
 from ..support.auth import is_key_retryable_error
 from ..state.key_state import BasicKeyManager, KeyCandidate
 from ..state.keys import key_pool
-from ..support.models import as_dicts, empty_result_row
+from ..support.models import ANSWER_SOURCES, as_dicts, empty_result_row, is_empty_result
 from ..support.secrets import scrub_secrets
 
 
@@ -24,8 +24,6 @@ ALL_SOURCE_NAMES = {
 
 SOURCE_ALIASES = {
     "baidu-ai-search": "baidu",
-    "deepseek-web": "deepseek_web",
-    "glm-web": "glm_web",
     "github": "github_repos",
     "github-repos": "github_repos",
     "linux-do": "linuxdo",
@@ -35,7 +33,7 @@ SOURCE_ALIASES = {
 }
 
 ROUTE_PROFILES = {
-    "default": {"brave", "tavily", "exa", "serpapi", "firecrawl", "baidu", "glm_web", "deepseek_web"},
+    "default": {"brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"},
     "fast": {"baidu", "tavily", "firecrawl", "exa"},
     "social": {"twitter"},
     "dev": {"stackoverflow", "github_repos", "hackernews"},
@@ -47,7 +45,7 @@ ROUTE_PROFILES = {
     # Everything except the video sources (and excluding linuxdo_api duplicate
     # in favor of the route-canonical linuxdo).
     "all": {
-        "brave", "tavily", "exa", "serpapi", "baidu", "glm_web", "deepseek_web",
+        "brave", "parallel", "tavily", "exa", "serpapi", "baidu",
         "firecrawl", "twitter", "stackoverflow", "github_repos",
         "hackernews", "zhihu", "v2ex", "linuxdo",
     },
@@ -196,6 +194,23 @@ def missing(source: str, message: str) -> list[dict]:
     return [{"source": source, "error": f"skipped: {message}"}]
 
 
+def _attach_provider_ranks(rows: list[dict]) -> list[dict]:
+    """Preserve a provider's own result order before fanout rows are merged."""
+    rank = 0
+    output = as_dicts(rows)
+    for row in output:
+        if (
+            row.get("error")
+            or is_empty_result(row)
+            or row.get("source") in ANSWER_SOURCES
+            or not row.get("url")
+        ):
+            continue
+        rank += 1
+        row.setdefault("provider_rank", rank)
+    return output
+
+
 def call_optional_timeout(fn, *positional, timeout: float, **keyword_options):
     try:
         params = inspect.signature(fn).parameters
@@ -336,7 +351,7 @@ class SearchRunner:
                     results.append({"source": source, "error": scrub_secrets(exc, self.config.keys)})
                 else:
                     if source_results:
-                        results.extend(as_dicts(source_results))
+                        results.extend(_attach_provider_ranks(source_results))
                     else:
                         results.append(empty_result_row(source))
 

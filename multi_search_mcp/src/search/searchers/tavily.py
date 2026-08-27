@@ -54,7 +54,16 @@ def search_tavily(
         raw = item.get("raw_content") or ""
         if raw:
             result["scraped_content"] = raw
+            result["content_kind"] = "body"
+        elif item.get("content"):
+            result["content_kind"] = "excerpt"
+        else:
+            result["content_kind"] = "metadata"
         results.append(result)
     if data.get("answer"):
-        results.insert(0, {"source": "tavily_answer", "answer": data["answer"]})
+        results.insert(0, {
+            "source": "tavily_answer",
+            "answer": data["answer"],
+            "content_kind": "answer",
+        })
     return results

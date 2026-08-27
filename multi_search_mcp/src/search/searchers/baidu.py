@@ -70,6 +70,7 @@ def _rows_from_response(data: dict[str, Any], *, endpoint: str,
         rows.append({
             "source": "baidu_answer",
             "answer": answer,
+            "content_kind": "answer",
             "request_id": request_id,
             "endpoint": endpoint,
         })
@@ -94,8 +95,14 @@ def _rows_from_response(data: dict[str, Any], *, endpoint: str,
         }
         if markdown_text:
             row["scraped_content"] = markdown_text
+            row["content_kind"] = "body"
         elif content:
             row["scraped_content"] = content
+            row["content_kind"] = "body"
+        elif snippet:
+            row["content_kind"] = "excerpt"
+        else:
+            row["content_kind"] = "metadata"
         rows.append(row)
     if not rows:
         return [empty_result_row("baidu", request_id=request_id)]

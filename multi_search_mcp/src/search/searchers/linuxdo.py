@@ -24,10 +24,13 @@ def search_linuxdo_api(query, cookie="", count=10, timeout=20):
     posts = data.get("posts", [])
     items = []
     for p in posts[:count]:
+        blurb = (p.get("blurb") or "")[:200].replace("\n", " ")
         items.append({
             "source": "linuxdo-api",
-            "title": (p.get("blurb") or "")[:200].replace("\n", " "),
+            "title": blurb,
             "url": f"https://linux.do/t/topic/{p['topic_id']}",
             "description": f"u/{p.get('username', '?')} | {p.get('like_count', 0)} likes",
+            "content": blurb,
+            "content_kind": "excerpt" if blurb else "metadata",
         })
     return items

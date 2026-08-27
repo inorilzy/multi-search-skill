@@ -6,11 +6,17 @@ from typing import Any, Callable, Literal
 from .src.state.key_state import SQLiteKeyManager
 from .src.scrape.scrape import KNOWN_BACKENDS
 from .src.service import (
+    FetchSourceRequest,
     MultiSearchRequest,
+    ReadSourceRequest,
+    SearchWebRequest,
     ScrapeRequest,
     doctor_data,
     list_sources as service_list_sources,
     run_multi_search,
+    run_fetch_source,
+    run_read_source,
+    run_search_web,
     run_scrape,
 )
 from .src.search.search_runner import ALL_SOURCE_NAMES, ROUTE_PROFILES
@@ -36,6 +42,59 @@ def _safe_call(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - tool boundary must not leak tracebacks
         return _error(str(exc), "runtime_error")
 
+def search_web_tool(
+    query: str,
+    route: str | None = None,
+    count: int | None = None,
+    sources: list[str] | None = None,
+    timeout: int | None = None,
+    expand: list[str] | None = None,
+    use_state: bool = True,
+) -> dict[str, Any]:
+    return _safe_call(lambda: run_search_web(SearchWebRequest(
+        query=query,
+        route=route,
+        count=count,
+        sources=sources,
+        timeout=timeout,
+        expand=list(expand) if expand else [],
+        use_state=use_state,
+    )))
+
+
+def fetch_source_tool(
+    source_id: str | None = None,
+    url: str | None = None,
+    backends: list[str] | None = None,
+    max_chars: int = 20_000,
+    timeout: int | None = None,
+    use_state: bool = True,
+) -> dict[str, Any]:
+    return _safe_call(lambda: run_fetch_source(FetchSourceRequest(
+        source_id=source_id,
+        url=url,
+        backends=backends,
+        max_chars=max_chars,
+        timeout=timeout,
+        use_state=use_state,
+    )))
+
+
+def read_source_tool(
+    source_id: str,
+    keyword: str | None = None,
+    offset: int = 0,
+    limit: int = 4_000,
+    use_state: bool = True,
+) -> dict[str, Any]:
+    return _safe_call(lambda: run_read_source(ReadSourceRequest(
+        source_id=source_id,
+        keyword=keyword,
+        offset=offset,
+        limit=limit,
+        use_state=use_state,
+    )))
+
 
 def multi_search_tool(
     query: str,
@@ -45,6 +104,7 @@ def multi_search_tool(
     scrape_top: int | None = None,
     scrape_chars: int | None = None,
     timeout: int | None = None,
+    scrape_timeout: int | None = None,
     expand: list[str] | None = None,
     use_state: bool = True,
     output: Literal["json", "markdown", "both"] = "both",
@@ -63,6 +123,7 @@ def multi_search_tool(
         scrape_top=scrape_top,
         scrape_chars=scrape_chars,
         timeout=timeout,
+        scrape_timeout=scrape_timeout,
         expand=list(expand) if expand else [],
         output=output,
         use_state=use_state,

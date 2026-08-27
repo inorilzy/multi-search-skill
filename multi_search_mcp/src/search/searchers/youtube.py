@@ -53,6 +53,7 @@ def search_youtube(query: str, api_key: str, count: int = 10, timeout: float = 2
             "title": snippet.get("title") or video_id,
             "url": f"https://www.youtube.com/watch?v={video_id}",
             "description": " · ".join(desc_parts),
+            "content_kind": "excerpt" if description else "metadata",
             "video_id": video_id,
             "channel": channel,
             "published_at": published,

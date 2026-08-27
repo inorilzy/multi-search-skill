@@ -1,10 +1,11 @@
 {
   "type": "default",
-  "disabled_sources": ["glm_web", "deepseek_web"],
+  "disabled_sources": [],
   "count": null,
   "counts": {
     "baidu": 10,
     "brave": 10,
+    "parallel": 10,
     "tavily": 10,
     "exa": 10,
     "firecrawl": 10,
@@ -15,12 +16,11 @@
     "github": 10,
     "hackernews": 10,
     "stackoverflow": 10,
-    "twitter": 10,
-    "deepseek_web": 10
+    "twitter": 10
   },
   "serpapi_engine": "google_light",
   "timeout": 60,
-  "scrape_top": 30,
+  "scrape_top": null,
   "no_scrape": false,
   "scrape_chars": 6000,
   "scrape_per_source": 6,

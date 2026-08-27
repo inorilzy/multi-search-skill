@@ -70,6 +70,11 @@ def search_firecrawl(
         }
         if result.get("markdown"):
             item["scraped_content"] = result.get("markdown")
+            item["content_kind"] = "body"
+        elif result.get("description"):
+            item["content_kind"] = "excerpt"
+        else:
+            item["content_kind"] = "metadata"
         items.append(item)
     return items
 

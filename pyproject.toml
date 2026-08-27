@@ -10,6 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
+multi-search = "multi_search_mcp.cli:entrypoint"
 multi-search-mcp = "multi_search_mcp.server:main"
 
 [build-system]

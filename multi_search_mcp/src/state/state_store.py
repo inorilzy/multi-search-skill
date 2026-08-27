@@ -85,6 +85,50 @@ SCHEMA = (
       created_at TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS search_sources (
+      source_id TEXT PRIMARY KEY,
+      response_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      canonical_url TEXT NOT NULL,
+      content TEXT NOT NULL,
+      content_kind TEXT NOT NULL,
+      providers_json TEXT NOT NULL,
+      body_available INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS content_objects (
+      content_hash TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      content_bytes INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      last_access_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_content_objects_last_access
+    ON content_objects (last_access_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS content_sources (
+      source_id TEXT PRIMARY KEY,
+      content_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_content_sources_hash
+    ON content_sources (content_hash)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_content_sources_expires
+    ON content_sources (expires_at)
+    """,
 )
 
 

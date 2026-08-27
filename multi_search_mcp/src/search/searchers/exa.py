@@ -60,7 +60,12 @@ def search_exa(
         }
         if text:
             result["scraped_content"] = text
-        elif highlights_text:
-            result["scraped_content"] = highlights_text
+            result["content_kind"] = "body"
+        elif highlights_text or r.get("summary"):
+            if highlights_text:
+                result["scraped_content"] = highlights_text
+            result["content_kind"] = "excerpt"
+        else:
+            result["content_kind"] = "metadata"
         items.append(result)
     return items

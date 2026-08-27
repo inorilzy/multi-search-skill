@@ -28,7 +28,14 @@
 | `title` | 单条搜索结果标题 | `title` | 展示、去重辅助、抓正文标题 |
 | `url` | 单条搜索结果链接 | `url` | 后续 scrape 的入口 |
 | `content` | 单条搜索结果摘要/snippet/highlight，不是网页全文 | `description` | 快速预览、轻量引用、排序辅助 |
-| `body` / `full_content` | 已抓取或 provider 预取的页面正文/长文本 | `scraped_content` | 专家模式证据、最终综合总结 |
+| `content_kind` | `metadata/content/excerpt/body/answer` 的显式语义 | `content_kind` | capability 驱动的正文/抓取决策 |
+| `body` / `full_content` | 旧 `multi_search` 的兼容正文别名 | `scraped_content` | 兼容调用方；新 SearchHit 不携带正文 |
+| `source_id` | 一次 `response_id` 内 canonical URL 的稳定引用 | `SearchHit.source_id` | `fetch_source` / `read_source` |
+| `provider_ranks` / `rrf_score` | provider 原始名次与跨源 RRF 共识分 | `SearchHit` | 与完成顺序、正文长度解耦的排序 |
+
+`search_web` 只输出紧凑 `SearchHit`。即使 provider 搜索阶段返回了 body，
+公共响应也只给出 `body_available=true` 和 `content_ref`；允许留存时正文进入
+短期 ContentStore，再由 `fetch_source` / `read_source` 按需读取。
 
 ## 通用搜索能力矩阵
 
@@ -38,10 +45,9 @@
 | tavily | `answer`、`results[].title/url/content/raw_content` | 是 | 是 | 是 | deep 是 | `fast` -> `search_depth=fast`；`normal` -> `basic answer`；`deep` -> `advanced answer + raw_content=markdown` | prefetch | 快速、专家 | docs 明确 `content` 是 short description，`raw_content` 才是 cleaned/parsed HTML content。 |
 | exa | `results[].title/url/highlights/text/summary`、Contents API `text/highlights/summary` | 否 | 是 | 是 | 是 | `fast` -> `type=fast + highlights`；`normal` -> `auto + highlights`；`deep` -> `deep + highlights + text` | prefetch | 快速、专家、发现 | Exa 的 highlights 很适合当 `content`；`text` 是正文。官方还支持 LLM summaries，但当前 searcher 没单独产 answer 行。 |
 | brave | `web.results[].title/url/description/extra_snippets` | 否 | 是 | 是 | 否 | `fast` 不开 extra snippets；`normal/deep` 开 `extra_snippets` | candidate | 发现、专家 | docs 的 `description` 和 `extra_snippets` 都是摘要/片段，不是正文。正文需要后续 scrape。 |
+| parallel | `results[].title/url/publish_date/excerpts` | 否 | 是 | 是 | 否 | 固定 Search API `mode=fast` | candidate | 默认、发现、专家 | `excerpts` 是 LLM 优化压缩摘录，不是完整正文；使用 GA `/v1/search`。 |
 | serpapi | `organic_results[].title/link/snippet`、`knowledge_graph.description` | 有时 | 是 | 是 | 否 | `fast` -> `google_light`；`normal/deep` -> 配置 engine | candidate | 快速、新闻、发现 | organic result 的 `link` 归一到 `url`，`snippet` 归一到 `content`；Knowledge Graph 可形成 `summary`。 |
 | firecrawl | `web[].title/url/description/snippet`、`markdown` with `scrapeOptions` | 否 | 是 | 是 | deep 是 | `fast/normal` 只 search；`deep` 加 `scrapeOptions.formats=["markdown"]` | candidate / deep prefetch | 专家、域名搜索 | docs 说明 search 默认返回 title/description/url，加 `scrapeOptions` 才返回 full-page markdown。 |
-| deepseek-web | answer、引用 URL、snippet | 是 | 是 | 是 | 否 | 不适配统一 depth 参数，作为 answer source | candidate | 快速、新闻、答案 | 原生联网回答，适合 fast；严肃任务要抓 URL 正文复核。 |
-| glm-web | answer、引用 URL、web_search_results | 是 | 是 | 是 | 是 | 不适配统一 depth 参数，作为 answer source | prefetch | 快速、新闻、答案 | 本地 glm2api 服务返回总结、引用和部分正文。 |
 
 ## 专用搜索能力矩阵
 
@@ -63,8 +69,10 @@
 
 ## want_content 行为与注意事项
 
-`level`（fast/normal）维度已删除。是否让 provider 在搜索响应里直接返回正文，
-由 route_meta 的 `want_content` 控制，目前只有 `fast` 路由开启（`want_content=True`、`scrape_top=0`）。
+`level`（fast/normal）维度已删除。`want_content` 只服务于兼容入口
+`multi_search`，目前只有 `fast` route 开启。候选入口 `search_web` 固定传
+`want_content=False` 且不运行 scrape stage；读取深度由 `fetch_source` /
+`read_source` 显式表达。
 
 - **作用范围**：`want_content` 只传给支持内联正文的 4 个 provider（baidu / tavily / exa / firecrawl）。其它 searcher 不接受该参数，会被 `call_optional_timeout` 按签名静默忽略。
 - **Tavily**：`want_content=True` 时设 `include_raw_content="markdown"` 回填正文；`search_depth` 固定为 `basic`。
@@ -79,9 +87,9 @@
 > `ROUTE_META` 实际值。原设计稿（收窄 `default`、`expert`、`reddit_oauth` 等）见
 > `docs/route-redesign-plan.md` 顶部「实际落地差异」。
 
-| Route | Provider 组合 | 默认 scrape | 行为目标 |
+| Route | Provider 组合 | `multi_search` 默认 scrape | 行为目标 |
 |---|---|---:|---|
-| `default` / `web` | `brave`, `tavily`, `exa`, `serpapi`, `firecrawl`, `baidu`, `glm_web`, `deepseek_web` | 20 | 默认事实搜索；广 web 召回。 |
+| `default` / `web` | `brave`, `parallel`, `tavily`, `exa`, `serpapi`, `firecrawl`, `baidu` | 20 | 默认事实搜索；广 web 召回。 |
 | `fast` | `baidu`, `tavily`, `firecrawl`, `exa` | 0 | 只跑“搜索 API 自带正文”的 provider（`want_content=True`），不额外抓取。缺 key 时只显示该源的 error row，不跨路由降级。 |
 | `all` | `default` 的源 + `twitter`, `stackoverflow`, `github_repos`, `hackernews`, `zhihu`, `v2ex`, `linuxdo` | 30 | 尽可能广的非视频召回（不含 video）。 |
 | `social` | `twitter` | 0 | 社交反馈、用户评价、讨论热度。 |
@@ -90,6 +98,8 @@
 | `video` | `youtube`, `bilibili` | 0 | 视频/教程搜索。 |
 
 单 provider 调用不再放进 `ROUTE_PROFILES`，统一走 `sources` 参数，例如 `sources=["brave"]` 或 `sources=["github"]`。
+
+上表的 scrape 默认值不适用于 `search_web`；后者对所有 route 都是 0。
 
 ## 直接总结 vs 抓正文后总结
 
@@ -101,7 +111,7 @@
 
 - 延迟低，链路短，失败点少。
 - 很适合新闻速览、当前背景、快速了解一个问题。
-- DeepSeek、GLM、Tavily 可以直接返回答案和引用 URL，不需要再跑完整 scrape。
+- Baidu、Tavily 可以直接返回答案和引用 URL，不需要再跑完整 scrape。
 - 成本更低，也更少遇到网页反爬、正文抽取失败、超时等问题。
 
 风险：
@@ -137,23 +147,21 @@
 
 | 模式 | 默认行为 |
 |---|---|
-| 快速模式 | 优先使用 answer-capable providers。默认展示 provider 总结、引用 URL 和摘要。只有在摘要太弱或需要核实时，轻量抓取 top 1-3 个 URL。 |
-| 专家模式 | 广泛搜索，抓取 top URL 正文，再由主模型基于正文综合。Provider answer 可以作为线索，不作为最终证据。 |
-| 新闻模式 | 不单独设 route；从快速模式开始，在查询词中加入时间/最新语义。用户要求准确性、来源、细节时，改走专家模式。 |
+| 普通 / 快速 | `search_web` 返回候选；只对支撑回答所需的少量 `source_id` 调 `fetch_source` / `read_source`。 |
+| 专家模式 | `search_web` 扩展查询后按需读证据；用户明确要批量正文或一调用聚合时才用 `multi_search(scrape_top=N)`。 |
+| 新闻模式 | 不单独设 route；查询包含时间语义，保留 provider failure diagnostics，并为主要结论读取可点击来源。 |
 
 实践规则：
 
-- 用户问“发生了什么 / 快速总结 / 最新情况 / news”：走 `fast`。
-- 用户问“比较 / 决策 / 验证 / 架构 review / 为什么 / 给证据”：走 `default` 并显式加 `scrape_top=N` 深抓正文（无独立 `expert` route）。
-- 用户问“给我链接 / 找来源”：走 `web`；明确找 repo/Q&A/HN 时走 `dev`。
+- 用户问“发生了什么 / 快速总结 / 最新情况 / news”：`search_web(route=fast)`，再按需读少量来源。
+- 用户问“比较 / 决策 / 验证 / 架构 review / 为什么 / 给证据”：`search_web(route=default, expand=[...])`，对关键 `source_id` 做 fetch/read。
+- 用户问“给我链接 / 找来源”：`search_web(route=web)`；明确找 repo/Q&A/HN 时走 `dev`。
 - 用户问“大家怎么说 / 评价 / 社区反馈 / 踩坑”：走 `social` 或 `cn-community`。
 
-## 待决策问题
+## 已确定边界
 
-| 问题 | 当前倾向 |
+| 问题 | 结论 |
 |---|---|
-| `default` 应该是快速还是专家？ | `default` 是 `web` 的兼容别名；快速和专家必须显式选择。 |
-| DeepSeek 要不要放进 `default`？ | 不建议。DeepSeek 依赖 cookie/token，放进 `fast` / `news` / `answer` 更清晰。 |
-| answer 行是否默认显示？ | 对 `fast`、`news`、`answer`、`deepseek-web`、`glm-web` 应默认显示，不应该要求 `verbose=True`。 |
-| snippet/摘要是否默认显示？ | 快速/新闻/答案 route 应默认显示。专家模式可以保持 URL 清单 + scraped content。 |
-| DeepSeek token 要不要进入 key 轮换？ | 暂时不要假装它是普通 API key。应把浏览器态 session/cookie 和 API key pool 分开建模。 |
+| route 是否表达读取深度？ | 否。route 选源；`search_web`、`fetch_source`、`read_source` 表达逐步读取。 |
+| 何时使用批量 scrape？ | 仅显式深度/批量需求走兼容 `multi_search(scrape_top=N)`。 |
+| provider body 如何进入上下文？ | 受 retention policy 约束写入短期 ContentStore，再按 `source_id` 局部读取。 |

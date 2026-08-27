@@ -65,6 +65,7 @@ def search_zhihu(query: str, access_secret: str, count: int = 10, timeout: float
             "title": item.get("Title", ""),
             "url": item.get("Url", ""),
             "description": description[:300],
+            "content_kind": "excerpt" if description else "metadata",
             "author_name": item.get("AuthorName", ""),
             "vote_up_count": item.get("VoteUpCount", 0),
             "comment_count": item.get("CommentCount", 0),

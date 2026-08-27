@@ -4,17 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..search.capabilities import ProviderKind, ScrapePolicy, get_capability_optional
 from ..support.dedup import _norm_url, deduplicate, result_to_scrape, split_by_content
 from ..state.key_state import BasicKeyManager
 from ..state.keys import jina_config_keys
 from ..support.models import as_dicts
-
-
-PREFER_SCRAPE_SOURCES = {
-    "brave", "serpapi", "github-repos", "firecrawl", "v2ex", "zhihu", "reddit", "hackernews", "stackoverflow",
-}
-
-VIDEO_SOURCES = {"youtube", "bilibili"}
 
 
 @dataclass
@@ -50,14 +44,20 @@ class ScrapePlan:
 def has_preferred_scrape_source(item: dict) -> bool:
     sources = {item.get("source")}
     sources.update(item.get("also_from") or [])
-    return bool(sources & PREFER_SCRAPE_SOURCES)
+    for source in sources:
+        capability = get_capability_optional(source)
+        if capability and capability.scrape_policy == ScrapePolicy.CANDIDATE:
+            return True
+    return False
 
 
 def is_video_result(item: dict) -> bool:
     sources = {item.get("source")}
     sources.update(item.get("also_from") or [])
-    if sources & VIDEO_SOURCES:
-        return True
+    for source in sources:
+        capability = get_capability_optional(source)
+        if capability and capability.kind == ProviderKind.VIDEO_SEARCHER:
+            return True
     url = str(item.get("url") or "").lower()
     return any(host in url for host in ("youtube.com/", "youtu.be/", "bilibili.com/"))
 
@@ -132,7 +132,7 @@ def plan_scrapes(
     content_urls = {
         _norm_url(item.get("url", ""))
         for item in with_content
-        if item.get("url") and item.get("source") != "twitter"
+        if item.get("url")
     }
     deduped_without_content, _ = deduplicate(without_content)
     final_without_content = deduped_without_content

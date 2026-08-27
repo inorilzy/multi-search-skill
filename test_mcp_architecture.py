@@ -37,7 +37,7 @@ class PluginRouteRedesignTests(unittest.TestCase):
     def test_routes_are_semantic_profiles_not_single_provider_aliases(self):
         self.assertEqual(
             resolve_route("default"),
-            {"brave", "tavily", "exa", "serpapi", "firecrawl", "baidu", "glm_web", "deepseek_web"},
+            {"brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"},
         )
         self.assertEqual(resolve_route("social"), {"twitter"})
         self.assertEqual(resolve_route("dev"), {"stackoverflow", "github_repos", "hackernews"})
@@ -74,20 +74,21 @@ class PluginRouteRedesignTests(unittest.TestCase):
         self.assertIn("fast", data["routes"])
         self.assertNotIn("levels", data)
         self.assertIn("brave", data["sources"])
+        self.assertIn("parallel", data["sources"])
         self.assertIn("github_repos", data["sources"])
         self.assertNotIn("brave", data["routes"])
 
     def test_formatter_shows_answers_and_degradation_when_route_requests_it(self):
         output = format_results(
             [
-                {"source": "deepseek_web_answer", "answer": "直接总结"},
+                {"source": "tavily_answer", "answer": "直接总结"},
                 {"source": "exa", "title": "Example", "url": "https://example.com", "description": "摘要"},
             ],
             "q",
             show_answer=True,
             degradation={"message": "fast degraded to tavily, exa"},
         )
-        self.assertIn("DeepSeek Web Answer", output)
+        self.assertIn("Tavily AI Answer", output)
         self.assertIn("直接总结", output)
         self.assertIn("fast degraded to tavily, exa", output)
         self.assertIn("摘要", output)
@@ -134,6 +135,7 @@ class PluginKeyStateTests(unittest.TestCase):
                     backends=("exa",),
                     exa_keys=["bad", "good"],
                     key_manager=manager,
+                    url_resolver=lambda _host: ["93.184.216.34"],
                 )
 
             self.assertNotIn("error", result)
@@ -261,6 +263,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 "https://example.com",
                 primary="firecrawl",
                 backends=("firecrawl",),
+                url_resolver=lambda _host: ["93.184.216.34"],
             )
 
         self.assertEqual(result["via"], "firecrawl")
@@ -307,6 +310,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 backends=("exa",),
                 exa_keys=["ek"],
                 scrape_chars=2048,
+                url_resolver=lambda _host: ["93.184.216.34"],
             )
 
         self.assertEqual(result["via"], "exa")
@@ -374,6 +378,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     jina_keys=["jk1", "jk2"],
                     jina_prefer_keyed=True,
                     key_manager=manager,
+                    url_resolver=lambda _host: ["93.184.216.34"],
                 )
 
             self.assertNotIn("error", result)
@@ -443,6 +448,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     backends=("jina", "tavily"),
                     tavily_keys=["tk"],
                     site_memory=memory,
+                    url_resolver=lambda _host: ["93.184.216.34"],
                 )
 
             self.assertEqual(result["via"], "tavily")
@@ -466,6 +472,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 primary="tavily",
                 backends=("jina", "tavily"),
                 tavily_keys=["tk"],
+                url_resolver=lambda _host: ["93.184.216.34"],
             )
 
         self.assertEqual(result["via"], "tavily")
@@ -496,6 +503,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     backends=("jina", "tavily"),
                     tavily_keys=["tk"],
                     site_memory=memory,
+                    url_resolver=lambda _host: ["93.184.216.34"],
                 )
 
             self.assertEqual(result["via"], "tavily")
@@ -523,7 +531,7 @@ class PluginServiceConfigTests(unittest.TestCase):
                 captured["counts"] = config.counts
 
             def run(self, query):
-                return [{"source": "deepseek_web_answer", "answer": "fast answer"}]
+                return [{"source": "tavily_answer", "answer": "fast answer"}]
 
         def fake_scrape_stage(all_results, **kwargs):
             captured["scrape_top"] = kwargs["scrape_top"]
@@ -540,7 +548,7 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(captured["timeout"], 45)
         self.assertEqual(captured["counts"]["tavily"], 10)
         self.assertEqual(captured["scrape_top"], 0)
-        self.assertIn("DeepSeek Web Answer", response["markdown"])
+        self.assertIn("Tavily AI Answer", response["markdown"])
         self.assertEqual(response["diagnostics"]["route_meta"]["scrape_top"], 0)
 
     def test_fast_route_is_echoed_in_diagnostics(self):
@@ -878,9 +886,9 @@ class PluginServiceConfigTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
-            run_multi_search(MultiSearchRequest(query="q", sources=["github", "deepseek-web"], use_state=False))
+            run_multi_search(MultiSearchRequest(query="q", sources=["github", "reddit-browser"], use_state=False))
 
-        self.assertEqual(captured["sources"], {"github_repos", "deepseek_web"})
+        self.assertEqual(captured["sources"], {"github_repos", "reddit_browser"})
 
     def test_expand_query_thread_pool_is_capped(self):
         captured: dict[str, int] = {}
@@ -956,8 +964,8 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(response["diagnostics"]["route_degradation"]["route"], "default")
 
     def test_public_source_name_success_prevents_false_degradation(self):
-        # Regression: result rows use public names (deepseek-web) while
-        # primary_success_sources uses internal names (deepseek_web). A genuine
+        # Regression: result rows use public names (github-repos) while
+        # primary_success_sources uses internal names (github_repos). A genuine
         # success must normalize-match so degradation does not falsely fire.
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
@@ -965,16 +973,16 @@ class PluginServiceConfigTests(unittest.TestCase):
 
             def run(self, query):
                 return [
-                    {"source": "brave", "error": "down"},
-                    {"source": "tavily", "error": "down"},
-                    {"source": "deepseek-web", "title": "ok", "url": "https://x.example/a", "description": "d"},
+                    {"source": "stackoverflow", "error": "down"},
+                    {"source": "hackernews", "error": "down"},
+                    {"source": "github-repos", "title": "ok", "url": "https://x.example/a", "description": "d"},
                 ]
 
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
              mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=self._fake_scrape_stage):
-            response = run_multi_search(MultiSearchRequest(query="q", route="default", use_state=False))
+            response = run_multi_search(MultiSearchRequest(query="q", route="dev", use_state=False))
 
         self.assertIsNone(response["diagnostics"]["route_degradation"])
 
@@ -1155,11 +1163,11 @@ class PluginDisabledSourcesTests(unittest.TestCase):
                 return []
 
         self._run(
-            {"disabled_sources": ["deepseek-web"]},
+            {"disabled_sources": ["baidu-ai-search"]},
             MultiSearchRequest(query="q", route="default", use_state=False),
             FakeRunner,
         )
-        self.assertNotIn("deepseek_web", captured["sources"])
+        self.assertNotIn("baidu", captured["sources"])
 
     def test_unknown_disabled_source_is_invalid_request(self):
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"disabled_sources": ["not-a-source"]}), \
@@ -1189,7 +1197,7 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         # primary query still has an active source and expand queries do not
         # raise even if their set shrinks.
         response = self._run(
-            {"disabled_sources": ["brave", "tavily", "exa", "serpapi", "firecrawl", "glm_web", "deepseek_web"]},
+            {"disabled_sources": ["brave", "parallel", "tavily", "exa", "serpapi", "firecrawl"]},
             MultiSearchRequest(query="q", route="default", expand=["q2"], use_state=False),
             FakeRunner,
         )
@@ -1253,6 +1261,34 @@ class PluginEntryLayerTests(unittest.TestCase):
         self.assertNotIn("error", result)
         self.assertEqual(captured["route"], "default")
         self.assertEqual(result["route"], "default")
+
+    def test_multi_search_tool_preserves_config_timeout_precedence(self):
+        captured = {}
+
+        class FakeRunner:
+            def __init__(self, config, providers, route_resolver=None, key_manager=None):
+                captured["timeout"] = config.timeout
+
+            def run(self, query):
+                return []
+
+        def fake_scrape_stage(all_results, **kwargs):
+            captured["scrape_timeout"] = kwargs["scrape_timeout"]
+            return {
+                "with_content": [], "final_without_content": [], "passthrough": [],
+                "raw_counts": {}, "items_to_scrape": [], "scrape_errors": [], "scrapes": [],
+            }
+
+        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"timeout": 60, "scrape_timeout": 60}), \
+             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
+             mock.patch("multi_search_mcp.src.service._run_scrape_stage", side_effect=fake_scrape_stage):
+            result = tools.multi_search_tool("q", timeout=None, scrape_timeout=None, use_state=False)
+
+        self.assertNotIn("error", result)
+        self.assertEqual(captured["timeout"], 60)
+        self.assertEqual(captured["scrape_timeout"], 60)
 
     def test_multi_search_empty_query_returns_structured_error(self):
         result = tools.multi_search_tool("", use_state=False)

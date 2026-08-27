@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,8 @@ from .search.search_runner import (
     available_routes,
     normalize_source_name,
 )
+from .search.candidate import canonicalize_url, fuse_search_results, make_source_id
+from .search.capabilities import retention_policy_for_sources
 from .search.resolve import (
     COUNT_CAPS,
     DEFAULT_COUNTS,
@@ -32,7 +35,10 @@ from .search.resolve import (
     resolve_search_plan,
 )
 from .support.secrets import scrub_secrets
+from .support.url_security import validate_public_http_url
+from .state.content_store import ContentStore, ContentStoreError
 from .state.site_memory import SiteScraperMemory
+from .state.source_registry import SourceRegistry
 from .state.state_store import StateStore
 
 
@@ -74,6 +80,394 @@ class ScrapeRequest:
     timeout: int | None = None
     output: str = "both"
     use_state: bool = True
+
+
+@dataclass
+class SearchWebRequest:
+    query: str
+    route: str | None = None
+    count: int | None = None
+    sources: list[str] | None = None
+    timeout: int | None = None
+    config_path: str | None = None
+    expand: list[str] = field(default_factory=list)
+    use_state: bool = True
+
+
+@dataclass
+class FetchSourceRequest:
+    source_id: str | None = None
+    url: str | None = None
+    backends: list[str] | None = None
+    max_chars: int = 20_000
+    timeout: int | None = None
+    config_path: str | None = None
+    use_state: bool = True
+
+
+@dataclass
+class ReadSourceRequest:
+    source_id: str
+    keyword: str | None = None
+    offset: int = 0
+    limit: int = 4_000
+    use_state: bool = True
+
+
+def run_read_source(
+    request: ReadSourceRequest | dict,
+    *,
+    state_store: StateStore | None = None,
+) -> dict:
+    """Read a bounded slice from ContentStore without accessing the network."""
+    if isinstance(request, dict):
+        request = ReadSourceRequest(**request)
+    if not request.source_id:
+        raise ValueError("source_id is required")
+    if not request.use_state:
+        raise ValueError("read_source requires state")
+    store = state_store or StateStore()
+    cached = ContentStore(store).get(request.source_id)
+    if cached is None:
+        raise ValueError(
+            "cached content is missing or expired; call fetch_source first"
+        )
+
+    body = str(cached["content"])
+    offset = max(0, int(request.offset))
+    limit = max(1, min(int(request.limit), 8_000))
+    match_offset = None
+    if request.keyword:
+        match_offset = body.lower().find(str(request.keyword).lower())
+        if match_offset < 0:
+            raise ValueError("keyword was not found in cached content")
+        start = min(len(body), match_offset + offset)
+    else:
+        start = min(len(body), offset)
+    end = min(len(body), start + limit)
+    return {
+        "source_id": request.source_id,
+        "content": body[start:end],
+        "start": start,
+        "end": end,
+        "match_offset": match_offset,
+        "has_more": end < len(body),
+        "next_offset": (offset + (end - start)) if end < len(body) else None,
+        "content_length": len(body),
+        "content_hash": cached["content_hash"],
+        "expires_at": cached["expires_at"],
+        "untrusted_content": True,
+    }
+
+
+def run_fetch_source(
+    request: FetchSourceRequest | dict,
+    *,
+    state_store: StateStore | None = None,
+    scraper=None,
+    keys: dict | None = None,
+    config: dict | None = None,
+    url_resolver=None,
+) -> dict:
+    """Fetch one registered source and persist its untrusted body briefly."""
+    if isinstance(request, dict):
+        request = FetchSourceRequest(**request)
+    if bool(request.source_id) == bool(request.url):
+        raise ValueError("provide exactly one of source_id or url")
+    if not request.use_state and request.source_id:
+        raise ValueError("source_id fetch requires state; provide an explicit URL")
+
+    store = (state_store or StateStore()) if request.use_state else None
+    source = SourceRegistry(store).get(request.source_id) if store and request.source_id else None
+    if request.source_id and source is None:
+        raise ValueError(
+            "source_id is unknown or expired; call search_web again before fetch_source"
+        )
+    url = str(request.url or source["url"])
+    validate_public_http_url(url, resolver=url_resolver)
+    source_providers = list((source or {}).get("providers") or ["direct"])
+    retention = retention_policy_for_sources(source_providers)
+    source_id = str(request.source_id or "")
+    if not source_id:
+        response_id = f"resp_{uuid.uuid4().hex}"
+        canonical_url = canonicalize_url(url)
+        source_id = make_source_id(response_id, canonical_url)
+        if store is not None:
+            SourceRegistry(
+                store, ttl_seconds=retention.max_ttl_seconds
+            ).register(response_id, [{
+                "source_id": source_id,
+                "title": url,
+                "url": url,
+                "canonical_url": canonical_url,
+                "content": "",
+                "content_kind": "metadata",
+                "providers": ["direct"],
+                "body_available": False,
+            }])
+        source = {"providers": ["direct"]}
+    max_chars = max(1, min(int(request.max_chars), 20_000))
+
+    content_store = ContentStore(store) if store is not None else None
+    cached = content_store.get(source_id) if content_store and source_id else None
+    if cached is not None and not retention.persist_body:
+        content_store.delete_source(source_id)
+        cached = None
+    if cached is not None:
+        return {
+            "source_id": source_id,
+            "url": url,
+            "body": str(cached["content"])[:max_chars],
+            "content_hash": cached["content_hash"],
+            "expires_at": cached["expires_at"],
+            "backend": "content-store",
+            "cache_hit": True,
+            "persisted": True,
+            "truncated": len(str(cached["content"])) > max_chars,
+            "untrusted_content": True,
+        }
+
+    resolved_config = (
+        _load_config_safe(request.config_path) if config is None else dict(config)
+    )
+    scrape_response = run_scrape(
+        ScrapeRequest(
+            url=url,
+            backends=request.backends,
+            scrape_chars=max_chars,
+            timeout=request.timeout,
+            output="json",
+            use_state=request.use_state,
+        ),
+        state_store=store,
+        scraper=scraper,
+        keys=keys,
+        config=resolved_config,
+        url_resolver=url_resolver,
+    )
+    result = scrape_response["result"]
+    if result.get("error"):
+        raise ValueError(str(result["error"]))
+    body = str(result.get("markdown") or "")
+    if not body:
+        raise ValueError("fetch_source returned empty body")
+    stored = (
+        ContentStore(
+            store, ttl_seconds=retention.max_ttl_seconds
+        ).put(source_id, body)
+        if content_store and source_id and retention.persist_body
+        else None
+    )
+    return {
+        "source_id": source_id or None,
+        "url": url,
+        "body": body[:max_chars],
+        "content_hash": stored.get("content_hash") if stored else None,
+        "expires_at": stored.get("expires_at") if stored else None,
+        "backend": str(result.get("via") or "unknown"),
+        "cache_hit": False,
+        "persisted": stored is not None,
+        "truncated": len(body) > max_chars,
+        "untrusted_content": True,
+    }
+
+
+def run_search_web(
+    request: SearchWebRequest | dict,
+    *,
+    providers: dict | None = None,
+    keys: dict | None = None,
+    config: dict | None = None,
+    state_store: StateStore | None = None,
+) -> dict:
+    """Run candidate-only search and return compact, RRF-ranked SearchHits."""
+    if isinstance(request, dict):
+        request = SearchWebRequest(**request)
+    if not request.query:
+        raise ValueError("query is required")
+    resolved_config = (
+        _load_config_safe(request.config_path) if config is None else dict(config)
+    )
+    queries = [request.query] + list(
+        request.expand
+        or config_list(resolved_config, "expand")
+        or config_list(resolved_config, "expand_queries")
+    )
+
+    planning_request = MultiSearchRequest(
+        query=request.query,
+        route=request.route,
+        count=request.count,
+        sources=request.sources,
+        scrape_top=0,
+        timeout=request.timeout,
+        output="json",
+        config_path=request.config_path,
+        use_state=request.use_state,
+    )
+    plan = resolve_search_plan(planning_request, resolved_config)
+    runtime_keys = load_keys() if keys is None else dict(keys)
+    store = (state_store or StateStore()) if request.use_state else None
+    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
+
+    if providers is None:
+        from .search.registry import build_provider_registry
+
+        providers = build_provider_registry()
+    base_sources, active_sources = resolve_active_sources(
+        plan.route, plan.sources, plan.disabled_sources
+    )
+    if base_sources and not active_sources:
+        raise ValueError(
+            f"all selected sources are disabled: {', '.join(sorted(base_sources))}"
+        )
+
+    def route_resolver(_route):
+        _selected, active = resolve_active_sources(
+            _route, plan.sources, plan.disabled_sources
+        )
+        return active
+
+    runner = SearchRunner(
+        SearchRunnerConfig(
+            plan.route,
+            plan.effective_counts,
+            plan.timeout,
+            plan.serpapi_engine,
+            runtime_keys,
+            False,
+        ),
+        providers,
+        route_resolver=route_resolver,
+        key_manager=key_manager,
+    )
+    query_results: dict[str, list[dict]] = {}
+    if len(queries) == 1:
+        query_results[queries[0]] = runner.run(queries[0])
+    else:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(len(queries), MAX_EXPAND_CONCURRENCY)
+        ) as pool:
+            futures = {pool.submit(runner.run, query): query for query in queries}
+            for future in concurrent.futures.as_completed(futures):
+                query = futures[future]
+                try:
+                    query_results[query] = future.result()
+                except Exception as exc:  # provider boundary diagnostic
+                    query_results[query] = [{
+                        "source": "multi-search",
+                        "error": scrub_secrets(exc, runtime_keys),
+                    }]
+    query_runs = [(query, query_results[query]) for query in queries]
+    rows = [row for _query, query_rows in query_runs for row in query_rows]
+    failures = sorted(
+        (
+            {
+                "source": str(row.get("source") or "?"),
+                "query": query,
+                "error": str(row.get("error") or ""),
+            }
+            for query, query_rows in query_runs
+            for row in query_rows
+            if row.get("error")
+        ),
+        key=lambda row: (row["query"], row["source"], row["error"]),
+    )
+    response_id = f"resp_{uuid.uuid4().hex}"
+    limit = request.count if request.count is not None else int(plan.route_defaults["count"])
+    hits = fuse_search_results(
+        query_runs, response_id=response_id, limit=limit
+    )
+    if store is not None:
+        for hit in hits:
+            retention = retention_policy_for_sources(list(hit.get("providers") or []))
+            if not retention.persist_search_result:
+                continue
+            registry_hit = dict(hit)
+            if not retention.persist_content:
+                registry_hit["content"] = ""
+            SourceRegistry(
+                store, ttl_seconds=retention.max_ttl_seconds
+            ).register(response_id, [registry_hit])
+    content_store_errors = []
+    if store is not None:
+        bodies: dict[str, list[tuple[str, str]]] = {}
+        for _query, query_rows in query_runs:
+            for row in query_rows:
+                body = str(row.get("scraped_content") or "")
+                if row.get("content_kind") != "body" or not body or not row.get("url"):
+                    continue
+                bodies.setdefault(canonicalize_url(str(row["url"])), []).append(
+                    (str(row.get("source") or ""), body)
+                )
+        for hit in hits:
+            retention = retention_policy_for_sources(list(hit.get("providers") or []))
+            if not retention.persist_body:
+                continue
+            candidates = bodies.get(str(hit["canonical_url"])) or []
+            if not candidates:
+                continue
+            _provider, body = sorted(
+                candidates, key=lambda item: (-len(item[1]), item[0], item[1])
+            )[0]
+            try:
+                ContentStore(
+                    store, ttl_seconds=retention.max_ttl_seconds
+                ).put(str(hit["source_id"]), body)
+            except ContentStoreError as exc:
+                content_store_errors.append({
+                    "source_id": hit["source_id"],
+                    "error": str(exc),
+                })
+    return {
+        "query": request.query,
+        "route": plan.route,
+        "response_id": response_id,
+        "results": hits,
+        "provider_status": _query_provider_status(query_runs),
+        "errors": failures,
+        "diagnostics": {
+            "raw_result_count": len(rows),
+            "candidate_count": len(hits),
+            "queries": queries,
+            "provider_failures": failures,
+            "content_store_errors": content_store_errors,
+            "route_sources": sorted(base_sources),
+            "disabled_sources": sorted(plan.disabled_sources),
+            "active_sources": sorted(active_sources),
+            "state_path": str(store.path) if store else None,
+        },
+    }
+
+
+def _query_provider_status(
+    query_runs: list[tuple[str, list[dict]]],
+) -> list[dict]:
+    sources = sorted({
+        str(row.get("source") or "?")
+        for _query, rows in query_runs
+        for row in rows
+    })
+    output = []
+    for source in sources:
+        hits = 0
+        errors = []
+        for query, rows in query_runs:
+            for row in rows:
+                if str(row.get("source") or "?") != source:
+                    continue
+                if row.get("error"):
+                    errors.append({"query": query, "error": str(row["error"])})
+                elif not is_empty_result(row) and row.get("url"):
+                    hits += 1
+        status = "partial" if hits and errors else "error" if errors else "ok"
+        output.append({
+            "source": source,
+            "status": status,
+            "raw_hits": hits,
+            "errors": errors,
+        })
+    return output
 
 
 def run_multi_search(request: MultiSearchRequest | dict) -> dict:
@@ -215,27 +609,37 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     return response
 
 
-def run_scrape(request: ScrapeRequest | dict) -> dict:
+def run_scrape(
+    request: ScrapeRequest | dict,
+    *,
+    state_store: StateStore | None = None,
+    scraper=None,
+    keys: dict | None = None,
+    config: dict | None = None,
+    url_resolver=None,
+) -> dict:
     if isinstance(request, dict):
         request = ScrapeRequest(**request)
-    config = _load_config_safe(None)
-    keys = load_keys()
-    timeout = _resolve_nonnegative(request.timeout, config, "scrape_timeout", 60)
-    scrape_chars = max(1, _resolve_int(request.scrape_chars, config, "scrape_chars", 6000))
-    store = StateStore() if request.use_state else None
+    resolved_config = _load_config_safe(None) if config is None else dict(config)
+    runtime_keys = load_keys() if keys is None else dict(keys)
+    timeout = _resolve_nonnegative(request.timeout, resolved_config, "scrape_timeout", 60)
+    scrape_chars = max(1, _resolve_int(request.scrape_chars, resolved_config, "scrape_chars", 6000))
+    store = (state_store or StateStore()) if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
     site_memory = SiteScraperMemory(store) if store else None
-    result = scrape_url_smart(
+    scraper_fn = scraper or scrape_url_smart
+    result = scraper_fn(
         request.url,
         timeout=timeout,
         backends=tuple(request.backends) if request.backends else None,
-        jina_keys=[candidate.key for candidate in key_manager.candidates("jina", jina_config_keys(keys.get("jina")))],
-        exa_keys=[candidate.key for candidate in key_manager.candidates("exa", keys.get("exa"))],
-        firecrawl_keys=[candidate.key for candidate in key_manager.candidates("firecrawl", keys.get("firecrawl"))],
-        tavily_keys=[candidate.key for candidate in key_manager.candidates("tavily", keys.get("tavily"))],
+        jina_keys=[candidate.key for candidate in key_manager.candidates("jina", jina_config_keys(runtime_keys.get("jina")))],
+        exa_keys=[candidate.key for candidate in key_manager.candidates("exa", runtime_keys.get("exa"))],
+        firecrawl_keys=[candidate.key for candidate in key_manager.candidates("firecrawl", runtime_keys.get("firecrawl"))],
+        tavily_keys=[candidate.key for candidate in key_manager.candidates("tavily", runtime_keys.get("tavily"))],
         site_memory=site_memory,
         key_manager=key_manager,
         scrape_chars=scrape_chars,
+        url_resolver=url_resolver,
     )
     response = {
         "url": request.url,
@@ -342,9 +746,9 @@ def _route_degradation(route: str, results: list[dict], source_names: set[str] |
     if not primary_sources:
         return None
     rows = as_dicts(results)
-    # Result rows carry public source names (e.g. ``deepseek-web``,
-    # ``github-repos``) while ``primary_success_sources`` uses internal names
-    # (``deepseek_web``). Normalize before comparing so a genuine primary
+    # Result rows carry public source names (e.g. ``github-repos``) while
+    # ``primary_success_sources`` uses internal names (``github_repos``).
+    # Normalize before comparing so a genuine primary
     # success is not misread as a degradation.
     primary_sources = {normalize_source_name(src) for src in primary_sources}
     has_primary_success = any(

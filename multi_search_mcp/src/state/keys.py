@@ -17,6 +17,7 @@ class KeysError(ValueError):
 KEY_ENV_PAIRS = (
     ("BRAVE_SEARCH_API_KEY", "brave"),
     ("BRAVE_API_KEY", "brave"),
+    ("PARALLEL_API_KEY", "parallel"),
     ("BAIDU_QIANFAN_API_KEY", "baidu"),
     ("QIANFAN_API_KEY", "baidu"),
     ("APPBUILDER_API_KEY", "baidu"),
@@ -33,10 +34,6 @@ KEY_ENV_PAIRS = (
     ("YOUTUBE_API_KEY", "youtube"),
     ("BILIBILI_COOKIE", "bilibili"),
     ("TWITTER_COOKIES_PATH", "twitter_cookies"),
-    ("DEEPSEEK_WEB_TOKEN", "deepseek_web_token"),
-    ("DEEPSEEK_USER_TOKEN", "deepseek_web_token"),
-    ("DEEPSEEK_WEB_COOKIE", "deepseek_web_cookie"),
-    ("DEEPSEEK_WEB_AUTH_EXPORT", "deepseek_web_auth_export"),
     ("REDDIT_COOKIE_EXPORT", "reddit_cookie_export"),
     ("REDDIT_BROWSER_PROFILE", "reddit_browser_profile"),
 )
@@ -143,16 +140,6 @@ def load_keys(
             keys[key_name] = val
             if env_name == "TWITTER_COOKIES_PATH":
                 keys["twitter"] = val
-    deepseek_web = keys.get("deepseek_web") if isinstance(keys.get("deepseek_web"), dict) else {}
-    if keys.get("deepseek_web_token") or keys.get("deepseek_web_cookie") or keys.get("deepseek_web_auth_export"):
-        merged = dict(deepseek_web)
-        if keys.get("deepseek_web_token"):
-            merged["token"] = keys.get("deepseek_web_token")
-        if keys.get("deepseek_web_cookie"):
-            merged["cookie"] = keys.get("deepseek_web_cookie")
-        if keys.get("deepseek_web_auth_export"):
-            merged["auth_export"] = keys.get("deepseek_web_auth_export")
-        keys["deepseek_web"] = merged
     reddit_browser = keys.get("reddit_browser") if isinstance(keys.get("reddit_browser"), dict) else {}
     if keys.get("reddit_cookie_export") or keys.get("reddit_browser_profile"):
         merged = dict(reddit_browser)

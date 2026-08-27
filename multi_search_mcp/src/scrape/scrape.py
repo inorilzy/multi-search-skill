@@ -2,6 +2,11 @@
 import time
 
 from ..support.auth import is_key_retryable_error
+from ..support.url_security import (
+    UrlSecurityError,
+    validate_redirect_target,
+    validate_scrape_url,
+)
 from ..state.key_state import KeyCandidate, key_fingerprint, key_id_for
 from .scrapers import (
     _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
@@ -127,6 +132,13 @@ def _scrape_with_optional_key_pool(provider: str, keys: list[str], call, deadlin
     return call("")
 
 
+def _prepare_scrape_target(url: str, *, resolver=None) -> tuple[str, str]:
+    safe_url = validate_scrape_url(url, resolver=resolver)
+    target_url = _rewrite_for_clean_scrape(safe_url)
+    validate_redirect_target(target_url, resolver=resolver)
+    return safe_url, target_url
+
+
 def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
                      exa_key: str = "", tavily_key: str = "",
@@ -142,7 +154,8 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      site_memory=None,
                      key_manager=None,
                      scrape_chars: int | None = None,
-                     jina_prefer_keyed: bool = False) -> dict:
+                     jina_prefer_keyed: bool = False,
+                     url_resolver=None) -> dict:
     """Scrape `url` starting with `primary` backend, falling back through the others."""
 
     def _remaining_timeout() -> float:
@@ -152,8 +165,6 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         if remaining <= 0:
             return 0.0
         return min(float(timeout), max(0.1, remaining))
-
-    policy = _resolve_scrape_policy(url, backends)
 
     # When a caller forces an explicit backend list, surface configuration
     # mistakes eagerly instead of letting them collapse into the generic
@@ -170,29 +181,35 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             if backend in KEYED_BACKENDS and not key_pool_for[backend]:
                 return {"url": url, "error": f"missing key for backend: {backend}"}
 
+    try:
+        safe_url, scrape_target = _prepare_scrape_target(url, resolver=url_resolver)
+    except UrlSecurityError as exc:
+        return {"url": url, "error": str(exc)}
+
+    policy = _resolve_scrape_policy(safe_url, backends)
+
     def _call(backend: str) -> dict | None:
-        scrape_url = _rewrite_for_clean_scrape(url)
         call_timeout = _remaining_timeout()
         if call_timeout <= 0:
-            return {"url": scrape_url, "error": "scrape deadline exceeded"}
+            return {"url": scrape_target, "error": "scrape deadline exceeded"}
         if backend == "jina":
             key_pool = list(jina_keys or ([] if not jina_key else [jina_key]))
 
             def _scrape_anonymous() -> dict:
                 if _jina_anonymous_cooling_down():
                     return {
-                        "url": scrape_url,
+                        "url": scrape_target,
                         "error": "Jina: anonymous rate limit cooldown active",
                         "rate_limited": True,
                     }
-                result = scrape_url_jina(scrape_url, "", timeout=_remaining_timeout(), **policy["jina"])
+                result = scrape_url_jina(scrape_target, "", timeout=_remaining_timeout(), **policy["jina"])
                 if "error" in result and result.get("rate_limited"):
                     _record_jina_anonymous_rate_limit()
                 return result
 
             def _scrape_keyed(key: str) -> dict:
                 return scrape_url_jina(
-                    scrape_url,
+                    scrape_target,
                     key,
                     timeout=_remaining_timeout(),
                     skip_anonymous=True,
@@ -229,13 +246,13 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                 tavily_options = policy["tavily"]
                 if tavily_options:
                     return scrape_url_tavily(
-                        scrape_url,
+                        scrape_target,
                         key,
                         timeout=_remaining_timeout(),
                         deadline=deadline,
                         **tavily_options,
                     )
-                return scrape_url_tavily(scrape_url, key, timeout=_remaining_timeout(), deadline=deadline)
+                return scrape_url_tavily(scrape_target, key, timeout=_remaining_timeout(), deadline=deadline)
             return _scrape_with_key_pool(
                 "tavily",
                 candidates,
@@ -248,7 +265,7 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             return _scrape_with_key_pool(
                 "exa",
                 candidates,
-                lambda key: scrape_url_exa(scrape_url, key, timeout=_remaining_timeout(), max_chars=scrape_chars),
+                lambda key: scrape_url_exa(scrape_target, key, timeout=_remaining_timeout(), max_chars=scrape_chars),
                 deadline=deadline,
                 key_manager=key_manager,
             )
@@ -257,7 +274,7 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             return _scrape_with_optional_key_pool(
                 "firecrawl",
                 candidates,
-                lambda key: scrape_url_firecrawl(scrape_url, key, timeout=_remaining_timeout()),
+                lambda key: scrape_url_firecrawl(scrape_target, key, timeout=_remaining_timeout()),
                 deadline=deadline,
                 key_manager=key_manager,
             )
@@ -288,12 +305,12 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         blocked = policy["blocked"]
         if blocked and blocked(result.get("markdown") or ""):
             last = {
-                "url": url,
+                "url": safe_url,
                 "error": f"{backend}: {policy['name'].title()} blocked content fetch",
             }
             if site_memory is not None:
                 site_memory.record_attempt(ScrapeAttempt(
-                    url=url,
+                    url=safe_url,
                     scraper=backend,
                     success=False,
                     content_length=0,
@@ -303,10 +320,10 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                 ))
             continue
         if "error" not in result:
-            result["url"] = url
+            result["url"] = safe_url
             if site_memory is not None:
                 site_memory.record_attempt(ScrapeAttempt(
-                    url=url,
+                    url=safe_url,
                     scraper=backend,
                     success=True,
                     content_length=len(result.get("markdown") or ""),
@@ -315,11 +332,11 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             return result
         if site_memory is not None:
             site_memory.record_attempt(ScrapeAttempt(
-                url=url,
+                url=safe_url,
                 scraper=backend,
                 success=False,
                 content_length=len(result.get("markdown") or ""),
                 error_message=str(result.get("error") or ""),
                 elapsed_ms=elapsed_ms,
             ))
-    return last or {"url": url, "error": "no scrape backend available"}
+    return last or {"url": safe_url, "error": "no scrape backend available"}

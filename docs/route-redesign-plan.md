@@ -10,8 +10,8 @@
 > 部分保留作设计背景，不再逐行更新。
 >
 > **实际落地差异：**
-> - `default` / `web` 实际是 `brave + tavily + exa + serpapi + firecrawl + baidu + glm_web + deepseek_web`（未按原稿收窄到 4 源）。
-> - `fast` 实际是 `baidu + tavily + firecrawl + exa`（`want_content=True`、`scrape_top=0`），不是原稿的 `deepseek_web + glm_web + tavily + exa`。
+> - `default` / `web` 实际是 `brave + parallel + tavily + exa + serpapi + firecrawl + baidu`（未按原稿收窄到 4 源）。
+> - `fast` 实际是 `baidu + tavily + firecrawl + exa`（`want_content=True`、`scrape_top=0`）。
 > - `expert` route **未实现**：用 `route=default` + `scrape_top=N` 覆盖「召回 + 深抓」场景。
 > - `social` 实际只有 `twitter`；`reddit_oauth` **未实现**。
 > - 新增 `all` route（default 源 + social/dev/cn-community 源，不含 video）。
@@ -26,7 +26,7 @@ uv run --with pytest python -m pytest -q
 python -m compileall multi_search_mcp/src
 ```
 
-本方案综合 GPT 的三层心智模型、GLM 的落地层补强（`ROUTE_META` + 降级策略），并按"别过度工程"原则做了两处修正（不自动生成单 provider route、lite/fast 二选一）。
+本方案综合三层心智模型与落地层补强（`ROUTE_META` + 降级策略），并按"别过度工程"原则做了两处修正（不自动生成单 provider route、lite/fast 二选一）。
 
 ---
 
@@ -50,7 +50,7 @@ python -m compileall multi_search_mcp/src
 | answer 展示靠全局 `verbose`（`show_answers = verbose and not brief`） | format.py | per-route 展示必须改 formatter |
 | `sources` 参数直接 bypass route | service.py:103 | 单 provider 可走 sources，无需 route |
 | keyed provider 走 SQLite 轮换 | registry.py | brave exa firecrawl linuxdo reddit serpapi tavily v2ex youtube |
-| 非 keyed provider（cookie/token/本地，无轮换、易失效） | registry.py | deepseek_web glm_web twitter reddit_oauth linuxdo_api zhihu hackernews github_repos bilibili stackoverflow |
+| 非 keyed provider（cookie/token/本地，无轮换、易失效） | registry.py | twitter reddit_oauth linuxdo_api zhihu hackernews github_repos bilibili stackoverflow |
 
 > 结论：route 改名/增删只是 dict 改动，但"快速模式少抓+显示 answer / 专家模式多抓+显示正文"**必须改 `service.py` 和 `format.py`**，不是加个 dict 就完。
 
@@ -73,10 +73,10 @@ python -m compileall multi_search_mcp/src
 | route | provider 集合 | 说明 |
 |---|---|---|
 | `web`（= `default` 别名） | brave, tavily, exa, serpapi | 纯事实搜索，去掉 firecrawl/twitter/github |
-| `fast` | deepseek_web, glm_web, tavily, exa | answer 优先：直接拿模型总结，少 scrape |
+| `fast` | baidu, tavily, firecrawl, exa | 正文内联优先，不额外 scrape |
 | `expert` | brave, tavily, exa, serpapi, firecrawl | 多源 + firecrawl，深抓正文 |
 
-> `lite` 删除，并入 `fast`（二选一，修正 GLM 保留 lite 的不自洽）。
+> `lite` 删除，并入 `fast`，避免保留两个重叠的快速 route。
 > `news` 不单列；时效需求让 `fast`/`web` 在查询里加时间词。
 
 ### Layer 2 · 专用平台（站点搜索，不进默认）
@@ -92,7 +92,7 @@ python -m compileall multi_search_mcp/src
 
 ### Layer 3 · 单 provider —— 不进 ROUTE_PROFILES
 
-删除全部 22 条单 provider route / alias。需要指定单源时走 `sources` 参数（代码已支持 bypass）。这是**删代码**，不是 GLM 提的"自动生成"（那是加间接层）。
+删除全部 22 条单 provider route / alias。需要指定单源时走 `sources` 参数（代码已支持 bypass）。这是**删代码**，不通过自动生成增加间接层。
 
 ```
 # 旧：route="brave"
@@ -103,7 +103,7 @@ python -m compileall multi_search_mcp/src
 
 ---
 
-## 3. ROUTE_META（GLM 核心贡献，必须新增）
+## 3. ROUTE_META（行为元数据）
 
 `ROUTE_PROFILES` 只管 provider 集合；新增 `ROUTE_META` 管行为：
 
@@ -121,15 +121,15 @@ DEFAULT_META = {"scrape_top": 30, "show_answer": False, "show_snippet": True, "c
 ```
 
 设计要点：
-- `fast.scrape_top = 0` —— 快速模式不抓正文，直接用 deepseek/glm 的 answer（呼应"直接总结=快速模式"）。
+- `fast.scrape_top = 0` —— 快速模式不额外抓正文，直接复用 provider 返回的 answer 或内联正文。
 - `expert.show_answer = False` —— 专家模式给 scrape 正文，不靠模型总结。
 - 请求里显式传的 `scrape_top/verbose/brief` 仍可覆盖 route 默认（保持现有覆盖语义）。
 
 ---
 
-## 4. 非 keyed provider 降级策略（GLM，必须定义）
+## 4. 非 keyed provider 降级策略
 
-问题：`fast` 依赖 `deepseek_web/glm_web`，`social` 依赖 `twitter/reddit_oauth`，这些非 keyed、易失效。若全不可用，`fast` 会静默退化成 `tavily+exa`（= 旧 lite），用户看到 "fast" 却跑了 lite。
+问题：`social` 依赖 `twitter/reddit_oauth` 这类非 keyed、易失效的 provider。不可用时必须显式说明，不能静默切到语义不同的来源。
 
 规则：
 1. 每个含非 keyed provider 的 route 标注 `degrade_to`（keyed-only 兜底集合）。
@@ -137,7 +137,7 @@ DEFAULT_META = {"scrape_top": 30, "show_answer": False, "show_snippet": True, "c
    - `social.degrade_to = {}`（专用平台无 web 兜底，直接报"平台源不可用"）
 2. 运行时若 route 内"有效 provider 数为 0"，按 `degrade_to` 兜底，并在结果里**显式标注降级**（不静默）。
 3. formatter 在降级时输出一行提示，例如：
-   `> ⚠️ fast 降级：deepseek/glm 不可用，已回退至 tavily+exa`
+   `> ⚠️ social 主来源不可用，且未配置兜底源`
 
 ---
 
@@ -187,7 +187,7 @@ route 总数：26 → 7（web/fast/expert/social/dev/cn-community/video）。
 1. `resolve_route` 单测：7 条 route 各自的 provider 集合。
 2. ROUTE_META 解析优先级单测：请求值 > config > route meta > default。
 3. 降级单测：mock 非 keyed provider 全失败 → 验证 `fast` 回退 `{tavily,exa}` 且 `degraded=True`。
-4. formatter 单测：`show_answer=True` 时展示 deepseek/glm answer；降级时输出提示行。
+4. formatter 单测：`show_answer=True` 时展示 provider answer；降级时输出提示行。
 5. `sources` bypass 回归：传 `sources=["brave"]` 行为等价旧 `route="brave"`。
 
 ---

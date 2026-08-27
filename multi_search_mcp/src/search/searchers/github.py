@@ -58,12 +58,14 @@ def search_github_repos(query: str, count: int = 10, token: str = "", timeout: f
         return [{"source": "github-repos", "error": f"JSON parse error: {e}"}]
     items = []
     for item in data.get("items", []):
+        description = item.get("description") or ""
         items.append(
             {
                 "source": "github-repos",
                 "title": item.get("full_name", ""),
                 "url": item.get("html_url", ""),
-                "description": item.get("description") or "",
+                "description": description,
+                "content_kind": "excerpt" if description else "metadata",
                 "stars": item.get("stargazers_count"),
             }
         )

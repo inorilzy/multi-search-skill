@@ -1,14 +1,23 @@
 """Provider capability contracts for searchers and scrapers.
 
-This module is descriptive for now: it gives the architecture one normalized
-place to answer questions such as "can this provider search?", "does it return
-full content?", and "should ScrapePlanner treat its URLs as candidates?".
-Runtime registries still live in ``search_runner`` and ``scrapers.registry``.
+The contracts drive content classification, scrape planning, retention, and
+operator-facing capability tables. Runtime provider registries still live in
+``search.registry`` and the scraper modules.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+
+from ..support.models import (
+    ANSWER_SOURCES,
+    CONTENT_KIND_ANSWER,
+    CONTENT_KIND_BODY,
+    CONTENT_KIND_CONTENT,
+    CONTENT_KIND_EXCERPT,
+    CONTENT_KIND_METADATA,
+    normalize_content_kind,
+)
 
 
 class ProviderKind(str, Enum):
@@ -79,6 +88,19 @@ class OperationalProfile:
 
 
 @dataclass(frozen=True)
+class RetentionPolicy:
+    """Conservative local retention contract for provider-derived data."""
+
+    persist_search_result: bool = True
+    persist_content: bool = True
+    persist_body: bool = True
+    max_ttl_seconds: int = 60 * 60
+
+
+DEFAULT_RETENTION_POLICY = RetentionPolicy()
+
+
+@dataclass(frozen=True)
 class ProviderCapability:
     name: str
     public_name: str
@@ -87,6 +109,7 @@ class ProviderCapability:
     scrape: ScrapeCapability = field(default_factory=ScrapeCapability)
     output: OutputCapability = field(default_factory=OutputCapability)
     operation: OperationalProfile = field(default_factory=OperationalProfile)
+    retention: RetentionPolicy = field(default_factory=RetentionPolicy)
     scrape_policy: ScrapePolicy = ScrapePolicy.NONE
     # ``count_key`` is the key a provider's ProviderSpec actually reads from
     # ``cfg.counts[...]``. It is usually ``name``, but github_repos reads
@@ -127,6 +150,10 @@ class ProviderCapability:
             "auth_mode": self.operation.auth_mode.value,
             "key_name": self.operation.key_name or "",
             "scrape_policy": self.scrape_policy.value,
+            "persist_search_result": self.retention.persist_search_result,
+            "persist_content": self.retention.persist_content,
+            "persist_body": self.retention.persist_body,
+            "max_retention_ttl_seconds": self.retention.max_ttl_seconds,
             "best_for": ", ".join(self.best_for),
         }
 
@@ -175,6 +202,19 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         count_key="brave",
         timeout_default=15,
         best_for=("broad web search", "fresh URLs"),
+    ),
+    "parallel": ProviderCapability(
+        name="parallel",
+        public_name="parallel",
+        kind=ProviderKind.SEARCHER,
+        search=SearchCapability(can_search=True, max_count=20),
+        output=OutputCapability(returns_urls=True, returns_snippet=True),
+        operation=_op(AuthMode.API_KEY, "parallel", quota_sensitive=True, rate_limit_sensitive=True),
+        scrape_policy=ScrapePolicy.CANDIDATE,
+        count_key="parallel",
+        timeout_default=15,
+        best_for=("semantic web search", "dense source excerpts"),
+        notes="Uses the GA /v1/search endpoint in fast mode; excerpts are not full page bodies.",
     ),
     "tavily": ProviderCapability(
         name="tavily",
@@ -226,43 +266,6 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         count_key="serpapi",
         timeout_default=20,
         best_for=("Google SERP metadata", "knowledge graph snippets"),
-    ),
-    "glm_web": ProviderCapability(
-        name="glm_web",
-        public_name="glm-web",
-        kind=ProviderKind.ANSWER_SEARCHER,
-        search=SearchCapability(can_search=True, max_count=30),
-        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_content=True, returns_answer=True),
-        operation=_op(
-            AuthMode.OPTIONAL_API_KEY,
-            "glm_web",
-            rate_limit_sensitive=True,
-            requires_dependency="local glm2api service",
-            risk_notes=("Reverse-engineered web API behavior may change without notice.",),
-        ),
-        scrape_policy=ScrapePolicy.PREFETCH,
-        count_key="glm_web",
-        timeout_default=120,
-        best_for=("GLM native web-search answers", "Chinese web search with citations"),
-        notes="Calls a local OpenAI-compatible glm2api endpoint and reads GLM web_search_results.",
-    ),
-    "deepseek_web": ProviderCapability(
-        name="deepseek_web",
-        public_name="deepseek-web",
-        kind=ProviderKind.ANSWER_SEARCHER,
-        search=SearchCapability(can_search=True, max_count=30),
-        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_answer=True),
-        operation=_op(
-            AuthMode.COOKIE,
-            "deepseek_web",
-            rate_limit_sensitive=True,
-            risk_notes=("Reverse-engineered web API behavior may change without notice.",),
-        ),
-        scrape_policy=ScrapePolicy.CANDIDATE,
-        count_key="deepseek_web",
-        timeout_default=120,
-        best_for=("DeepSeek native web-search answers", "search answers with citations"),
-        notes="Calls chat.deepseek.com web APIs directly with user token/cookies and search_enabled=true.",
     ),
     "github_repos": ProviderCapability(
         name="github_repos",
@@ -416,6 +419,79 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
 
 def get_capability(name: str) -> ProviderCapability:
     return PROVIDER_CAPABILITIES[name]
+
+
+def get_capability_optional(name: str) -> ProviderCapability | None:
+    return PROVIDER_CAPABILITIES.get(normalize_provider_name(name))
+
+
+def retention_policy_for_sources(names: list[str] | tuple[str, ...]) -> RetentionPolicy:
+    policies = []
+    for name in names:
+        capability = get_capability_optional(name)
+        policies.append(
+            capability.retention if capability is not None else DEFAULT_RETENTION_POLICY
+        )
+    if not policies:
+        policies = [DEFAULT_RETENTION_POLICY]
+    return RetentionPolicy(
+        persist_search_result=all(policy.persist_search_result for policy in policies),
+        persist_content=all(policy.persist_content for policy in policies),
+        persist_body=all(policy.persist_body for policy in policies),
+        max_ttl_seconds=max(
+            1, min(int(policy.max_ttl_seconds) for policy in policies)
+        ),
+    )
+
+
+def normalize_provider_name(name: str) -> str:
+    normalized = str(name or "").replace("-", "_")
+    if normalized in PROVIDER_CAPABILITIES:
+        return normalized
+    if normalized.endswith("_answer"):
+        base = normalized[: -len("_answer")]
+        if base in PROVIDER_CAPABILITIES:
+            return base
+    for internal, capability in PROVIDER_CAPABILITIES.items():
+        if capability.public_name.replace("-", "_") == normalized:
+            return internal
+    return normalized
+
+
+def infer_content_kind(row: dict | None) -> str:
+    data = row or {}
+    explicit = str(data.get("content_kind") or "").strip()
+    if explicit:
+        return normalize_content_kind(explicit)
+
+    source = str(data.get("source") or "")
+    normalized_source = normalize_provider_name(source)
+    if source in ANSWER_SOURCES or source.replace("-", "_").endswith("_answer") or data.get("answer"):
+        return CONTENT_KIND_ANSWER
+
+    if data.get("scraped_content"):
+        if normalized_source in {"twitter", "reddit_browser"}:
+            return CONTENT_KIND_CONTENT
+        capability = get_capability_optional(normalized_source)
+        if capability and capability.output.returns_content and capability.scrape_policy == ScrapePolicy.PREFETCH:
+            return CONTENT_KIND_BODY
+        return CONTENT_KIND_CONTENT
+
+    if data.get("description"):
+        capability = get_capability_optional(normalized_source)
+        if capability and capability.output.returns_snippet:
+            return CONTENT_KIND_EXCERPT
+    return CONTENT_KIND_METADATA
+
+
+def content_kind_blocks_scrape(source_name: str, content_kind: str) -> bool:
+    kind = normalize_content_kind(content_kind)
+    if kind == CONTENT_KIND_BODY:
+        return True
+    if kind != CONTENT_KIND_CONTENT:
+        return False
+    capability = get_capability_optional(source_name)
+    return bool(capability and capability.output.returns_content)
 
 
 def capability_table_rows(names: list[str] | tuple[str, ...] | None = None) -> list[dict[str, object]]:

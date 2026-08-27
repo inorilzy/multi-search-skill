@@ -94,8 +94,13 @@ def shape_result(raw: dict, *, want_content: bool) -> dict:
     if want_content:
         content = _content_markdown(raw)
         row["scraped_content"] = content
+        row["content_kind"] = "content"
         row["scraped"] = True
         row["scrape_via"] = SOURCE_NAME
+    elif row["description"]:
+        row["content_kind"] = "excerpt"
+    else:
+        row["content_kind"] = "metadata"
     return row
 
 

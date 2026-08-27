@@ -1,12 +1,17 @@
 """URL normalization, content splitting, and cross-source deduplication."""
 import urllib.parse
 
-from .models import ANSWER_SOURCES, as_dict, as_dicts, is_empty_result
+from ..search.capabilities import content_kind_blocks_scrape, infer_content_kind
+from .models import (
+    ANSWER_SOURCES,
+    CONTENT_KIND_ANSWER,
+    as_dict,
+    as_dicts,
+    content_kind_priority,
+    is_empty_result,
+)
 # Re-exported here for existing callers.
 from .urlutil import _norm_url
-
-
-MIN_USEFUL_WEB_CONTENT_CHARS = 300
 
 # When the same URL is returned by multiple sources, prefer the source that is
 # authoritative for that host as the canonical `source` (the others move to
@@ -63,23 +68,20 @@ def _raw_counts(results: list) -> dict:
     return raw_counts
 
 
-def is_usable_web_content(content: str, min_chars: int = MIN_USEFUL_WEB_CONTENT_CHARS) -> bool:
-    """Return whether content is substantial enough to stand in for webpage text."""
-    return len((content or "").strip()) >= min_chars
-
-
 def _is_passthrough(item: dict) -> bool:
+    kind = infer_content_kind(item)
     return (
         is_empty_result(item)
         or "error" in item
         or item.get("source") in ANSWER_SOURCES
+        or kind == CONTENT_KIND_ANSWER
         or not item.get("url")
     )
 
 
 def _canonical_source(source: str) -> str:
-    # Answer rows use underscores (``glm_web_answer``) while the matching result
-    # rows use hyphens (``glm-web``); fold both so they compare equal.
+    # Public source names may use hyphens while internal names use underscores;
+    # fold both so they compare equal.
     return str(source or "").replace("-", "_")
 
 
@@ -115,28 +117,18 @@ def split_by_content(
     passthrough: list[dict] = []
 
     for item in results:
+        item["content_kind"] = infer_content_kind(item)
         if _is_passthrough(item):
             passthrough.append(item)
             continue
-        content = item.get("scraped_content") or ""
-        if item.get("source") == "twitter":
-            # Twitter discussion content is independent of webpage body;
-            # any non-empty scraped_content counts as "has content".
-            if content:
-                with_content.append(item)
-            else:
-                without_content.append(item)
-        elif summarized and _canonical_source(item.get("source")) in summarized:
+        if summarized and _canonical_source(item.get("source")) in summarized:
             # This source already returned a summary, so accept it
             # as content-bearing and skip scraping its concrete URLs.
             with_content.append(item)
+        elif content_kind_blocks_scrape(item.get("source", ""), item["content_kind"]):
+            with_content.append(item)
         else:
-            # For web sources, short/empty content should not satisfy
-            # "already has content" — otherwise it blocks richer scraping.
-            if is_usable_web_content(content):
-                with_content.append(item)
-            else:
-                without_content.append(item)
+            without_content.append(item)
 
     return with_content, without_content, passthrough, _raw_counts(results)
 
@@ -150,6 +142,7 @@ def result_to_scrape(item: dict) -> dict:
         "via": f"{item.get('source', '?')}:prefetch",
         "markdown": content,
         "length": len(content),
+        "content_kind": infer_content_kind(item),
     }
 
 
@@ -178,6 +171,9 @@ def apply_scraped_content(rows: list, content_pool: dict) -> None:
         existing = row.get("scraped_content") or ""
         if len(markdown) > len(existing):
             row["scraped_content"] = markdown
+        elif not existing:
+            row["scraped_content"] = markdown
+        row["content_kind"] = pooled.get("content_kind") or "body"
         row["scraped"] = True
         if pooled.get("via"):
             row["scrape_via"] = pooled["via"]
@@ -242,11 +238,14 @@ def deduplicate(results: list) -> tuple:
         if norm not in seen:
             seen[norm] = len(deduped)
             item = dict(item)
+            item["content_kind"] = infer_content_kind(item)
             item["also_from"] = []
             deduped.append(item)
         else:
             existing = deduped[seen[norm]]
             other_src = item.get("source", "?")
+            existing_kind = infer_content_kind(existing)
+            item_kind = infer_content_kind(item)
             if other_src != existing.get("source") and other_src not in existing.get("also_from", []):
                 existing.setdefault("also_from", []).append(other_src)
             # Let an authoritative source for this host claim the canonical slot
@@ -255,11 +254,19 @@ def deduplicate(results: list) -> tuple:
             # Promote richer fields from later occurrences so we don't lose
             # pre-fetched content / longer descriptions / star counts just because
             # a snippet-only source happened to return the URL first.
-            for fld in ("scraped_content", "description"):
-                new_val = item.get(fld) or ""
-                old_val = existing.get(fld) or ""
-                if len(new_val) > len(old_val):
-                    existing[fld] = new_val
+            new_content = item.get("scraped_content") or ""
+            old_content = existing.get("scraped_content") or ""
+            if new_content and (
+                content_kind_priority(item_kind) > content_kind_priority(existing_kind)
+                or len(new_content) > len(old_content)
+            ):
+                existing["scraped_content"] = new_content
+            new_desc = item.get("description") or ""
+            old_desc = existing.get("description") or ""
+            if len(new_desc) > len(old_desc):
+                existing["description"] = new_desc
+            if content_kind_priority(item_kind) > content_kind_priority(existing_kind):
+                existing["content_kind"] = item_kind
             if item.get("stars") and not existing.get("stars"):
                 existing["stars"] = item["stars"]
             if (item.get("title") and len(item["title"]) > len(existing.get("title") or "")):

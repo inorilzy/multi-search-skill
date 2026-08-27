@@ -16,10 +16,9 @@ from .searchers.firecrawl import (
     search_zhihu as search_zhihu_firecrawl,
 )
 from .searchers.github import search_github_repos
-from .searchers.glm_web import search_glm_web
-from .searchers.deepseek_web import search_deepseek_web
 from .searchers.hackernews import search_hackernews
 from .searchers.linuxdo import search_linuxdo_api
+from .searchers.parallel import search_parallel
 from .searchers.reddit_browser import search_reddit_browser
 from .searchers.serpapi import search_serpapi
 from .searchers.stackoverflow import search_stackoverflow
@@ -75,6 +74,13 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             missing_message="missing BRAVE_SEARCH_API_KEY / BRAVE_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_brave, q, key, cfg.counts["brave"], timeout=ctx.timeout,
+            ),
+        ),
+        "parallel": _provider_spec(
+            "parallel",
+            missing_message="missing PARALLEL_API_KEY",
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_parallel, q, key, cfg.counts["parallel"], timeout=ctx.timeout,
             ),
         ),
         "baidu": _provider_spec(
@@ -180,16 +186,6 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             ),
         ),
         "zhihu": _provider_spec("zhihu", call=_search_zhihu_with_fallback),
-        "glm_web": _provider_spec(
-            "glm_web",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(search_glm_web, q, cfg.counts["glm_web"], timeout=ctx.timeout),
-        ),
-        "deepseek_web": _provider_spec(
-            "deepseek_web",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_deepseek_web, q, cfg.counts["deepseek_web"], cfg.keys.get("deepseek_web"), timeout=ctx.timeout,
-            ),
-        ),
     }
 
 

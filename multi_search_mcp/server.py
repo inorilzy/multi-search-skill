@@ -6,13 +6,16 @@ from mcp.server.fastmcp import FastMCP
 
 from .tools import (
     doctor_tool,
+    fetch_source_tool,
     get_key_status_tool,
     get_site_scraper_stats_tool,
     list_sources_tool,
     multi_search_tool,
     reset_key_state_tool,
     reset_site_scraper_stats_tool,
+    read_source_tool,
     scrape_url_tool,
+    search_web_tool,
     set_site_scraper_preference_tool,
 )
 
@@ -26,13 +29,56 @@ mcp = FastMCP(
 )
 
 
+@mcp.tool(name="search_web")
+def search_web(
+    query: str,
+    route: str | None = None,
+    count: int | None = None,
+    sources: list[str] | None = None,
+    timeout: int | None = None,
+    expand: list[str] | None = None,
+    use_state: bool = True,
+) -> dict:
+    """Return compact, RRF-ranked candidates without bulk page scraping."""
+    return search_web_tool(
+        query, route, count, sources, timeout, expand, use_state
+    )
+
+
+@mcp.tool(name="fetch_source")
+def fetch_source(
+    source_id: str | None = None,
+    url: str | None = None,
+    backends: list[str] | None = None,
+    max_chars: int = 20_000,
+    timeout: int | None = None,
+    use_state: bool = True,
+) -> dict:
+    """Fetch one source body, using the short-lived content cache when allowed."""
+    return fetch_source_tool(
+        source_id, url, backends, max_chars, timeout, use_state
+    )
+
+
+@mcp.tool(name="read_source")
+def read_source(
+    source_id: str,
+    keyword: str | None = None,
+    offset: int = 0,
+    limit: int = 4_000,
+    use_state: bool = True,
+) -> dict:
+    """Read a bounded slice of cached untrusted content without network access."""
+    return read_source_tool(source_id, keyword, offset, limit, use_state)
+
+
 @mcp.tool(name="multi_search")
 def multi_search(query: str, route: str | None = None,
                   count: int | None = None,
                   sources: list[str] | None = None, scrape_top: int | None = None,
                   scrape_chars: int | None = None, timeout: int | None = None,
-                  expand: list[str] | None = None, use_state: bool = True,
-                  output: str = "both") -> dict:
+                  scrape_timeout: int | None = None, expand: list[str] | None = None,
+                  use_state: bool = True, output: str = "both") -> dict:
     """Search across configured sources, optionally scrape top URLs, and return structured results.
 
     `route` selects which sources to fan out to
@@ -40,9 +86,10 @@ def multi_search(query: str, route: str | None = None,
     providers that return body content inline (baidu/tavily/firecrawl/exa) and
     defaults to `scrape_top=0`; explicit tool/config `scrape_top` values still
     override that default. For "recall then scrape", use `route=default` with `scrape_top=N`.
-    `timeout` is the search-provider timeout in seconds. `expand` adds extra query
-    variants to run alongside `query`. Set `use_state=False` to skip the SQLite
-    state DB, key-health rotation, and site scraper memory (clean test path).
+    `timeout` is the search-provider timeout in seconds. `scrape_timeout` is the
+    total scrape-stage timeout in seconds. `expand` adds extra query variants to
+    run alongside `query`. Set `use_state=False` to skip the SQLite state DB,
+    key-health rotation, and site scraper memory (clean test path).
     The response includes `results[]` with full rows and `display_results[]` as a
     compact title/source/url/snippet list for UI or chat presentation. For
     news/current-events queries, preserve verifiability: show `display_results[]`
@@ -51,7 +98,7 @@ def multi_search(query: str, route: str | None = None,
     On invalid input the tool returns a structured {"error", "error_type"} dict.
     """
     return multi_search_tool(query, route, count, sources, scrape_top, scrape_chars,
-                             timeout, expand, use_state, output)  # type: ignore[arg-type]
+                             timeout, scrape_timeout, expand, use_state, output)  # type: ignore[arg-type]
 
 
 @mcp.tool(name="scrape_url")

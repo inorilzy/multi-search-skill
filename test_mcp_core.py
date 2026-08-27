@@ -40,6 +40,7 @@ from multi_search_mcp.src.search.searchers import baidu as baidu_searcher
 from multi_search_mcp.src.search.searchers import brave as brave_searcher
 from multi_search_mcp.src.search.searchers import exa as exa_searcher
 from multi_search_mcp.src.search.searchers import firecrawl as firecrawl_searcher
+from multi_search_mcp.src.search.searchers import parallel as parallel_searcher
 from multi_search_mcp.src.search.searchers import serpapi as serpapi_searcher
 from multi_search_mcp.src.search.searchers import tavily as tavily_searcher
 
@@ -130,7 +131,7 @@ class RouteTests(unittest.TestCase):
     def test_named_routes_resolve_to_expected_profiles(self):
         self.assertEqual(
             resolve_route("default"),
-            {"brave", "exa", "tavily", "serpapi", "firecrawl", "baidu", "glm_web", "deepseek_web"},
+            {"brave", "parallel", "exa", "tavily", "serpapi", "firecrawl", "baidu"},
         )
         self.assertEqual(resolve_route("dev"), {"stackoverflow", "hackernews", "github_repos"})
         self.assertEqual(resolve_route("social"), {"twitter"})
@@ -138,7 +139,7 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(resolve_route("cn-community"), {"zhihu", "v2ex", "linuxdo"})
         self.assertNotIn("youtube", resolve_route("all"))
         self.assertNotIn("bilibili", resolve_route("all"))
-        self.assertTrue({"brave", "baidu", "github_repos", "zhihu"} <= resolve_route("all"))
+        self.assertTrue({"brave", "parallel", "baidu", "github_repos", "zhihu"} <= resolve_route("all"))
 
     def test_fast_route_resolves_to_inline_content_providers(self):
         # ``fast`` is a route whose providers return body content inline.
@@ -238,22 +239,21 @@ class ProviderMetadataDriftTests(unittest.TestCase):
     # github_repos reads ``counts["github"]``; v2ex rides firecrawl's quota and
     # has no count of its own (capability.count_key is None).
     REGISTRY_COUNT_KEYS = {
-        "baidu": "baidu", "brave": "brave", "tavily": "tavily", "exa": "exa",
+        "baidu": "baidu", "brave": "brave", "parallel": "parallel", "tavily": "tavily", "exa": "exa",
         "serpapi": "serpapi", "youtube": "youtube", "bilibili": "bilibili",
         "firecrawl": "firecrawl", "v2ex": None, "linuxdo": "linuxdo",
         "linuxdo_api": "linuxdo_api", "github_repos": "github",
         "hackernews": "hackernews", "stackoverflow": "stackoverflow",
-        "twitter": "twitter", "zhihu": "zhihu", "glm_web": "glm_web",
-        "deepseek_web": "deepseek_web", "reddit_browser": "reddit_browser",
+        "twitter": "twitter", "zhihu": "zhihu", "reddit_browser": "reddit_browser",
     }
 
     # Frozen snapshot of current count membership, so derivation cannot silently
     # add/drop a source (e.g. accidentally giving v2ex its own count). Both dicts
     # currently share the same 17 keys (v2ex excluded -- it rides firecrawl).
     COUNT_CAPS_KEYS = {
-        "baidu", "brave", "tavily", "exa", "github", "hackernews", "serpapi",
+        "baidu", "brave", "parallel", "tavily", "exa", "github", "hackernews", "serpapi",
         "youtube", "bilibili", "stackoverflow", "firecrawl", "zhihu", "linuxdo",
-        "linuxdo_api", "twitter", "glm_web", "deepseek_web", "reddit_browser",
+        "linuxdo_api", "twitter", "reddit_browser",
     }
     DEFAULT_COUNTS_KEYS = COUNT_CAPS_KEYS
 
@@ -267,10 +267,10 @@ class ProviderMetadataDriftTests(unittest.TestCase):
         # not just stay internally consistent with capabilities.
         from multi_search_mcp.src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
         expected_caps = {
-            "baidu": 50, "brave": 20, "tavily": 20, "exa": 100, "github": 100,
+            "baidu": 50, "brave": 20, "parallel": 20, "tavily": 20, "exa": 100, "github": 100,
             "hackernews": 100, "serpapi": 100, "youtube": 50, "bilibili": 50,
             "stackoverflow": 100, "firecrawl": 100, "zhihu": 10, "linuxdo": 20,
-            "linuxdo_api": 10, "twitter": 20, "glm_web": 30, "deepseek_web": 30,
+            "linuxdo_api": 10, "twitter": 20,
             "reddit_browser": 25,
         }
         self.assertEqual(COUNT_CAPS, expected_caps)
@@ -397,6 +397,80 @@ class GeneralSearchDepthTests(unittest.TestCase):
         self.assertIn("text", captured[1]["contents"])
         self.assertEqual(rows[0]["scraped_content"], "h")
 
+    def test_parallel_uses_ga_search_endpoint_and_maps_excerpts(self):
+        captured = {}
+
+        def fake_urlopen(req, timeout=0):
+            captured["url"] = req.full_url
+            captured["api_key"] = req.get_header("X-api-key")
+            captured["timeout"] = timeout
+            captured["payload"] = json.loads(req.data.decode("utf-8"))
+            return self._FakeResp({
+                "search_id": "search-1",
+                "session_id": "session-1",
+                "results": [{
+                    "title": "Parallel docs",
+                    "url": "https://docs.parallel.ai/search",
+                    "publish_date": "2026-08-01",
+                    "excerpts": ["first excerpt", "second excerpt"],
+                }],
+            })
+
+        with mock.patch.object(parallel_searcher, "urlopen_retry", side_effect=fake_urlopen):
+            rows = parallel_searcher.search_parallel("semantic search", "parallel-key", count=7, timeout=9)
+
+        self.assertEqual(captured["url"], "https://api.parallel.ai/v1/search")
+        self.assertEqual(captured["api_key"], "parallel-key")
+        self.assertEqual(captured["timeout"], 9)
+        self.assertEqual(captured["payload"], {
+            "objective": "semantic search",
+            "search_queries": ["semantic search"],
+            "mode": "fast",
+            "advanced_settings": {"max_results": 7},
+        })
+        self.assertEqual(rows[0]["source"], "parallel")
+        self.assertEqual(rows[0]["description"], "first excerpt\n\nsecond excerpt")
+        self.assertEqual(rows[0]["excerpts"], ["first excerpt", "second excerpt"])
+        self.assertEqual(rows[0]["publish_date"], "2026-08-01")
+        self.assertNotIn("scraped_content", rows[0])
+
+    def test_parallel_clamps_count_and_drops_rows_without_urls(self):
+        captured = {}
+
+        def fake_urlopen(req, timeout=0):
+            captured.update(json.loads(req.data.decode("utf-8")))
+            return self._FakeResp({
+                "results": [
+                    {"title": "missing URL", "excerpts": ["ignored"]},
+                    {"title": None, "url": "https://example.com", "excerpts": []},
+                ],
+            })
+
+        with mock.patch.object(parallel_searcher, "urlopen_retry", side_effect=fake_urlopen):
+            rows = parallel_searcher.search_parallel("q", "key", count=999)
+
+        self.assertEqual(captured["advanced_settings"]["max_results"], 20)
+        self.assertEqual(rows, [{
+            "source": "parallel",
+            "title": "",
+            "url": "https://example.com",
+            "description": "",
+            "content_kind": "metadata",
+        }])
+
+    def test_parallel_errors_are_redacted_and_classified_for_key_state(self):
+        with mock.patch.object(
+            parallel_searcher,
+            "urlopen_retry",
+            side_effect=RuntimeError("HTTP 429 rate limit for parallel-secret"),
+        ):
+            rows = parallel_searcher.search_parallel("q", "parallel-secret")
+
+        self.assertNotIn("parallel-secret", rows[0]["error"])
+        outcome = BasicKeyManager().classify_result("parallel", rows)
+        self.assertTrue(outcome.retryable)
+        self.assertEqual(outcome.error_type, "rate_limit")
+
     def test_brave_fast_disables_extra_snippets(self):
         urls = []
 
@@ -467,13 +541,12 @@ class DedupTests(unittest.TestCase):
         self.assertEqual(deduped[0]["scraped_content"], "full text")
 
     def test_split_by_content_keeps_summarized_url_rows_when_skipping(self):
-        # An answer row's source uses underscores (``glm_web_answer``) while its
-        # matching URL row uses hyphens (``glm-web``); skip_summarized_sources
-        # must fold both so the URL row is accepted as content-bearing (not
-        # scraped), while a URL-only source (github) still needs scraping.
+        # A provider with a query-level answer should keep its URL rows out of
+        # scraping when skip_summarized_sources is enabled, while a URL-only
+        # source (github) still needs scraping.
         rows = [
-            {"source": "glm_web_answer", "answer": "synthesized summary"},
-            {"source": "glm-web", "title": "A", "url": "https://example.com/a"},
+            {"source": "tavily_answer", "answer": "synthesized summary"},
+            {"source": "tavily", "title": "A", "url": "https://example.com/a"},
             {"source": "github-repos", "title": "Y", "url": "https://github.com/x/y"},
         ]
 
@@ -491,8 +564,8 @@ class DedupTests(unittest.TestCase):
         # Without skip_summarized_sources (normal level), a summarized source's
         # URL row is still a scrape candidate.
         rows = [
-            {"source": "glm_web_answer", "answer": "synthesized summary"},
-            {"source": "glm-web", "title": "A", "url": "https://example.com/a"},
+            {"source": "tavily_answer", "answer": "synthesized summary"},
+            {"source": "tavily", "title": "A", "url": "https://example.com/a"},
         ]
 
         _with, without_content, _pass, _raw = split_by_content(rows)
@@ -672,6 +745,15 @@ class KeyTests(unittest.TestCase):
                     keys = load_keys()
 
         self.assertEqual(keys["jina"], "jina-env-key")
+
+    def test_parallel_env_key_is_loaded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch("pathlib.Path.home", return_value=Path(tmpdir)):
+                keys = load_keys(keys_file=Path(tmpdir) / "missing.json", environ={
+                    "PARALLEL_API_KEY": "parallel-env-key",
+                })
+
+        self.assertEqual(keys["parallel"], "parallel-env-key")
 
     def test_zhihu_access_secret_env_key_is_loaded(self):
         with tempfile.TemporaryDirectory() as tmpdir:

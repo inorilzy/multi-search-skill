@@ -51,5 +51,6 @@ def search_stackoverflow(query: str, count: int = 10, timeout: float = 20) -> li
             "title": title or url_value or "(no title)",
             "url": url_value,
             "description": " · ".join(stats),
+            "content_kind": "metadata",
         })
     return items

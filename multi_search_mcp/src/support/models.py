@@ -10,13 +10,50 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+CONTENT_KIND_METADATA = "metadata"
+CONTENT_KIND_CONTENT = "content"
+CONTENT_KIND_EXCERPT = "excerpt"
+CONTENT_KIND_BODY = "body"
+CONTENT_KIND_ANSWER = "answer"
+
+CONTENT_KINDS = frozenset({
+    CONTENT_KIND_METADATA,
+    CONTENT_KIND_CONTENT,
+    CONTENT_KIND_EXCERPT,
+    CONTENT_KIND_BODY,
+    CONTENT_KIND_ANSWER,
+})
+
+CONTENT_KIND_PRIORITY = {
+    CONTENT_KIND_METADATA: 0,
+    CONTENT_KIND_EXCERPT: 1,
+    CONTENT_KIND_CONTENT: 2,
+    CONTENT_KIND_BODY: 3,
+    CONTENT_KIND_ANSWER: 4,
+}
+
+
+def normalize_content_kind(
+    kind: Any,
+    default: str = CONTENT_KIND_METADATA,
+) -> str:
+    value = str(kind or "").strip().lower()
+    if value in CONTENT_KINDS:
+        return value
+    return default
+
+
+def content_kind_priority(kind: Any) -> int:
+    return CONTENT_KIND_PRIORITY[normalize_content_kind(kind)]
+
+
 # Sources that return a synthesized answer/summary rather than ranked webpage
 # results. These rows are excluded from result counts, dedup, and raw-hit
 # accounting. Keep this as the single source of truth; importers must not
 # re-declare their own copies.
 ANSWER_SOURCES = frozenset({
     "baidu_answer", "tavily_answer", "serpapi_answer",
-    "exa_answer", "glm_web_answer", "deepseek_web_answer",
+    "exa_answer",
 })
 
 
@@ -66,6 +103,7 @@ class SearchResult:
     url: str = ""
     description: str = ""
     scraped_content: str = ""
+    content_kind: str = CONTENT_KIND_METADATA
     also_from: list[str] = field(default_factory=list)
     stars: int | None = None
     score: float | None = None
@@ -78,6 +116,7 @@ class SearchResult:
             "url": self.url,
             "description": self.description,
             "scraped_content": self.scraped_content,
+            "content_kind": normalize_content_kind(self.content_kind),
             "also_from": list(self.also_from),
             "stars": self.stars,
             "score": self.score,
@@ -90,6 +129,7 @@ class SearchResult:
     def from_dict(cls, data: dict) -> "SearchResult":
         known = {
             "source", "title", "url", "description", "scraped_content",
+            "content_kind",
             "also_from", "stars", "score",
         }
         return cls(
@@ -98,6 +138,7 @@ class SearchResult:
             url=str(data.get("url", "") or ""),
             description=str(data.get("description", "") or ""),
             scraped_content=str(data.get("scraped_content", "") or ""),
+            content_kind=normalize_content_kind(data.get("content_kind")),
             also_from=list(data.get("also_from") or []),
             stars=data.get("stars"),
             score=data.get("score"),

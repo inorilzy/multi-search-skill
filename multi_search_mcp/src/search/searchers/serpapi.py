@@ -76,6 +76,7 @@ def search_serpapi(
                     "source": "serpapi_answer",
                     "answer": answer_text,
                     "answer_type": "answer_box",
+                    "content_kind": "answer",
                 })
             kg = data.get("knowledge_graph") or {}
             if kg.get("description"):
@@ -83,6 +84,7 @@ def search_serpapi(
                     "source": "serpapi_answer",
                     "answer": f"[{kg.get('title', '')}] {kg['description']}",
                     "answer_type": "knowledge_graph",
+                    "content_kind": "answer",
                 })
         organic = data.get("organic_results") or []
         if not organic:
@@ -90,11 +92,13 @@ def search_serpapi(
         for item in organic:
             if organic_count >= target_count:
                 break
+            description = (item.get("snippet") or "")[:300]
             results.append({
                 "source": "serpapi",
                 "title": item.get("title", ""),
                 "url": item.get("link", ""),
-                "description": (item.get("snippet") or "")[:300],
+                "description": description,
+                "content_kind": "excerpt" if description else "metadata",
                 "search_depth": depth,
                 "provider_depth": engine,
             })

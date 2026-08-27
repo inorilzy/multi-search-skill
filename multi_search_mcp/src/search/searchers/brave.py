@@ -49,12 +49,14 @@ def search_brave(
             extra_text = " · ".join(s for s in extras if s and s not in desc)
             if extra_text:
                 desc = f"{desc} · {extra_text}" if desc else extra_text
+        content_kind = "excerpt" if desc else "metadata"
         results.append(
             {
                 "source": "brave",
                 "title": item.get("title", ""),
                 "url": item.get("url", ""),
                 "description": desc,
+                "content_kind": content_kind,
                 "search_depth": depth,
                 "extra_snippets": extra_snippets == "true",
             }

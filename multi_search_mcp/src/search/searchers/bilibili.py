@@ -59,6 +59,7 @@ def _search_bilibili_html(query: str, count: int, timeout: float) -> list:
             "title": _plain_text(title),
             "url": f"https://www.bilibili.com/video/{bvid}",
             "description": "from Bilibili search page",
+            "content_kind": "metadata",
             "video_id": bvid,
         })
         if len(items) >= max(1, min(count, 50)):
@@ -147,11 +148,13 @@ def search_bilibili(query: str, cookie: str = "", count: int = 10, timeout: floa
         description = _plain_text(row.get("description") or "")
         if description:
             details.append(description[:200])
+        content_kind = "excerpt" if description else "metadata"
         items.append({
             "source": "bilibili",
             "title": _plain_text(row.get("title") or bvid or url),
             "url": url,
             "description": " · ".join(details),
+            "content_kind": content_kind,
             "video_id": bvid,
             "author": str(author) if author else "",
         })

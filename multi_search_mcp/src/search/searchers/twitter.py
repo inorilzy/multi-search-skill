@@ -119,5 +119,6 @@ def search_twitter(
             "url": url_val,
             "description": f"💬{getattr(t, 'reply_count', 0)} ♥{getattr(t, 'favorite_count', 0)} 🔁{getattr(t, 'retweet_count', 0)}",
             "scraped_content": content,
+            "content_kind": "content",
         })
     return items

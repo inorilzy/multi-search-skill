@@ -69,5 +69,6 @@ def search_hackernews(query: str, count: int = 10, timeout: float = 20) -> list:
             "title": title,
             "url": story_url or hackernews_url,
             "description": " · ".join(detail),
+            "content_kind": "metadata",
         })
     return items

@@ -19,8 +19,6 @@ SOURCE_ICONS = {
     "github-repos": "📦",
     "serpapi": "🔎",
     "twitter": "🐦",
-    "glm-web": "GLM",
-    "deepseek-web": "DS",
     "baidu": "BD",
 }
 
@@ -139,8 +137,6 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     tavily_answers = [r for r in results if r.get("source") == "tavily_answer"]
     exa_answers = [r for r in results if r.get("source") == "exa_answer"]
     serpapi_answers = [r for r in results if r.get("source") == "serpapi_answer"]
-    glm_web_answers = [r for r in results if r.get("source") == "glm_web_answer"]
-    deepseek_web_answers = [r for r in results if r.get("source") == "deepseek_web_answer"]
     status_items = [r for r in results if is_empty_result(r)]
     results = [
         r for r in results
@@ -159,10 +155,6 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
         lines.append(f"\n> **Exa AI Answer:** {exa_answers[0]['answer']}\n")
     if show_answers and serpapi_answers:
         lines.append(f"\n> **Google Knowledge Graph:** {serpapi_answers[0]['answer']}\n")
-    if show_answers and glm_web_answers:
-        lines.append(f"\n> **GLM Web Answer:** {glm_web_answers[0]['answer']}\n")
-    if show_answers and deepseek_web_answers:
-        lines.append(f"\n> **DeepSeek Web Answer:** {deepseek_web_answers[0]['answer']}\n")
 
     if raw_counts is None:
         source_counts: dict = {}
