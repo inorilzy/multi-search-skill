@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable
 
 
 Resolver = Callable[[str], Iterable[str]]
+_CGNAT_V4_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 
 class UrlSecurityError(ValueError):
@@ -46,18 +47,16 @@ def _validate_url(url: str, *, label: str, resolver: Resolver | None) -> str:
     host = parts.hostname
     direct_ip = _parse_ip(host)
     if direct_ip is not None:
-        _ensure_public_ip(direct_ip, host, label=label, resolved=False)
+        _ensure_public_ip(direct_ip, label=label, resolved=False)
         return candidate
     answers = list((resolver or _resolve_host_ips)(host))
     if not answers:
-        raise UrlSecurityError(f"{label} host '{host}' did not resolve to any IP")
+        raise UrlSecurityError(f"{label} host did not resolve to any IP")
     for answer in answers:
         ip = _parse_ip(answer)
         if ip is None:
-            raise UrlSecurityError(
-                f"{label} host '{host}' resolved to non-IP value '{answer}'"
-            )
-        _ensure_public_ip(ip, host, label=label, resolved=True)
+            raise UrlSecurityError(f"{label} host resolved to a non-IP value")
+        _ensure_public_ip(ip, label=label, resolved=True)
     return candidate
 
 
@@ -65,7 +64,7 @@ def _resolve_host_ips(host: str) -> list[str]:
     try:
         infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise UrlSecurityError(f"host '{host}' DNS resolution failed: {exc}") from exc
+        raise UrlSecurityError(f"host DNS resolution failed: {exc.strerror or exc}") from exc
     answers: list[str] = []
     seen: set[str] = set()
     for family, _socktype, _proto, _canonname, sockaddr in infos:
@@ -87,7 +86,6 @@ def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | Non
 
 def _ensure_public_ip(
     ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
-    host: str,
     *,
     label: str,
     resolved: bool,
@@ -95,8 +93,8 @@ def _ensure_public_ip(
     reason = _unsafe_reason(ip)
     if reason is None:
         return
-    verb = "resolved to" if resolved else "is"
-    raise UrlSecurityError(f"unsafe {label}: host '{host}' {verb} {reason} IP {ip}")
+    address_kind = "resolved address" if resolved else "direct address"
+    raise UrlSecurityError(f"unsafe {label}: {address_kind} is {reason}")
 
 
 def _unsafe_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
@@ -110,6 +108,10 @@ def _unsafe_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | N
         return "multicast"
     if ip.is_reserved:
         return "reserved"
+    if isinstance(ip, ipaddress.IPv4Address) and ip in _CGNAT_V4_NETWORK:
+        return "shared"
     if ip.is_private:
         return "private"
+    if not ip.is_global:
+        return "non-public"
     return None

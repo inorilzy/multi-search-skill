@@ -364,6 +364,122 @@ class SearchWebCoreTests(unittest.TestCase):
         )
         self.assertEqual(len(response["results"]), 2)
 
+    def test_expanded_search_reports_query_failures_when_an_angle_has_no_candidates(self):
+        from multi_search_mcp.src.service import SearchWebRequest, run_search_web
+
+        def brave(query, _config, _context, _key):
+            if query == "main angle":
+                return [
+                    {
+                        "source": "brave",
+                        "title": "main",
+                        "url": "https://example.com/main",
+                        "description": "main",
+                        "content_kind": "excerpt",
+                    }
+                ]
+            return []
+
+        def tavily(query, _config, _context, _key):
+            if query == "expanded angle":
+                raise RuntimeError("provider unavailable")
+            return [
+                {
+                    "source": "tavily",
+                    "title": "main",
+                    "url": "https://example.com/main",
+                    "description": "main",
+                    "content_kind": "excerpt",
+                }
+            ]
+
+        response = run_search_web(
+            SearchWebRequest(
+                query="main angle",
+                expand=["expanded angle"],
+                sources=["brave", "tavily"],
+                count=10,
+                use_state=False,
+            ),
+            providers={
+                "brave": ProviderSpec("brave", "brave", brave),
+                "tavily": ProviderSpec("tavily", "tavily", tavily),
+            },
+            keys={},
+            config={},
+        )
+
+        self.assertEqual(
+            response["diagnostics"]["query_failures"],
+            [
+                {
+                    "errors": [
+                        {
+                            "error": "provider unavailable",
+                            "source": "tavily",
+                        }
+                    ],
+                    "query": "expanded angle",
+                }
+            ],
+        )
+        self.assertEqual(len(response["results"]), 1)
+
+    def test_expanded_search_reports_all_failed_queries_separately(self):
+        from multi_search_mcp.src.service import SearchWebRequest, run_search_web
+
+        def failing(_query, _config, _context, _key):
+            raise RuntimeError("provider unavailable")
+
+        response = run_search_web(
+            SearchWebRequest(
+                query="main angle",
+                expand=["expanded angle"],
+                sources=["brave", "tavily"],
+                count=10,
+                use_state=False,
+            ),
+            providers={
+                "brave": ProviderSpec("brave", "brave", failing),
+                "tavily": ProviderSpec("tavily", "tavily", failing),
+            },
+            keys={},
+            config={},
+        )
+
+        self.assertEqual(response["results"], [])
+        self.assertEqual(
+            response["diagnostics"]["query_failures"],
+            [
+                {
+                    "errors": [
+                        {
+                            "error": "provider unavailable",
+                            "source": "brave",
+                        },
+                        {
+                            "error": "provider unavailable",
+                            "source": "tavily",
+                        },
+                    ],
+                    "query": "main angle",
+                },
+                {
+                    "errors": [
+                        {
+                            "error": "provider unavailable",
+                            "source": "brave",
+                        },
+                        {
+                            "error": "provider unavailable",
+                            "source": "tavily",
+                        },
+                    ],
+                    "query": "expanded angle",
+                },
+            ],
+        )
+
 
 class SearchWebToolTests(unittest.TestCase):
     def test_mcp_tool_does_not_replace_an_omitted_timeout(self):

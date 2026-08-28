@@ -292,6 +292,66 @@ class ReadSourceCoreTests(unittest.TestCase):
         self.assertEqual(response["end"], 17)
         self.assertTrue(response["untrusted_content"])
 
+    def test_read_supports_stable_keyword_pagination(self):
+        from multi_search_mcp.src.service import ReadSourceRequest, run_read_source
+
+        with TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state.sqlite")
+            ContentStore(store).put(
+                "src_readable", "prefix needle content suffix"
+            )
+            first = run_read_source(
+                ReadSourceRequest(
+                    source_id="src_readable",
+                    keyword="needle",
+                    offset=0,
+                    limit=6,
+                ),
+                state_store=store,
+            )
+            second = run_read_source(
+                ReadSourceRequest(
+                    source_id="src_readable",
+                    keyword="needle",
+                    offset=first["next_offset"],
+                    limit=8,
+                ),
+                state_store=store,
+            )
+
+        self.assertEqual(first["content"], "needle")
+        self.assertEqual(first["next_offset"], 6)
+        self.assertEqual(second["content"], " content")
+        self.assertEqual(second["match_offset"], 7)
+        self.assertEqual(second["start"], 13)
+
+    def test_read_clamps_out_of_range_offset_and_limit_and_caps_limit(self):
+        from multi_search_mcp.src.service import ReadSourceRequest, run_read_source
+
+        with TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state.sqlite")
+            ContentStore(store).put("src_readable", "x" * 9_000)
+            clamped = run_read_source(
+                ReadSourceRequest(
+                    source_id="src_readable",
+                    offset=-1,
+                    limit=0,
+                ),
+                state_store=store,
+            )
+
+            response = run_read_source(
+                ReadSourceRequest(source_id="src_readable", limit=9_000),
+                state_store=store,
+            )
+
+        self.assertEqual(clamped["content"], "x")
+        self.assertEqual(clamped["start"], 0)
+        self.assertEqual(clamped["next_offset"], 1)
+        self.assertEqual(len(response["content"]), 8_000)
+        self.assertTrue(response["has_more"])
+        self.assertEqual(response["next_offset"], 8_000)
+
     def test_read_fails_explicitly_for_missing_cache_or_keyword(self):
         from multi_search_mcp.src.service import (
             ReadSourceRequest,
@@ -313,6 +373,84 @@ class ReadSourceCoreTests(unittest.TestCase):
                     ReadSourceRequest(source_id="src_missing"),
                     state_store=store,
                 )
+
+    def test_read_fails_for_expired_or_deleted_cached_content(self):
+        from multi_search_mcp.src.service import ReadSourceRequest, run_read_source
+
+        with TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state.sqlite")
+            now = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+            content_store = ContentStore(
+                store,
+                ttl_seconds=60,
+                clock=lambda: now[0],
+            )
+            content_store.put("src_expired", "known body")
+            now[0] += timedelta(seconds=61)
+            with self.assertRaisesRegex(ValueError, "call fetch_source"):
+                run_read_source(
+                    ReadSourceRequest(source_id="src_expired"),
+                    state_store=store,
+                    content_store=content_store,
+                )
+
+            content_store.put("src_deleted", "known body")
+            self.assertEqual(content_store.delete_source("src_deleted"), 1)
+            with self.assertRaisesRegex(ValueError, "call fetch_source"):
+                run_read_source(
+                    ReadSourceRequest(source_id="src_deleted"),
+                    state_store=store,
+                    content_store=content_store,
+                )
+
+    def test_repeated_reads_update_lru_without_extending_expiry(self):
+        from multi_search_mcp.src.service import ReadSourceRequest, run_read_source
+
+        with TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state.sqlite")
+            now = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+            content_store = ContentStore(
+                store,
+                ttl_seconds=60,
+                clock=lambda: now[0],
+            )
+            content_store.put("src_readable", "known body")
+            before = store.rows(
+                """
+                SELECT s.expires_at, o.last_access_at
+                FROM content_sources AS s
+                JOIN content_objects AS o ON o.content_hash = s.content_hash
+                WHERE s.source_id = ?
+                """,
+                ("src_readable",),
+            )[0]
+
+            now[0] += timedelta(seconds=1)
+            first = run_read_source(
+                ReadSourceRequest(source_id="src_readable"),
+                state_store=store,
+                content_store=content_store,
+            )
+            now[0] += timedelta(seconds=1)
+            second = run_read_source(
+                ReadSourceRequest(source_id="src_readable"),
+                state_store=store,
+                content_store=content_store,
+            )
+            after = store.rows(
+                """
+                SELECT s.expires_at, o.last_access_at
+                FROM content_sources AS s
+                JOIN content_objects AS o ON o.content_hash = s.content_hash
+                WHERE s.source_id = ?
+                """,
+                ("src_readable",),
+            )[0]
+
+        self.assertEqual(first["expires_at"], before["expires_at"])
+        self.assertEqual(second["expires_at"], before["expires_at"])
+        self.assertEqual(after["expires_at"], before["expires_at"])
+        self.assertEqual(after["last_access_at"], now[0].isoformat())
 
 
 class SourceContentToolTests(unittest.TestCase):

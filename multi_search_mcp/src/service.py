@@ -118,6 +118,7 @@ def run_read_source(
     request: ReadSourceRequest | dict,
     *,
     state_store: StateStore | None = None,
+    content_store: ContentStore | None = None,
 ) -> dict:
     """Read a bounded slice from ContentStore without accessing the network."""
     if isinstance(request, dict):
@@ -126,8 +127,9 @@ def run_read_source(
         raise ValueError("source_id is required")
     if not request.use_state:
         raise ValueError("read_source requires state")
-    store = state_store or StateStore()
-    cached = ContentStore(store).get(request.source_id)
+    store = state_store or (content_store.store if content_store else StateStore())
+    cache = content_store or ContentStore(store)
+    cached = cache.get(request.source_id)
     if cached is None:
         raise ValueError(
             "cached content is missing or expired; call fetch_source first"
@@ -373,6 +375,7 @@ def run_search_web(
         ),
         key=lambda row: (row["query"], row["source"], row["error"]),
     )
+    query_failures = _query_failures(query_runs)
     response_id = f"resp_{uuid.uuid4().hex}"
     limit = request.count if request.count is not None else int(plan.route_defaults["count"])
     hits = fuse_search_results(
@@ -431,6 +434,7 @@ def run_search_web(
             "candidate_count": len(hits),
             "queries": queries,
             "provider_failures": failures,
+            "query_failures": query_failures,
             "content_store_errors": content_store_errors,
             "route_sources": sorted(base_sources),
             "disabled_sources": sorted(plan.disabled_sources),
@@ -467,6 +471,35 @@ def _query_provider_status(
             "raw_hits": hits,
             "errors": errors,
         })
+    return output
+
+
+def _query_failures(query_runs: list[tuple[str, list[dict]]]) -> list[dict]:
+    output = []
+    for query, rows in query_runs:
+        errors = sorted(
+            [
+                {
+                    "source": str(row.get("source") or "?"),
+                    "error": str(row.get("error") or ""),
+                }
+                for row in rows
+                if row.get("error")
+            ],
+            key=lambda row: (row["source"], row["error"]),
+        )
+        has_valid_candidate = any(
+            not row.get("error")
+            and not is_empty_result(row)
+            and row.get("url")
+            and row.get("source") not in ANSWER_SOURCES
+            for row in rows
+        )
+        if errors and not has_valid_candidate:
+            output.append({
+                "query": query,
+                "errors": errors,
+            })
     return output
 
 

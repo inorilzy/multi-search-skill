@@ -7,6 +7,8 @@
 
 > 当前 canonical 形态是 **一个 skill + 一个 Core + MCP/CLI 两个薄入口**：`skills/multi-search/SKILL.md` 负责候选优先工作流；`multi_search_mcp/src/` 承载搜索、RRF、抓取、ContentStore、key 状态和站点记忆。
 
+> 分阶段迁移、回滚和发布验证门槛见 [docs/candidate-first-release.md](docs/candidate-first-release.md)。
+
 ## MCP / CLI / Skill 入口
 
 MCP server 入口在仓库根目录：
@@ -338,7 +340,7 @@ JSON 配置支持 `disabled_sources`（默认为 `[]`）用来全局关闭某些
 
 - `results[]`：紧凑 SearchHit；不含 `body`、`scraped_content` 等正文。
 - `provider_status[]` / `errors[]`：每个 provider/query 的部分失败可见，不阻断其它结果。
-- `diagnostics`：查询角度、原始/候选数量、实际 route sources、状态路径和缓存写入错误。
+- `diagnostics`：查询角度、原始/候选数量、`provider_failures`、无有效候选的 `query_failures`、实际 route sources、状态路径和缓存写入错误。
 
 旧 `multi_search` 输出保持兼容：
 
