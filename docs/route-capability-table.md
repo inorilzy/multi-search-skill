@@ -13,7 +13,7 @@
 | 模式 | 产品目标 | 典型输出 | scrape 阶段 | 适合场景 |
 |---|---|---|---|---|
 | 快速模式 | 用较少搜索源获取信息 | 排序 URL + 摘要 + 正文预览 | RRF 最终前 15 条统一获取 | 新闻速览、快速查询、当前背景、初步调研 |
-| 专家模式 | 给出更可审计的答案 | URL 清单 + 正文预览 + 按需读取更多片段 | 同上，结合扩展查询和缓存阅读 | 技术决策、方案比较、事实核查、架构 review、争议问题 |
+| 专家模式 | 给出更可审计的答案 | URL 清单 + 正文预览 + 选读已取得全文 | 同上，结合扩展查询和选读 | 技术决策、方案比较、事实核查、架构 review、争议问题 |
 | 发现模式 | 找候选来源，不强制总结 | 排序 URL、摘要、正文预览 | RRF 最终前 15 条统一获取 | 找项目、找资料源、找 repo、找文章 |
 | 讨论模式 | 找社区/社交反馈 | 讨论链接、摘要、正文预览 | RRF 最终前 15 条统一获取 | 大家怎么说、用户反馈、社区评价、踩坑经验 |
 
@@ -28,11 +28,11 @@
 | `url` | 单条搜索结果链接 | `url` | 后续 scrape 的入口 |
 | `content` | 单条搜索结果摘要/snippet/highlight，不是网页全文 | `description` | 快速预览、证据选择；不额外参与相关性评分 |
 | `content_kind` | `metadata/content/excerpt/body/answer` 的显式语义 | `content_kind` | capability 驱动的正文/抓取决策 |
-| `markdown` | RRF 后获取的正文预览，默认每篇最多 6000 字符 | `scrapes[].markdown`；展示模式为顶层 `markdown` | 阅读证据；完整取得的正文按策略缓存 |
+| `markdown` | RRF 后获取的正文预览，默认每篇最多 1200 字符 | `scrapes[].markdown`；展示模式为顶层 `markdown` | 阅读证据；完整取得的正文按策略缓存 |
 | `source_id` | 一次 `response_id` 内 canonical URL 的稳定引用 | `SearchHit.source_id` | `fetch_source` / `read_source` |
 | `provider_ranks` / `rrf_score` | provider 原始名次与跨源 RRF 共识分 | `SearchHit` | 与完成顺序、正文长度解耦的排序 |
 
-`search_web` 与 `multi_search` 共用候选召回、两级 RRF 和正文获取流程。所有有效原始名次参与融合，不在源内或查询内截断 15 条；最终取前 15 条获取正文。成功时在候选上附 `body_available` / `body_truncated` / `body_backend`，失败保留原排名并附 `body_error`。正文只在关联的 `scrapes[].markdown` 中出现；展示模式将正文移至顶层 `markdown`。`content` 始终保留摘要，允许留存的完整正文进入短期 ContentStore，可通过 `read_source` 读取预览以外的片段。
+`search_web` 与 `multi_search` 共用候选召回、两级 RRF 和正文获取流程。所有有效原始名次参与融合，不在源内或查询内截断 15 条；最终取前 15 条获取正文。成功时在候选上附 `body_available` / `body_truncated` / `body_backend`，失败保留原排名并附 `body_error`。正文只在关联的 `scrapes[].markdown` 中出现；展示模式将正文移至顶层 `markdown`。`content` 始终保留摘要，允许留存的完整正文进入短期 ContentStore。Agent 根据问题和预览选 3–5 篇，逐篇调用 `fetch_source(source_id=..., full_content=True)` 一次读取已取得全文，可并发；少于 3 篇合格来源时读取可用数量并说明。Core 的 15 条排序和抓取流程不变，选读由调用工具的 Agent 完成，不引入服务端 AI 选择器、摘要或智能摘录。
 
 ## 通用搜索能力矩阵
 
@@ -68,7 +68,7 @@
 - **Tavily / Exa / Firecrawl**：召回时不向这些 provider 请求正文，公共入口在 RRF 后统一获取正文。
 - **Baidu**：仍可返回 answer + 引用 snippet，随后与其他候选一样进入 RRF 和正文获取。
 - **V2EX / SOV2EX**：匿名 `GET /api/search`，使用 `sort=sumup` 按相关性召回；搜索阶段忽略 `_source.content`，仅返回标题、URL 和清理后的高亮摘要。最终入选 RRF 前 15 条后，再统一抓取原帖 URL 或复用此前 URL 抓取的正文缓存。此源不依赖 Firecrawl 搜索，也不是 V2EX 官方 API；索引收录和更新由第三方服务决定。
-- **已有 URL**：直接走 `fetch_source(url=...)` / `scrape_url`；搜索得到的正文预览不足时用 `read_source` 局部读取缓存。
+- **已有 URL**：直接走 `fetch_source(url=..., full_content=True)` / `scrape_url`；`read_source` 用于定向查证缓存片段。缓存缺失或过期但 `source_id` 有效时，fetch 按原 ID 重新抓取；只有 ID 本身未知或失效时，才显式按已观察到的 URL 重新 fetch 并使用新 `source_id`。保留原错误。
 
 ## 最终 Route 设计
 
@@ -110,7 +110,7 @@
 
 ### 抓 URL 正文后由主模型总结
 
-当前所有公共搜索 route 都使用此流程；需要更深入核查时可扩展查询并读取更多缓存片段。
+当前所有公共搜索 route 都使用此流程；Agent 根据问题选择来源并读取已取得全文，需要更深入核查时可扩展查询或定向查证。
 
 优点：
 
@@ -128,20 +128,20 @@
 
 ## 建议
 
-摘要用于快速定位，结论结合搜索自动取得的正文核实，必要时读取更多缓存片段。
+摘要和预览用于选择来源，结论结合选读的已取得全文核实。
 
 推荐默认行为：
 
 | 模式 | 默认行为 |
 |---|---|
-| 普通 / 快速 | `search_web` 返回 RRF 前 15 条与正文预览；预览不足时 `read_source`。 |
-| 专家模式 | `search_web` 扩展查询后同样取最终前 15 条正文；对关键 `source_id` 读取更多证据。 |
+| 普通 / 快速 | `search_web` 返回 RRF 前 15 条与每篇最多 1200 字符预览；Agent 选 3–5 篇，用 `fetch_source(full_content=True)` 逐篇读取已取得全文。 |
+| 专家模式 | `search_web` 扩展查询后同样取最终前 15 条正文；按同一选读流程读取关键来源，`read_source` 用于定向查证。 |
 | 新闻模式 | 不单独设 route；查询包含时间语义，保留 provider failure diagnostics，并为主要结论读取可点击来源。 |
 
 实践规则：
 
-- 用户问“发生了什么 / 快速总结 / 最新情况 / news”：`search_web(route=fast)`，使用自动返回的正文，必要时 `read_source`。
-- 用户问“比较 / 决策 / 验证 / 架构 review / 为什么 / 给证据”：`search_web(route=default, expand=[...])`，对关键 `source_id` 做 fetch/read。
+- 用户问“发生了什么 / 快速总结 / 最新情况 / news”：`search_web(route=fast)`，按预览选读来源。
+- 用户问“比较 / 决策 / 验证 / 架构 review / 为什么 / 给证据”：`search_web(route=default, expand=[...])`，选读关键来源并追查原始材料。
 - 用户问“给我链接 / 找来源”：`search_web(route=web)`；明确找 repo/Q&A/HN 时走 `dev`。
 - 用户问“大家怎么说 / 评价 / 社区反馈 / 踩坑”：走 `social`；V2EX 讨论可显式指定 `sources=["v2ex"]`，Linux Do 站内讨论可显式指定 `sources=["linuxdo_api"]`。
 
@@ -149,6 +149,6 @@
 
 | 问题 | 结论 |
 |---|---|
-| route 是否表达读取深度？ | 否。route 选源；搜索统一取最终前 15 条正文，`read_source` 读取更多片段。 |
+| route 是否表达读取深度？ | 否。route 选源；搜索统一取最终前 15 条正文，Agent 再选 3–5 篇读取已取得全文。 |
 | 何时使用批量 scrape？ | 两个公共搜索入口都在 RRF 后自动执行；已有 URL 直接单页抓取。 |
-| body 如何进入上下文？ | 默认返回最多 6000 字符预览；完整取得的正文受 retention 和容量策略约束写入 ContentStore，再按 `source_id` 局部读取。 |
+| body 如何进入上下文？ | 默认返回正文开头最多 1200 字符预览；选读时 `fetch_source(full_content=True)` 一次返回全部已取得文本并覆盖 `max_chars`。省略或设为 `False` 时保留默认 20000 字符及显式预览限制。全文受现有抓取限制约束，Reddit 只含已加载评论；缓存容量和 retention 继续生效。 |

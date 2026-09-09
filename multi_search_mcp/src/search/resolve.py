@@ -71,7 +71,7 @@ def resolve_search_plan(request: Any, config: dict) -> ResolvedSearchPlan:
         effective_counts=build_counts(config, request.count, route_default=meta["count"]),
         timeout=timeout,
         scrape_top=scrape_top,
-        scrape_chars=max(1, _resolve_int(request.scrape_chars, config, "scrape_chars", 6000)),
+        scrape_chars=max(1, _resolve_int(request.scrape_chars, config, "scrape_chars", 1200)),
         scrape_per_source=max(1, _resolve_int(request.scrape_per_source, config, "scrape_per_source", 6)),
         scrape_timeout=scrape_timeout,
         scrape_url_timeout=_resolve_nonnegative(None, config, "scrape_url_timeout", scrape_timeout),

@@ -57,7 +57,7 @@ def _sanitize_scraped(md: str) -> str:
     return md
 
 
-def format_scrapes(scrapes: list, max_chars: int = 6000) -> str:
+def format_scrapes(scrapes: list, max_chars: int = 1200) -> str:
     """Render one body per page, with a metadata-only index and source ids."""
     scrapes = as_dicts(scrapes)
     if not scrapes:

@@ -107,6 +107,7 @@ class FetchSourceRequest:
     timeout: int | None = None
     config_path: str | None = None
     use_state: bool = True
+    full_content: bool = False
 
 
 @dataclass
@@ -219,7 +220,7 @@ def run_fetch_source(
                 "body_available": False,
             }])
         source = {"providers": ["direct"]}
-    max_chars = max(1, min(int(request.max_chars), 20_000))
+    max_chars = None if request.full_content else max(1, min(int(request.max_chars), 20_000))
 
     content_store = ContentStore(store) if store is not None else None
     cached = content_store.get(source_id) if content_store and source_id else None
@@ -237,7 +238,7 @@ def run_fetch_source(
             "backend": "content-store",
             "cache_hit": True,
             "persisted": True,
-            "truncated": len(str(cached["content"])) > max_chars,
+            "truncated": max_chars is not None and len(str(cached["content"])) > max_chars,
             "untrusted_content": True,
         }
 
@@ -287,7 +288,7 @@ def run_fetch_source(
         "backend": str(result.get("via") or "unknown"),
         "cache_hit": False,
         "persisted": stored is not None,
-        "truncated": len(body) > max_chars,
+        "truncated": max_chars is not None and len(body) > max_chars,
         "untrusted_content": True,
         "site_scraper_updates": updates,
     }
@@ -591,7 +592,7 @@ def run_search_web(
                 previous = prefetched.get(url, "")
                 if (len(body), body) > (len(previous), previous):
                     prefetched[url] = body
-    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 6000), 20_000))
+    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 1200), 20_000))
     body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
     concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))
 
@@ -757,7 +758,7 @@ def _run_scrape_raw(
     timeout = _resolve_nonnegative(request.timeout, resolved_config, "scrape_timeout", 60)
     if deadline is None:
         deadline = time.monotonic() + timeout
-    scrape_chars = max(1, _resolve_int(request.scrape_chars, resolved_config, "scrape_chars", 6000))
+    scrape_chars = max(1, _resolve_int(request.scrape_chars, resolved_config, "scrape_chars", 1200))
     store = (state_store or StateStore()) if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
     site_memory = SiteScraperMemory(store) if store else None

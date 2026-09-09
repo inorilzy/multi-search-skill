@@ -43,7 +43,12 @@ def search_web(
 
     `count` controls each provider's recall, subject to its API cap. It does not
     change the final 15-result limit. `results[].content` is a search excerpt;
-    `scrapes[].markdown` is the single fetched preview, joined by `source_id`.
+    `scrapes[].markdown` is the single fetched preview (default: 1200 characters),
+    joined by `source_id`. The calling Agent reviews these previews, selects
+    3-5 relevant sources, then calls fetch_source(source_id=..., full_content=True)
+    for each. If fewer than 3 sources qualify, use the available number.
+    Core does not make this selection or summarize with AI.
+    Use read_source for bounded slices of cached text.
     `results[].body_error` marks failures. Fetching never changes rank.
     Use fetch_source(url=...) to read a known URL without searching.
     """
@@ -60,10 +65,16 @@ def fetch_source(
     max_chars: int = 20_000,
     timeout: int | None = None,
     use_state: bool = True,
+    full_content: bool = False,
 ) -> dict:
-    """Fetch one source body, using the short-lived content cache when allowed."""
+    """Fetch one source body, using the short-lived content cache when allowed.
+
+    `full_content=True` returns the entire acquired body and overrides the
+    `max_chars` output limit. Otherwise output is bounded by `max_chars`
+    (default and maximum: 20000 characters). The body occurs once in `body`.
+    """
     return fetch_source_tool(
-        source_id, url, backends, max_chars, timeout, use_state
+        source_id, url, backends, max_chars, timeout, use_state, full_content
     )
 
 
@@ -89,7 +100,8 @@ def multi_search(query: str, route: str | None = None,
     """Compatibility output for the same RRF search-and-fetch flow as search_web.
 
     Both tools fuse all returned candidates and fetch the final 15 URLs.
-    `count` controls per-provider recall. `scrape_chars` bounds body previews,
+    `count` controls per-provider recall. `scrape_chars` bounds body previews
+    (default: 1200 characters),
     while cached content retains the acquired body within storage limits.
     `scrape_timeout` bounds the body-fetch batch; `timeout` bounds search.
     Legacy `scrape_top` is accepted but does not limit the final result fetches.
@@ -97,6 +109,10 @@ def multi_search(query: str, route: str | None = None,
     bodies occur once in `scrapes[].markdown`. With output=markdown/both, bodies
     occur once in top-level `markdown`, and `scrapes` contains metadata only.
     Markdown sections include `source_id` for continued cached reading.
+    The calling Agent reviews the previews, selects 3-5 relevant sources, then
+    calls fetch_source(source_id=..., full_content=True) for each. If fewer than
+    3 sources qualify, use the available number. Core does not make this
+    selection or summarize with AI.
     Use fetch_source(url=...) or scrape_url for a known URL without searching.
     On invalid input returns a structured {"error", "error_type"} dict.
     """
@@ -110,6 +126,7 @@ def scrape_url(url: str, backends: list[str] | None = None, scrape_chars: int | 
                output: str = "both") -> dict:
     """Fetch readable page content using state-aware scraper backend ordering.
 
+    `scrape_chars` defaults to 1200 characters of body output.
     `scrape_timeout` is the per-scrape timeout in seconds. Set `use_state=False`
     to skip the SQLite state DB and site scraper memory. On invalid input the
     tool returns a structured {"error", "error_type"} dict.
