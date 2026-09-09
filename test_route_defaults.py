@@ -31,10 +31,22 @@ class RouteScrapeDefaultTests(unittest.TestCase):
     def test_repo_config_keeps_route_owned_scrape_defaults_when_unset(self):
         config = load_config(str(ROOT_CONFIG_PATH))
 
-        for route, expected in {"default": 20, "fast": 0, "video": 0}.items():
+        for route, expected in {"default": 20, "fast": 0, "social": 0}.items():
             with self.subTest(route=route):
                 plan = resolve_search_plan(make_request(route=route), config)
                 self.assertEqual(plan.scrape_top, expected)
+
+    def test_removed_video_route_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unknown route: video"):
+            resolve_search_plan(make_request(route="video"), {})
+
+    def test_removed_video_sources_are_rejected(self):
+        for source in ("youtube", "bilibili"):
+            with self.subTest(source=source):
+                request = make_request()
+                request.sources = [source]
+                with self.assertRaisesRegex(ValueError, "unknown source"):
+                    resolve_search_plan(request, {})
 
     def test_request_scrape_top_beats_config_value(self):
         plan = resolve_search_plan(

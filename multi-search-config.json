@@ -9,14 +9,12 @@
     "tavily": 10,
     "exa": 10,
     "firecrawl": 10,
-    "zhihu": 10,
-    "youtube": 10,
-    "bilibili": 10,
     "serpapi": 10,
     "github": 10,
     "hackernews": 10,
     "stackoverflow": 10,
-    "twitter": 10
+    "twitter": 10,
+    "v2ex": 10
   },
   "serpapi_engine": "google_light",
   "timeout": 60,

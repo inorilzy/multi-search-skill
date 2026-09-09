@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..search.capabilities import ProviderKind, ScrapePolicy, get_capability_optional
+from ..search.capabilities import ScrapePolicy, get_capability_optional
 from ..support.dedup import _norm_url, deduplicate, result_to_scrape, split_by_content
 from ..state.key_state import BasicKeyManager
 from ..state.keys import jina_config_keys
@@ -52,12 +52,7 @@ def has_preferred_scrape_source(item: dict) -> bool:
 
 
 def is_video_result(item: dict) -> bool:
-    sources = {item.get("source")}
-    sources.update(item.get("also_from") or [])
-    for source in sources:
-        capability = get_capability_optional(source)
-        if capability and capability.kind == ProviderKind.VIDEO_SEARCHER:
-            return True
+    # General web providers can still return video URLs.
     url = str(item.get("url") or "").lower()
     return any(host in url for host in ("youtube.com/", "youtu.be/", "bilibili.com/"))
 

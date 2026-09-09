@@ -1,7 +1,8 @@
-"""URL scraping orchestration via Jina / Exa / Tavily / Firecrawl."""
+"""URL scraping with Reddit domain dispatch and generic page backends."""
 import time
 
 from ..support.auth import is_key_retryable_error
+from ..support.models import normalize_scrape_result
 from ..support.url_security import (
     UrlSecurityError,
     validate_redirect_target,
@@ -22,11 +23,12 @@ from .scrapers.jina import (
     scrape_url_jina,
 )
 from .scrapers.tavily import scrape_url_tavily
+from .scrapers.reddit import is_reddit_url, scrape_url_reddit
 from .url_classify import is_zhihu_blocked_text, is_zhihu_url
 from ..state.site_memory import ScrapeAttempt
 
 
-# Backends that have a real dispatch implementation in scrape_url_smart.
+# Selectable generic backends. Reddit is selected exclusively by URL domain.
 KNOWN_BACKENDS = ("jina", "exa", "tavily", "firecrawl")
 # Keyed backends whose only requirement to run is a configured key. Used to
 # distinguish "no key configured" from "backend unknown" when a caller forces
@@ -72,7 +74,7 @@ def _resolve_scrape_policy(url: str, backends: list[str] | tuple[str, ...] | Non
         else:
             # Caller supplied an explicit backend order (e.g. the search
             # orchestrator). Keep that order but make sure policy-mandated
-            # fallbacks (such as the local ``reddit`` scraper) are still
+            # fallbacks are still
             # appended so URL-specific behavior is not silently dropped.
             for backend in candidate.get("ensure_backends", ()):
                 if backend not in enabled:
@@ -156,7 +158,7 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      scrape_chars: int | None = None,
                      jina_prefer_keyed: bool = False,
                      url_resolver=None) -> dict:
-    """Scrape `url` starting with `primary` backend, falling back through the others."""
+    """Dispatch Reddit URLs to eddrit; otherwise use the generic backend order."""
 
     def _remaining_timeout() -> float:
         if deadline is None:
@@ -165,6 +167,30 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         if remaining <= 0:
             return 0.0
         return min(float(timeout), max(0.1, remaining))
+
+    if backends is not None:
+        for backend in backends:
+            if backend not in KNOWN_BACKENDS:
+                return normalize_scrape_result({"error": f"unknown scrape backend: {backend}"}, url=url)
+
+    # Domain dispatch precedes generic key/backend selection. The scrape planner
+    # can pass its generic backend list even for Reddit candidates.
+    if is_reddit_url(url):
+        try:
+            safe_url = validate_scrape_url(url, resolver=url_resolver)
+        except UrlSecurityError as exc:
+            return normalize_scrape_result({"error": str(exc)}, url=url, via="reddit")
+        started = time.monotonic()
+        result = scrape_url_reddit(safe_url, timeout=timeout, deadline=deadline, url_resolver=url_resolver)
+        result = normalize_scrape_result(result, url=safe_url, via="reddit")
+        if site_memory is not None:
+            site_memory.record_attempt(ScrapeAttempt(
+                url=safe_url, scraper="reddit", success="error" not in result,
+                content_length=len(result.get("markdown") or ""),
+                error_message=result.get("error"),
+                elapsed_ms=int((time.monotonic() - started) * 1000),
+            ))
+        return result
 
     # When a caller forces an explicit backend list, surface configuration
     # mistakes eagerly instead of letting them collapse into the generic
@@ -176,15 +202,13 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             "firecrawl": _key_candidates(firecrawl_key or "", firecrawl_keys),
         }
         for backend in backends:
-            if backend not in KNOWN_BACKENDS:
-                return {"url": url, "error": f"unknown scrape backend: {backend}"}
             if backend in KEYED_BACKENDS and not key_pool_for[backend]:
-                return {"url": url, "error": f"missing key for backend: {backend}"}
+                return normalize_scrape_result({"error": f"missing key for backend: {backend}"}, url=url, via=backend)
 
     try:
         safe_url, scrape_target = _prepare_scrape_target(url, resolver=url_resolver)
     except UrlSecurityError as exc:
-        return {"url": url, "error": str(exc)}
+        return normalize_scrape_result({"error": str(exc)}, url=url)
 
     policy = _resolve_scrape_policy(safe_url, backends)
 
@@ -300,14 +324,14 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         result = _call(backend)
         if result is None:
             continue
+        result = normalize_scrape_result(result, url=safe_url, via=backend)
         elapsed_ms = int((time.monotonic() - started) * 1000)
         last = result
         blocked = policy["blocked"]
         if blocked and blocked(result.get("markdown") or ""):
-            last = {
-                "url": safe_url,
+            last = normalize_scrape_result({
                 "error": f"{backend}: {policy['name'].title()} blocked content fetch",
-            }
+            }, url=safe_url, via=backend)
             if site_memory is not None:
                 site_memory.record_attempt(ScrapeAttempt(
                     url=safe_url,
@@ -339,4 +363,4 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                 error_message=str(result.get("error") or ""),
                 elapsed_ms=elapsed_ms,
             ))
-    return last or {"url": safe_url, "error": "no scrape backend available"}
+    return last or normalize_scrape_result({"error": "no scrape backend available"}, url=safe_url)

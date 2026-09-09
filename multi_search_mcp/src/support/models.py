@@ -47,6 +47,37 @@ def content_kind_priority(kind: Any) -> int:
     return CONTENT_KIND_PRIORITY[normalize_content_kind(kind)]
 
 
+@dataclass(frozen=True)
+class SearchContent:
+    """Separate candidate text from a provider's independently supplied body."""
+
+    snippet: str
+    snippet_kind: str
+    body: str
+
+
+def search_content(row: dict) -> SearchContent:
+    """Interpret legacy provider fields once for candidate output and caching.
+
+    Some adapters also put highlights in scraped_content. Only body/content
+    rows contain bodies; a body row can independently carry a description.
+    """
+    kind = normalize_content_kind(row.get("content_kind"))
+    body = (
+        str(row.get("scraped_content") or "")
+        if kind in {CONTENT_KIND_BODY, CONTENT_KIND_CONTENT} else ""
+    )
+    snippet = str(
+        row.get("description") or ""
+        if kind == CONTENT_KIND_BODY
+        else row.get("content") or row.get("description") or ""
+    )
+    snippet_kind = kind
+    if kind in {CONTENT_KIND_BODY, CONTENT_KIND_CONTENT}:
+        snippet_kind = CONTENT_KIND_EXCERPT if snippet else CONTENT_KIND_METADATA
+    return SearchContent(snippet, snippet_kind, body)
+
+
 # Sources that return a synthesized answer/summary rather than ranked webpage
 # results. These rows are excluded from result counts, dedup, and raw-hit
 # accounting. Keep this as the single source of truth; importers must not
@@ -177,6 +208,37 @@ class ScrapeResult:
             via=str(data.get("via", "") or ""),
             raw={key: value for key, value in data.items() if key not in known},
         )
+
+
+def normalize_scrape_result(data: Any, *, url: str = "", via: str = "") -> dict:
+    """Expose one Markdown contract at the shared scraper boundary.
+
+    Provider payloads and alternate body aliases never cross this boundary.
+    Plain text is valid Markdown; content is preserved without rewriting it.
+    """
+    row = data if isinstance(data, dict) else {}
+    target = url or str(row.get("url") or "")
+    backend = via or str(row.get("via") or "")
+    title = row.get("title")
+    title = title if isinstance(title, str) and title else target
+    error = row.get("error")
+    markdown = row.get("markdown")
+    if not isinstance(data, dict):
+        error = "invalid scrape response: expected an object"
+    elif not error and (not isinstance(markdown, str) or not markdown.strip()):
+        error = "invalid scrape response: expected non-empty markdown"
+    if error:
+        return ScrapeResult(
+            url=target, title=title, via=backend,
+            raw={"truncated": False, "error": str(error)},
+        ).to_dict()
+    length = row.get("length")
+    if isinstance(length, bool) or not isinstance(length, int) or length < len(markdown):
+        length = len(markdown)
+    return ScrapeResult(
+        url=target, title=title, markdown=markdown, length=length, via=backend,
+        raw={"truncated": bool(row.get("truncated")) or length > len(markdown)},
+    ).to_dict()
 
 
 @dataclass

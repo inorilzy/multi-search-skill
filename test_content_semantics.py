@@ -4,22 +4,15 @@ from unittest import mock
 
 from multi_search_mcp.src.scrape.scrape_planner import plan_scrapes
 from multi_search_mcp.src.search.searchers.baidu import _rows_from_response
-from multi_search_mcp.src.search.searchers.bilibili import (
-    _search_bilibili_html,
-    search_bilibili,
-)
 from multi_search_mcp.src.search.searchers.brave import search_brave
 from multi_search_mcp.src.search.searchers.exa import search_exa
 from multi_search_mcp.src.search.searchers.github import search_github_repos
 from multi_search_mcp.src.search.searchers.hackernews import search_hackernews
 from multi_search_mcp.src.search.searchers.linuxdo import search_linuxdo_api
 from multi_search_mcp.src.search.searchers.parallel import search_parallel
-from multi_search_mcp.src.search.searchers.reddit_browser import shape_result
 from multi_search_mcp.src.search.searchers.serpapi import search_serpapi
 from multi_search_mcp.src.search.searchers.stackoverflow import search_stackoverflow
 from multi_search_mcp.src.search.searchers.tavily import search_tavily
-from multi_search_mcp.src.search.searchers.youtube import search_youtube
-from multi_search_mcp.src.search.searchers.zhihu import search_zhihu
 from multi_search_mcp.src.support.dedup import _norm_url, apply_scraped_content
 from multi_search_mcp.src.support.models import SearchResult
 
@@ -81,43 +74,6 @@ class ProviderContentKindTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["content_kind"], "excerpt")
         self.assertEqual(rows[0]["description"], "summary · detail")
-
-    def test_bilibili_api_description_is_excerpt(self):
-        payload = {
-            "code": 0,
-            "data": {
-                "result": [{
-                    "bvid": "BV1xx411c7mD",
-                    "arcurl": "https://www.bilibili.com/video/BV1xx411c7mD",
-                    "title": "<em>Video</em>",
-                    "author": "creator",
-                    "description": "clip summary",
-                }]
-            },
-        }
-
-        with mock.patch(
-            "multi_search_mcp.src.search.searchers.bilibili.urlopen_retry",
-            return_value=_FakeResponse(payload),
-        ):
-            rows = search_bilibili("q")
-
-        self.assertEqual(rows[0]["content_kind"], "excerpt")
-        self.assertIn("clip summary", rows[0]["description"])
-
-    def test_bilibili_html_fallback_without_text_is_metadata(self):
-        html = (
-            '<a href="//www.bilibili.com/video/BV1xx411c7mD">'
-            '<img alt="Video title">'
-        )
-
-        with mock.patch(
-            "multi_search_mcp.src.search.searchers.bilibili.urlopen_retry",
-            return_value=_FakeResponse(html),
-        ):
-            rows = _search_bilibili_html("q", 10, 20)
-
-        self.assertEqual(rows[0]["content_kind"], "metadata")
 
     def test_exa_highlights_are_excerpt_not_body(self):
         payload = {
@@ -192,21 +148,6 @@ class ProviderContentKindTests(unittest.TestCase):
         self.assertEqual(rows[0]["content_kind"], "answer")
         self.assertEqual(rows[1]["content_kind"], "body")
         self.assertEqual(rows[1]["scraped_content"], "full body")
-
-    def test_reddit_platform_body_is_content(self):
-        row = shape_result(
-            {
-                "title": "Example",
-                "url": "https://www.reddit.com/r/python/comments/1/abc/",
-                "subreddit": "python",
-                "post_text": "post body",
-                "comments": ["comment"],
-            },
-            want_content=True,
-        )
-
-        self.assertEqual(row["content_kind"], "content")
-        self.assertIn("post body", row["scraped_content"])
 
     def test_github_repo_description_is_excerpt(self):
         payload = {
@@ -323,48 +264,6 @@ class ProviderContentKindTests(unittest.TestCase):
             rows = search_stackoverflow("q")
 
         self.assertEqual(rows[0]["content_kind"], "metadata")
-
-    def test_youtube_description_is_excerpt(self):
-        payload = {
-            "items": [{
-                "id": {"videoId": "abc123"},
-                "snippet": {
-                    "title": "Video",
-                    "channelTitle": "Channel",
-                    "publishedAt": "2026-08-27T00:00:00Z",
-                    "description": "video summary",
-                },
-            }]
-        }
-
-        with mock.patch(
-            "multi_search_mcp.src.search.searchers.youtube.urlopen_retry",
-            return_value=_FakeResponse(payload),
-        ):
-            rows = search_youtube("q", "yk")
-
-        self.assertEqual(rows[0]["content_kind"], "excerpt")
-
-    def test_zhihu_content_text_is_excerpt(self):
-        payload = {
-            "Code": 0,
-            "Data": {
-                "Items": [{
-                    "Title": "Zhihu answer",
-                    "Url": "https://www.zhihu.com/question/1/answer/2",
-                    "ContentText": "answer excerpt",
-                    "ContentType": "answer",
-                }]
-            },
-        }
-
-        with mock.patch(
-            "multi_search_mcp.src.search.searchers.zhihu.urlopen_retry",
-            return_value=_FakeResponse(payload),
-        ):
-            rows = search_zhihu("q", "zk")
-
-        self.assertEqual(rows[0]["content_kind"], "excerpt")
 
 
 class ScrapePlannerContentKindTests(unittest.TestCase):

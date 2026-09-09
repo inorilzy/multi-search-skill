@@ -101,6 +101,10 @@ SCHEMA = (
     )
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_search_sources_expires
+    ON search_sources (expires_at)
+    """,
+    """
     CREATE TABLE IF NOT EXISTS content_objects (
       content_hash TEXT PRIMARY KEY,
       content TEXT NOT NULL,

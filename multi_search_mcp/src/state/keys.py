@@ -30,12 +30,7 @@ KEY_ENV_PAIRS = (
     ("FIRECRAWL_API_KEY", "firecrawl"),
     ("SERPAPI_API_KEY", "serpapi"),
     ("SERPAPI_KEY", "serpapi"),
-    ("ZHIHU_ACCESS_SECRET", "zhihu"),
-    ("YOUTUBE_API_KEY", "youtube"),
-    ("BILIBILI_COOKIE", "bilibili"),
     ("TWITTER_COOKIES_PATH", "twitter_cookies"),
-    ("REDDIT_COOKIE_EXPORT", "reddit_cookie_export"),
-    ("REDDIT_BROWSER_PROFILE", "reddit_browser_profile"),
 )
 
 KEY_ENV_NAMES = [env_name for env_name, _key_name in KEY_ENV_PAIRS]
@@ -140,12 +135,4 @@ def load_keys(
             keys[key_name] = val
             if env_name == "TWITTER_COOKIES_PATH":
                 keys["twitter"] = val
-    reddit_browser = keys.get("reddit_browser") if isinstance(keys.get("reddit_browser"), dict) else {}
-    if keys.get("reddit_cookie_export") or keys.get("reddit_browser_profile"):
-        merged = dict(reddit_browser)
-        if keys.get("reddit_cookie_export"):
-            merged["cookie_export"] = keys.get("reddit_cookie_export")
-        if keys.get("reddit_browser_profile"):
-            merged["profile"] = keys.get("reddit_browser_profile")
-        keys["reddit_browser"] = merged
     return keys

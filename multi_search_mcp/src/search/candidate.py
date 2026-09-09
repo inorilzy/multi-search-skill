@@ -5,12 +5,13 @@ import hashlib
 import urllib.parse
 from typing import Any
 
-from ..support.models import ANSWER_SOURCES, content_kind_priority, is_empty_result
+from ..support.models import ANSWER_SOURCES, content_kind_priority, is_empty_result, search_content
 from ..support.urlutil import _is_tracking_param
+from .query_policy import QueryFusionPolicy
 
 
 RRF_RANK_CONSTANT = 40
-RRF_RANK_WINDOW = 15
+SEARCH_RESULT_LIMIT = 15
 SEARCH_HIT_CONTENT_CHARS = 1200
 
 
@@ -88,7 +89,7 @@ def _candidate_rows(query: str, rows: list[dict]) -> dict[str, dict[str, dict]]:
         (dict(row) for row in rows),
         key=lambda row: (
             str(row.get("source") or ""),
-            int(row.get("provider_rank") or RRF_RANK_WINDOW + 1),
+            int(row["provider_rank"]) if row.get("provider_rank") else float("inf"),
             canonicalize_url(str(row.get("url") or "")),
             str(row.get("title") or ""),
         ),
@@ -107,7 +108,7 @@ def _candidate_rows(query: str, rows: list[dict]) -> dict[str, dict[str, dict]]:
             continue
         inferred_ranks[source] = inferred_ranks.get(source, 0) + 1
         rank = int(row.get("provider_rank") or inferred_ranks[source])
-        if rank < 1 or rank > RRF_RANK_WINDOW:
+        if rank < 1:
             continue
         canonical_url = canonicalize_url(url)
         if not canonical_url:
@@ -139,22 +140,24 @@ def _public_hit(
     primary_source, representative = contributions[0]
     content_rows = []
     for provider, row in contributions:
-        candidate_text = str(row.get("content") or row.get("description") or "")
-        if candidate_text.strip():
-            content_rows.append((provider, row, candidate_text))
+        content = search_content(row)
+        if content.snippet.strip():
+            content_rows.append((provider, row, content))
     if content_rows:
-        _content_provider, content_row, content_text = sorted(
+        _content_provider, _content_row, content = sorted(
             content_rows,
             key=lambda item: (
-                -content_kind_priority(item[1].get("content_kind")),
-                -len(item[2]),
+                -content_kind_priority(item[2].snippet_kind),
+                -len(item[2].snippet),
                 int(item[1]["provider_rank"]),
                 item[0],
             ),
         )[0]
+        content_text = content.snippet
+        content_kind = content.snippet_kind
     else:
-        content_row = representative
         content_text = ""
+        content_kind = "metadata"
     provider_ranks = []
     for provider, row in sorted(
         contributions,
@@ -170,9 +173,8 @@ def _public_hit(
         provider_ranks.append(rank)
 
     body_available = any(
-        row.get("content_kind") == "body"
+        bool(search_content(row).body)
         or bool(row.get("body_available"))
-        or bool(row.get("scraped_content") and row.get("content_kind") == "body")
         for _, row in contributions
     )
     published_at = next(
@@ -185,9 +187,6 @@ def _public_hit(
         None,
     )
     source_id = make_source_id(response_id, canonical_url)
-    content_kind = str(content_row.get("content_kind") or "content")
-    if content_kind == "body":
-        content_kind = "content"
     hit = {
         "source_id": source_id,
         "title": str(representative.get("title") or representative.get("url") or ""),
@@ -206,6 +205,9 @@ def _public_hit(
     }
     if query_ranks is not None:
         hit["query_ranks"] = query_ranks
+        if any("is_primary" in rank for rank in query_ranks):
+            hit["primary_query_hit"] = any(rank["is_primary"] for rank in query_ranks)
+            hit["variant_support_count"] = sum(not rank["is_primary"] for rank in query_ranks)
     return hit
 
 
@@ -221,9 +223,7 @@ def _fuse_one_query(
             scores[canonical_url] = scores.get(canonical_url, 0.0) + (
                 1.0 / (RRF_RANK_CONSTANT + int(row["provider_rank"]))
             )
-    ordered_urls = sorted(by_url, key=lambda url: (-scores[url], url))[
-        :RRF_RANK_WINDOW
-    ]
+    ordered_urls = sorted(by_url, key=lambda url: (-scores[url], url))
     return by_url, scores, ordered_urls
 
 
@@ -231,22 +231,30 @@ def fuse_search_results(
     query_runs: list[tuple[str, list[dict]]],
     *,
     response_id: str,
-    limit: int = 10,
+    limit: int = SEARCH_RESULT_LIMIT,
+    primary_query: str | None = None,
+    query_policy: QueryFusionPolicy | None = None,
 ) -> list[dict[str, Any]]:
     """Fuse provider rankings, then fuse query-angle rankings when expanded."""
     if not query_runs:
         return []
+    policy = query_policy or QueryFusionPolicy()
+    weights = None
+    if policy.mode == "weighted":
+        if primary_query is None:
+            raise ValueError("weighted fusion requires primary_query")
+        weights = policy.weights([query for query, _rows in query_runs], primary_query)
     per_query = [
         (query, *_fuse_one_query(query, rows)) for query, rows in query_runs
     ]
     if len(per_query) == 1:
-        _query, by_url, scores, ordered_urls = per_query[0]
+        _query, by_url, provider_scores, ordered_urls = per_query[0]
         return [
             _public_hit(
                 response_id=response_id,
                 canonical_url=url,
                 contributions=by_url[url],
-                score=scores[url],
+                score=provider_scores[url],
             )
             for url in ordered_urls[: max(0, int(limit))]
         ]
@@ -257,12 +265,14 @@ def fuse_search_results(
     for query, by_url, _provider_scores, ordered_urls in per_query:
         for rank, canonical_url in enumerate(ordered_urls, start=1):
             contributions.setdefault(canonical_url, []).extend(by_url[canonical_url])
-            query_ranks.setdefault(canonical_url, []).append(
-                {"query": query, "rank": rank}
-            )
-            scores[canonical_url] = scores.get(canonical_url, 0.0) + (
-                1.0 / (RRF_RANK_CONSTANT + rank)
-            )
+            weight = weights[query] if weights is not None else 1.0
+            contribution = weight / (RRF_RANK_CONSTANT + rank)
+            query_rank: dict[str, Any] = {"query": query, "rank": rank}
+            if weights is not None:
+                query_rank.update(weight=weight, contribution=contribution,
+                                  is_primary=query == primary_query)
+            query_ranks.setdefault(canonical_url, []).append(query_rank)
+            scores[canonical_url] = scores.get(canonical_url, 0.0) + contribution
     ordered_urls = sorted(contributions, key=lambda url: (-scores[url], url))
     return [
         _public_hit(

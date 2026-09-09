@@ -1,37 +1,22 @@
-"""Provider registry and zhihu fallback used by the search service."""
+"""Provider registry used by the search service."""
 from .capabilities import AuthMode, get_capability
 from .search_runner import (
     ProviderSpec,
     call_optional_timeout,
-    run_keyed_source,
 )
 from .searchers.baidu import search_baidu
 from .searchers.brave import search_brave
-from .searchers.bilibili import search_bilibili
 from .searchers.exa import search_exa
-from .searchers.firecrawl import (
-    search_firecrawl,
-    search_linuxdo,
-    search_v2ex,
-    search_zhihu as search_zhihu_firecrawl,
-)
+from .searchers.firecrawl import search_firecrawl
 from .searchers.github import search_github_repos
 from .searchers.hackernews import search_hackernews
 from .searchers.linuxdo import search_linuxdo_api
 from .searchers.parallel import search_parallel
-from .searchers.reddit_browser import search_reddit_browser
 from .searchers.serpapi import search_serpapi
 from .searchers.stackoverflow import search_stackoverflow
 from .searchers.tavily import search_tavily
 from .searchers.twitter import search_twitter
-from .searchers.youtube import search_youtube
-from .searchers.zhihu import search_zhihu
-
-
-# The official Zhihu API is fast when it works but hangs hard when credentials
-# are stale; cap its timeout aggressively so a bad zhihu key cannot eat the
-# whole search-stage deadline before the Firecrawl fallback can run.
-ZHIHU_OFFICIAL_API_TIMEOUT = 5
+from .searchers.v2ex import search_v2ex
 
 
 def _capability_metadata(name: str) -> tuple[str, str | None, int]:
@@ -112,17 +97,6 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
                 timeout=ctx.timeout,
             ),
         ),
-        "youtube": _provider_spec(
-            "youtube",
-            missing_message="missing YOUTUBE_API_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(search_youtube, q, key, cfg.counts["youtube"], timeout=ctx.timeout),
-        ),
-        "bilibili": _provider_spec(
-            "bilibili",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_bilibili, q, cfg.keys.get("bilibili", ""), cfg.counts["bilibili"], timeout=ctx.timeout,
-            ),
-        ),
         "firecrawl": _provider_spec(
             "firecrawl",
             missing_message="missing FIRECRAWL_API_KEY",
@@ -130,24 +104,16 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
                 search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, want_content=cfg.want_content,
             ),
         ),
-        "v2ex": _provider_spec(
-            "v2ex",
-            missing_message="missing FIRECRAWL_API_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_v2ex, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout,
-            ),
-        ),
-        "linuxdo": _provider_spec(
-            "linuxdo",
-            missing_message="missing FIRECRAWL_API_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_linuxdo, q, key, cfg.counts["linuxdo"], timeout=ctx.timeout,
-            ),
-        ),
         "linuxdo_api": _provider_spec(
             "linuxdo_api",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_linuxdo_api, q, cfg.keys.get("linuxdo", ""), cfg.counts["linuxdo_api"], timeout=ctx.timeout,
+            ),
+        ),
+        "v2ex": _provider_spec(
+            "v2ex",
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_v2ex, q, cfg.counts["v2ex"], timeout=ctx.timeout,
             ),
         ),
         "github_repos": _provider_spec(
@@ -174,39 +140,4 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
                 timeout=ctx.timeout,
             ),
         ),
-        "reddit_browser": _provider_spec(
-            "reddit_browser",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_reddit_browser,
-                q,
-                cfg.counts["reddit_browser"],
-                cfg.keys.get("reddit_browser") or {},
-                timeout=ctx.timeout,
-                want_content=True,
-            ),
-        ),
-        "zhihu": _provider_spec("zhihu", call=_search_zhihu_with_fallback),
     }
-
-
-def _search_zhihu_with_fallback(query, cfg, ctx, _key):
-    if cfg.keys.get("zhihu"):
-        return run_keyed_source(
-            "zhihu",
-            cfg.keys.get("zhihu"),
-            lambda api_key: call_optional_timeout(search_zhihu, query, api_key, cfg.counts["zhihu"], timeout=min(ctx.timeout, ZHIHU_OFFICIAL_API_TIMEOUT)),
-            deadline=ctx.deadline,
-        )
-    if cfg.keys.get("firecrawl"):
-        return run_keyed_source(
-            "zhihu",
-            cfg.keys.get("firecrawl"),
-            lambda api_key: call_optional_timeout(
-                search_zhihu_firecrawl, query, api_key, cfg.counts["firecrawl"],
-                timeout=ctx.timeout,
-            ),
-            deadline=ctx.deadline,
-        )
-    return [{"source": "zhihu", "error": "skipped: missing ZHIHU_ACCESS_SECRET / FIRECRAWL_API_KEY fallback"}]
-
-

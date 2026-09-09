@@ -31,6 +31,7 @@ class SourceRegistry:
         now = self.clock()
         expires_at = now + timedelta(seconds=self.ttl_seconds)
         with self.store.connect() as conn:
+            self._purge_expired_conn(conn, now.isoformat())
             for hit in hits:
                 conn.execute(
                     """
@@ -78,7 +79,11 @@ class SourceRegistry:
     def purge_expired(self) -> int:
         now = self.clock().isoformat()
         with self.store.connect() as conn:
-            cursor = conn.execute(
-                "DELETE FROM search_sources WHERE expires_at <= ?", (now,)
-            )
-            return int(cursor.rowcount or 0)
+            return self._purge_expired_conn(conn, now)
+
+    @staticmethod
+    def _purge_expired_conn(conn, now: str) -> int:
+        cursor = conn.execute(
+            "DELETE FROM search_sources WHERE expires_at <= ?", (now,)
+        )
+        return int(cursor.rowcount or 0)

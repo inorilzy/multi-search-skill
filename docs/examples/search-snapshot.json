@@ -1,0 +1,18 @@
+{
+  "data_origin": "synthetic_fixture",
+  "description": "Hand-authored input fixture, not live search or measured provider quality. Materialize with scripts/search_snapshot.py fixture.",
+  "provider": "brave",
+  "primary_query": "question",
+  "variants": ["variant"],
+  "count": 2,
+  "rows_by_query": {
+    "question": [
+      {"source": "brave", "title": "Primary only", "url": "https://example.test/z", "description": "Synthetic primary result"},
+      {"source": "brave", "title": "Shared", "url": "https://example.test/shared", "description": "Synthetic shared result"}
+    ],
+    "variant": [
+      {"source": "brave", "title": "Variant only", "url": "https://example.test/added", "description": "Synthetic variant result"},
+      {"source": "brave", "title": "Shared", "url": "https://example.test/shared"}
+    ]
+  }
+}

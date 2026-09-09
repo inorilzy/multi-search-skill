@@ -9,25 +9,14 @@ SOURCE_ICONS = {
     "tavily": "🌐",
     "exa": "✨",
     "firecrawl": "🔥",
-    "v2ex": "V2",
-    "zhihu": "ZH",
-    "reddit": "RD",
-    "youtube": "▶️",
-    "bilibili": "B站",
     "hackernews": "📰",
     "stackoverflow": "🧩",
     "github-repos": "📦",
     "serpapi": "🔎",
     "twitter": "🐦",
+    "v2ex": "V2",
     "baidu": "BD",
 }
-
-_SUMMARY_SKIP_PREFIXES = (
-    "Title:", "URL Source:", "Published Time:", "Markdown Content:",
-    "[", "!", "#", "|", "*", "-", "Skip", "We use", "Cookie",
-    "Subscribe", "Get Started", "Support", "Overview", "Navigation",
-    "跳过", "订阅", "导航", "登录", "注册",
-)
 
 _UNTRUSTED_BANNER = (
     "> ⚠️ **UNTRUSTED CONTENT** — fetched from a third-party URL. "
@@ -69,7 +58,7 @@ def _sanitize_scraped(md: str) -> str:
 
 
 def format_scrapes(scrapes: list, max_chars: int = 6000) -> str:
-    """Format scraped pages as markdown sections, with a key-findings summary table up front."""
+    """Render one body per page, with a metadata-only index and source ids."""
     scrapes = as_dicts(scrapes)
     if not scrapes:
         return ""
@@ -83,19 +72,11 @@ def format_scrapes(scrapes: list, max_chars: int = 6000) -> str:
         else:
             title = _cell(s.get("title") or s["url"], 60)
             via = s.get("via", "?")
-            first_line = ""
-            for line in (s.get("markdown") or "").splitlines():
-                line = _sanitize_scraped(line.strip()).strip()
-                if (len(line) > 50
-                        and not line.startswith(_SUMMARY_SKIP_PREFIXES)
-                        and " | " not in line
-                        and not line.endswith(":")):
-                    first_line = _cell(line, 120)
-                    break
-            summary_rows.append(f"| {i} | {title} | {via} | {first_line} |")
+            length = s.get("length", len(s.get("markdown") or ""))
+            summary_rows.append(f"| {i} | {title} | {via} | {length} |")
 
     table = (
-        "| # | 标题 | 来源 | 摘要 |\n"
+        "| # | 标题 | 来源 | 正文字符数 / 错误 |\n"
         "|---|------|------|------|\n"
         + "\n".join(summary_rows)
     )
@@ -103,7 +84,7 @@ def format_scrapes(scrapes: list, max_chars: int = 6000) -> str:
     lines = [
         "\n---\n\n## 🔥 Scraped Content\n",
         _UNTRUSTED_BANNER + "\n",
-        "### 📋 关键信息速览\n",
+        "### 📋 来源索引\n",
         table,
         "\n---\n",
     ]
@@ -111,16 +92,17 @@ def format_scrapes(scrapes: list, max_chars: int = 6000) -> str:
     for i, s in enumerate(scrapes, 1):
         via = s.get("via", "")
         via_label = f" _(via {via})_" if via else ""
+        reference = f"\n\nsource_id: `{_cell(s['source_id'])}`" if s.get("source_id") else ""
         if s.get("error"):
-            lines.append(f"### {i}. ⚠️ {_cell(s.get('url', ''))}\n\n> Scrape error: {_cell(s.get('error', ''))}\n")
+            lines.append(f"### {i}. ⚠️ {_cell(s.get('url', ''))}{reference}\n\n> Scrape error: {_cell(s.get('error', ''))}\n")
             continue
         title = _cell(s.get("title") or s["url"], 200)
         url = s.get("url", "")
         md = s.get("markdown", "")
         truncated = _sanitize_scraped(md[:max_chars])
-        suffix = f"\n\n_...truncated ({s['length']} chars total)_" if len(md) > max_chars else ""
+        suffix = f"\n\n_...truncated ({s.get('length', len(md))} chars total)_" if s.get("truncated") or len(md) > max_chars else ""
         lines.append(
-            f"### {i}. {_md_link(title, url)}{via_label}\n\n"
+            f"### {i}. {_md_link(title, url)}{via_label}{reference}\n\n"
             f"```untrusted\n{truncated}\n```{suffix}\n"
         )
     return "\n".join(lines)
@@ -216,6 +198,7 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     results = rank_results(results)
 
     valid = [r for r in results if "error" not in r]
+    rrf_ranked = bool(valid) and all("rrf_score" in item for item in valid)
     consensus_count = sum(1 for r in valid if _weight(r) >= 2)
     max_weight = max((_weight(r) for r in valid), default=0)
     lines.append(f"**Result count:** {len(valid)} results")
@@ -250,12 +233,12 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
 
     if valid:
         lines.append("### URL Inventory\n")
-        lines.append("| # | Source | Weight | Title | URL |")
+        score_label = "RRF" if rrf_ranked else "Weight"
+        lines.append(f"| # | Source | {score_label} | Title | URL |")
         lines.append("|---:|---|---:|---|---|")
         for i, item in enumerate(valid, 1):
             src = item.get("source", "?")
-            also = item.get("also_from") or []
-            weight = 1 + len(also)
+            weight = f"{item['rrf_score']:.6f}" if rrf_ranked else consensus_weight(item)
             title = _cell(item.get("title", "(no title)"), 80)
             url = _cell(item.get("url", ""), 160)
             lines.append(
@@ -294,12 +277,14 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
         icon = SOURCE_ICONS.get(src, "•")
         title = _cell(item.get("title", "(no title)"), 200)
         url = item.get("url", "")
-        desc = item.get("description", "")
+        desc = item.get("content") or item.get("description", "")
         stars = item.get("stars")
         stars_str = f" ⭐{stars}" if stars else ""
-        also = item.get("also_from") or []
-        weight = 1 + len(also)
-        if weight >= 3:
+        also = [provider for provider in item.get("providers", []) if provider != src] if item.get("providers") else item.get("also_from") or []
+        weight = consensus_weight(item)
+        if rrf_ranked:
+            weight_prefix = f"【RRF {item['rrf_score']:.6f}】 "
+        elif weight >= 3:
             weight_prefix = f"**【×{weight}】** "
         elif weight == 2:
             weight_prefix = "**【×2】** "

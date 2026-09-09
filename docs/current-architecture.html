@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>当前架构图</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+      background: #181818;
+      color: #d8d8d8;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100%;
+      background: #181818;
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    main {
+      width: 100%;
+      height: 100vh;
+      padding: 8px 8vw 24px;
+      border-top: 2px solid #2a2a2a;
+    }
+
+    p {
+      margin: 34px 0 46px;
+      font-size: 28px;
+      line-height: 1.5;
+    }
+
+    code {
+      padding: 4px 12px;
+      border-radius: 10px;
+      background: #303030;
+      color: #dedede;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: .88em;
+    }
+
+    .diagram-viewport {
+      position: relative;
+      width: 100%;
+      height: calc(100vh - 126px);
+      min-height: 420px;
+      overflow: hidden;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    .diagram-viewport.is-dragging {
+      cursor: grabbing;
+    }
+
+    img {
+      position: absolute;
+      inset: 0 auto auto 0;
+      display: block;
+      width: 4450.46875px;
+      max-width: none;
+      height: auto;
+      transform-origin: 0 0;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    @media (max-width: 720px) {
+      main {
+        padding-left: 24px;
+        padding-right: 24px;
+      }
+
+      p {
+        font-size: 20px;
+      }
+
+      .diagram-viewport {
+        height: calc(100vh - 106px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p>这版以当前 <code>HEAD f66e441</code> 为准：</p>
+    <div class="diagram-viewport" id="diagram-viewport">
+      <img id="architecture-diagram" src="./current-architecture.svg" alt="Multi Search 当前中文架构图" draggable="false">
+    </div>
+  </main>
+  <script>
+    (() => {
+      const diagramWidth = 4450.46875;
+      const diagramHeight = 2770.38525390625;
+      const viewport = document.getElementById('diagram-viewport');
+      const diagram = document.getElementById('architecture-diagram');
+
+      let state = { scale: 1, x: 0, y: 0 };
+      let minimumScale = 1;
+      let dragStart = null;
+
+      function viewportSize() {
+        const rect = viewport.getBoundingClientRect();
+        return { width: rect.width, height: rect.height };
+      }
+
+      function clamp() {
+        const size = viewportSize();
+        const width = diagramWidth * state.scale;
+        const height = diagramHeight * state.scale;
+
+        state.x = width <= size.width
+          ? (size.width - width) / 2
+          : Math.min(0, Math.max(size.width - width, state.x));
+        state.y = height <= size.height
+          ? 0
+          : Math.min(0, Math.max(size.height - height, state.y));
+      }
+
+      function render() {
+        clamp();
+        diagram.style.transform = `translate(${state.x}px, ${state.y}px) scale(${state.scale})`;
+      }
+
+      function fit() {
+        const size = viewportSize();
+        minimumScale = Math.min(size.width / diagramWidth, size.height / diagramHeight);
+        state = { scale: minimumScale, x: 0, y: 0 };
+        render();
+      }
+
+      viewport.addEventListener('wheel', (event) => {
+        event.preventDefault();
+        const rect = viewport.getBoundingClientRect();
+        const pointerX = event.clientX - rect.left;
+        const pointerY = event.clientY - rect.top;
+        const previousScale = state.scale;
+        const nextScale = Math.min(3, Math.max(minimumScale, previousScale * (event.deltaY < 0 ? 1.12 : 1 / 1.12)));
+
+        state.x = pointerX - (pointerX - state.x) * nextScale / previousScale;
+        state.y = pointerY - (pointerY - state.y) * nextScale / previousScale;
+        state.scale = nextScale;
+        render();
+      }, { passive: false });
+
+      viewport.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        viewport.setPointerCapture(event.pointerId);
+        viewport.classList.add('is-dragging');
+        dragStart = { clientX: event.clientX, clientY: event.clientY, x: state.x, y: state.y };
+      });
+
+      viewport.addEventListener('pointermove', (event) => {
+        if (!dragStart) return;
+        state.x = dragStart.x + event.clientX - dragStart.clientX;
+        state.y = dragStart.y + event.clientY - dragStart.clientY;
+        render();
+      });
+
+      function stopDragging(event) {
+        if (!dragStart) return;
+        dragStart = null;
+        viewport.classList.remove('is-dragging');
+        if (viewport.hasPointerCapture(event.pointerId)) {
+          viewport.releasePointerCapture(event.pointerId);
+        }
+      }
+
+      viewport.addEventListener('pointerup', stopDragging);
+      viewport.addEventListener('pointercancel', stopDragging);
+      window.addEventListener('resize', fit);
+      diagram.addEventListener('load', fit, { once: true });
+    })();
+  </script>
+</body>
+</html>
