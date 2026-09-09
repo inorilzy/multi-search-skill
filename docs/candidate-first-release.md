@@ -5,10 +5,10 @@
 ## 新增能力
 
 - `search_web`：返回 RRF 最终前 15 条与正文预览，抓取失败保留结果并显式报告 `body_error`。
-- `fetch_source`：按 `source_id` 或显式 URL 抓取单条正文，优先复用缓存。
-- `read_source`：只读缓存中的局部正文，支持 `keyword`、`offset`、`limit`，不会隐式联网。
-- `multi-search` CLI：`search`、`fetch`、`read`、`doctor`、`keys status`、`keys reset` 直接调用与 MCP 相同的 Core。
-- 公共语义：`content` 保留摘要，`body` 是正文预览；`content_kind`、`response_id` / `source_id`、短期 `ContentStore` 和 provider retention 边界继续有效。两级 RRF 保留 `k=40`、默认等权，取消中间窗口。
+- `fetch_source`：按 `source_id` 或显式 URL 抓取单条正文，优先复用缓存；`full_content=True` 覆盖 `max_chars`，一次返回全部已取得文本。
+- `read_source`：只读缓存中的局部正文，支持 `keyword`、`offset`、`limit`，用于定向查证，不会隐式联网。
+- `multi-search` CLI：`search`、`fetch`、`read`、`doctor`、`keys status`、`keys reset` 直接调用与 MCP 相同的 Core；`fetch --full-content` 对应全文读取。
+- 公共语义：`content` 保留摘要，正文只在 `scrapes[].markdown` 或展示模式的顶层 `markdown` 中出现；`content_kind`、`response_id` / `source_id`、短期 `ContentStore` 和 provider retention 边界继续有效。两级 RRF 保留 `k=40`、默认等权，取消中间窗口。
 
 ## 兼容边界
 
@@ -16,7 +16,8 @@
 - 普通查询自动获取最终列表正文；`count` 只控制每源召回，最终最多 15 条。旧 `scrape_top` / `scrape_per_source` 包括 0 在内都不再裁剪或关闭正文抓取，显式传入时 diagnostics 会说明。
 - `~/.search-keys.json` 不迁移，环境变量优先级不变。
 - `~/.multi-search/state.sqlite` 继续作为共享状态文件；CLI 和 MCP 共用同一路径。
-- 两个搜索入口的 `body` 默认返回最多 6000 字符；预览限制不截短已取得且允许缓存的正文，`read_source` 可读取预览以外的片段。
+- 两个搜索入口的正文预览默认返回每篇开头最多 1200 字符；预览限制不截短已取得且允许缓存的正文。
+- `fetch_source.full_content` 默认 `False`，保留现有 `max_chars` 行为（默认 20000，显式值限制在 1–20000）。全文仅指后端实际取得文本，Reddit 包括已加载评论，不扩展未加载评论；现有抓取、缓存容量、TTL 和 retention 限制继续生效。
 
 ## 分阶段迁移
 
@@ -28,14 +29,16 @@
 
 ### Phase 2：切 skill 默认流程
 
-- 普通联网查询默认调用 `search_web`，直接使用摘要和正文预览，需要更多片段时调用 `read_source`。
+- 普通联网查询默认调用 `search_web`，Agent 根据问题、摘要和每篇最多 1200 字符预览选 3–5 篇，逐篇调用 `fetch_source(source_id=..., full_content=True)` 一次读取已取得全文，可并发；不足 3 篇合格来源时读取可用数量并说明。
+- 选读由调用工具的 Agent 完成，Core 继续获取 RRF 最终 15 条并按策略缓存；不增加服务端 AI 选择器、摘要或智能摘录。`read_source` 保留用于定向查证。
+- 保留 `body_error` 和每次读取错误。缓存缺失或过期但 `source_id` 有效时，`fetch_source(source_id=..., full_content=True)` 按原 ID 重新抓取；只有 ID 本身未知或失效时，才按已观察到的 URL 显式 `fetch_source(url=..., full_content=True)`，使用返回的新 `source_id`。
 - route 只用于选源，不作为正文开关；所有 route 都获取最终 RRF 前 15 条。
-- 输入已是 URL 时直接 `fetch_source(url=...)` / `scrape_url`，无需先搜索。
+- 输入已是 URL 时直接 `fetch_source(url=..., full_content=True)` / `scrape_url`，无需先搜索。
 
 ### Phase 3：逐步迁移新调用方
 
-- 新的 MCP/CLI 调用优先面向 `SearchHit`、`response_id` / `source_id`、`content_kind` 和 `read_source`。
-- 既有调用方按需迁移到共享的 `content` / `body` 字段及来源引用，避免再以正文长度自行重排结果。
+- 新的 MCP/CLI 调用优先面向 `SearchHit`、`response_id` / `source_id`、`content_kind` 和 `fetch_source(full_content=True)`；`read_source` 用于定向查证。
+- 既有调用方读取 `results[].content` 摘要，并按 `source_id` 关联 `scrapes[].markdown`；展示模式读取顶层 `markdown`，避免再以正文长度自行重排结果。
 - provider retention policy 只约束缓存与持久化边界，不改变调用入口。
 
 ## 回滚路径
@@ -57,8 +60,8 @@
 
 以下通过后，才算这次统一排序与正文获取发布准备完成：
 
-- 合约测试覆盖：两个搜索入口的 RRF 一致性、第 16 名以后候选进入最终列表、仅最后截取 15 条、抓取顺序与失败隔离、`fetch_source` / `read_source` 缓存与局部读取、URL 安全校验、CLI 共享 Core 契约、旧参数明确诊断。
-- 本地 smoke 覆盖：搜索返回 `content` 摘要及 `body` 正文预览；缓存保留已取得的完整正文，`read_source` 能读取预览外片段；直接 URL 抓取不调用 searcher；CLI 和 MCP 指向同一个 `state.sqlite`。
+- 合约测试覆盖：两个搜索入口的 RRF 一致性、第 16 名以后候选进入最终列表、仅最后截取 15 条、抓取顺序与失败隔离、`fetch_source` 全文与默认/显式预览的兼容、缓存与 `read_source` 局部读取、URL 安全校验、CLI `--full-content` 共享 Core 契约、旧参数明确诊断。
+- 本地 smoke 覆盖：搜索返回 `content` 摘要及单份最多 1200 字符的 Markdown 正文预览；选读来源通过 `fetch_source(full_content=True)` 一次返回已取得全文，缓存与 fresh fetch 均覆盖，`read_source` 可定向读取预览外片段；直接 URL 抓取不调用 searcher；CLI 和 MCP 指向同一个 `state.sqlite`。
 - 文档核对：README、skill、glossary、route/capability 文档对默认 workflow、`content_kind`、`response_id` / `source_id`、ContentStore 生命周期和 retention 边界的表述一致。
 
 ## 本说明不声称已验证的内容

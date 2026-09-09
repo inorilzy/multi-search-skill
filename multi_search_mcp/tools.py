@@ -69,6 +69,7 @@ def fetch_source_tool(
     max_chars: int = 20_000,
     timeout: int | None = None,
     use_state: bool = True,
+    full_content: bool = False,
 ) -> dict[str, Any]:
     return _safe_call(lambda: run_fetch_source(FetchSourceRequest(
         source_id=source_id,
@@ -77,6 +78,7 @@ def fetch_source_tool(
         max_chars=max_chars,
         timeout=timeout,
         use_state=use_state,
+        full_content=full_content,
     )))
 
 

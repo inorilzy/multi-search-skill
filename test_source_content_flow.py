@@ -228,7 +228,8 @@ class FetchSourceCoreTests(unittest.TestCase):
             )
 
         self.assertNotIn("scraped_content", response["results"][0])
-        self.assertEqual(response["results"][0]["body"], "provider body")
+        self.assertNotIn("body", response["results"][0])
+        self.assertEqual(response["markdown"].count("provider body"), 1)
         self.assertNotIn("full_content", response["results"][0])
         self.assertEqual(response["results"][0]["content"], "excerpt")
 

@@ -56,8 +56,10 @@
 | **url（结果链接）** | 单条搜索结果的目标 URL，是后续 scrape 正文的入口。 | `SearchResult.url` / dict `url` |
 | **content（结果摘要）** | `SearchHit.content` 映射摘要；provider 的 `description` 可以与正文同时存在。`search_content()` 统一分离摘要和正文后，再生成候选输出。 | `support/models.py` → `search_content` / `search/candidate.py` |
 | **content_kind（内容语义）** | Provider 行区分 `metadata`、`content`（平台正文）、`excerpt`、`body`、`answer`；其中 `content` / `body` 行的 `scraped_content` 可进入正文缓存，`excerpt` 行的同名字段仅为高亮。候选输出的类型描述其摘要，不继承正文类型。 | `support/models.py` / `search/capabilities.py` |
-| **body（正文预览）** | 两个搜索入口在 RRF 后获取正文并附到 `body`，默认最多 6000 字符；`content` 仍是摘要。完整取得的正文按留存和容量策略进入缓存；底层 provider 仍兼容 `scraped_content`。 | `service.py` → `run_search_web` / `run_fetch_source` |
-| **SearchHit（搜索候选）** | 概念见 [CONTEXT.md](../CONTEXT.md)。候选包含 `source_id/title/url/canonical_url/content/providers/provider_ranks/rrf_score/body_available`；公共响应在排序后补充 `body` 或 `body_error`。 | `search/candidate.py` / `service.py` |
+| **正文预览（Markdown）** | 搜索正文只存放在 `scrapes[].markdown`，按 `source_id` 对应候选，默认截取所获正文开头最多 1200 字符。`multi_search` 的 markdown/both 模式只在顶层 `markdown` 放正文，`scrapes` 保留元数据。`fetch_source` 的单页文本字段为 `body`；预览长度不截短缓存。 | `service.py` → `run_search_web` / `run_fetch_source` |
+| **选读 / 全文** | 调用工具的 Agent 根据问题和预览选 3–5 篇，逐篇用 `fetch_source(full_content=True)` 一次读取全部已取得文本；少于 3 篇合格来源时读取可用数量并说明。Core 继续抓取 RRF 最终 15 条；选读是 Agent 阅读流程。全文受后端现有抓取限制约束，Reddit 仅含已加载评论。 | `skills/multi-search/SKILL.md` / `service.py` → `run_fetch_source` |
+| **ScrapeResult（统一抓取结果）** | 五个后端在共享入口统一为 `url/title/markdown/length/via/truncated`。`length` 是取得正文的字符数，`truncated` 标明预览是否截断；失败时正文为空、长度为 0，并增加 `error`。上游私有响应字段不会直接透传。 | `support/models.py` → `normalize_scrape_result` |
+| **SearchHit（搜索候选）** | 概念见 [CONTEXT.md](../CONTEXT.md)。候选包含 `source_id/title/url/canonical_url/content/providers/provider_ranks/rrf_score/body_available`；公共响应在排序后补充抓取状态或 `body_error`，正文由同一 `source_id` 的抓取结果提供。 | `search/candidate.py` / `service.py` |
 | **response_id / source_id** | `response_id` 标识一次候选搜索；`source_id` 稳定标识该响应中的 canonical URL，并作为 `fetch_source` / `read_source` 的引用。 | `search/candidate.py` / `state/source_registry.py` |
 | **provider_rank / RRF** | 保留 provider 内部原始名次；同一 query 先做等权 RRF，expanded query 再按 query 排名做第二级 RRF，默认等权。`k=40`，两级均无中间截断，最终最多 15 条。provider 原生 score 只保留为诊断，正文不改变排序。 | `search/search_runner.py` / `search/candidate.py` |
 | **count（每源召回量）** | 控制每个搜索源请求多少结果，受该源上限约束；不控制融合后的最终 15 条限制。 | `search/resolve.py` / `search/candidate.py` |
@@ -67,8 +69,8 @@
 | **dedup（去重）** | 两个搜索入口统一使用保守 canonical URL 后按 RRF 融合，同一 query、同一 provider 的重复 URL 只按最好名次投一票。跨 provider、跨 query 的贡献保留。 | `search/candidate.py` |
 | **ContentStore（正文缓存）** | 对后端本次返回的原始正文执行容量检查与持久化，再裁剪本次响应。`max_chars` 只限制返回预览，不能截短缓存；TTL、单对象/总容量、LRU 和 provider retention 继续生效。 | `state/content_store.py` / `service.py` → `_run_scrape_raw` |
 | **SourceRegistry（来源注册表）** | 保存短期来源引用；每个注册批次在同一事务中删除已到期记录，按 `expires_at` 索引查找。没有后台定时器，应用停止时不会自动执行清理。 | `state/source_registry.py` / `state/state_store.py` |
-| **fetch_source（按需抓取）** | 按 `source_id` 或显式 URL 抓一条正文；先查 ContentStore，未命中才调用现有 scraper 链。目标 URL 统一执行 SSRF 校验。 | `service.py` → `run_fetch_source` |
-| **read_source（局部读取）** | 只读 ContentStore，支持 keyword/offset/limit。缺失或过期时明确要求先调用 `fetch_source`，不会隐式联网。 | `service.py` → `run_read_source` |
+| **fetch_source（按需抓取）** | 按 `source_id` 或显式 URL 抓一条正文；先查 ContentStore，未命中才调用现有 scraper 链。`full_content=False` 保留默认 20000 字符及显式 `max_chars` 限制；`True` 覆盖 `max_chars`，一次返回全部已取得文本，缓存容量与 retention 不变。目标 URL 统一执行 SSRF 校验。 | `service.py` → `run_fetch_source` |
+| **read_source（局部读取）** | 只读 ContentStore，支持 keyword/offset/limit，供定向查证缓存片段。缺失或过期时明确要求先调用 `fetch_source`，不会隐式联网；默认选读全文使用 `fetch_source(full_content=True)`。 | `service.py` → `run_read_source` |
 | **降级 / degradation** | route 的主源全部失败或无可用结果时，在结果里**显式标注**。当前所有 route 的 `degrade_to` 都为空，所以只会输出「primary providers unavailable」提示，不会自动切换到兜底源（兜底机制保留但未启用）。 | `ROUTE_META` 的 `degrade_to` ＋ `service.py` `_route_degradation` |
 
 ## 5. Key 与状态

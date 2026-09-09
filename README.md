@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-并行聚合搜索 skill + 共享 Core：搜索结果统一按 RRF 排序，取前 15 条后自动获取正文；已有 URL 可直接抓取。MCP 与 CLI 使用同一套搜索、key 状态和 SQLite 缓存，后续可按 `source_id` 读取正文片段。
+并行聚合搜索 skill + 共享 Core：搜索结果统一按 RRF 排序，取前 15 条后自动获取正文并返回预览；Agent 按问题选 3–5 篇，再按 `source_id` 一次读取每篇已取得的全文。MCP 与 CLI 使用同一套搜索、key 状态和 SQLite 缓存；已有 URL 可直接抓取。
 
 > 当前 canonical 形态是 **一个 skill + 一个 Core + MCP/CLI 两个薄入口**：`skills/multi-search/SKILL.md` 负责工具选择和使用策略；`multi_search_mcp/src/` 承载搜索、RRF、抓取、ContentStore、key 状态和站点记忆。
 
@@ -50,7 +50,7 @@ python -m multi_search_mcp.server
 
 边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。MCP 客户端启动配置只负责启动 server，不保存 secret。
 
-当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`content` 保留摘要，`body` 返回正文预览，默认最多 6000 字符；允许留存时完整取得的正文进入缓存，可用 `read_source` 读取预览以外的片段。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
+当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符，直接截取所获正文的开头。调用工具的 Agent 根据问题和预览选 3–5 篇，逐篇调用 `fetch_source(source_id=..., full_content=True)` 一次读取已取得全文，可并发；少于 3 篇合格来源时读取可用数量并如实说明。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
 
 ## 适用场景
 
@@ -72,7 +72,7 @@ python -m multi_search_mcp.server
 
 ## 快速开始
 
-把本仓库作为 skill 和 MCP server 注册给 agent 后，调用 `search_web` 获取排序结果及正文，需要更多片段时调用 `read_source`；已有 URL 直接用 `fetch_source(url=...)` 或 `scrape_url`：
+把本仓库作为 skill 和 MCP server 注册给 agent 后，调用 `search_web` 获取排序结果及预览，选 3–5 篇后用 `fetch_source(source_id=..., full_content=True)` 读取已取得全文；已有 URL 直接用 `fetch_source(url=..., full_content=True)` 或 `scrape_url`：
 
 ```powershell
 git clone https://github.com/inorilzy/multi-search-skill.git
@@ -142,7 +142,7 @@ MCP 和 CLI 都是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工
 | `all` | default + social + dev + v2ex（12 源；`linuxdo_api` 需显式指定） | 尽可能广的 API 召回 |
 | 指定源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` | 绕过 route，直接指定一个或多个源 |
 
-搜索自动返回正文预览；需要更深的证据片段时用 `read_source`。已有 URL 无需搜索，直接用 `fetch_source` / `scrape_url`。
+搜索自动返回正文预览；Agent 选读来源后用 `fetch_source(full_content=True)` 获取已取得全文，`read_source` 用于定向查证缓存片段。已有 URL 无需搜索，直接用 `fetch_source` / `scrape_url`。
 
 > 实际生效的源以响应里的 `diagnostics.active_sources` 为准：`multi-search-config.json`
 > 可通过 `disabled_sources` 全局关闭源；被关闭的源会从 route 中减去，不会执行。
@@ -258,9 +258,11 @@ flowchart LR
 - `source_id`、`title`、`url`、`canonical_url`、`content`、`content_kind`
 - `source`、`providers`、`provider_ranks`、`rrf_score`
 - `published_at`、`body_available`、`content_ref`、`untrusted_content`
-- 抓取成功时：`body`（默认最多 6000 字符预览）、`body_truncated`、`body_backend`；失败时：`body_error`
+- 抓取成功时：`body_available`、`body_truncated`、`body_backend`；失败时：`body_error`。正文只在同一 `source_id` 的 `scrapes[].markdown` 中出现一次。
 
-响应同时包含 `response_id`、`provider_status`、`scrapes`、`errors` 和 `diagnostics`。预览限制不截短已取得并允许缓存的正文。`fetch_source` 返回单页 `body`、cache/retention 状态；`read_source` 只读缓存中的有界片段。正文始终标记为 untrusted。
+响应同时包含 `response_id`、`provider_status`、`scrapes`、`errors` 和 `diagnostics`。预览限制不截短已取得并允许缓存的正文。`fetch_source` 返回单页 `body`、cache/retention 状态；`full_content=True` 返回全部已取得文本。这里的全文受现有抓取限制约束，Reddit 包括已加载评论，不会因此加载未展开评论。缓存容量、TTL 和 retention 规则继续生效。`read_source` 只读缓存中的有界片段，用于定向查证。
+
+抓取失败和 `body_error` 应显式保留。缓存缺失或过期但 `source_id` 有效时，`fetch_source(source_id=..., full_content=True)` 按原 ID 重新抓取。只有来源 ID 本身未知或失效时，Agent 才使用已观察到的 URL 显式调用 `fetch_source(url=..., full_content=True)`，后续使用返回的新 `source_id`。正文始终标记为 untrusted。
 
 旧 `multi_search` 仍兼容 dict 和原有 dataclass：`SearchResult`、`ScrapeResult`、`ProviderStatus`、`ProviderError`，定义在 `multi_search_mcp/src/support/models.py`。
 
@@ -283,13 +285,13 @@ search_web({
   "expand": ["agent orchestration best practices multi-agent"]
 })
 
-// 按 source_id 复用缓存，或重试此前正文获取失败的来源
-fetch_source({ "source_id": "src_..." })
+// Agent 根据预览选 3–5 篇，每篇一次读取已取得全文；可并发调用
+fetch_source({ "source_id": "src_...", "full_content": true })
 
 // 也可直接抓公开 URL；source_id 与 url 必须二选一
-fetch_source({ "url": "https://example.com/article" })
+fetch_source({ "url": "https://example.com/article", "full_content": true })
 
-// 后续按关键词或偏移量读取缓存，包括搜索预览以外的正文
+// 定向查证缓存片段；默认阅读全文无需分页
 read_source({ "source_id": "src_...", "keyword": "installation", "limit": 4000 })
 
 // 兼容入口使用相同RRF和正文流程
@@ -301,7 +303,7 @@ search_web({ "query": "AI Agent", "sources": ["linuxdo_api"] })
 search_web({ "query": "python", "sources": ["v2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <source_id>`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `doctor`、`keys status`、`keys reset`。
+CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `doctor`、`keys status`、`keys reset`。
 
 ## 配置和参数
 
@@ -319,27 +321,45 @@ CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <sou
 | `expand` | — | 额外扩展查询（list），常用于给中文查询补英文 |
 | `use_state` | true | 是否使用 SQLite key 状态与站点抓取器记忆 |
 
-`fetch_source` 通过 `source_id` 或 `url` 选择一页，支持 `backends`、`max_chars`、`timeout`、`use_state`。`read_source` 通过 `source_id` 读取缓存，支持 `keyword`、`offset`、`limit`；单次最多 8000 字符。
+`fetch_source` 通过 `source_id` 或 `url` 选择一页，支持 `backends`、`max_chars`、`full_content`、`timeout`、`use_state`。`full_content` 默认 `False`，保留现有 `max_chars` 行为（默认 20000，显式值限制在 1–20000）；设为 `True` 时覆盖 `max_chars`，一次返回全部已取得文本。CLI 对应 `fetch --full-content`。`read_source` 通过 `source_id` 读取缓存，支持 `keyword`、`offset`、`limit`；单次最多 8000 字符，用于定向查证。
 
-`multi_search` 额外支持 `scrape_chars`、`scrape_timeout` 和 `output`。`scrape_chars` 限制本次正文预览，默认 6000；`scrape_timeout` 限制正文阶段时间。旧 `scrape_top` / `scrape_per_source` 仍接受，但包括 0 在内都不再控制是否抓取或抓取数量，diagnostics 会明确说明。所有搜索入口都获取最终前 15 条正文。
+`multi_search` 额外支持 `scrape_chars`、`scrape_timeout` 和 `output`。`scrape_chars` 限制本次正文预览，默认 1200；`scrape_timeout` 限制正文阶段时间。旧 `scrape_top` / `scrape_per_source` 仍接受，但包括 0 在内都不再控制是否抓取或抓取数量，diagnostics 会明确说明。所有搜索入口都获取最终前 15 条正文。
 
 `count` 解析优先级：tool 入参 `count` > 配置文件 `counts{}` / `*_count` > 配置文件全局 `count` > route 默认值，最后按各 provider 的上限 clamp。响应里的 `diagnostics.effective_counts` 会回显最终每个 provider 使用的数量；`diagnostics.route_meta.route_default_count` 只表示 route 默认值。
 
 JSON 配置支持 `disabled_sources`（默认为 `[]`）用来全局关闭某些搜索源。route 正常解析后会从结果里减去这些源，对 tool 显式传入的 `sources` 同样生效。它只是调度开关：不删除 API key、不改变 provider 能力，被禁用源在 `counts{}` 里的配置保留但不生效。支持源别名（如 `baidu-ai-search`、`github`），只接受搜索源，不接受 scrape backend（如 `jina`）；填入未知名称会报错。若某次请求的全部源都被禁用，会返回明确错误而不是静默返回空结果。响应的 `diagnostics` 会回显 `route_sources`（原始选择）、`disabled_sources`（已关闭）、`active_sources`（实际执行）。
 
-`scrape_url` tool 用于单独抓取一个 URL，支持 `backends`、`scrape_chars`、`scrape_timeout`、`use_state` 等参数。
+`scrape_url` tool 用于单独抓取一个 URL，支持 `backends`、`scrape_chars`、`scrape_timeout`、`use_state` 等参数；默认正文输出上限同为 1200 字符，可通过 `scrape_chars` 覆盖。
+
+五个抓取后端（Jina、Exa、Tavily、Firecrawl、Reddit）在共享入口统一输出：
+
+| 字段 | 含义 |
+|---|---|
+| `url` / `title` | 原始目标 URL 与标题；没有标题时使用 URL |
+| `markdown` | 本次取得的正文或其预览；保留原有文本，不调用 AI 重写 |
+| `length` | 取得正文的字符数，预览截断后仍保留原长度 |
+| `via` | 本次使用的后端；未执行后端时为空 |
+| `truncated` | 当前正文预览是否截断 |
+| `error` | 仅失败时存在；失败正文为空、长度为 0 |
+
+上游的 `text`、`raw_content`、JSON 等由各适配器解析，共享入口校验并归一化；非法或空正文明确报错。`search_web` 在抓取结果上附加 `source_id`。`fetch_source` 和 `read_source` 保留各自现有的单页、缓存读取协议。
 
 ## 输出
 
 `search_web` 输出包含：
 
-- `results[]`：RRF 最终前 15 条；`content` 是摘要，`body` 是正文预览，抓取失败保留候选并提供 `body_error`。
+- `results[]`：RRF 最终前 15 条；`content` 是摘要，保留来源引用、排序和抓取状态，失败时提供 `body_error`。
+- `scrapes[]`：按相同 RRF 顺序返回统一抓取结果，正文只在 `markdown` 字段出现，默认每篇最多 1200 字符。
 - `provider_status[]` / `errors[]`：每个 provider/query 的部分失败可见，不阻断其它结果。
 - `diagnostics`：查询角度、原始/候选数量、`provider_failures`、无有效候选的 `query_failures`、实际 route sources、正文成功数和失败信息、状态路径和缓存写入错误。
 
-旧 `multi_search` 输出保持兼容：
+`multi_search` 保留兼容入口，正文输出统一为一份：
 
-- JSON `summary`：首个 provider 原生 query-level answer/summary；`summaries` 保留全部 `*_answer` 来源及 metadata。`source_briefs` 为每个 provider 提供一条展示 brief，优先使用原生 answer，否则从该来源的 URL 结果 title/snippet/highlights 生成 brief；兼容字段 `source_summaries` 仍会返回，但新代码应使用 `source_briefs`。`results[]` 与 `search_web` 共用 `content` 摘要和 `body` 正文预览字段。
+- `output="json"`：正文在 `scrapes[].markdown`；`output="markdown"` / `"both"`：正文仅在顶层 `markdown`，`scrapes[]` 保留来源引用、长度、后端、截断和错误等元数据。
+- `scrape_url` 同样遵循此规则：json 模式的正文在 `result.markdown`；markdown/both 模式的正文仅在顶层 `markdown`，`result` 保留元数据。
+- 调用方从旧的 `results[].body` 迁移至同一 `source_id` 的 `scrapes[].markdown`；展示模式消费顶层 `markdown`。CLI 和 Skill 已同步采用此约定。
+
+- JSON `summary`：首个 provider 原生 query-level answer/summary；`summaries` 保留全部 `*_answer` 来源及 metadata。`source_briefs` 为每个 provider 提供一条展示 brief，优先使用原生 answer，否则从该来源的 URL 结果 title/snippet/highlights 生成 brief；兼容字段 `source_summaries` 仍会返回，但新代码应使用 `source_briefs`。`results[]` 与 `search_web` 共用摘要、排名及来源引用。
 - `display_results[]`：从最终排序后的有效 `results[]` 抽取的展示清单，固定包含 title、source、URL 和 snippet，供 UI / agent 优先展示。新闻、时事和需要核验的查询必须先列出这些可点击来源链接，再给摘要；不能只输出无链接的叙述性总结。
 - `Sources (raw hits)`：各源原始命中数。
 - `Source Status`：OK / PARTIAL / ERROR。

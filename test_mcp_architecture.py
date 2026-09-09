@@ -782,7 +782,8 @@ class PluginServiceConfigTests(unittest.TestCase):
         row = response["results"][0]
         self.assertEqual(row["content"], "short result content")
         self.assertNotIn("scraped_content", row)
-        self.assertEqual(row["body"], "Fetched body for https://example.com")
+        self.assertNotIn("body", row)
+        self.assertIn("Fetched body for https://example.com", response["markdown"])
         self.assertNotIn("full_content", row)
 
     def test_display_results_expose_verifiable_links(self):
@@ -1022,7 +1023,8 @@ class PluginServiceConfigTests(unittest.TestCase):
 
         self.assertEqual(fetched, [["https://example.com/doc"]] * 3)
         for response in responses:
-            self.assertEqual(response["results"][0]["body"], "Fetched body for https://example.com/doc")
+            self.assertNotIn("body", response["results"][0])
+            self.assertEqual(response["markdown"].count("Fetched body for https://example.com/doc"), 1)
             self.assertEqual(response["diagnostics"]["body_fetch_count"], 1)
 
     def test_direct_scrape_passes_configured_jina_keys(self):
@@ -1540,7 +1542,12 @@ class PluginRRFSearchContractTests(unittest.TestCase):
             self.assertEqual([hit["url"] for hit in hits],
                              ["https://example.com/first", "https://example.com/second"])
             self.assertGreater(hits[0]["rrf_score"], hits[1]["rrf_score"])
-            self.assertTrue(all("body" in hit for hit in hits))
+            self.assertTrue(all(hit["body_available"] and "body" not in hit for hit in hits))
+            if "markdown" in response:
+                self.assertIn("Fetched body for https://example.com/first", response["markdown"])
+                self.assertIn("Fetched body for https://example.com/second", response["markdown"])
+            else:
+                self.assertTrue(all(row["markdown"] for row in response["scrapes"]))
         self.assertEqual([hit["rrf_score"] for hit in responses[0]["results"]],
                          [hit["rrf_score"] for hit in responses[1]["results"]])
 
@@ -1583,7 +1590,11 @@ class PluginRRFSearchContractTests(unittest.TestCase):
             self.assertEqual(first["body_error"], "page unavailable")
             self.assertNotIn("error", first)
             self.assertNotIn("body", first)
-            self.assertIn("body", second)
+            self.assertTrue(second["body_available"])
+            if "markdown" in response:
+                self.assertIn("Fetched body for https://example.com/second", response["markdown"])
+            else:
+                self.assertEqual(response["scrapes"][1]["markdown"], "Fetched body for https://example.com/second")
             self.assertEqual(response["errors"][0]["stage"], "fetch")
             self.assertEqual(response["diagnostics"]["body_success_count"], 1)
         markdown = responses[1]["markdown"]

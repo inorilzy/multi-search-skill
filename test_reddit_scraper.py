@@ -71,7 +71,8 @@ class RedditRoutingTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina") as generic:
             result = scrape_url_smart(URL, url_resolver=PUBLIC)
         self.assertIn("403", result["error"])
-        self.assertNotIn("markdown", result)
+        self.assertEqual(result["markdown"], "")
+        self.assertEqual(result["via"], "reddit")
         generic.assert_not_called()
 
     def test_private_resolution_and_credentials_are_rejected_before_auth(self):

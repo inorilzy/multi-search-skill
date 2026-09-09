@@ -12,7 +12,7 @@ from .support.config import ConfigError, config_list, load_config, resolve_confi
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
 from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, load_keys
-from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, search_content
+from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content
 from .scrape.scrape import scrape_url_smart
 from .scrape.stage import (
     _backfill_scrape_title,
@@ -107,6 +107,7 @@ class FetchSourceRequest:
     timeout: int | None = None
     config_path: str | None = None
     use_state: bool = True
+    full_content: bool = False
 
 
 @dataclass
@@ -219,7 +220,7 @@ def run_fetch_source(
                 "body_available": False,
             }])
         source = {"providers": ["direct"]}
-    max_chars = max(1, min(int(request.max_chars), 20_000))
+    max_chars = None if request.full_content else max(1, min(int(request.max_chars), 20_000))
 
     content_store = ContentStore(store) if store is not None else None
     cached = content_store.get(source_id) if content_store and source_id else None
@@ -237,7 +238,7 @@ def run_fetch_source(
             "backend": "content-store",
             "cache_hit": True,
             "persisted": True,
-            "truncated": len(str(cached["content"])) > max_chars,
+            "truncated": max_chars is not None and len(str(cached["content"])) > max_chars,
             "untrusted_content": True,
         }
 
@@ -287,7 +288,7 @@ def run_fetch_source(
         "backend": str(result.get("via") or "unknown"),
         "cache_hit": False,
         "persisted": stored is not None,
-        "truncated": len(body) > max_chars,
+        "truncated": max_chars is not None and len(body) > max_chars,
         "untrusted_content": True,
         "site_scraper_updates": updates,
     }
@@ -591,7 +592,7 @@ def run_search_web(
                 previous = prefetched.get(url, "")
                 if (len(body), body) > (len(previous), previous):
                     prefetched[url] = body
-    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 6000), 20_000))
+    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 1200), 20_000))
     body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
     concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))
 
@@ -616,32 +617,38 @@ def run_search_web(
     )
     scrapes = []
     for hit, body_result in zip(response["results"], fetched["results"]):
-        if body_result.get("error"):
-            hit["body_error"] = body_result["error"]
-            scrapes.append({"source_id": hit["source_id"], "url": hit["url"],
-                            "error": body_result["error"]})
+        page = normalize_scrape_result({
+            "title": hit["title"], "markdown": body_result.get("body"),
+            "length": body_result.get("content_length"),
+            "truncated": bool(body_result.get("truncated")),
+            "error": body_result.get("error"),
+        }, url=hit["url"], via=body_result.get("backend") or "")
+        page["source_id"] = hit["source_id"]
+        scrapes.append(page)
+        if page.get("error"):
+            hit["body_error"] = page["error"]
+            hit["body_available"] = False
             continue
         hit.update(
-            body=body_result["body"], body_available=True,
-            body_truncated=bool(body_result.get("truncated")),
-            body_backend=body_result.get("backend"),
+            body_available=True,
+            body_truncated=page["truncated"],
+            body_backend=page["via"],
         )
-        scrapes.append({
-            "source_id": hit["source_id"], "url": hit["url"], "title": hit["title"],
-            "markdown": hit["body"], "length": body_result.get("content_length", len(hit["body"])),
-            "via": body_result.get("backend"), "truncated": hit["body_truncated"],
-        })
     response["scrapes"] = scrapes
     response["site_scraper_updates"] = [
         update for result in fetched["results"]
         for update in result.get("site_scraper_updates", [])
     ]
-    response["errors"].extend({**error, "stage": "fetch"} for error in fetched["errors"])
+    body_errors = [
+        {key: row[key] for key in ("source_id", "url", "error")}
+        for row in scrapes if row.get("error")
+    ]
+    response["errors"].extend({**error, "stage": "fetch"} for error in body_errors)
     response["diagnostics"].update(
         result_limit=SEARCH_RESULT_LIMIT,
         body_fetch_count=len(response["results"]),
-        body_success_count=sum("body" in hit for hit in response["results"]),
-        body_failures=fetched["errors"],
+        body_success_count=sum(not row.get("error") for row in scrapes),
+        body_failures=body_errors,
     )
     return response
 
@@ -700,6 +707,12 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             show_answer=plan.show_answer or request.verbose, show_snippet=plan.show_snippet,
             degradation=response["diagnostics"]["route_degradation"],
         ) + format_scrapes(response["scrapes"], max_chars=plan.scrape_chars)
+        # Rendered Markdown owns the bodies in these modes; JSON rows retain
+        # source references and fetch metadata without another copy of the text.
+        response["scrapes"] = [
+            {key: value for key, value in row.items() if key != "markdown"}
+            for row in response["scrapes"]
+        ]
     return response
 
 
@@ -725,6 +738,7 @@ def run_scrape(
     }
     if request.output in {"markdown", "both"}:
         response["markdown"] = format_scrapes([result], max_chars=scrape_chars)
+        response["result"].pop("markdown", None)
     return response
 
 
@@ -744,7 +758,7 @@ def _run_scrape_raw(
     timeout = _resolve_nonnegative(request.timeout, resolved_config, "scrape_timeout", 60)
     if deadline is None:
         deadline = time.monotonic() + timeout
-    scrape_chars = max(1, _resolve_int(request.scrape_chars, resolved_config, "scrape_chars", 6000))
+    scrape_chars = max(1, _resolve_int(request.scrape_chars, resolved_config, "scrape_chars", 1200))
     store = (state_store or StateStore()) if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
     site_memory = SiteScraperMemory(store) if store else None
@@ -763,6 +777,7 @@ def _run_scrape_raw(
         scrape_chars=scrape_chars,
         url_resolver=url_resolver,
     )
+    result = normalize_scrape_result(result, url=request.url)
     return result, site_memory.consume_updates() if site_memory else [], scrape_chars
 
 
@@ -771,6 +786,7 @@ def _limit_scrape_row(row: dict, max_chars: int) -> dict:
     markdown = limited.get("markdown")
     if isinstance(markdown, str) and len(markdown) > max_chars:
         limited["markdown"] = markdown[:max_chars]
+        limited["truncated"] = True
     return limited
 
 

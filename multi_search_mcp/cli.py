@@ -62,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_parser.add_argument("--backend", action="append", dest="backends", default=[])
     fetch_parser.add_argument("--max-chars", type=int, default=20_000)
     fetch_parser.add_argument("--timeout", type=int)
+    fetch_parser.add_argument(
+        "--full-content", action="store_true",
+        help="return the entire acquired body, overriding --max-chars",
+    )
     _add_format_argument(fetch_parser)
     fetch_parser.set_defaults(handler=_handle_fetch)
 
@@ -145,6 +149,7 @@ def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
             backends=list(args.backends or []),
             max_chars=args.max_chars,
             timeout=args.timeout,
+            full_content=args.full_content,
         )
     )
 
@@ -222,6 +227,8 @@ def _render_markdown(payload: Any) -> str:
 
 
 def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
+    if isinstance(payload.get("markdown"), str):
+        return payload["markdown"]
     query = str(payload.get("query") or "")
     route = str(payload.get("route") or "")
     results = payload.get("display_results") or payload.get("results") or []

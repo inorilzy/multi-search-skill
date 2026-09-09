@@ -210,6 +210,37 @@ class ScrapeResult:
         )
 
 
+def normalize_scrape_result(data: Any, *, url: str = "", via: str = "") -> dict:
+    """Expose one Markdown contract at the shared scraper boundary.
+
+    Provider payloads and alternate body aliases never cross this boundary.
+    Plain text is valid Markdown; content is preserved without rewriting it.
+    """
+    row = data if isinstance(data, dict) else {}
+    target = url or str(row.get("url") or "")
+    backend = via or str(row.get("via") or "")
+    title = row.get("title")
+    title = title if isinstance(title, str) and title else target
+    error = row.get("error")
+    markdown = row.get("markdown")
+    if not isinstance(data, dict):
+        error = "invalid scrape response: expected an object"
+    elif not error and (not isinstance(markdown, str) or not markdown.strip()):
+        error = "invalid scrape response: expected non-empty markdown"
+    if error:
+        return ScrapeResult(
+            url=target, title=title, via=backend,
+            raw={"truncated": False, "error": str(error)},
+        ).to_dict()
+    length = row.get("length")
+    if isinstance(length, bool) or not isinstance(length, int) or length < len(markdown):
+        length = len(markdown)
+    return ScrapeResult(
+        url=target, title=title, markdown=markdown, length=length, via=backend,
+        raw={"truncated": bool(row.get("truncated")) or length > len(markdown)},
+    ).to_dict()
+
+
 @dataclass
 class ProviderStatus:
     source: str

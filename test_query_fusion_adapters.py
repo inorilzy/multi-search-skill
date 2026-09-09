@@ -50,7 +50,8 @@ class QueryFusionAdapterTests(unittest.TestCase):
                         cli_result = json.loads(output.getvalue())
                         self.assertEqual(stable_hits(mcp_result), stable_hits(cli_result))
                         self.assertEqual(mcp_result["diagnostics"]["query_fusion"], cli_result["diagnostics"]["query_fusion"])
-                        self.assertEqual(cli_result["results"][0]["body"], "Attribution: original release. " * 20)
+                        self.assertEqual(cli_result["scrapes"][0]["markdown"], "Attribution: original release. " * 20)
+                        self.assertNotIn("body", cli_result["results"][0])
                         source_id = mcp_result["results"][0]["source_id"]
                         fetched = service.run_fetch_source(
                             {"source_id": source_id, "max_chars": 12}, state_store=store,

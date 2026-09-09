@@ -89,7 +89,8 @@ class SearchFetchPipelineTests(unittest.TestCase):
         self.assertAlmostEqual(hits[0]["rrf_score"], 2 / 56)
         self.assertCountEqual(fetched_urls, [hit["url"] for hit in hits])
         self.assertEqual(len(fetched_urls), 15)
-        self.assertTrue(all("body" in hit for hit in hits))
+        self.assertTrue(all(hit["body_available"] and "body" not in hit for hit in hits))
+        self.assertTrue(all(row["markdown"] for row in response["scrapes"]))
 
     def test_query_rank_sixteen_can_reach_final_fetch_set(self):
         provider = _provider("brave", {
@@ -125,8 +126,8 @@ class SearchFetchPipelineTests(unittest.TestCase):
         response = self._search({"brave": provider}, scraper)
         hits = response["results"]
         self.assertEqual([hit["url"] for hit in hits], [row["url"] for row in rows])
-        self.assertIn("body", hits[0])
-        self.assertIn("body", hits[2])
+        self.assertTrue(response["scrapes"][0]["markdown"])
+        self.assertTrue(response["scrapes"][2]["markdown"])
         self.assertNotIn("body", hits[1])
         self.assertIn("backend refused", hits[1]["body_error"])
         self.assertEqual(len(response["errors"]), 1)
@@ -162,7 +163,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         self.assertEqual(response["errors"], [])
         self.assertEqual([hit["url"] for hit in hits], [row["url"] for row in rows])
         self.assertLess(completed.index(rows[1]["url"]), completed.index(rows[0]["url"]))
-        self.assertGreater(len(hits[1]["body"]), len(hits[0]["body"]))
+        self.assertGreater(len(response["scrapes"][1]["markdown"]), len(response["scrapes"][0]["markdown"]))
         self.assertGreater(hits[0]["rrf_score"], hits[1]["rrf_score"])
 
     def test_search_body_cache_keeps_full_text_beyond_preview(self):
@@ -174,7 +175,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         response = self._search({"brave": provider}, scraper, use_state=True, scrape_chars=32)
         hit = response["results"][0]
         self.assertEqual(response["errors"], [])
-        self.assertEqual(hit["body"], body[:32])
+        self.assertEqual(response["scrapes"][0]["markdown"], body[:32])
         self.assertTrue(hit["body_truncated"])
         self.assertEqual(scraper.call_count, 1)
         self.assertGreater(scraper.call_args.kwargs["scrape_chars"], len(body))
@@ -215,7 +216,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
                 scrape_top=0, scrape_per_source=1, output="both",
             ))
         self.assertEqual(legacy["errors"], [])
-        for field in ("url", "rrf_score", "body"):
+        for field in ("url", "rrf_score", "body_available"):
             self.assertEqual(
                 [hit[field] for hit in legacy["results"]],
                 [hit[field] for hit in current["results"]],
@@ -225,6 +226,9 @@ class SearchFetchPipelineTests(unittest.TestCase):
         self.assertEqual(scraper.call_count, 15)
         self.assertEqual(len(legacy["scrapes"]), 15)
         self.assertIn("markdown", legacy)
+        for row in current["scrapes"]:
+            self.assertEqual(legacy["markdown"].count(row["markdown"]), 1)
+        self.assertTrue(all("markdown" not in row for row in legacy["scrapes"]))
         self.assertIn("legacy_scrape_limits", legacy["diagnostics"])
 
     def test_direct_url_fetch_never_invokes_search(self):
@@ -315,7 +319,12 @@ class SearchFetchPipelineTests(unittest.TestCase):
                     response = call(query="primary", sources=["brave"], use_state=False)
                     self.assertEqual(response["errors"], [])
                     self.assertEqual([hit["url"] for hit in response["results"]], [row["url"] for row in rows])
-                    self.assertTrue(all(hit["body"].startswith("MCP_BODY:") for hit in response["results"]))
+                    self.assertTrue(all("body" not in hit for hit in response["results"]))
+                    if "markdown" in response:
+                        for row in rows:
+                            self.assertEqual(response["markdown"].count(f"MCP_BODY:{row['url']}"), 1)
+                    else:
+                        self.assertTrue(all(row["markdown"].startswith("MCP_BODY:") for row in response["scrapes"]))
 
     def test_batch_timeout_prevents_starting_another_scrape_backend(self):
         from multi_search_mcp.src.scrape import scrape
@@ -381,7 +390,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         hit = response["results"][0]
         self.assertEqual(response["errors"], [])
         self.assertEqual(hit["providers"], ["brave", "tavily"])
-        self.assertEqual(hit["body"], "provider body")
+        self.assertEqual(response["scrapes"][0]["markdown"], "provider body")
         scraper.assert_not_called()
         store = StateStore(self.state_path)
         self.assertIsNone(SourceRegistry(store).get(hit["source_id"]))
