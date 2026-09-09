@@ -39,7 +39,13 @@ def search_web(
     expand: list[str] | None = None,
     use_state: bool = True,
 ) -> dict:
-    """Return compact, RRF-ranked candidates without bulk page scraping."""
+    """Search sources, fuse all returned ranks with RRF, then fetch the final 15 URLs.
+
+    `count` controls each provider's recall, subject to its API cap. It does not
+    change the final 15-result limit. `content` is a search excerpt; `body` is a
+    fetched preview, with `body_error` on failure. Fetching never changes rank.
+    Use fetch_source(url=...) to read a known URL without searching.
+    """
     return search_web_tool(
         query, route, count, sources, timeout, expand, use_state
     )
@@ -79,23 +85,17 @@ def multi_search(query: str, route: str | None = None,
                   scrape_chars: int | None = None, timeout: int | None = None,
                   scrape_timeout: int | None = None, expand: list[str] | None = None,
                   use_state: bool = True, output: str = "both") -> dict:
-    """Search across configured sources, optionally scrape top URLs, and return structured results.
+    """Compatibility output for the same RRF search-and-fetch flow as search_web.
 
-    `route` selects which sources to fan out to
-    (default/fast/social/dev/cn-community/vertical/video/all). The `fast` route runs only
-    providers that return body content inline (baidu/tavily/firecrawl/exa) and
-    defaults to `scrape_top=0`; explicit tool/config `scrape_top` values still
-    override that default. For "recall then scrape", use `route=default` with `scrape_top=N`.
-    `timeout` is the search-provider timeout in seconds. `scrape_timeout` is the
-    total scrape-stage timeout in seconds. `expand` adds extra query variants to
-    run alongside `query`. Set `use_state=False` to skip the SQLite state DB,
-    key-health rotation, and site scraper memory (clean test path).
-    The response includes `results[]` with full rows and `display_results[]` as a
-    compact title/source/url/snippet list for UI or chat presentation. For
-    news/current-events queries, preserve verifiability: show `display_results[]`
-    links before or alongside any narrative summary. Do not replace URLs with a
-    linkless summary.
-    On invalid input the tool returns a structured {"error", "error_type"} dict.
+    Both tools fuse all returned candidates and fetch the final 15 URLs.
+    `count` controls per-provider recall. `scrape_chars` bounds body previews,
+    while cached content retains the acquired body within storage limits.
+    `scrape_timeout` bounds the body-fetch batch; `timeout` bounds search.
+    Legacy `scrape_top` is accepted but does not limit the final result fetches.
+    `results` includes excerpts, fetched bodies, ranks, and explicit body errors;
+    `display_results` stays compact, and markdown follows the same RRF order.
+    Use fetch_source(url=...) or scrape_url for a known URL without searching.
+    On invalid input returns a structured {"error", "error_type"} dict.
     """
     return multi_search_tool(query, route, count, sources, scrape_top, scrape_chars,
                              timeout, scrape_timeout, expand, use_state, output)  # type: ignore[arg-type]

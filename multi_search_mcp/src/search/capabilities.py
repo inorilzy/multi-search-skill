@@ -26,7 +26,6 @@ class ProviderKind(str, Enum):
     ANSWER_SEARCHER = "answer_searcher"
     SCRAPER = "scraper"
     PLATFORM_SEARCHER = "platform_searcher"
-    VIDEO_SEARCHER = "video_searcher"
 
 
 class AuthMode(str, Enum):
@@ -113,8 +112,7 @@ class ProviderCapability:
     scrape_policy: ScrapePolicy = ScrapePolicy.NONE
     # ``count_key`` is the key a provider's ProviderSpec actually reads from
     # ``cfg.counts[...]``. It is usually ``name``, but github_repos reads
-    # ``counts["github"]`` and v2ex deliberately rides firecrawl's quota (so it
-    # has no count of its own -> None). Scrapers have no count -> None.
+    # ``counts["github"]``. Scrapers have no count -> None.
     count_key: str | None = None
     # Per-source search timeout used by the runtime registry. Scrapers do not
     # run in the search registry, so they leave this None.
@@ -292,69 +290,6 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         timeout_default=20,
         best_for=("social discussion", "tweet text"),
     ),
-    "reddit_browser": ProviderCapability(
-        name="reddit_browser",
-        public_name="reddit-browser",
-        kind=ProviderKind.CONTENT_SEARCHER,
-        search=SearchCapability(can_search=True, supports_sort=True, max_count=25),
-        scrape=ScrapeCapability(can_scrape=True, supports_text=True, supports_site_policy=True),
-        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_content=True, returns_platform_metadata=True, returns_engagement=True),
-        operation=_op(AuthMode.COOKIE, "reddit_browser", rate_limit_sensitive=True, requires_dependency="cloakbrowser"),
-        scrape_policy=ScrapePolicy.PREFETCH,
-        count_key="reddit_browser",
-        timeout_default=45,
-        best_for=("Reddit search with post bodies and comments via a logged-in browser",),
-        notes="Searches and reads top posts in one CloakBrowser session; returns inline content.",
-    ),
-    "youtube": ProviderCapability(
-        name="youtube",
-        public_name="youtube",
-        kind=ProviderKind.VIDEO_SEARCHER,
-        search=SearchCapability(can_search=True, supports_pagination=True, max_count=50),
-        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_platform_metadata=True, returns_engagement=True),
-        operation=_op(AuthMode.API_KEY, "youtube", quota_sensitive=True),
-        scrape_policy=ScrapePolicy.SKIP,
-        count_key="youtube",
-        timeout_default=20,
-        best_for=("video discovery",),
-    ),
-    "bilibili": ProviderCapability(
-        name="bilibili",
-        public_name="bilibili",
-        kind=ProviderKind.VIDEO_SEARCHER,
-        search=SearchCapability(can_search=True, supports_pagination=True, max_count=50),
-        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_platform_metadata=True, returns_engagement=True),
-        operation=_op(AuthMode.OPTIONAL_API_KEY, "bilibili", rate_limit_sensitive=True),
-        scrape_policy=ScrapePolicy.SKIP,
-        count_key="bilibili",
-        timeout_default=20,
-        best_for=("Chinese video discovery",),
-    ),
-    "v2ex": ProviderCapability(
-        name="v2ex",
-        public_name="v2ex",
-        kind=ProviderKind.PLATFORM_SEARCHER,
-        search=SearchCapability(can_search=True, supports_domain_filter=True),
-        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_platform_metadata=True),
-        operation=_op(AuthMode.API_KEY, "firecrawl", quota_sensitive=True, rate_limit_sensitive=True),
-        scrape_policy=ScrapePolicy.CANDIDATE,
-        # v2ex deliberately rides firecrawl's quota -> no count of its own.
-        count_key=None,
-        timeout_default=60,
-        best_for=("V2EX discussions",),
-    ),
-    "linuxdo": ProviderCapability(
-        name="linuxdo",
-        public_name="linuxdo",
-        kind=ProviderKind.PLATFORM_SEARCHER,
-        search=SearchCapability(can_search=True, supports_domain_filter=True, max_count=20),
-        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_platform_metadata=True),
-        operation=_op(AuthMode.API_KEY, "firecrawl", quota_sensitive=True, rate_limit_sensitive=True),
-        scrape_policy=ScrapePolicy.CANDIDATE,
-        count_key="linuxdo",
-        timeout_default=60,
-        best_for=("Linux Do discussions through Firecrawl search",),
-    ),
     "linuxdo_api": ProviderCapability(
         name="linuxdo_api",
         public_name="linuxdo-api",
@@ -366,6 +301,19 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         count_key="linuxdo_api",
         timeout_default=20,
         best_for=("Linux Do API/cookie results",),
+    ),
+    "v2ex": ProviderCapability(
+        name="v2ex",
+        public_name="v2ex",
+        kind=ProviderKind.PLATFORM_SEARCHER,
+        search=SearchCapability(can_search=True, max_count=50),
+        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_platform_metadata=True, returns_scores=True, returns_engagement=True),
+        operation=_op(AuthMode.NONE, rate_limit_sensitive=True),
+        scrape_policy=ScrapePolicy.CANDIDATE,
+        count_key="v2ex",
+        timeout_default=20,
+        best_for=("V2EX topic search via SOV2EX",),
+        notes="Anonymous third-party SOV2EX index; highlights supply snippets, selected topic URLs are fetched after RRF ranking.",
     ),
     "hackernews": ProviderCapability(
         name="hackernews",
@@ -390,19 +338,6 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         count_key="stackoverflow",
         timeout_default=20,
         best_for=("Stack Overflow Q&A",),
-    ),
-    "zhihu": ProviderCapability(
-        name="zhihu",
-        public_name="zhihu",
-        kind=ProviderKind.PLATFORM_SEARCHER,
-        search=SearchCapability(can_search=True, supports_domain_filter=True, max_count=10),
-        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_platform_metadata=True),
-        operation=_op(AuthMode.MIXED, "zhihu", quota_sensitive=True, rate_limit_sensitive=True),
-        scrape_policy=ScrapePolicy.CANDIDATE,
-        count_key="zhihu",
-        timeout_default=60,
-        best_for=("Zhihu answers and articles",),
-        notes="Uses Zhihu credentials when available and Firecrawl domain search as fallback.",
     ),
     "jina": ProviderCapability(
         name="jina",
@@ -470,7 +405,7 @@ def infer_content_kind(row: dict | None) -> str:
         return CONTENT_KIND_ANSWER
 
     if data.get("scraped_content"):
-        if normalized_source in {"twitter", "reddit_browser"}:
+        if normalized_source == "twitter":
             return CONTENT_KIND_CONTENT
         capability = get_capability_optional(normalized_source)
         if capability and capability.output.returns_content and capability.scrape_policy == ScrapePolicy.PREFETCH:

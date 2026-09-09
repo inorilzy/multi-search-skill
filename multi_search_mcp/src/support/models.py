@@ -47,6 +47,37 @@ def content_kind_priority(kind: Any) -> int:
     return CONTENT_KIND_PRIORITY[normalize_content_kind(kind)]
 
 
+@dataclass(frozen=True)
+class SearchContent:
+    """Separate candidate text from a provider's independently supplied body."""
+
+    snippet: str
+    snippet_kind: str
+    body: str
+
+
+def search_content(row: dict) -> SearchContent:
+    """Interpret legacy provider fields once for candidate output and caching.
+
+    Some adapters also put highlights in scraped_content. Only body/content
+    rows contain bodies; a body row can independently carry a description.
+    """
+    kind = normalize_content_kind(row.get("content_kind"))
+    body = (
+        str(row.get("scraped_content") or "")
+        if kind in {CONTENT_KIND_BODY, CONTENT_KIND_CONTENT} else ""
+    )
+    snippet = str(
+        row.get("description") or ""
+        if kind == CONTENT_KIND_BODY
+        else row.get("content") or row.get("description") or ""
+    )
+    snippet_kind = kind
+    if kind in {CONTENT_KIND_BODY, CONTENT_KIND_CONTENT}:
+        snippet_kind = CONTENT_KIND_EXCERPT if snippet else CONTENT_KIND_METADATA
+    return SearchContent(snippet, snippet_kind, body)
+
+
 # Sources that return a synthesized answer/summary rather than ranked webpage
 # results. These rows are excluded from result counts, dedup, and raw-hit
 # accounting. Keep this as the single source of truth; importers must not

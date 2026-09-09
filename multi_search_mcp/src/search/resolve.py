@@ -19,8 +19,7 @@ from .search_runner import (
 # Per-provider count metadata is derived from the single source of truth in
 # capabilities.py. A provider participates in the count system only when it has
 # its own count key (``count_key``), can search, and declares a ``max_count``.
-# This excludes scrapers (jina/reddit) and providers that ride another quota
-# (v2ex -> firecrawl, count_key=None). ProviderMetadataDriftTests pins the
+# This excludes scrapers (jina). ProviderMetadataDriftTests pins the
 # resulting membership and values to the historical snapshot.
 DEFAULT_SOURCE_COUNT = 10
 

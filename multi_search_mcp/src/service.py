@@ -2,20 +2,22 @@
 from __future__ import annotations
 
 import concurrent.futures
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from .support.config import ConfigError, config_list, load_config, resolve_config_path
-from .support.dedup import deduplicate, rank_results
 from .support.format import format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
 from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, load_keys
-from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result
+from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, search_content
 from .scrape.scrape import scrape_url_smart
 from .scrape.stage import (
     _backfill_scrape_title,
     run_scrape_stage as _run_scrape_stage,
+    run_ranked_fetch_stage,
 )
 from .search.search_runner import (
     ALL_SOURCE_NAMES,
@@ -24,7 +26,9 @@ from .search.search_runner import (
     available_routes,
     normalize_source_name,
 )
-from .search.candidate import canonicalize_url, fuse_search_results, make_source_id
+from .search.candidate import SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_results, make_source_id
+from .search.query_policy import QueryFusionPolicy
+from .search.query_plan import build_query_plan
 from .search.capabilities import retention_policy_for_sources
 from .search.resolve import (
     COUNT_CAPS,
@@ -36,7 +40,7 @@ from .search.resolve import (
 )
 from .support.secrets import scrub_secrets
 from .support.url_security import validate_public_http_url
-from .state.content_store import ContentStore, ContentStoreError
+from .state.content_store import ContentStore, ContentStoreError, DEFAULT_MAX_OBJECT_BYTES
 from .state.site_memory import SiteScraperMemory
 from .state.source_registry import SourceRegistry
 from .state.state_store import StateStore
@@ -170,17 +174,24 @@ def run_fetch_source(
     keys: dict | None = None,
     config: dict | None = None,
     url_resolver=None,
+    source_record: dict | None = None,
+    prefetched_body: str | None = None,
+    deadline: float | None = None,
 ) -> dict:
     """Fetch one registered source and persist its untrusted body briefly."""
     if isinstance(request, dict):
         request = FetchSourceRequest(**request)
     if bool(request.source_id) == bool(request.url):
         raise ValueError("provide exactly one of source_id or url")
-    if not request.use_state and request.source_id:
+    if not request.use_state and request.source_id and source_record is None:
         raise ValueError("source_id fetch requires state; provide an explicit URL")
 
     store = (state_store or StateStore()) if request.use_state else None
-    source = SourceRegistry(store).get(request.source_id) if store and request.source_id else None
+    if source_record is not None and source_record.get("source_id") != request.source_id:
+        raise ValueError("source record does not match source_id")
+    source = source_record
+    if source is None and store and request.source_id:
+        source = SourceRegistry(store).get(request.source_id)
     if request.source_id and source is None:
         raise ValueError(
             "source_id is unknown or expired; call search_web again before fetch_source"
@@ -221,6 +232,7 @@ def run_fetch_source(
             "url": url,
             "body": str(cached["content"])[:max_chars],
             "content_hash": cached["content_hash"],
+            "content_length": len(str(cached["content"])),
             "expires_at": cached["expires_at"],
             "backend": "content-store",
             "cache_hit": True,
@@ -232,22 +244,27 @@ def run_fetch_source(
     resolved_config = (
         _load_config_safe(request.config_path) if config is None else dict(config)
     )
-    scrape_response = run_scrape(
-        ScrapeRequest(
-            url=url,
-            backends=request.backends,
-            scrape_chars=max_chars,
-            timeout=request.timeout,
-            output="json",
-            use_state=request.use_state,
-        ),
-        state_store=store,
-        scraper=scraper,
-        keys=keys,
-        config=resolved_config,
-        url_resolver=url_resolver,
-    )
-    result = scrape_response["result"]
+    updates = []
+    if prefetched_body:
+        result = {"markdown": prefetched_body, "via": "provider:prefetch"}
+    else:
+        result, updates, _scrape_chars = _run_scrape_raw(
+            ScrapeRequest(
+                url=url,
+                backends=request.backends,
+                # Preview size must not truncate the cached acquisition.
+                scrape_chars=DEFAULT_MAX_OBJECT_BYTES,
+                timeout=request.timeout,
+                output="json",
+                use_state=request.use_state,
+            ),
+            state_store=store,
+            scraper=scraper,
+            keys=keys,
+            config=resolved_config,
+            url_resolver=url_resolver,
+            deadline=deadline,
+        )
     if result.get("error"):
         raise ValueError(str(result["error"]))
     body = str(result.get("markdown") or "")
@@ -264,6 +281,7 @@ def run_fetch_source(
         "source_id": source_id or None,
         "url": url,
         "body": body[:max_chars],
+        "content_length": len(body),
         "content_hash": stored.get("content_hash") if stored else None,
         "expires_at": stored.get("expires_at") if stored else None,
         "backend": str(result.get("via") or "unknown"),
@@ -271,16 +289,18 @@ def run_fetch_source(
         "persisted": stored is not None,
         "truncated": len(body) > max_chars,
         "untrusted_content": True,
+        "site_scraper_updates": updates,
     }
 
 
-def run_search_web(
+def _run_search_candidates(
     request: SearchWebRequest | dict,
     *,
     providers: dict | None = None,
     keys: dict | None = None,
     config: dict | None = None,
     state_store: StateStore | None = None,
+    query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,
 ) -> dict:
     """Run candidate-only search and return compact, RRF-ranked SearchHits."""
     if isinstance(request, dict):
@@ -290,11 +310,16 @@ def run_search_web(
     resolved_config = (
         _load_config_safe(request.config_path) if config is None else dict(config)
     )
-    queries = [request.query] + list(
+    query_plan = build_query_plan(
+        request.query,
         request.expand
         or config_list(resolved_config, "expand")
         or config_list(resolved_config, "expand_queries")
     )
+    queries = list(query_plan.queries)
+    query_policy = QueryFusionPolicy.from_config(resolved_config)
+    # Validate and allocate against the complete plan, before any query can fail.
+    query_weights = query_policy.weights(queries, query_plan.primary_query)
 
     planning_request = MultiSearchRequest(
         query=request.query,
@@ -361,6 +386,8 @@ def run_search_web(
                         "error": scrub_secrets(exc, runtime_keys),
                     }]
     query_runs = [(query, query_results[query]) for query in queries]
+    if query_runs_observer is not None:
+        query_runs_observer(query_runs)
     rows = [row for _query, query_rows in query_runs for row in query_rows]
     failures = sorted(
         (
@@ -377,9 +404,20 @@ def run_search_web(
     )
     query_failures = _query_failures(query_runs)
     response_id = f"resp_{uuid.uuid4().hex}"
-    limit = request.count if request.count is not None else int(plan.route_defaults["count"])
+    limit = SEARCH_RESULT_LIMIT
     hits = fuse_search_results(
-        query_runs, response_id=response_id, limit=limit
+        query_runs, response_id=response_id, limit=limit,
+        primary_query=query_plan.primary_query, query_policy=query_policy,
+    )
+    primary_rows = query_results[query_plan.primary_query]
+    primary_has_candidates = bool(fuse_search_results(
+        [(query_plan.primary_query, primary_rows)], response_id=response_id, limit=1,
+    ))
+    primary_has_errors = any(row.get("error") for row in primary_rows)
+    primary_status = (
+        "partial" if primary_has_candidates and primary_has_errors
+        else "ok" if primary_has_candidates
+        else "failed" if primary_has_errors else "empty"
     )
     if store is not None:
         for hit in hits:
@@ -397,8 +435,8 @@ def run_search_web(
         bodies: dict[str, list[tuple[str, str]]] = {}
         for _query, query_rows in query_runs:
             for row in query_rows:
-                body = str(row.get("scraped_content") or "")
-                if row.get("content_kind") != "body" or not body or not row.get("url"):
+                body = search_content(row).body
+                if not body or not row.get("url") or row.get("error"):
                     continue
                 bodies.setdefault(canonicalize_url(str(row["url"])), []).append(
                     (str(row.get("source") or ""), body)
@@ -428,11 +466,21 @@ def run_search_web(
         "response_id": response_id,
         "results": hits,
         "provider_status": _query_provider_status(query_runs),
+        "key_status_summary": _summarize_key_status(key_manager.status_rows()),
         "errors": failures,
         "diagnostics": {
             "raw_result_count": len(rows),
             "candidate_count": len(hits),
             "queries": queries,
+            "query_fusion": {
+                **query_policy.to_dict(),
+                "applied_stage": "provider" if len(queries) == 1 else "query",
+                "weights": query_weights,
+                "primary_status": primary_status,
+            },
+            "primary_query": query_plan.primary_query,
+            "duplicate_query_count": query_plan.duplicate_count,
+            "discarded_blank_query_count": query_plan.discarded_blank_count,
             "provider_failures": failures,
             "query_failures": query_failures,
             "content_store_errors": content_store_errors,
@@ -503,142 +551,155 @@ def _query_failures(query_runs: list[tuple[str, list[dict]]]) -> list[dict]:
     return output
 
 
+def run_search_web(
+    request: SearchWebRequest | dict,
+    *,
+    providers: dict | None = None,
+    keys: dict | None = None,
+    config: dict | None = None,
+    state_store: StateStore | None = None,
+    query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,
+    scraper=None,
+    url_resolver=None,
+    scrape_chars: int | None = None,
+    scrape_timeout: int | None = None,
+    scrape_concurrency: int | None = None,
+) -> dict:
+    """Fuse all returned candidates, then fetch the final 15 in RRF order."""
+    if isinstance(request, dict):
+        request = SearchWebRequest(**request)
+    resolved_config = _load_config_safe(request.config_path) if config is None else dict(config)
+    runtime_keys = load_keys() if keys is None else dict(keys)
+    store = (state_store or StateStore()) if request.use_state else None
+    query_runs = []
+
+    def observe(runs):
+        query_runs.extend(runs)
+        if query_runs_observer is not None:
+            query_runs_observer(runs)
+
+    response = _run_search_candidates(
+        request, providers=providers, keys=runtime_keys, config=resolved_config,
+        state_store=store, query_runs_observer=observe,
+    )
+    prefetched = {}
+    for _query, rows in query_runs:
+        for row in rows:
+            body = search_content(row).body
+            url = canonicalize_url(str(row.get("url") or ""))
+            if body and url and not row.get("error"):
+                previous = prefetched.get(url, "")
+                if (len(body), body) > (len(previous), previous):
+                    prefetched[url] = body
+    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 6000), 20_000))
+    body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
+    concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))
+
+    def fetch(hit, remaining):
+        try:
+            return run_fetch_source(
+                FetchSourceRequest(
+                    source_id=hit["source_id"], max_chars=max_chars,
+                    timeout=remaining, use_state=request.use_state,
+                ),
+                state_store=store, scraper=scraper, keys=runtime_keys,
+                config=resolved_config, url_resolver=url_resolver, source_record=hit,
+                prefetched_body=prefetched.get(hit["canonical_url"]),
+                deadline=time.monotonic() + remaining,
+            )
+        except Exception as exc:
+            return {"source_id": hit["source_id"], "url": hit["url"],
+                    "error": scrub_secrets(exc, runtime_keys)}
+
+    fetched = run_ranked_fetch_stage(
+        response["results"], fetch=fetch, timeout=body_timeout, concurrency=concurrency,
+    )
+    scrapes = []
+    for hit, body_result in zip(response["results"], fetched["results"]):
+        if body_result.get("error"):
+            hit["body_error"] = body_result["error"]
+            scrapes.append({"source_id": hit["source_id"], "url": hit["url"],
+                            "error": body_result["error"]})
+            continue
+        hit.update(
+            body=body_result["body"], body_available=True,
+            body_truncated=bool(body_result.get("truncated")),
+            body_backend=body_result.get("backend"),
+        )
+        scrapes.append({
+            "source_id": hit["source_id"], "url": hit["url"], "title": hit["title"],
+            "markdown": hit["body"], "length": body_result.get("content_length", len(hit["body"])),
+            "via": body_result.get("backend"), "truncated": hit["body_truncated"],
+        })
+    response["scrapes"] = scrapes
+    response["site_scraper_updates"] = [
+        update for result in fetched["results"]
+        for update in result.get("site_scraper_updates", [])
+    ]
+    response["errors"].extend({**error, "stage": "fetch"} for error in fetched["errors"])
+    response["diagnostics"].update(
+        result_limit=SEARCH_RESULT_LIMIT,
+        body_fetch_count=len(response["results"]),
+        body_success_count=sum("body" in hit for hit in response["results"]),
+        body_failures=fetched["errors"],
+    )
+    return response
+
+
 def run_multi_search(request: MultiSearchRequest | dict) -> dict:
+    """Compatibility presentation of the shared RRF search-and-fetch flow."""
     if isinstance(request, dict):
         request = MultiSearchRequest(**request)
-    if not request.query:
-        raise ValueError("query is required")
     config = _load_config_safe(request.config_path)
     plan = resolve_search_plan(request, config)
-
-    keys = load_keys()
-
-    from .search.registry import build_provider_registry
-
-    store = StateStore() if request.use_state else None
-    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
-    site_memory = SiteScraperMemory(store) if store else None
-    runner_config = SearchRunnerConfig(
-        plan.route,
-        plan.effective_counts,
-        plan.timeout,
-        plan.serpapi_engine,
-        keys,
-        plan.want_content,
+    query_runs = []
+    response = run_search_web(
+        SearchWebRequest(
+            query=request.query, route=request.route, count=request.count,
+            sources=request.sources, timeout=request.timeout, expand=request.expand,
+            config_path=request.config_path, use_state=request.use_state,
+        ),
+        config=config, query_runs_observer=query_runs.extend,
+        scrape_chars=request.scrape_chars, scrape_timeout=request.scrape_timeout,
+        scrape_concurrency=request.scrape_concurrency,
     )
-    base_sources, active_sources = resolve_active_sources(
-        plan.route, plan.sources, plan.disabled_sources,
+    rows = [row for _query, query_rows in query_runs for row in query_rows]
+    results = response["results"]
+    summaries = _extract_summaries(rows)
+    source_briefs = _extract_source_briefs(rows)
+    response.update(
+        summary=summaries[0]["answer"] if summaries else None,
+        summaries=summaries, source_briefs=source_briefs,
+        source_summaries=_compat_source_summaries(source_briefs),
+        display_results=_display_results(results),
     )
-    if base_sources and not active_sources:
-        raise ValueError(
-            f"all selected sources are disabled: {', '.join(sorted(base_sources))}"
+    response["diagnostics"].update(
+        valid_result_count=len(results),
+        effective_counts=plan.effective_counts,
+        route_meta={**plan.route_defaults, "scrape_top": SEARCH_RESULT_LIMIT,
+                    "want_content": False, "timeout": plan.timeout,
+                    "route_default_count": plan.route_defaults["count"],
+                    "route_default_timeout": plan.route_defaults["timeout"]},
+        route_degradation=_route_degradation(plan.route, rows, plan.sources, plan.route_defaults),
+    )
+    if request.scrape_top is not None or request.scrape_per_source is not None:
+        response["diagnostics"]["legacy_scrape_limits"] = (
+            "scrape_top and scrape_per_source no longer limit fetching; "
+            "all final RRF results (at most 15) are fetched"
         )
-
-    def route_resolver(_route):
-        _selected, active = resolve_active_sources(
-            _route, plan.sources, plan.disabled_sources,
-        )
-        return active
-
-    runner = SearchRunner(runner_config, build_provider_registry(), route_resolver=route_resolver, key_manager=key_manager)
-
-    queries_to_run = [request.query] + list(request.expand or config_list(config, "expand") or config_list(config, "expand_queries"))
-    all_results: list[dict] = []
-    if len(queries_to_run) == 1:
-        all_results = runner.run(request.query)
-    else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(queries_to_run), MAX_EXPAND_CONCURRENCY)) as pool:
-            futures = {pool.submit(runner.run, q): q for q in queries_to_run}
-            for fut in concurrent.futures.as_completed(futures):
-                q = futures[fut]
-                try:
-                    all_results.extend(fut.result())
-                except Exception as exc:
-                    all_results.append({"source": "multi-search", "error": f"query '{q}' failed: {scrub_secrets(exc, keys)}"})
-
-    scrape_result = _run_scrape_stage(
-        all_results,
-        keys=keys,
-        scrape_top=plan.scrape_top,
-        scrape_per_source=plan.scrape_per_source,
-        scrape_timeout=plan.scrape_timeout,
-        scrape_url_timeout=plan.scrape_url_timeout,
-        scrape_concurrency=plan.scrape_concurrency,
-        scrape_chars=plan.scrape_chars,
-        site_memory=site_memory,
-        key_manager=key_manager,
-        skip_summarized_sources=bool(plan.route_defaults.get("skip_summarized_sources")),
-    )
-    final_results, _ = deduplicate(
-        scrape_result["with_content"] + scrape_result["final_without_content"] + scrape_result["passthrough"]
-    )
-    # Single ranking shared by JSON results, markdown rendering, and provider
-    # status — previously sorting only happened inside format_results, so the
-    # JSON `results` order diverged from the markdown order.
-    final_results = rank_results(final_results)
-    _add_public_content_aliases(final_results)
-    valid_count = _valid_result_count(final_results)
-    markdown = ""
     if plan.output_mode in {"markdown", "both"}:
-        markdown = format_results(
-            final_results,
-            request.query,
-            raw_counts=scrape_result["raw_counts"],
-            brief=request.brief,
-            verbose=request.verbose,
-            title_url_only=plan.title_url_only,
-            show_answer=plan.show_answer or request.verbose,
-            show_snippet=plan.show_snippet,
-            degradation=_route_degradation(plan.route, all_results, plan.sources, plan.route_defaults),
-        )
-        if plan.scrape_top > 0:
-            markdown += format_scrapes(scrape_result["scrapes"], max_chars=plan.scrape_chars)
-
-    errors = [row for row in as_dicts(final_results) + scrape_result["scrape_errors"] if row.get("error")]
-    summaries = _extract_summaries(final_results)
-    source_briefs = _extract_source_briefs(final_results)
-    response = {
-        "query": request.query,
-        "route": plan.route,
-        "summary": summaries[0]["answer"] if summaries else None,
-        "summaries": summaries,
-        "source_briefs": source_briefs,
-        # Compatibility alias for older callers. New code should use
-        # source_briefs: these rows may be built from per-result snippets and
-        # are not necessarily provider-native query summaries.
-        "source_summaries": _compat_source_summaries(source_briefs),
-        "display_results": _display_results(final_results),
-        "results": as_dicts(final_results),
-        "scrapes": _limit_scrape_rows(scrape_result["scrapes"], plan.scrape_chars),
-        "provider_status": _provider_status(final_results),
-        "key_status_summary": _summarize_key_status(key_manager.status_rows() if hasattr(key_manager, "status_rows") else []),
-        "site_scraper_updates": site_memory.consume_updates() if site_memory else [],
-        "errors": errors,
-        "diagnostics": {
-            "valid_result_count": valid_count,
-            "raw_result_count": len(all_results),
-            "scrape_candidate_count": len(scrape_result["items_to_scrape"]),
-            "jina_keys_active_total": count_jina_keys(keys.get("jina")),
-            "state_path": str(store.path) if store else None,
-            "route_meta": {
-                "scrape_top": plan.scrape_top,
-                "show_answer": plan.show_answer or request.verbose,
-                "show_snippet": plan.show_snippet,
-                "count": plan.route_defaults.get("count"),
-                "route_default_count": plan.route_defaults.get("count"),
-                "timeout": plan.timeout,
-                "route_default_timeout": plan.route_defaults.get("timeout"),
-                "want_content": plan.want_content,
-            },
-            "effective_counts": plan.effective_counts,
-            "route_sources": sorted(base_sources),
-            "disabled_sources": sorted(plan.disabled_sources),
-            "active_sources": sorted(active_sources),
-            "route_degradation": _route_degradation(plan.route, all_results, plan.sources, plan.route_defaults),
-        },
-    }
-    if plan.output_mode in {"markdown", "both"}:
-        response["markdown"] = markdown
+        raw_counts = {}
+        for row in rows:
+            if row.get("url") and not row.get("error") and not is_empty_result(row):
+                source = row.get("source", "?")
+                raw_counts[source] = raw_counts.get(source, 0) + 1
+        response["markdown"] = format_results(
+            results + [row for row in rows if row.get("source") in ANSWER_SOURCES or row.get("error") or is_empty_result(row)],
+            request.query, raw_counts=raw_counts, brief=request.brief,
+            verbose=request.verbose, title_url_only=plan.title_url_only,
+            show_answer=plan.show_answer or request.verbose, show_snippet=plan.show_snippet,
+            degradation=response["diagnostics"]["route_degradation"],
+        ) + format_scrapes(response["scrapes"], max_chars=plan.scrape_chars)
     return response
 
 
@@ -653,9 +714,36 @@ def run_scrape(
 ) -> dict:
     if isinstance(request, dict):
         request = ScrapeRequest(**request)
+    result, updates, scrape_chars = _run_scrape_raw(
+        request, state_store=state_store, scraper=scraper, keys=keys,
+        config=config, url_resolver=url_resolver,
+    )
+    response = {
+        "url": request.url,
+        "result": _limit_scrape_row(result, scrape_chars),
+        "site_scraper_updates": updates,
+    }
+    if request.output in {"markdown", "both"}:
+        response["markdown"] = format_scrapes([result], max_chars=scrape_chars)
+    return response
+
+
+def _run_scrape_raw(
+    request: ScrapeRequest,
+    *,
+    state_store: StateStore | None = None,
+    scraper=None,
+    keys: dict | None = None,
+    config: dict | None = None,
+    url_resolver=None,
+    deadline: float | None = None,
+) -> tuple[dict, list[dict], int]:
+    """Execute shared state-aware scraping before applying a public projection."""
     resolved_config = _load_config_safe(None) if config is None else dict(config)
     runtime_keys = load_keys() if keys is None else dict(keys)
     timeout = _resolve_nonnegative(request.timeout, resolved_config, "scrape_timeout", 60)
+    if deadline is None:
+        deadline = time.monotonic() + timeout
     scrape_chars = max(1, _resolve_int(request.scrape_chars, resolved_config, "scrape_chars", 6000))
     store = (state_store or StateStore()) if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
@@ -664,6 +752,7 @@ def run_scrape(
     result = scraper_fn(
         request.url,
         timeout=timeout,
+        deadline=deadline,
         backends=tuple(request.backends) if request.backends else None,
         jina_keys=[candidate.key for candidate in key_manager.candidates("jina", jina_config_keys(runtime_keys.get("jina")))],
         exa_keys=[candidate.key for candidate in key_manager.candidates("exa", runtime_keys.get("exa"))],
@@ -674,14 +763,7 @@ def run_scrape(
         scrape_chars=scrape_chars,
         url_resolver=url_resolver,
     )
-    response = {
-        "url": request.url,
-        "result": _limit_scrape_row(result, scrape_chars),
-        "site_scraper_updates": site_memory.consume_updates() if site_memory else [],
-    }
-    if request.output in {"markdown", "both"}:
-        response["markdown"] = format_scrapes([result], max_chars=scrape_chars)
-    return response
+    return result, site_memory.consume_updates() if site_memory else [], scrape_chars
 
 
 def _limit_scrape_row(row: dict, max_chars: int) -> dict:
@@ -738,38 +820,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         data["configured_keys"] = {name: bool(value) for name, value in keys.items()}
         data["key_status"] = SQLiteKeyManager(store).status_rows()
         data["jina_keys_active_total"] = count_jina_keys(keys.get("jina"))
-    data["cloak"] = _cloak_health(keys)
     return data
-
-
-def _cloak_health(keys: dict) -> dict:
-    """Report CloakBrowser availability without importing/launching it.
-
-    Uses importlib spec lookup so a missing optional dependency is reported as a
-    boolean rather than raising. Also surfaces whether a Reddit cookie export is
-    configured, since that is the common reason the browser source returns an
-    error row.
-    """
-    import importlib.util
-
-    def _installed(module: str) -> bool:
-        try:
-            return importlib.util.find_spec(module) is not None
-        except (ImportError, ValueError):
-            return False
-
-    reddit_cfg = keys.get("reddit_browser")
-    if isinstance(reddit_cfg, dict):
-        reddit_cookie = bool(reddit_cfg.get("cookie_export"))
-    elif isinstance(reddit_cfg, str):
-        reddit_cookie = bool(reddit_cfg)
-    else:
-        reddit_cookie = False
-    return {
-        "cloakbrowser_installed": _installed("cloakbrowser"),
-        "playwright_installed": _installed("playwright"),
-        "reddit_cookie_configured": reddit_cookie,
-    }
 
 
 def _route_degradation(route: str, results: list[dict], source_names: set[str] | None, meta: dict) -> dict | None:
@@ -862,12 +913,18 @@ def _add_public_content_aliases(results: list[dict]) -> None:
         if not isinstance(row, dict) or row.get("error"):
             continue
         description = row.get("description")
-        body = row.get("scraped_content")
         if description and not row.get("content"):
             row["content"] = description
-        if body:
-            row.setdefault("body", body)
-            row.setdefault("full_content", body)
+
+
+def _strip_public_body_fields(results: list[dict]) -> None:
+    """Remove body aliases from public search results."""
+    for row in results:
+        if not isinstance(row, dict):
+            continue
+        row.pop("scraped_content", None)
+        row.pop("body", None)
+        row.pop("full_content", None)
 
 
 def _extract_summaries(results: list[dict]) -> list[dict]:

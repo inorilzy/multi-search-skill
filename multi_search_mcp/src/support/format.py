@@ -9,16 +9,12 @@ SOURCE_ICONS = {
     "tavily": "🌐",
     "exa": "✨",
     "firecrawl": "🔥",
-    "v2ex": "V2",
-    "zhihu": "ZH",
-    "reddit": "RD",
-    "youtube": "▶️",
-    "bilibili": "B站",
     "hackernews": "📰",
     "stackoverflow": "🧩",
     "github-repos": "📦",
     "serpapi": "🔎",
     "twitter": "🐦",
+    "v2ex": "V2",
     "baidu": "BD",
 }
 
@@ -118,7 +114,7 @@ def format_scrapes(scrapes: list, max_chars: int = 6000) -> str:
         url = s.get("url", "")
         md = s.get("markdown", "")
         truncated = _sanitize_scraped(md[:max_chars])
-        suffix = f"\n\n_...truncated ({s['length']} chars total)_" if len(md) > max_chars else ""
+        suffix = f"\n\n_...truncated ({s.get('length', len(md))} chars total)_" if s.get("truncated") or len(md) > max_chars else ""
         lines.append(
             f"### {i}. {_md_link(title, url)}{via_label}\n\n"
             f"```untrusted\n{truncated}\n```{suffix}\n"
@@ -216,6 +212,7 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     results = rank_results(results)
 
     valid = [r for r in results if "error" not in r]
+    rrf_ranked = bool(valid) and all("rrf_score" in item for item in valid)
     consensus_count = sum(1 for r in valid if _weight(r) >= 2)
     max_weight = max((_weight(r) for r in valid), default=0)
     lines.append(f"**Result count:** {len(valid)} results")
@@ -250,12 +247,12 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
 
     if valid:
         lines.append("### URL Inventory\n")
-        lines.append("| # | Source | Weight | Title | URL |")
+        score_label = "RRF" if rrf_ranked else "Weight"
+        lines.append(f"| # | Source | {score_label} | Title | URL |")
         lines.append("|---:|---|---:|---|---|")
         for i, item in enumerate(valid, 1):
             src = item.get("source", "?")
-            also = item.get("also_from") or []
-            weight = 1 + len(also)
+            weight = f"{item['rrf_score']:.6f}" if rrf_ranked else consensus_weight(item)
             title = _cell(item.get("title", "(no title)"), 80)
             url = _cell(item.get("url", ""), 160)
             lines.append(
@@ -294,12 +291,14 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
         icon = SOURCE_ICONS.get(src, "•")
         title = _cell(item.get("title", "(no title)"), 200)
         url = item.get("url", "")
-        desc = item.get("description", "")
+        desc = item.get("content") or item.get("description", "")
         stars = item.get("stars")
         stars_str = f" ⭐{stars}" if stars else ""
-        also = item.get("also_from") or []
-        weight = 1 + len(also)
-        if weight >= 3:
+        also = [provider for provider in item.get("providers", []) if provider != src] if item.get("providers") else item.get("also_from") or []
+        weight = consensus_weight(item)
+        if rrf_ranked:
+            weight_prefix = f"【RRF {item['rrf_score']:.6f}】 "
+        elif weight >= 3:
             weight_prefix = f"**【×{weight}】** "
         elif weight == 2:
             weight_prefix = "**【×2】** "

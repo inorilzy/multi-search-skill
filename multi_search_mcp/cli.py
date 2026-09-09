@@ -16,6 +16,7 @@ from .src.service import (
     run_read_source,
     run_search_web,
 )
+from .src.support.format import format_scrapes
 from .src.state.key_state import SQLiteKeyManager
 from .src.state.state_store import StateStore
 
@@ -45,11 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = _ArgumentParser(prog="multi-search", description="Thin CLI for the shared multi-search core.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    search_parser = subparsers.add_parser("search", help="candidate search without bulk scraping")
+    search_parser = subparsers.add_parser("search", help="RRF search followed by body fetches for the final 15 URLs")
     search_parser.add_argument("query")
     search_parser.add_argument("--route")
     search_parser.add_argument("--source", action="append", dest="sources", default=[])
-    search_parser.add_argument("--count", type=int)
+    search_parser.add_argument("--count", type=int, help="per-provider recall count; final output is at most 15")
     search_parser.add_argument("--timeout", type=int)
     search_parser.add_argument("--expand", action="append", default=[])
     _add_format_argument(search_parser)
@@ -224,6 +225,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
     query = str(payload.get("query") or "")
     route = str(payload.get("route") or "")
     results = payload.get("display_results") or payload.get("results") or []
+    bodies = format_scrapes(payload.get("scrapes") or [], max_chars=20_000)
     if markdown:
         lines = ["# Search", ""]
         lines.append(f"- query: {query}")
@@ -232,7 +234,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
         lines.append("")
         if not results:
             lines.append("_No results_")
-            return "\n".join(lines)
+            return "\n".join(lines) + bodies
         for item in results:
             title = str(item.get("title") or item.get("url") or "")
             url = str(item.get("url") or "")
@@ -245,14 +247,14 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
                 lines.append(f"  {url}")
             if snippet:
                 lines.append(f"  {snippet}")
-        return "\n".join(lines)
+        return "\n".join(lines) + bodies
 
     lines = [f"query: {query}"]
     if route:
         lines.append(f"route: {route}")
     if not results:
         lines.append("results: none")
-        return "\n".join(lines)
+        return "\n".join(lines) + bodies
     lines.append("results:")
     for item in results:
         title = str(item.get("title") or item.get("url") or "")
@@ -266,7 +268,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
             lines.append(f"  {url}")
         if snippet:
             lines.append(f"  {snippet}")
-    return "\n".join(lines)
+    return "\n".join(lines) + bodies
 
 
 def _is_search_payload(payload: Any) -> bool:

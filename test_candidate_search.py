@@ -27,6 +27,51 @@ class CanonicalUrlTests(unittest.TestCase):
 
 
 class CandidateFusionTests(unittest.TestCase):
+    @staticmethod
+    def _ranked_rows(source, prefix, shared_rank=16):
+        return [
+            {"source": source, "title": f"{prefix}-{rank}",
+             "url": f"https://example.com/{prefix}-{rank}", "provider_rank": rank}
+            for rank in range(1, shared_rank)
+        ] + [{"source": source, "title": "Shared", "url": "https://example.com/shared",
+              "provider_rank": shared_rank}]
+
+    def test_provider_rank_sixteen_can_win_before_final_top_fifteen(self):
+        from multi_search_mcp.src.search.candidate import fuse_search_results
+
+        rows = self._ranked_rows("brave", "brave") + self._ranked_rows("tavily", "tavily")
+        rows.append({"source": "brave", "title": "Duplicate", "provider_rank": 17,
+                     "url": "https://example.com/shared?utm_source=duplicate"})
+
+        hits = fuse_search_results([("query", rows)], response_id="late-provider-match")
+
+        self.assertEqual(len(hits), 15)
+        self.assertEqual(hits[0]["canonical_url"], "https://example.com/shared")
+        self.assertAlmostEqual(hits[0]["rrf_score"], 2 / (40 + 16))
+        self.assertEqual([rank["rank"] for rank in hits[0]["provider_ranks"]], [16, 16])
+
+    def test_query_rank_sixteen_can_win_before_final_top_fifteen(self):
+        from multi_search_mcp.src.search.candidate import fuse_search_results
+
+        hits = fuse_search_results([
+            ("primary", self._ranked_rows("brave", "primary")),
+            ("variant", self._ranked_rows("brave", "variant")),
+        ], response_id="late-query-match")
+
+        self.assertEqual(len(hits), 15)
+        self.assertEqual(hits[0]["canonical_url"], "https://example.com/shared")
+        self.assertAlmostEqual(hits[0]["rrf_score"], 2 / (40 + 16))
+        self.assertEqual(hits[0]["query_ranks"], [
+            {"query": "primary", "rank": 16}, {"query": "variant", "rank": 16},
+        ])
+
+    def test_offline_fusion_can_explicitly_return_more_than_fifteen(self):
+        from multi_search_mcp.src.search.candidate import fuse_search_results
+
+        runs = [("query", self._ranked_rows("brave", "result", shared_rank=30))]
+        self.assertEqual(len(fuse_search_results(runs, response_id="default")), 15)
+        self.assertEqual(len(fuse_search_results(runs, response_id="offline", limit=30)), 30)
+
     def test_compact_hit_uses_the_richest_non_body_candidate_text(self):
         from multi_search_mcp.src.search.candidate import fuse_search_results
 
@@ -242,9 +287,9 @@ class SearchWebCoreTests(unittest.TestCase):
         }
 
     def test_core_returns_compact_ranked_candidates_without_scraping(self):
-        from multi_search_mcp.src.service import SearchWebRequest, run_search_web
+        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
 
-        response = run_search_web(
+        response = _run_search_candidates(
             SearchWebRequest(
                 query="compact search",
                 sources=["brave", "tavily"],
@@ -275,13 +320,13 @@ class SearchWebCoreTests(unittest.TestCase):
         self.assertNotIn("scraped_content", response["results"][0])
 
     def test_core_registers_source_ids_in_the_shared_state_store(self):
-        from multi_search_mcp.src.service import SearchWebRequest, run_search_web
+        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
         from multi_search_mcp.src.state.source_registry import SourceRegistry
         from multi_search_mcp.src.state.state_store import StateStore
 
         with TemporaryDirectory() as tmp:
             store = StateStore(Path(tmp) / "state.sqlite")
-            response = run_search_web(
+            response = _run_search_candidates(
                 SearchWebRequest(
                     query="registered search",
                     sources=["brave", "tavily"],
@@ -301,7 +346,7 @@ class SearchWebCoreTests(unittest.TestCase):
         self.assertEqual(saved["providers"], ["brave", "tavily"])
 
     def test_expanded_search_keeps_partial_provider_failures_in_diagnostics(self):
-        from multi_search_mcp.src.service import SearchWebRequest, run_search_web
+        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
 
         def brave(query, _config, _context, _key):
             suffix = "main" if query == "main angle" else "expanded"
@@ -328,7 +373,7 @@ class SearchWebCoreTests(unittest.TestCase):
                 }
             ]
 
-        response = run_search_web(
+        response = _run_search_candidates(
             SearchWebRequest(
                 query="main angle",
                 expand=["expanded angle"],
@@ -365,7 +410,7 @@ class SearchWebCoreTests(unittest.TestCase):
         self.assertEqual(len(response["results"]), 2)
 
     def test_expanded_search_reports_query_failures_when_an_angle_has_no_candidates(self):
-        from multi_search_mcp.src.service import SearchWebRequest, run_search_web
+        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
 
         def brave(query, _config, _context, _key):
             if query == "main angle":
@@ -393,7 +438,7 @@ class SearchWebCoreTests(unittest.TestCase):
                 }
             ]
 
-        response = run_search_web(
+        response = _run_search_candidates(
             SearchWebRequest(
                 query="main angle",
                 expand=["expanded angle"],
@@ -426,12 +471,12 @@ class SearchWebCoreTests(unittest.TestCase):
         self.assertEqual(len(response["results"]), 1)
 
     def test_expanded_search_reports_all_failed_queries_separately(self):
-        from multi_search_mcp.src.service import SearchWebRequest, run_search_web
+        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
 
         def failing(_query, _config, _context, _key):
             raise RuntimeError("provider unavailable")
 
-        response = run_search_web(
+        response = _run_search_candidates(
             SearchWebRequest(
                 query="main angle",
                 expand=["expanded angle"],
@@ -498,6 +543,7 @@ class SearchWebToolTests(unittest.TestCase):
         self.assertIsNone(captured["request"].timeout)
 
     def test_mcp_tool_is_a_thin_contract_over_candidate_core(self):
+        from multi_search_mcp.src.service import _run_search_candidates
         from multi_search_mcp.tools import search_web_tool
 
         provider = ProviderSpec(
@@ -513,12 +559,12 @@ class SearchWebToolTests(unittest.TestCase):
                 }
             ],
         )
-        with (
-            mock.patch(
-                "multi_search_mcp.src.search.registry.build_provider_registry",
-                return_value={"brave": provider},
+        # Isolate argument forwarding from the public search body-fetch stage.
+        with mock.patch(
+            "multi_search_mcp.tools.run_search_web",
+            side_effect=lambda request: _run_search_candidates(
+                request, providers={"brave": provider}, keys={}, config={},
             ),
-            mock.patch("multi_search_mcp.src.service.load_keys", return_value={}),
         ):
             response = search_web_tool(
                 "tool query", sources=["brave"], count=1, use_state=False

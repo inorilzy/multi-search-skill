@@ -26,10 +26,8 @@ SOURCE_ALIASES = {
     "baidu-ai-search": "baidu",
     "github": "github_repos",
     "github-repos": "github_repos",
-    "linux-do": "linuxdo",
     "linuxdo-api": "linuxdo_api",
     "qianfan": "baidu",
-    "reddit-browser": "reddit_browser",
 }
 
 ROUTE_PROFILES = {
@@ -37,17 +35,11 @@ ROUTE_PROFILES = {
     "fast": {"baidu", "tavily", "firecrawl", "exa"},
     "social": {"twitter"},
     "dev": {"stackoverflow", "github_repos", "hackernews"},
-    "cn-community": {"zhihu", "v2ex", "linuxdo"},
-    "video": {"youtube", "bilibili"},
-    # Browser-backed vertical sources. Kept out of ``default`` because they
-    # drive a logged-in CloakBrowser session and are slower than API providers.
-    "vertical": {"reddit_browser"},
-    # Everything except the video sources (and excluding linuxdo_api duplicate
-    # in favor of the route-canonical linuxdo).
+    # linuxdo_api remains opt-in via explicit sources.
     "all": {
         "brave", "parallel", "tavily", "exa", "serpapi", "baidu",
         "firecrawl", "twitter", "stackoverflow", "github_repos",
-        "hackernews", "zhihu", "v2ex", "linuxdo",
+        "hackernews", "v2ex",
     },
 }
 
@@ -78,14 +70,14 @@ ROUTE_META = {
         "timeout": 60,
         "primary_success_sources": ROUTE_PROFILES["default"],
     },
-    # ``fast`` is a self-contained route of providers whose search API returns
-    # body content inline. Its route default is scrape_top=0, and it asks those
-    # providers to include full content via ``want_content``.
+    # ``fast`` keeps the low-latency provider mix, but the public search
+    # contract is still candidate-only. Body retrieval is reserved for
+    # explicit fetch/read paths.
     "fast": {
         "scrape_top": 0,
         "show_snippet": True,
         "show_answer": True,
-        "want_content": True,
+        "want_content": False,
         "count": 10,
         "timeout": 45,
         "primary_success_sources": ROUTE_PROFILES["fast"],
@@ -111,29 +103,6 @@ ROUTE_META = {
         "count": 10,
         "timeout": 60,
         "primary_success_sources": ROUTE_PROFILES["dev"],
-    },
-    "cn-community": {
-        "scrape_top": 20,
-        "show_snippet": True,
-        "count": 10,
-        "timeout": 60,
-        "primary_success_sources": ROUTE_PROFILES["cn-community"],
-    },
-    "vertical": {
-        # Content arrives inline from the browser provider, so no scrape stage.
-        "scrape_top": 0,
-        "show_snippet": True,
-        "count": 10,
-        "timeout": 90,
-        "primary_success_sources": ROUTE_PROFILES["vertical"],
-    },
-    "video": {
-        "scrape_top": 0,
-        "show_snippet": False,
-        "count": 10,
-        "timeout": 45,
-        "title_url_only": True,
-        "primary_success_sources": ROUTE_PROFILES["video"],
     },
 }
 

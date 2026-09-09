@@ -1,0 +1,168 @@
+---
+config:
+  theme: base
+  themeVariables:
+    background: "#181818"
+    primaryColor: "#353535"
+    primaryTextColor: "#d8d8d8"
+    primaryBorderColor: "#454545"
+    secondaryColor: "#353535"
+    secondaryTextColor: "#d8d8d8"
+    secondaryBorderColor: "#454545"
+    tertiaryColor: "#1f1f1f"
+    tertiaryTextColor: "#d8d8d8"
+    tertiaryBorderColor: "#3a3a3a"
+    mainBkg: "#353535"
+    secondBkg: "#353535"
+    nodeBorder: "#454545"
+    clusterBkg: "#1f1f1f"
+    clusterBorder: "#3a3a3a"
+    lineColor: "#888888"
+    arrowheadColor: "#888888"
+    edgeLabelBackground: "#181818"
+    textColor: "#d8d8d8"
+    fontFamily: "Microsoft YaHei UI, Microsoft YaHei, PingFang SC, sans-serif"
+---
+flowchart TB
+    U["智能体 / 用户"]
+    SK["Skill<br/>仅定义工作流选择"]
+    U -. 遵循 .-> SK
+
+    subgraph ENTRY["薄入口层"]
+        direction LR
+        MCP["FastMCP server.py<br/>全部 MCP 工具"]
+        TOOLS["tools.py<br/>参数校验 / 错误封装"]
+        CLI["cli.py<br/>search · fetch · read · doctor · keys"]
+        MCP --> TOOLS
+    end
+
+    U --> MCP
+    U --> CLI
+
+    subgraph SERVICE["共享 Core · src/service.py"]
+        direction LR
+        SW["search_web"]
+        FS["fetch_source"]
+        RS["read_source"]
+        MS["multi_search<br/>兼容重型路径"]
+        SU["scrape_url"]
+        OPS["doctor / key / site<br/>诊断"]
+    end
+
+    TOOLS --> SW
+    TOOLS --> FS
+    TOOLS --> RS
+    TOOLS --> MS
+    TOOLS --> SU
+    TOOLS --> OPS
+
+    CLI --> SW
+    CLI --> FS
+    CLI --> RS
+    CLI --> OPS
+
+    SK -. 默认候选流 .-> SW
+    SK -. 按需正文 .-> FS
+    SK -. 显式深抓取 .-> MS
+
+    subgraph SEARCH["共享搜索基座"]
+        direction LR
+        CFG["配置 / 环境变量 / 密钥文件"]
+        PLAN["resolve_search_plan<br/>route · sources · count · timeout"]
+        CAP["ProviderCapability<br/>→ Provider 注册表"]
+        RUN["SearchRunner<br/>并发扇出 · provider_rank · 密钥状态"]
+        ADAPTER["Provider 适配器"]
+        RAW["Provider 结果列表"]
+
+        CFG --> PLAN
+        CFG --> RUN
+        CAP --> RUN
+        PLAN --> RUN
+        RUN --> ADAPTER
+        ADAPTER --> RAW
+    end
+
+    SW --> PLAN
+    MS --> PLAN
+    ADAPTER <--> SEARCH_EXT[("搜索 API / 浏览器来源")]
+
+    subgraph CANDIDATE["候选优先主路径"]
+        direction LR
+        RRF["URL 身份<br/>两阶段等权 RRF"]
+        HIT["紧凑 SearchHit<br/>response_id · source_id"]
+        PREFETCH["真实 Provider 正文<br/>按保留策略可选保存"]
+
+        RRF --> HIT
+    end
+
+    RAW -- search_web --> RRF
+    HIT --> SOURCES
+    RAW -. Provider 预取正文 .-> PREFETCH
+    CAP -. 保留策略 .-> PREFETCH
+    PREFETCH --> CONTENT
+
+    subgraph BODY["按需正文路径"]
+        direction LR
+        REF["解析 source_id<br/>或直接 URL"]
+        CACHE{"ContentStore 命中？"}
+        SCRAPE["抓取编排<br/>后端失败切换"]
+        STORE["按保留策略写入"]
+        FOUT["受限长度正文<br/>标记为不可信"]
+        READ["仅缓存读取<br/>切片返回 · 不访问网络"]
+        SOUT["scrape_url 直接结果"]
+
+        REF --> CACHE
+        CACHE -- 命中 --> FOUT
+        CACHE -- 未命中 --> SCRAPE
+        SCRAPE -- fetch_source --> STORE
+        STORE --> FOUT
+    end
+
+    FS --> REF
+    SOURCES --> REF
+    CACHE <--> CONTENT
+    STORE --> CONTENT
+    RS --> READ
+    READ <--> CONTENT
+    SU --> SCRAPE
+    SCRAPE -- scrape_url --> SOUT
+
+    subgraph LEGACY["兼容重型路径 · multi_search"]
+        direction LR
+        STAGE["ScrapePlanner + 批量阶段<br/>content_kind · capability · quota"]
+        MERGE["未抓取行 + 正文回写行"]
+        RANK["deduplicate<br/>→ rank_results"]
+        FORMAT["JSON / Markdown"]
+
+        STAGE --> MERGE
+        MERGE --> RANK
+        RANK --> FORMAT
+    end
+
+    RAW -- multi_search --> STAGE
+    CAP -. 抓取策略 .-> STAGE
+    STAGE --> SCRAPE
+    SCRAPE -- multi_search --> MERGE
+
+    subgraph STATE["共享 StateStore · ~/.multi-search/state.sqlite"]
+        direction LR
+        KEYS["SQLiteKeyManager<br/>key_state"]
+        SITE["SiteScraperMemory<br/>site_scraper_stats"]
+        SOURCES["SourceRegistry<br/>search_sources"]
+        CONTENT["ContentStore<br/>content_objects / content_sources"]
+        LOGS["provider_runs<br/>scrape_attempts"]
+    end
+
+    RUN <--> KEYS
+    RUN --> LOGS
+    SCRAPE <--> KEYS
+    SCRAPE <--> SITE
+    SCRAPE --> LOGS
+    OPS <--> KEYS
+    OPS <--> SITE
+    OPS <--> LOGS
+
+    SECURITY["URL 安全<br/>HTTP(S) · DNS · 私网拦截 · 本地重定向校验"]
+    FS -. 使用 .-> SECURITY
+    SCRAPE -. 使用 .-> SECURITY
+    SCRAPE <--> SCRAPE_EXT[("Jina / Exa / Tavily / Firecrawl")]

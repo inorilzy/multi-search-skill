@@ -1,0 +1,58 @@
+flowchart TD
+    subgraph ENTRY["入口"]
+        MCP["MCP · server.py / tools.py"]
+        CLI["CLI · cli.py"]
+    end
+    CORE["service.py · 990 行 / 依赖 19 个内部模块<br/>search · fetch · read · 兼容入口 · 诊断"]
+    MCP --> CORE
+    CLI --> CORE
+
+    subgraph SEARCH["搜索模块"]
+        RUN["resolve / SearchRunner<br/>路由、并发、密钥轮换"]
+        CAP["capabilities<br/>来源能力与保留策略"]
+        PROVIDERS["registry / searchers<br/>API 与社区适配器"]
+        RRF["candidate.py<br/>URL 归一化、两级 RRF、SearchHit"]
+    end
+    CORE --> RUN
+    RUN --> PROVIDERS
+    RUN --> CAP
+    PROVIDERS --> CAP
+    CORE -->|search_web| RRF
+    CORE --> CAP
+
+    LEGACY["support/dedup + format<br/>multi_search 独立去重、排序、输出"]
+    STAGE["scrape/stage + planner<br/>仍调用，但 scrape_top 固定为 0"]
+    CORE -->|multi_search| LEGACY
+    CORE -->|multi_search| STAGE
+    LEGACY --> CAP
+
+    SCRAPE["scrape / scrapers<br/>Jina · Exa · Tavily · Firecrawl"]
+    HTTP["support/http + url_security<br/>HTTP、URL 与重定向校验"]
+    BROWSER["browser/cloak_runtime<br/>Reddit 浏览器会话"]
+    CORE -->|fetch_source / scrape_url| SCRAPE
+    SCRAPE --> HTTP
+    PROVIDERS --> HTTP
+    PROVIDERS --> BROWSER
+    BROWSER -.->|循环依赖：反向导入 Reddit 适配器| PROVIDERS
+
+    subgraph STATE["本地状态"]
+        SOURCES["SourceRegistry<br/>source_id → URL / 到期时间"]
+        CONTENT["ContentStore<br/>正文、哈希、TTL、容量上限"]
+        HEALTH["SQLiteKeyManager / SiteScraperMemory"]
+        DB[("StateStore / SQLite<br/>~/.multi-search/state.sqlite")]
+    end
+    CORE -->|search / fetch| SOURCES
+    CORE -->|search / fetch / read| CONTENT
+    CORE --> HEALTH
+    RUN --> HEALTH
+    SCRAPE --> HEALTH
+    SOURCES --> DB
+    CONTENT --> DB
+    HEALTH --> DB
+
+    classDef critical fill:#ff6b6b,stroke:#c92a2a,color:#111
+    classDef warning fill:#ffd43b,stroke:#e67700,color:#111
+    classDef clean fill:#d3f9d8,stroke:#2b8a3e,color:#111
+    class CORE,STAGE critical
+    class RRF,LEGACY,PROVIDERS,BROWSER,SOURCES,CONTENT warning
+    class MCP,CLI,RUN,CAP,SCRAPE,HTTP,HEALTH,DB clean

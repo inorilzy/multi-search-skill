@@ -21,12 +21,6 @@ CANONICAL_SOURCE_BY_HOST = {
     "github.com": "github-repos",
     "stackoverflow.com": "stackoverflow",
     "news.ycombinator.com": "hackernews",
-    "reddit.com": "reddit",
-    "zhihu.com": "zhihu",
-    "v2ex.com": "v2ex",
-    "youtube.com": "youtube",
-    "youtu.be": "youtube",
-    "bilibili.com": "bilibili",
 }
 
 
@@ -90,7 +84,7 @@ def _answer_provider_sources(results: list[dict]) -> set[str]:
 
     ``tavily_answer`` -> ``tavily``. Used to skip scraping the
     concrete URLs of any source that already provided a summary, while still
-    scraping sources (github/zhihu/...) that returned URLs only.
+    scraping sources (github/stackoverflow/...) that returned URLs only.
     """
     providers: set[str] = set()
     for item in results:
@@ -181,6 +175,8 @@ def apply_scraped_content(rows: list, content_pool: dict) -> None:
 
 def consensus_weight(item: dict) -> int:
     """Number of sources that agreed on a URL (1 + cross-source duplicates)."""
+    if item.get("providers"):
+        return len(set(item["providers"]))
     return 1 + len(item.get("also_from") or [])
 
 
@@ -197,6 +193,16 @@ def rank_results(results: list) -> list:
     Ties preserve insertion order (Python sort is stable).
     """
     rows = as_dicts(results)
+
+    # Fused search results keep their RRF order after fetching and rendering.
+    # Body size, fetch errors, and platform popularity must not rerank them.
+    candidates = [row for row in rows if not row.get("error")]
+    if candidates and all("rrf_score" in row for row in candidates):
+        return sorted(rows, key=lambda row: (
+            bool(row.get("error")),
+            -float(row.get("rrf_score") or 0),
+            str(row.get("canonical_url") or row.get("url") or ""),
+        ))
 
     def _key(item: dict):
         is_error = "error" in item

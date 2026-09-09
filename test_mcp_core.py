@@ -124,7 +124,7 @@ class ModelTests(unittest.TestCase):
 class RouteTests(unittest.TestCase):
     """Route assertions reflect the semantic-profile redesign.
 
-    The legacy single-provider aliases (github/youtube/v2ex ...) were
+    The legacy single-provider aliases (github/hackernews ...) were
     intentionally removed; routes are now multi-provider profiles.
     """
 
@@ -135,14 +135,14 @@ class RouteTests(unittest.TestCase):
         )
         self.assertEqual(resolve_route("dev"), {"stackoverflow", "hackernews", "github_repos"})
         self.assertEqual(resolve_route("social"), {"twitter"})
-        self.assertEqual(resolve_route("video"), {"bilibili", "youtube"})
-        self.assertEqual(resolve_route("cn-community"), {"zhihu", "v2ex", "linuxdo"})
+        self.assertEqual(resolve_route("video"), set())
+        self.assertEqual(resolve_route("cn-community"), set())
         self.assertNotIn("youtube", resolve_route("all"))
         self.assertNotIn("bilibili", resolve_route("all"))
-        self.assertTrue({"brave", "parallel", "baidu", "github_repos", "zhihu"} <= resolve_route("all"))
+        self.assertTrue({"brave", "parallel", "baidu", "github_repos", "twitter"} <= resolve_route("all"))
 
-    def test_fast_route_resolves_to_inline_content_providers(self):
-        # ``fast`` is a route whose providers return body content inline.
+    def test_fast_route_resolves_to_low_latency_providers(self):
+        # ``fast`` selects the low-latency provider mix.
         self.assertEqual(resolve_route("fast"), {"baidu", "tavily", "firecrawl", "exa"})
         # ``normal`` is no longer a route or a level.
         self.assertEqual(resolve_route("normal"), set())
@@ -160,8 +160,11 @@ class RouteTests(unittest.TestCase):
 
     def test_available_routes_lists_semantic_profiles(self):
         routes = available_routes()
-        for name in ("default", "fast", "all", "dev", "social", "video", "cn-community"):
+        for name in ("default", "fast", "all", "dev", "social"):
             self.assertIn(name, routes)
+        self.assertNotIn("video", routes)
+        self.assertNotIn("vertical", routes)
+        self.assertNotIn("cn-community", routes)
         self.assertNotIn("normal", routes)
         self.assertNotIn("web", routes)
 
@@ -177,11 +180,19 @@ class CapabilityTests(unittest.TestCase):
             self.assertIn(name, PROVIDER_CAPABILITIES)
             self.assertTrue(PROVIDER_CAPABILITIES[name].scrape.can_scrape)
 
-    def test_video_sources_are_marked_skip_for_scraping(self):
+    def test_removed_video_sources_are_not_advertised(self):
+        from multi_search_mcp.src.search.registry import build_provider_registry
+        from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES
+        from multi_search_mcp.src.service import list_sources
+
+        registry = build_provider_registry()
+        advertised = list_sources()
         for name in ("youtube", "bilibili"):
-            capability = PROVIDER_CAPABILITIES[name]
-            self.assertEqual(capability.kind, ProviderKind.VIDEO_SEARCHER)
-            self.assertEqual(capability.scrape_policy, ScrapePolicy.SKIP)
+            self.assertNotIn(name, PROVIDER_CAPABILITIES)
+            self.assertNotIn(name, registry)
+            self.assertNotIn(name, ALL_SOURCE_NAMES)
+            self.assertNotIn(name, advertised["sources"])
+        self.assertNotIn("video", advertised["routes"])
 
     def test_content_searchers_return_content_and_prefetch(self):
         for name in ("tavily", "exa", "twitter"):
@@ -236,24 +247,22 @@ class ProviderMetadataDriftTests(unittest.TestCase):
 
     # The count key each provider's ProviderSpec actually reads from
     # ``cfg.counts[...]`` (hand-verified against build_provider_registry).
-    # github_repos reads ``counts["github"]``; v2ex rides firecrawl's quota and
-    # has no count of its own (capability.count_key is None).
+    # github_repos reads ``counts["github"]``.
     REGISTRY_COUNT_KEYS = {
         "baidu": "baidu", "brave": "brave", "parallel": "parallel", "tavily": "tavily", "exa": "exa",
-        "serpapi": "serpapi", "youtube": "youtube", "bilibili": "bilibili",
-        "firecrawl": "firecrawl", "v2ex": None, "linuxdo": "linuxdo",
+        "serpapi": "serpapi",
+        "firecrawl": "firecrawl",
         "linuxdo_api": "linuxdo_api", "github_repos": "github",
         "hackernews": "hackernews", "stackoverflow": "stackoverflow",
-        "twitter": "twitter", "zhihu": "zhihu", "reddit_browser": "reddit_browser",
+        "twitter": "twitter", "v2ex": "v2ex",
     }
 
     # Frozen snapshot of current count membership, so derivation cannot silently
-    # add/drop a source (e.g. accidentally giving v2ex its own count). Both dicts
-    # currently share the same 17 keys (v2ex excluded -- it rides firecrawl).
+    # add/drop a source. Both dicts currently share the same 13 keys.
     COUNT_CAPS_KEYS = {
         "baidu", "brave", "parallel", "tavily", "exa", "github", "hackernews", "serpapi",
-        "youtube", "bilibili", "stackoverflow", "firecrawl", "zhihu", "linuxdo",
-        "linuxdo_api", "twitter", "reddit_browser",
+        "stackoverflow", "firecrawl",
+        "linuxdo_api", "twitter", "v2ex",
     }
     DEFAULT_COUNTS_KEYS = COUNT_CAPS_KEYS
 
@@ -268,10 +277,9 @@ class ProviderMetadataDriftTests(unittest.TestCase):
         from multi_search_mcp.src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
         expected_caps = {
             "baidu": 50, "brave": 20, "parallel": 20, "tavily": 20, "exa": 100, "github": 100,
-            "hackernews": 100, "serpapi": 100, "youtube": 50, "bilibili": 50,
-            "stackoverflow": 100, "firecrawl": 100, "zhihu": 10, "linuxdo": 20,
-            "linuxdo_api": 10, "twitter": 20,
-            "reddit_browser": 25,
+            "hackernews": 100, "serpapi": 100,
+            "stackoverflow": 100, "firecrawl": 100,
+            "linuxdo_api": 10, "twitter": 20, "v2ex": 50,
         }
         self.assertEqual(COUNT_CAPS, expected_caps)
         self.assertEqual(DEFAULT_COUNTS, {k: 10 for k in expected_caps})
@@ -586,9 +594,11 @@ class ScrapePlannerTests(unittest.TestCase):
         self.assertEqual([item["url"] for item in plan.items_to_scrape], ["https://example.com/needs"])
         self.assertIn("https://example.com/full", {row["url"] for row in plan.content_pool.values()})
 
-    def test_video_results_are_not_scrape_candidates(self):
+    def test_web_video_urls_are_not_scrape_candidates(self):
         rows = [
-            {"source": "youtube", "title": "Video", "url": "https://youtube.com/watch?v=1"},
+            {"source": "brave", "title": "Video", "url": "https://youtube.com/watch?v=1"},
+            {"source": "brave", "title": "Video", "url": "https://youtu.be/1"},
+            {"source": "brave", "title": "Video", "url": "https://www.bilibili.com/video/BV1"},
             {"source": "brave", "title": "Doc", "url": "https://example.com/doc"},
         ]
 
@@ -754,14 +764,6 @@ class KeyTests(unittest.TestCase):
                 })
 
         self.assertEqual(keys["parallel"], "parallel-env-key")
-
-    def test_zhihu_access_secret_env_key_is_loaded(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch("pathlib.Path.home", return_value=Path(tmpdir)):
-                with mock.patch.dict(os.environ, {"ZHIHU_ACCESS_SECRET": "zhihu-secret"}, clear=False):
-                    keys = load_keys()
-
-        self.assertEqual(keys["zhihu"], "zhihu-secret")
 
     def test_jina_config_keys_filter_statically_exhausted_without_shuffle(self):
         cfg = [
