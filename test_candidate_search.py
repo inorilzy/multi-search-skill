@@ -7,6 +7,23 @@ from multi_search_mcp.src.search.search_runner import ProviderSpec
 
 
 class CanonicalUrlTests(unittest.TestCase):
+    def test_repeated_business_parameters_keep_their_order_and_identity(self):
+        from multi_search_mcp.src.search.candidate import canonicalize_url, fuse_search_results
+
+        first = "https://example.test/read?id=1&id=2"
+        second = "https://example.test/read?id=2&id=1"
+        self.assertNotEqual(canonicalize_url(first), canonicalize_url(second))
+        self.assertEqual(
+            canonicalize_url("https://example.test/read?z=9&id=2&utm_source=x&id=&a=0"),
+            "https://example.test/read?a=0&id=2&id=&z=9",
+        )
+        hits = fuse_search_results([("query", [
+            {"source": "brave", "title": "First", "url": first, "provider_rank": 1},
+            {"source": "brave", "title": "Second", "url": second, "provider_rank": 2},
+        ])], response_id="ordered-parameters")
+        self.assertEqual([hit["canonical_url"] for hit in hits], [first, second])
+        self.assertNotEqual(hits[0]["source_id"], hits[1]["source_id"])
+
     def test_canonicalization_is_conservative_and_deterministic(self):
         from multi_search_mcp.src.search.candidate import canonicalize_url
 

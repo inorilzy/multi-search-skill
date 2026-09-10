@@ -122,7 +122,9 @@ SCHEMA = (
       source_id TEXT PRIMARY KEY,
       content_hash TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      canonical_url TEXT NOT NULL DEFAULT '',
+      cache_scope TEXT NOT NULL DEFAULT ''
     )
     """,
     """
@@ -159,6 +161,7 @@ class StateStore:
 
     def migrate(self) -> None:
         with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             for statement in SCHEMA:
                 conn.execute(statement)
             self._ensure_columns(conn, "key_state", {
@@ -166,6 +169,14 @@ class StateStore:
                 "last_used_at": "TEXT",
                 "invalid_strikes": "INTEGER NOT NULL DEFAULT 0",
             })
+            self._ensure_columns(conn, "content_sources", {
+                "canonical_url": "TEXT NOT NULL DEFAULT ''",
+                "cache_scope": "TEXT NOT NULL DEFAULT ''",
+            })
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_content_sources_url_scope "
+                "ON content_sources (canonical_url, cache_scope, expires_at)"
+            )
 
     def _ensure_columns(self, conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
         existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}

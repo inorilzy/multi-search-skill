@@ -17,7 +17,24 @@ MCP server 入口在仓库根目录：
 python -m multi_search_mcp.server
 ```
 
-在支持 `uvx --from` 的 MCP 配置界面中使用：
+当前源码版本为 **0.3.0**。在仓库根目录可直接运行 CLI，无需先启动 MCP server：
+
+```powershell
+uv run --locked multi-search --help
+uv run --locked multi-search search "Python asyncio TaskGroup" --source hackernews --count 3 --format markdown
+uv run --locked multi-search fetch --url "https://docs.python.org/3/library/asyncio-task.html" --full-content --format json
+# 将 src_... 替换为搜索结果中的 source_id
+uv run --locked multi-search fetch src_... --full-content --format json
+uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
+```
+
+`uv run --locked` 使用项目虚拟环境并按锁文件同步依赖。已在激活的虚拟环境中安装项目时，也可以直接执行 `multi-search` 或 `python -m multi_search_mcp.cli`，子命令参数相同。
+
+只使用独立 CLI 时，从当前源码根目录运行 `uv tool install --force .`，之后在任意目录执行 `multi-search --help`。GitHub 安装、更新、参数示例和完整工作流统一见 [CLI-only 指南](skills/multi-search/references/cli.md)。GitHub 安装只包含远端代码；当前本地未发布修复需使用本地安装命令。
+
+搜索全部活动源失败时 CLI 退出 `1`，JSON 仍保留完整错误；正常零匹配和部分成功退出 `0`。human/Markdown 同样展示错误。`doctor` 真正解析配置；显式配置路径不存在会报错。`doctor --network` 对 Hacker News/GitHub 公共 API 做总预算 5 秒的连接检查，结果以 `network_ok` / `network_checks` 为准，不代表所有源的 key 或搜索质量正常。
+
+发布 `v0.3.0` tag 后，在支持 `uvx --from` 的 MCP 配置界面中使用以下配置；tag 尚未发布时使用上面的本地源码入口：
 
 ```json
 {
@@ -26,7 +43,7 @@ python -m multi_search_mcp.server
     "command": "uvx",
     "args": [
       "--from",
-      "git+https://github.com/inorilzy/multi-search-skill.git@v0.2.4",
+      "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.0",
       "multi-search-mcp"
     ],
     "timeoutMs": 60000
@@ -50,7 +67,7 @@ python -m multi_search_mcp.server
 
 边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。MCP 客户端启动配置只负责启动 server，不保存 secret。
 
-当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符，直接截取所获正文的开头。调用工具的 Agent 根据问题和预览选 3–5 篇，逐篇调用 `fetch_source(source_id=..., full_content=True)` 一次读取已取得全文，可并发；少于 3 篇合格来源时读取可用数量并如实说明。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
+当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。调用工具的 Agent 根据问题和预览选 3–5 篇，逐篇调用 `fetch_source(source_id=..., full_content=True)` 一次读取已取得全文，可并发；少于 3 篇合格来源时读取可用数量并如实说明。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
 
 ## 适用场景
 
@@ -102,6 +119,8 @@ skill 入口在 [skills/multi-search/SKILL.md](skills/multi-search/SKILL.md)，�
 
 MCP 和 CLI 都是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；业务能力只落在 `multi_search_mcp/src/`。
 
+同步个人 Skill 时，将整个 `skills/multi-search/`（含 `references/`）复制到自己的 Skill 目录；先备份现有文件并保留个人定制，核对文件内容或 hash 后替换。只复制 `SKILL.md` 会缺少 CLI 指南。已加载的旧 Skill 需要在新任务中重新读取。
+
 ## 搜索源、注册和免费额度
 
 当前注册 13 个搜索源；`all` 路由包含其中 12 个，`linuxdo_api` 通过 `sources` 显式选择。Jina 仅负责抓取正文，不计入搜索源。
@@ -112,7 +131,7 @@ MCP 和 CLI 都是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工
 |---|---|---|---|---:|
 | Brave Search | Web 搜索，snippet，额外抓取优先源 | https://brave.com/search/api/ | 约 1,000 次/月；通常需要邮箱 + 信用卡 | 20 |
 | Parallel Search | 语义 Web 搜索 + LLM 优化 excerpts | https://platform.parallel.ai/ | 使用 GA `/v1/search`；按请求计费，详见 [本地接入说明](docs/parallel/search.md) | 20 |
-| Baidu AI Search | 中文 Web 搜索 + AI summary + 引用正文 | https://cloud.baidu.com/product-s/qianfan_home | 千帆 / AppBuilder API；需要 `BAIDU_QIANFAN_API_KEY` 等 | 50 |
+| Baidu AI Search | 中文 Web 搜索 + AI summary + 引用摘要 | https://cloud.baidu.com/product-s/qianfan_home | 千帆 / AppBuilder API；需要 `BAIDU_QIANFAN_API_KEY` 等 | 50 |
 | Tavily | Web 搜索 + answer，可带 raw markdown，也是抓取后端 | https://tavily.com | 约 1,000 次/月；邮箱注册 | 20 |
 | Exa | 搜索 + `contents.text`，也是抓取后端 | https://exa.ai | 约 1,000 次/月；邮箱注册 | 100 |
 | Firecrawl | Web metadata search；抓取 backend | https://firecrawl.dev | 搜索仍需要 API key；`/v2/scrape` 无 key 可匿名使用但有 IP 级免费日额度，配置 key 后额度和限流更高 | 100 |
@@ -232,6 +251,8 @@ flowchart LR
 - **Service 服务层**：`multi_search_mcp/src/service.py`，是 MCP 和 CLI 共用的 Core；入口只负责参数适配。
 - **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口，最后取前 15 条；分数相同按 canonical URL 排序。
 - **SourceRegistry / ContentStore**：短期 SQLite 状态。前者把本次响应的 `source_id` 映射到 URL；后者按 TTL、单条/总容量限制保存正文并以内容哈希去重。provider 的 retention policy 可禁止保存结果、摘要或正文。
+
+同 canonical URL、相同来源集合、显式后端顺序及凭据上下文的有效抓取正文可跨响应复用，每次响应仍生成独立 `source_id`。关联新 ID 不延长原正文 TTL；来源策略更严格时服从当前限制。不同来源上下文（包括 direct 与搜索来源）、provider 预取正文及旧的无复用元数据缓存不跨 ID 混用。凭据上下文只存 SHA-256 摘要；旧缓存仍可按原 ID 读取。SQLite 首次运行自动兼容增加 URL/scope 字段与索引。
 - **Searcher 搜索器**：`multi_search_mcp/src/search/searchers/*`，只负责 query -> `SearchResult`/dict，输出 title、url、description、source、score、raw metadata。
 - **SearchRunner 搜索调度器**：`multi_search_mcp/src/search/search_runner.py`，负责 route、并发、timeout、SQLite key state 和 source status。
 - **统一排序与抓取**：两个公共搜索入口共用 RRF 结果；`run_ranked_fetch_stage` 获取最终列表正文，按输入顺序回填。正文长度、抓取成功与否和 stars 不再改变排名；`support/dedup.py` 中的旧排序辅助函数不参与公共搜索排序。
@@ -381,6 +402,10 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-se
 ### 某个搜索源一直报错怎么办？
 
 先调用 `doctor` tool 检查依赖和 key。缺 key、quota 用完、网络超时都会在 `Source Status` 和 `Errors` 中显示，不会静默吞掉。
+
+## 开发验证
+
+`uv run --locked python scripts/run_tests.py` 使用临时 SQLite 运行全量回归。干净环境先非 editable 安装 `python -m pip install .`，再运行 `python scripts/smoke_install.py`，检查仓库外 CLI 入口、MCP stdio 握手与工具调用。GitHub Actions 对 Windows/Linux、Python 3.10/3.14 执行这两类检查。
 
 ### 为什么结果里没有 Twitter/X？
 

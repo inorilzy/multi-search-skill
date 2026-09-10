@@ -1,14 +1,132 @@
-"""HTTP utilities: tolerant SSL context + urlopen with retry."""
+"""HTTP requests with safe redirects and a shared retry/read deadline."""
+import http.client
+import io
 import ssl
+import time
 from collections.abc import Iterable
+from functools import partial
+import urllib.parse
 import urllib.request
 
-from .url_security import validate_redirect_target
+from .url_security import UrlSecurityError, validate_redirect_target
 
 
 _ssl_ctx = ssl.create_default_context()
 if hasattr(ssl, "OP_IGNORE_UNEXPECTED_EOF"):
     _ssl_ctx.options |= ssl.OP_IGNORE_UNEXPECTED_EOF  # type: ignore[attr-defined]
+
+
+_CREDENTIAL_HEADERS = {
+    "authorization", "proxy-authorization", "cookie",
+    "x-api-key", "x-subscription-token", "x-appbuilder-authorization",
+}
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urllib.parse.urlsplit(url)
+    scheme = parts.scheme.lower()
+    port = parts.port if parts.port is not None else {"http": 80, "https": 443}.get(scheme)
+    return scheme, (parts.hostname or "").lower(), port
+
+
+def _remaining(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("HTTP request deadline exceeded")
+    return remaining
+
+
+class _DeadlineReader(io.RawIOBase):
+    """Refresh the socket budget before each individual buffered-stream read.
+
+    A single HTTPResponse.read() can perform many socket reads, so setting the
+    timeout just once still lets a slow, continuously arriving body run forever.
+    read1 performs at most one underlying read, including for chunked bodies.
+    """
+
+    def __init__(self, stream, sock, deadline: float):
+        self.stream, self.sock, self.deadline = stream, sock, deadline
+
+    def readable(self):
+        return True
+
+    def readinto(self, target):
+        if not target:
+            return 0
+        try:
+            self.sock.settimeout(_remaining(self.deadline))
+            chunk = self.stream.read1(len(target))
+            _remaining(self.deadline)
+            target[:len(chunk)] = chunk
+            return len(chunk)
+        except BaseException:
+            # urllib may drain a redirect body before returning any response
+            # to the caller, so its failure cannot rely on a caller's `with`.
+            self.stream.close()
+            raise
+
+    def close(self):
+        try:
+            self.stream.close()
+        finally:
+            super().close()
+
+
+class _DeadlineHTTPResponse(http.client.HTTPResponse):
+    def __init__(self, sock, *args, deadline: float, **kwargs):
+        super().__init__(sock, *args, **kwargs)
+        self.fp = io.BufferedReader(_DeadlineReader(self.fp, sock, deadline))
+
+
+def _open_with_deadline(handler, connection_type, req, **connection_options):
+    deadline = getattr(req, "_multi_search_deadline", None)
+
+    def connection(host, **options):
+        if deadline is not None:
+            options["timeout"] = _remaining(deadline)
+        conn = connection_type(host, **options)
+        if deadline is not None:
+            conn.response_class = partial(_DeadlineHTTPResponse, deadline=deadline)
+            create_connection = conn._create_connection
+            tunnel = conn._tunnel
+
+            def connect_socket(address, timeout=None, source_address=None, **socket_options):
+                sock = create_connection(
+                    address, timeout=_remaining(deadline),
+                    source_address=source_address, **socket_options,
+                )
+                try:
+                    sock.settimeout(_remaining(deadline))
+                except BaseException:
+                    sock.close()
+                    raise
+                return sock
+
+            def connect_tunnel():
+                tunnel()
+                try:
+                    conn.sock.settimeout(_remaining(deadline))
+                except BaseException:
+                    conn.close()
+                    raise
+
+            # Leave stdlib connect/TLS/SNI handling intact; deduct TCP and
+            # proxy CONNECT time before that flow starts the TLS handshake.
+            conn._create_connection = connect_socket
+            conn._tunnel = connect_tunnel
+        return conn
+
+    return handler.do_open(connection, req, **connection_options)
+
+
+class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return _open_with_deadline(self, http.client.HTTPConnection, req)
+
+
+class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return _open_with_deadline(self, http.client.HTTPSConnection, req, context=self._context)
 
 
 class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -19,10 +137,22 @@ class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         try:
             validate_redirect_target(newurl, resolver=self._resolver)
+            old_origin, new_origin = _origin(req.full_url), _origin(newurl)
+            if old_origin[0] == "https" and new_origin[0] == "http":
+                raise UrlSecurityError("HTTPS redirect must not downgrade to HTTP")
+            has_credentials = any(name.lower() in _CREDENTIAL_HEADERS for name, _ in req.header_items())
+            if old_origin != new_origin and has_credentials:
+                raise UrlSecurityError("cross-origin redirect must not forward credentials")
+            redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+            deadline = getattr(req, "_multi_search_deadline", None)
+            if redirected is not None and deadline is not None:
+                redirected._multi_search_deadline = deadline
+                # urllib follows the redirect with the original request's timeout.
+                req.timeout = _remaining(deadline)
+            return redirected
         except Exception:
             fp.close()
             raise
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _build_safe_opener(
@@ -32,7 +162,8 @@ def _build_safe_opener(
 ):
     return urllib.request.build_opener(
         _SafeHTTPRedirectHandler(resolver=redirect_resolver),
-        urllib.request.HTTPSHandler(context=_ssl_ctx),
+        _DeadlineHTTPHandler(),
+        _DeadlineHTTPSHandler(context=_ssl_ctx),
         *extra_handlers,
     )
 
@@ -43,13 +174,19 @@ urllib.request.install_opener(_shared_opener)
 
 def urlopen_retry(
     req_or_url,
-    timeout: int,
+    timeout: int | float,
     retries: int = 2,
     *,
     redirect_resolver=None,
     extra_handlers: Iterable[urllib.request.BaseHandler] = (),
 ):
-    """urlopen with up to 2 retries on SSL EOF errors (Python 3.12 + parallel TLS issue)."""
+    """Keep SSL retries, redirects and response reads within one time budget.
+
+    Returns the standard HTTPResponse protocol, including HTTPError bodies.
+    """
+    deadline = time.monotonic() + timeout
+    request = req_or_url if isinstance(req_or_url, urllib.request.Request) else urllib.request.Request(req_or_url)
+    request._multi_search_deadline = deadline
     last_exc = None
     handlers = tuple(extra_handlers)
     opener = (
@@ -62,7 +199,7 @@ def urlopen_retry(
     )
     for _ in range(retries + 1):
         try:
-            return opener.open(req_or_url, timeout=timeout)
+            return opener.open(request, timeout=_remaining(deadline))
         except (ssl.SSLEOFError, ssl.SSLError) as e:
             last_exc = e
             continue

@@ -138,6 +138,7 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
                 cfg.counts["twitter"],
                 cfg.keys.get("twitter") or cfg.keys.get("twitter_cookies", ""),
                 timeout=ctx.timeout,
+                deadline=ctx.deadline, publish_partial=ctx.publish_partial,
             ),
         ),
     }

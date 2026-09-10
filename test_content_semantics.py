@@ -131,14 +131,14 @@ class ProviderContentKindTests(unittest.TestCase):
         self.assertEqual(rows[0]["content_kind"], "body")
         self.assertEqual(rows[0]["scraped_content"], "markdown body")
 
-    def test_baidu_rows_mark_answer_and_body(self):
+    def test_baidu_rows_mark_answer_and_summary(self):
         rows = _rows_from_response(
             {
                 "choices": [{"message": {"content": "answer text"}}],
                 "references": [{
                     "title": "Reference",
                     "url": "https://example.com",
-                    "content": "full body",
+                    "content": "page summary",
                 }],
             },
             endpoint="/v2/ai_search/web_summary",
@@ -146,8 +146,9 @@ class ProviderContentKindTests(unittest.TestCase):
         )
 
         self.assertEqual(rows[0]["content_kind"], "answer")
-        self.assertEqual(rows[1]["content_kind"], "body")
-        self.assertEqual(rows[1]["scraped_content"], "full body")
+        self.assertEqual(rows[1]["content_kind"], "excerpt")
+        self.assertEqual(rows[1]["description"], "page summary")
+        self.assertNotIn("scraped_content", rows[1])
 
     def test_github_repo_description_is_excerpt(self):
         payload = {

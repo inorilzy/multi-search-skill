@@ -44,7 +44,10 @@ def search_web(
     `count` controls each provider's recall, subject to its API cap. It does not
     change the final 15-result limit. `results[].content` is a search excerpt;
     `scrapes[].markdown` is the single fetched preview (default: 1200 characters),
-    joined by `source_id`. The calling Agent reviews these previews, selects
+    joined by `source_id`. Bounded previews may skip a prefix before an exact
+    matching page H1 or a paragraph matching the complete search snippet;
+    `preview_start/end` are original-body character offsets.
+    The calling Agent reviews these previews, selects
     3-5 relevant sources, then calls fetch_source(source_id=..., full_content=True)
     for each. If fewer than 3 sources qualify, use the available number.
     Core does not make this selection or summarize with AI.

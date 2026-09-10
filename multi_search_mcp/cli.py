@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 from collections.abc import Sequence
@@ -78,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     read_parser.set_defaults(handler=_handle_read)
 
     doctor_parser = subparsers.add_parser("doctor", help="show local config and key health")
-    doctor_parser.add_argument("--network", action="store_true")
+    doctor_parser.add_argument("--network", action="store_true", help="probe public Hacker News and GitHub API connectivity (5s total budget)")
     doctor_parser.add_argument("--no-keys", action="store_true")
     _add_format_argument(doctor_parser)
     doctor_parser.set_defaults(handler=_handle_doctor)
@@ -113,6 +114,17 @@ def main(
         args = parser.parse_args(list(argv) if argv is not None else None)
         payload = args.handler(args)
         _write_payload(payload, args.format, stdout)
+        if args.command == "search":
+            statuses = payload.get("provider_status") or []
+            if statuses and all(row.get("status") == "error" for row in statuses):
+                stderr.write("error: all selected search providers failed\n")
+                return 1
+        if args.command == "doctor" and (
+            payload.get("config_error") or payload.get("keys_error")
+            or payload.get("network_ok") is False
+        ):
+            stderr.write("error: doctor found configuration, key, or network failures\n")
+            return 1
         return 0
     except CLIUsageError as exc:
         stderr.write(f"usage error: {exc}\n")
@@ -123,6 +135,10 @@ def main(
 
 
 def entrypoint() -> None:
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            if isinstance(stream, io.TextIOWrapper) and not stream.isatty():
+                stream.reconfigure(encoding="utf-8", errors=stream.errors)
     raise SystemExit(main())
 
 
@@ -194,7 +210,7 @@ def _write_payload(payload: Any, output_format: str, stream: TextIO) -> None:
 def _render_human(payload: Any) -> str:
     if _is_search_payload(payload):
         return _render_search(payload, markdown=False)
-    if isinstance(payload, dict) and isinstance(payload.get("key_status"), list):
+    if isinstance(payload, dict) and set(payload) == {"key_status"} and isinstance(payload["key_status"], list):
         rows = ["key_status:"]
         rows.extend(_render_key_rows(payload["key_status"], markdown=False))
         return "\n".join(rows)
@@ -209,7 +225,7 @@ def _render_human(payload: Any) -> str:
 def _render_markdown(payload: Any) -> str:
     if _is_search_payload(payload):
         return _render_search(payload, markdown=True)
-    if isinstance(payload, dict) and isinstance(payload.get("key_status"), list):
+    if isinstance(payload, dict) and set(payload) == {"key_status"} and isinstance(payload["key_status"], list):
         rows = ["# Key Status", ""]
         rows.extend(_render_key_rows(payload["key_status"], markdown=True))
         return "\n".join(rows).rstrip()
@@ -233,6 +249,14 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
     route = str(payload.get("route") or "")
     results = payload.get("display_results") or payload.get("results") or []
     bodies = format_scrapes(payload.get("scrapes") or [], max_chars=20_000)
+    errors = payload.get("errors") or []
+    failures = ""
+    if errors:
+        lines = ["", "## Errors" if markdown else "errors:"]
+        for error in errors:
+            query_label = f" ({error['query']})" if error.get("query") else ""
+            lines.append(f"- {error.get('source', '?')}{query_label}: {error.get('error', '')}")
+        failures = "\n".join(lines)
     if markdown:
         lines = ["# Search", ""]
         lines.append(f"- query: {query}")
@@ -241,7 +265,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
         lines.append("")
         if not results:
             lines.append("_No results_")
-            return "\n".join(lines) + bodies
+            return "\n".join(lines) + bodies + failures
         for item in results:
             title = str(item.get("title") or item.get("url") or "")
             url = str(item.get("url") or "")
@@ -254,14 +278,14 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
                 lines.append(f"  {url}")
             if snippet:
                 lines.append(f"  {snippet}")
-        return "\n".join(lines) + bodies
+        return "\n".join(lines) + bodies + failures
 
     lines = [f"query: {query}"]
     if route:
         lines.append(f"route: {route}")
     if not results:
         lines.append("results: none")
-        return "\n".join(lines) + bodies
+        return "\n".join(lines) + bodies + failures
     lines.append("results:")
     for item in results:
         title = str(item.get("title") or item.get("url") or "")
@@ -275,7 +299,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
             lines.append(f"  {url}")
         if snippet:
             lines.append(f"  {snippet}")
-    return "\n".join(lines) + bodies
+    return "\n".join(lines) + bodies + failures
 
 
 def _is_search_payload(payload: Any) -> bool:

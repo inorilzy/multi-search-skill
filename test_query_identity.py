@@ -14,6 +14,30 @@ def stable_hits(response):
 
 
 class QueryIdentityTests(unittest.TestCase):
+    def test_queued_expansion_does_not_extend_search_deadline(self):
+        release = threading.Event()
+        calls = []
+
+        def provider(query, *_args):
+            calls.append(query)
+            release.wait(timeout=4)
+            return []
+
+        started = time.monotonic()
+        try:
+            response = _run_search_candidates(
+                SearchWebRequest(query="primary", expand=["a", "b", "c", "d", "e"],
+                                 sources=["brave"], timeout=1, use_state=False),
+                providers={"brave": ProviderSpec("brave", "brave", provider)},
+                keys={}, config={},
+            )
+            self.assertLess(time.monotonic() - started, 1.6)
+            self.assertNotIn("e", calls)
+            self.assertEqual(len(response["errors"]), 6)
+            self.assertTrue(all("timeout" in row["error"] for row in response["errors"]))
+        finally:
+            release.set()
+
     def search(self, *, query="primary", expand=(), config=None, count=10, call=None,
                query_runs_observer=None):
         calls = []

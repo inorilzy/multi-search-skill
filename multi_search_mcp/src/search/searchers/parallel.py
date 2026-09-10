@@ -73,5 +73,6 @@ def search_parallel(
             result["excerpts"] = excerpts
         if item.get("publish_date") is not None:
             result["publish_date"] = item.get("publish_date")
+            result["published_at"] = item.get("publish_date")
         results.append(result)
     return results

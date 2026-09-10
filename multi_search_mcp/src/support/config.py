@@ -37,8 +37,8 @@ def load_config(path: str | None = None) -> dict:
     cookies in the keys file; use this config file for route/count/timeout
     preferences that are safe to share.
     """
-    explicit = path is not None
-    config_path = Path(path).expanduser() if explicit else resolve_config_path()
+    explicit = path is not None or bool(os.environ.get(CONFIG_ENV_VAR))
+    config_path = Path(path).expanduser() if path is not None else resolve_config_path()
     if not config_path.exists():
         if explicit:
             raise ConfigError(f"config file not found: {config_path}")

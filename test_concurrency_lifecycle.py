@@ -46,6 +46,44 @@ class BoundedDaemonExecutorTests(unittest.TestCase):
 
 
 class SearchRunnerLifecycleTests(unittest.TestCase):
+    def test_saturated_pool_preserves_completed_provider_outcomes(self):
+        release = threading.Event()
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-search-completed")
+
+        def success(*_args):
+            return [{"source": "success", "title": "Ready", "url": "https://example.test/ready"}]
+
+        def broken(*_args):
+            raise RuntimeError("provider unavailable")
+
+        def blocked(*_args):
+            release.wait(timeout=2)
+            return []
+
+        providers = {
+            "success": ProviderSpec("success", "success", success),
+            "empty": ProviderSpec("empty", "empty", lambda *_: []),
+            "broken": ProviderSpec("broken", "broken", broken),
+            "blocked": ProviderSpec("blocked", "blocked", blocked),
+            "unsubmitted": ProviderSpec("unsubmitted", "unsubmitted", blocked),
+        }
+        runner = SearchRunner(
+            SearchRunnerConfig("test", {}, 0.1, "google", {}), providers,
+            route_resolver=lambda _route: list(providers),
+        )
+        try:
+            with mock.patch.object(search_runner_module, "_SEARCH_POOL", pool):
+                rows = runner.run("query")
+            by_source = {row["source"]: row for row in rows}
+            self.assertEqual(by_source["success"].get("url"), "https://example.test/ready")
+            self.assertTrue(by_source["empty"].get("_empty"))
+            self.assertEqual(by_source["broken"]["error"], "provider unavailable")
+            for source in ("blocked", "unsubmitted"):
+                self.assertIn("timeout", by_source[source]["error"])
+        finally:
+            release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+
     def test_timed_out_worker_does_not_delay_process_exit(self):
         script = """
 import time

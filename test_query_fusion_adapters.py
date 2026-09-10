@@ -14,7 +14,9 @@ from multi_search_mcp.src.state.state_store import StateStore
 
 
 def stable_hits(response):
-    return [{key: value for key, value in hit.items() if key not in {"source_id", "content_ref"}}
+    # The second adapter reuses the first one's URL cache; ranking/content stay
+    # identical, while the actual acquisition backend truthfully changes.
+    return [{key: value for key, value in hit.items() if key not in {"source_id", "content_ref", "body_backend"}}
             for hit in response["results"]]
 
 
@@ -49,6 +51,7 @@ class QueryFusionAdapterTests(unittest.TestCase):
                         self.assertEqual(cli.main(argv, stdout=output, stderr=errors), 0, errors.getvalue())
                         cli_result = json.loads(output.getvalue())
                         self.assertEqual(stable_hits(mcp_result), stable_hits(cli_result))
+                        self.assertTrue(all(hit["body_backend"] == "content-store" for hit in cli_result["results"]))
                         self.assertEqual(mcp_result["diagnostics"]["query_fusion"], cli_result["diagnostics"]["query_fusion"])
                         self.assertEqual(cli_result["scrapes"][0]["markdown"], "Attribution: original release. " * 20)
                         self.assertNotIn("body", cli_result["results"][0])

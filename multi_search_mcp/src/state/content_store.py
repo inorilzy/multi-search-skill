@@ -37,11 +37,20 @@ class ContentStore:
         self.max_total_bytes = max(1, int(max_total_bytes))
         self.clock = clock
 
-    def put(self, source_id: str, content: str) -> dict:
+    def put(
+        self,
+        source_id: str,
+        content: str,
+        *,
+        canonical_url: str = "",
+        cache_scope: str = "",
+    ) -> dict:
         if not source_id:
             raise ContentStoreError("source_id is required")
         if not isinstance(content, str):
             raise ContentStoreError("content must be a string")
+        if bool(canonical_url) != bool(cache_scope):
+            raise ContentStoreError("canonical_url and cache_scope must be provided together")
 
         payload = content.encode("utf-8")
         content_bytes = len(payload)
@@ -60,11 +69,8 @@ class ContentStore:
         content_hash = hashlib.sha256(payload).hexdigest()
 
         with self.store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             self._purge_expired_conn(conn, now)
-            previous = conn.execute(
-                "SELECT content_hash FROM content_sources WHERE source_id = ?",
-                (source_id,),
-            ).fetchone()
             conn.execute(
                 """
                 INSERT INTO content_objects (
@@ -75,25 +81,59 @@ class ContentStore:
                 """,
                 (content_hash, content, content_bytes, now_iso, now_iso),
             )
-            conn.execute(
-                """
-                INSERT INTO content_sources (
-                  source_id, content_hash, created_at, expires_at
-                ) VALUES (?, ?, ?, ?)
-                ON CONFLICT(source_id) DO UPDATE SET
-                  content_hash = excluded.content_hash,
-                  created_at = excluded.created_at,
-                  expires_at = excluded.expires_at
-                """,
-                (source_id, content_hash, now_iso, expires_at),
+            self._bind_source_conn(
+                conn, source_id, content_hash, now_iso, expires_at,
+                canonical_url, cache_scope,
             )
-            if previous and previous["content_hash"] != content_hash:
-                self._drop_unreferenced_object(conn, str(previous["content_hash"]))
             self._evict_lru(conn, protected_hash=content_hash)
             row = self._lookup_conn(conn, source_id)
             if row is None:
                 raise ContentStoreError("content was evicted before it could be stored")
             return row
+
+    def reuse_for_url(self, source_id: str, *, canonical_url: str, cache_scope: str) -> dict | None:
+        """Bind an eligible URL body to another response's source id.
+
+        The caller supplies an already canonical URL and an opaque scope covering
+        source, backend and authorization restrictions. It must also check current
+        retention permission before calling; empty legacy scopes never participate.
+        Reuse never renews the acquired body's expiration.
+        """
+        if not source_id or not canonical_url or not cache_scope:
+            raise ContentStoreError("source_id, canonical_url and cache_scope are required")
+        now = self.clock()
+        with self.store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self._purge_expired_conn(conn, now)
+            cached = conn.execute(
+                """
+                SELECT s.content_hash, s.created_at, s.expires_at, o.content_bytes
+                FROM content_sources AS s
+                JOIN content_objects AS o ON o.content_hash = s.content_hash
+                WHERE s.canonical_url = ? AND s.cache_scope = ? AND s.expires_at > ?
+                ORDER BY s.created_at DESC, s.expires_at DESC, s.source_id ASC
+                LIMIT 1
+                """,
+                (canonical_url, cache_scope, now.isoformat()),
+            ).fetchone()
+            if cached is None:
+                return None
+            if cached["content_bytes"] > min(self.max_object_bytes, self.max_total_bytes):
+                return None
+            expires_at = min(
+                datetime.fromisoformat(str(cached["expires_at"])),
+                now + timedelta(seconds=self.ttl_seconds),
+            ).isoformat()
+            self._bind_source_conn(
+                conn, source_id, str(cached["content_hash"]),
+                str(cached["created_at"]), expires_at, canonical_url, cache_scope,
+            )
+            conn.execute(
+                "UPDATE content_objects SET last_access_at = ? WHERE content_hash = ?",
+                (now.isoformat(), cached["content_hash"]),
+            )
+            self._evict_lru(conn, protected_hash=str(cached["content_hash"]))
+            return self._lookup_conn(conn, source_id)
 
     def get(self, source_id: str) -> dict | None:
         now = self.clock()
@@ -112,6 +152,7 @@ class ContentStore:
 
     def delete_source(self, source_id: str) -> int:
         with self.store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT content_hash FROM content_sources WHERE source_id = ?",
                 (source_id,),
@@ -124,7 +165,33 @@ class ContentStore:
 
     def purge_expired(self) -> int:
         with self.store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             return self._purge_expired_conn(conn, self.clock())
+
+    def _bind_source_conn(
+        self, conn, source_id: str, content_hash: str, created_at: str,
+        expires_at: str, canonical_url: str, cache_scope: str,
+    ) -> None:
+        previous = conn.execute(
+            "SELECT content_hash FROM content_sources WHERE source_id = ?",
+            (source_id,),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO content_sources (
+              source_id, content_hash, created_at, expires_at, canonical_url, cache_scope
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_id) DO UPDATE SET
+              content_hash = excluded.content_hash,
+              created_at = excluded.created_at,
+              expires_at = excluded.expires_at,
+              canonical_url = excluded.canonical_url,
+              cache_scope = excluded.cache_scope
+            """,
+            (source_id, content_hash, created_at, expires_at, canonical_url, cache_scope),
+        )
+        if previous and previous["content_hash"] != content_hash:
+            self._drop_unreferenced_object(conn, str(previous["content_hash"]))
 
     def _lookup_conn(self, conn, source_id: str) -> dict | None:
         row = conn.execute(

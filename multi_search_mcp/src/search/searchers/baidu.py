@@ -17,8 +17,8 @@ def search_baidu(query: str, api_key: str, count: int = 10,
                  timeout: float = 30) -> list[dict[str, Any]]:
     """Search via Baidu AI Search.
 
-    Uses the high-performance web_summary endpoint, which returns answer plus
-    per-reference body content inline.
+    Uses the high-performance web_summary endpoint, which returns an answer
+    plus per-reference summaries without enable_full_content.
     """
     return _search_baidu_summary(query, api_key, count, timeout)
 
@@ -96,10 +96,9 @@ def _rows_from_response(data: dict[str, Any], *, endpoint: str,
         if markdown_text:
             row["scraped_content"] = markdown_text
             row["content_kind"] = "body"
-        elif content:
-            row["scraped_content"] = content
-            row["content_kind"] = "body"
         elif snippet:
+            # This request does not enable full content: content is a summary,
+            # just like snippet, and must not bypass the page-body fetch.
             row["content_kind"] = "excerpt"
         else:
             row["content_kind"] = "metadata"

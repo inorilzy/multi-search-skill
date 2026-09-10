@@ -76,13 +76,15 @@ class SiteScraperMemory:
                 return (2, 0, 0, original_index)
             cooldown = _parse_iso(row.get("cooldown_until"))
             in_cooldown = bool(cooldown and cooldown > now)
-            manual = 0 if row.get("manually_pinned") else 1
             manual_priority = row.get("manual_priority")
             priority = int(manual_priority) if manual_priority is not None else 100
             successes = int(row.get("success_count") or 0)
             failures = int(row.get("failure_count") or 0) + int(row.get("blocked_count") or 0) + int(row.get("timeout_count") or 0)
             score = successes - failures
-            return (1 if in_cooldown else manual, priority, -score, original_index)
+            # Manual preferences stay authoritative. Automatic cooldowns put a
+            # failed backend after untried ones, whose first rank component is 2.
+            category = 0 if row.get("manually_pinned") else 3 if in_cooldown else 1
+            return (category, priority, -score, original_index)
 
         return sorted(original, key=rank)
 

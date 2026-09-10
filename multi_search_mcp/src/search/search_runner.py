@@ -5,6 +5,7 @@ import inspect
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import Any, Callable
 
 from .capabilities import PROVIDER_CAPABILITIES
@@ -137,6 +138,7 @@ class SearchContext:
     deadline: float
     keys: dict
     options: dict[str, Any] = field(default_factory=dict)
+    publish_partial: Callable[[list], None] | None = None
 
 
 @dataclass
@@ -233,7 +235,7 @@ _SEARCH_POOL = BoundedDaemonExecutor(
 
 
 class SearchRunner:
-    """Run configured searchers in parallel with source-level deadlines."""
+    """Run configured searchers in parallel under a shared deadline."""
 
     def __init__(self, config: SearchRunnerConfig, providers: dict[str, ProviderSpec], route_resolver=None, key_manager=None):
         self.config = config
@@ -241,38 +243,49 @@ class SearchRunner:
         self.route_resolver = route_resolver or resolve_route
         self.key_manager = key_manager or BasicKeyManager()
 
-    def run(self, query: str) -> list[dict]:
+    def run(self, query: str, *, deadline: float | None = None) -> list[dict]:
         results: list[dict] = []
         jobs: list[tuple[str, Callable[[], list]]] = []
         source_names = self.route_resolver(self.config.route)
         timeout_seconds = max(0, self.config.timeout if self.config.timeout is not None else 60)
         source_deadline = time.monotonic() + timeout_seconds
+        if deadline is not None:
+            source_deadline = min(source_deadline, deadline)
+        partial_results: dict[str, list[dict]] = {}
+        partial_lock = Lock()
 
-        def source_request_timeout(default: float) -> float:
+        def publish_partial(source: str, rows: list) -> None:
+            snapshot = _attach_provider_ranks(rows)
+            with partial_lock:
+                if time.monotonic() < source_deadline:
+                    partial_results[source] = snapshot
+
+        def call_provider(spec: ProviderSpec, api_key) -> list:
             remaining = source_deadline - time.monotonic()
             if remaining <= 0:
-                return 0.1
-            return min(float(default), max(0.1, remaining))
+                return [{"source": spec.public_name, "error": f"timeout after {timeout_seconds}s"}]
+            ctx = SearchContext(
+                source=spec.public_name,
+                timeout=min(float(spec.timeout_default), remaining),
+                deadline=source_deadline,
+                keys=self.config.keys,
+                publish_partial=lambda rows: publish_partial(spec.public_name, rows),
+            )
+            return spec.call(query, self.config, ctx, api_key)
 
         for source in source_names:
             spec = self.providers.get(source)
             if spec is None:
                 continue
-            ctx = SearchContext(
-                source=spec.public_name,
-                timeout=source_request_timeout(spec.timeout_default),
-                deadline=source_deadline,
-                keys=self.config.keys,
-            )
             if spec.key_name:
                 key_value = self.config.keys.get(spec.key_name)
                 if key_value:
                     jobs.append((
                         spec.public_name,
-                        lambda spec=spec, ctx=ctx, key_value=key_value: self._run_keyed_source(
+                        lambda spec=spec, key_value=key_value: self._run_keyed_source(
                             spec.public_name,
                             key_value,
-                            lambda api_key: spec.call(query, self.config, ctx, api_key),
+                            lambda api_key: call_provider(spec, api_key),
                             deadline=source_deadline,
                         ),
                     ))
@@ -281,12 +294,12 @@ class SearchRunner:
             else:
                 jobs.append((
                     spec.public_name,
-                    lambda spec=spec, ctx=ctx: spec.call(query, self.config, ctx, None),
+                    lambda spec=spec: call_provider(spec, None),
                 ))
 
         if not jobs:
             return results
-        if timeout_seconds <= 0:
+        if time.monotonic() >= source_deadline:
             for name, _ in jobs:
                 results.append({"source": name, "error": f"timeout after {timeout_seconds}s"})
             return results
@@ -299,14 +312,16 @@ class SearchRunner:
                 future_sources[future] = name
 
         while future_sources:
-            remaining = source_deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            done, _ = wait(
-                tuple(future_sources),
-                timeout=remaining,
-                return_when=FIRST_COMPLETED,
-            )
+            done = {future for future in future_sources if future.done()}
+            if not done:
+                remaining = source_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                done, _ = wait(
+                    tuple(future_sources),
+                    timeout=remaining,
+                    return_when=FIRST_COMPLETED,
+                )
             if not done:
                 break
             for future in done:
@@ -317,6 +332,8 @@ class SearchRunner:
                 try:
                     source_results = future.result()
                 except Exception as exc:
+                    with partial_lock:
+                        results.extend(partial_results.get(source, []))
                     results.append({"source": source, "error": scrub_secrets(exc, self.config.keys)})
                 else:
                     if source_results:
@@ -325,6 +342,8 @@ class SearchRunner:
                         results.append(empty_result_row(source))
 
         for source in sorted(pending):
+            with partial_lock:
+                results.extend(partial_results.get(source, []))
             results.append({"source": source, "error": f"timeout after {timeout_seconds}s"})
         return results
 

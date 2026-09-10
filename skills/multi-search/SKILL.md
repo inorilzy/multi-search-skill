@@ -10,6 +10,9 @@ description: >
 
 Use the shared multi-search Core through MCP or CLI. Tool schemas are the source
 of truth for parameters; this skill decides the workflow and route.
+For CLI-only installation or execution, read [references/cli.md](references/cli.md)
+and follow its install → search → fetch → read workflow. `multi-search --help`
+and subcommand help define the installed CLI's parameters.
 
 ## Default workflow: rank, select, then read
 
@@ -19,7 +22,11 @@ of truth for parameters; this skill decides the workflow and route.
    claim). Each angle must preserve those constraints and answer a distinct
    evidence need. Submit the main query and variants together. Core searches
    them concurrently, fuses every returned rank, and fetches up to 15 final URLs,
-   returning up to 1200 characters from each acquired body's beginning by default.
+   returning up to 1200 characters per acquired body by default. Bounded previews
+   start at an exact matching page H1, or a paragraph matching the complete search
+   snippet (at least 32 non-space characters, allowing only whitespace differences).
+   Without either match they start at the beginning;
+   `preview_start` / `preview_end` identify the original body character range.
    `count` controls each provider's recall, not the final result count.
    Exact identifiers and quick lookups can stay unexpanded. Completion: ranked
    results and body-fetch outcomes are available, including provider failures.
@@ -123,4 +130,5 @@ successful candidates.
   exception for private addresses, unsafe schemes, or credential requests.
 
 Route/source definitions and field semantics live in
-`docs/glossary.md` and `docs/route-capability-table.md`.
+[the glossary](https://github.com/inorilzy/multi-search-skill/blob/main/docs/glossary.md)
+and [route capabilities](https://github.com/inorilzy/multi-search-skill/blob/main/docs/route-capability-table.md).

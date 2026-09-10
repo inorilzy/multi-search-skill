@@ -4,9 +4,10 @@ import subprocess
 import sys
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.search.snapshots import capture_snapshot
@@ -393,6 +394,47 @@ class QueryEvaluationTests(unittest.TestCase):
             path = Path(directory) / "ai-freeze.json"
             write_artifact(frozen, path)
             self.assertEqual(load_artifact(path), frozen)
+
+    def _precision_boundary_inputs(self):
+        from multi_search_mcp.src.search.evaluation import freeze_development
+
+        snapshot, question = inputs()
+        development = [reviewed(snapshot, question, prompt, []) for prompt in question["prompts"]]
+        heldout = dict(question, id="heldout", topic_group="heldout-topic")
+        questions = {"development": [question], "heldout": [heldout]}
+        versions = {"skill_sha256": "a" * 64, "variant_prompt_sha256": "b" * 64}
+        selection = {"prompt_id": "p1", "policy_id": "equal", "query_fusion": {"mode": "equal"},
+                     "selected_by": "SYNTHETIC", "selection_reason": "timestamp precision regression"}
+        thresholds = {"min_direct_at5": 1, "max_violations_at10": 0, "min_variant_only_valid": 0}
+        # Both artifacts observed exactly this time; only their encodings differ.
+        instant = 1788998400.1234562
+        captured_at = datetime.fromtimestamp(instant, timezone.utc)
+        self.assertLess(captured_at.timestamp(), instant)
+        with mock.patch("multi_search_mcp.src.search.evaluation.time.time", return_value=instant):
+            frozen = freeze_development(development, selection, versions, thresholds, questions)
+        self.assertEqual(frozen["frozen_at"], instant)
+        report = reviewed(snapshot, heldout, "p1", [])
+        report["snapshot_captured_at"] = captured_at.isoformat()
+        return frozen, report, versions, questions
+
+    def test_heldout_capture_at_same_microsecond_as_freeze_is_allowed(self):
+        from multi_search_mcp.src.search.evaluation import evaluate_heldout
+
+        frozen, report, versions, questions = self._precision_boundary_inputs()
+
+        result = evaluate_heldout(frozen, [report], versions=versions, question_set=questions)
+
+        self.assertEqual(result["status"], "heldout_thresholds_met")
+
+    def test_heldout_capture_one_microsecond_before_freeze_is_rejected(self):
+        from multi_search_mcp.src.search.evaluation import evaluate_heldout
+
+        frozen, report, versions, questions = self._precision_boundary_inputs()
+        captured_at = datetime.fromisoformat(report["snapshot_captured_at"])
+        report["snapshot_captured_at"] = (captured_at - timedelta(microseconds=1)).isoformat()
+
+        with self.assertRaisesRegex(ValueError, "capture predates freeze"):
+            evaluate_heldout(frozen, [report], versions=versions, question_set=questions)
 
 
 if __name__ == "__main__":

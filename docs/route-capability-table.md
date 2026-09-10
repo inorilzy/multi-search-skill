@@ -38,7 +38,7 @@
 
 | Provider | Docs 原始字段 | `summary` | `content` | `title/url` | API 正文能力 | 当前搜索调用 | 排序后正文 | 建议路由 | 说明 |
 |---|---|---:|---:|---:|---:|---|---|---|---|
-| baidu | `choices[].message.content`、`references[].title/url/snippet/content/markdown_text` | 是 | 是 | 是 | 是 | `web_summary` | 统一获取 | 快速、专家、中文 Web | answer 行用于 `summary`，references 作为候选；引用摘要与正文分开处理。 |
+| baidu | `choices[].message.content`、`references[].title/url/snippet/content` | 是 | 是 | 是 | 需启用全文，当前未启用 | `web_summary` | 统一获取 | 快速、专家、中文 Web | answer 行用于 `summary`；当前请求未启用 `enable_full_content`，引用 `content`/`snippet` 都是摘要，正文由统一抓取阶段取得。 |
 | tavily | `answer`、`results[].title/url/content/raw_content` | 是 | 是 | 是 | 是 | `search_depth=basic`、basic answer、`include_raw_content=false` | 统一获取 | 快速、专家 | `content` 是摘要；`raw_content` 是正文能力，公共召回阶段不请求。 |
 | exa | `results[].title/url/highlights/text/summary`、Contents API `text/highlights/summary` | 否 | 是 | 是 | 是 | `type=auto`、highlights | 统一获取 | 快速、专家、发现 | highlights 作为摘要；全文通过排序后的抓取流程获取。 |
 | brave | `web.results[].title/url/description/extra_snippets` | 否 | 是 | 是 | 否 | 启用 `extra_snippets` | 统一获取 | 发现、专家 | `description` 和 `extra_snippets` 都是摘要/片段，不是正文。 |

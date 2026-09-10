@@ -8,6 +8,8 @@ from unittest import mock
 
 from pydantic_core import to_json
 
+from multi_search_mcp import cli
+from multi_search_mcp.server import mcp
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape import scrape
 
@@ -78,8 +80,6 @@ class SingleMarkdownResponseTests(unittest.TestCase):
                 self.assertEqual(json.dumps(result).count(MARKER), 1)
 
     def test_cli_renders_the_single_markdown_body_and_source_reference(self):
-        from multi_search_mcp import cli
-
         result = service.run_search_web(
             service.SearchWebRequest(query="probe", use_state=False), keys={}, config={},
         )
@@ -112,8 +112,6 @@ class SingleMarkdownResponseTests(unittest.TestCase):
         self.assertEqual(len(result["diagnostics"]["body_failures"]), 1)
 
     def test_registered_mcp_tools_emit_one_body_in_the_text_response(self):
-        from multi_search_mcp.server import mcp
-
         for tool in ("search_web", "multi_search"):
             with self.subTest(tool=tool):
                 result = asyncio.run(mcp.call_tool(tool, {"query": "probe", "use_state": False}))

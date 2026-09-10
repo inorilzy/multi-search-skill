@@ -215,7 +215,7 @@ class CapabilityTests(unittest.TestCase):
         self.assertTrue(rows["baidu"]["returns_result_content"])
         self.assertTrue(rows["baidu"]["returns_title"])
         self.assertTrue(rows["baidu"]["returns_url"])
-        self.assertTrue(rows["baidu"]["returns_prefetched_body"])
+        self.assertFalse(rows["baidu"]["returns_prefetched_body"])
 
         self.assertFalse(rows["brave"]["returns_summary"])
         self.assertTrue(rows["brave"]["returns_result_content"])

@@ -532,7 +532,7 @@ class PluginServiceConfigTests(unittest.TestCase):
                 captured["timeout"] = config.timeout
                 captured["counts"] = config.counts
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [
                     {"source": "tavily_answer", "answer": "fast answer"},
                     {"source": "tavily", "title": "Doc", "url": "https://example.com/doc"},
@@ -561,7 +561,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
@@ -585,7 +585,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [{"source": "brave", "provider_rank": i + 1,
                          "title": f"Doc {i}", "url": f"https://example.com/{i}"}
                         for i in range(25)]
@@ -613,7 +613,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["want_content"] = config.want_content
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"type": "fast"}), \
@@ -634,7 +634,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured.append({"timeout": config.timeout, "counts": config.counts})
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [{"source": "tavily", "title": "Doc", "url": "https://example.com/doc"}]
 
         def fake_fetch_stage(hits, **kwargs):
@@ -686,7 +686,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["want_content"] = config.want_content
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [{"source": "baidu_answer", "answer": "summary"}]
 
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
@@ -706,7 +706,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [
                     {
                         "source": "baidu_answer",
@@ -736,7 +736,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [
                     {"source": "baidu_answer", "answer": "baidu summary"},
                     {"source": "baidu", "title": "Baidu result", "url": "https://baidu.example", "description": "baidu snippet"},
@@ -763,7 +763,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [{
                     "source": "exa",
                     "title": "Doc",
@@ -791,7 +791,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [
                     {"source": "baidu_answer", "answer": "summary"},
                     {"source": "baidu", "title": "News", "url": "https://example.com/news", "description": "snippet"},
@@ -820,7 +820,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [
                     {
                         "source": "baidu",
@@ -869,7 +869,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["counts"] = config.counts
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return []
 
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
@@ -889,7 +889,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 self.route_resolver = route_resolver
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 captured["sources"] = self.route_resolver("default")
                 return []
 
@@ -910,7 +910,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [{"source": "brave", "title": query, "url": f"https://example.com/{query}"}]
 
         def tracking_executor(*args, **kwargs):
@@ -937,7 +937,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [
                     {"source": "twitter", "error": "missing session"},
                     {"source": "twitter", "error": "service unavailable"},
@@ -958,7 +958,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [
                     {"source": "brave", "error": "down"},
                     {"source": "tavily", "error": "down"},
@@ -983,7 +983,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [
                     {"source": "stackoverflow", "error": "down"},
                     {"source": "hackernews", "error": "down"},
@@ -1006,7 +1006,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [{"source": "brave", "title": "Doc", "url": "https://example.com/doc"}]
 
         def fake_fetch_stage(hits, **kwargs):
@@ -1129,7 +1129,7 @@ class PluginDisabledSourcesTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 self.route_resolver = route_resolver
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 captured["sources"] = self.route_resolver("default")
                 return []
 
@@ -1160,7 +1160,7 @@ class PluginDisabledSourcesTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 self.route_resolver = route_resolver
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 captured["sources"] = self.route_resolver("default")
                 return []
 
@@ -1191,7 +1191,7 @@ class PluginDisabledSourcesTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 self.route_resolver = route_resolver
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 runs.append((query, sorted(self.route_resolver("default"))))
                 return [{"source": "baidu", "title": "t", "url": "https://e.com"}]
 
@@ -1219,7 +1219,7 @@ class PluginDisabledSourcesTests(unittest.TestCase):
                 self.config = config
                 self.route_resolver = route_resolver
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 runs.append((query, sorted(self.route_resolver(self.config.route))))
                 return [{"source": "github-repos", "title": "t", "url": f"https://e.com/{query}"}]
 
@@ -1247,7 +1247,7 @@ class PluginEntryLayerTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["route"] = config.route
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return []
 
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
@@ -1268,7 +1268,7 @@ class PluginEntryLayerTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["timeout"] = config.timeout
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return []
 
         def fake_scrape_stage(hits, **kwargs):
@@ -1308,7 +1308,7 @@ class PluginEntryLayerTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 captured["key_manager"] = type(key_manager).__name__
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return []
 
         def fake_scrape_stage(hits, **kwargs):
@@ -1485,7 +1485,7 @@ class PluginRankingTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [
                     {"source": "brave", "url": "https://x.com/lo", "title": "Lo", "description": "d"},
                     {"source": "tavily", "url": "https://x.com/hi", "title": "Hi", "also_from": ["exa"]},
@@ -1516,7 +1516,7 @@ class PluginRRFSearchContractTests(unittest.TestCase):
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
                 pass
 
-            def run(self, query):
+            def run(self, query, *, deadline=None):
                 return [dict(row) for row in rows]
 
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \

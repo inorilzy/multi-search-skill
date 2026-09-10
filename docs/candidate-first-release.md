@@ -1,5 +1,7 @@
 # 搜索排序与正文获取发布说明
 
+源码版本：`0.3.0`。本版本包含下述默认搜索行为变化；远端 tag 发布与实际客户端联调需分别验证。
+
 当前契约统一为：搜索取得候选，全部有效排名参与两级 RRF，最终取前 15 条并自动获取正文；已有 URL 直接用 `fetch_source` / `scrape_url`。`search_web` 和 `multi_search` 共用流程，MCP 和 CLI 保留各自的参数及展示入口。本文件沿用原路径，内容描述当前发布契约。
 
 ## 新增能力
@@ -16,7 +18,7 @@
 - 普通查询自动获取最终列表正文；`count` 只控制每源召回，最终最多 15 条。旧 `scrape_top` / `scrape_per_source` 包括 0 在内都不再裁剪或关闭正文抓取，显式传入时 diagnostics 会说明。
 - `~/.search-keys.json` 不迁移，环境变量优先级不变。
 - `~/.multi-search/state.sqlite` 继续作为共享状态文件；CLI 和 MCP 共用同一路径。
-- 两个搜索入口的正文预览默认返回每篇开头最多 1200 字符；预览限制不截短已取得且允许缓存的正文。
+- 两个搜索入口的正文预览默认最多 1200 字符；需要截断时，从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从开头开始。`preview_start/end` 标注原文字符区间；完整正文和缓存不变。
 - `fetch_source.full_content` 默认 `False`，保留现有 `max_chars` 行为（默认 20000，显式值限制在 1–20000）。全文仅指后端实际取得文本，Reddit 包括已加载评论，不扩展未加载评论；现有抓取、缓存容量、TTL 和 retention 限制继续生效。
 
 ## 分阶段迁移
@@ -53,7 +55,7 @@
 
 - 先备份当前安装版本和 `~/.multi-search/state.sqlite`，再 pin 到之前的 tag / package 版本。
 - 不要为了回滚删除 `~/.search-keys.json` 或 `state.sqlite`。
-- 本次 `state.sqlite` 变更是加表式扩展；新增的 `search_sources`、`content_objects`、`content_sources` 可以保留，不要求做反向迁移。
+- 本次 `state.sqlite` 变更是加表、加列式扩展；新增的 `search_sources`、`content_objects`、`content_sources` 及正文关联的 `canonical_url/cache_scope` 列可以保留，不要求做反向迁移。旧的无 scope 正文仍按原 ID 读取。
 - 离线搜索快照现为 schema 2；旧窗口算法快照不能按当前算法宣称精确重放，版本回退时保留各自算法和快照的匹配关系。
 
 ## 发布验证门槛
@@ -63,9 +65,19 @@
 - 合约测试覆盖：两个搜索入口的 RRF 一致性、第 16 名以后候选进入最终列表、仅最后截取 15 条、抓取顺序与失败隔离、`fetch_source` 全文与默认/显式预览的兼容、缓存与 `read_source` 局部读取、URL 安全校验、CLI `--full-content` 共享 Core 契约、旧参数明确诊断。
 - 本地 smoke 覆盖：搜索返回 `content` 摘要及单份最多 1200 字符的 Markdown 正文预览；选读来源通过 `fetch_source(full_content=True)` 一次返回已取得全文，缓存与 fresh fetch 均覆盖，`read_source` 可定向读取预览外片段；直接 URL 抓取不调用 searcher；CLI 和 MCP 指向同一个 `state.sqlite`。
 - 文档核对：README、skill、glossary、route/capability 文档对默认 workflow、`content_kind`、`response_id` / `source_id`、ContentStore 生命周期和 retention 边界的表述一致。
+- 安装边界：非 editable、未使用开发锁文件的安装运行 `scripts/smoke_install.py`，验证仓库外两个 console scripts 和 MCP 握手/工具调用；`scripts/run_tests.py` 覆盖总预算、部分失败、缓存并发和URL跨响应复用。
+
+2026-09-10 审查问题的修复与验收记录见 [audit-fixes-2026-09-10.md](audit-fixes-2026-09-10.md)。CLI 全源失败及 doctor 诊断失败现在退出 `1`；正常零匹配或部分搜索成功仍为 `0`，调用脚本应检查返回码和结构化错误。
 
 ## 本说明不声称已验证的内容
 
-- 不声称真实 provider、真实额度、真实 retention 条款或远端部署已经 live 验证。
+- 13 个 provider 已逐一实际调用，11 个搜索成功，Twitter 超时、LinuxDo 403；见 [最终验收](provider-acceptance-2026-09-10.md)。这不代表全部查询、持续可用性、真实 retention 条款或远端部署已经验证。
 - 不声称任何生产客户端、第三方 Agent、托管 MCP 平台或外部网络环境已经完成联调。
 - 这些部分需要单独做环境级验证，不能用本地合约测试替代。
+
+## 0.3.0 本机 CLI 验证（2026-09-09）
+
+- `uv run --locked` 已将项目环境同步到 `multi-search-mcp==0.3.0`；锁文件检查和 0.3.0 Wheel 构建通过。
+- `test_cli`、`test_full_content_interfaces`、`test_full_content_flow`、`test_preview_defaults` 共 26 项通过，测试使用临时 SQLite 状态库。
+- 真实运行 `uv run --locked multi-search search "SQLite" --source hackernews --count 3 --timeout 30 --format json`：9.88 秒返回 3 条结果与 3 份各 1200 字符的正文预览，errors 为空。
+- 在独立 CLI 进程中按返回的 `source_id` 执行 `fetch --full-content`：缓存命中，返回 13273 字符，`truncated=false`；随后 `read --offset 1200 --limit 200` 成功读取 200 字符。该 smoke 验证本机搜索、正文和跨进程缓存链路，不代表全部来源或真实 Agent 引用质量已通过。

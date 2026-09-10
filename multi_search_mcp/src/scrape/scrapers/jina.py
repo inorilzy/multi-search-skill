@@ -151,6 +151,12 @@ def scrape_url_jina(
             if not markdown:
                 message = page.get("warning") or data.get("message") or "empty content"
                 return {"url": url, "error": f"Jina: {scrub_secrets(message, secrets)}"}
+            if (
+                (page.get("title") or "").strip().casefold() == "just a moment..."
+                and "## performing security verification" in markdown.casefold()
+                and "this website uses a security service to protect against malicious bots." in markdown.casefold()
+            ):
+                return {"url": url, "error": "Jina: blocked by website security verification"}
             return {
                 "url": url,
                 "title": page.get("title") or url,

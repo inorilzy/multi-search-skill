@@ -6,7 +6,7 @@ import json
 import math
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .candidate import canonicalize_url
@@ -365,6 +365,9 @@ def evaluate_heldout(freeze: dict, reports: list[dict], *, versions: dict, quest
     expected = set(freeze["heldout_question_hashes"])
     if {r["question_id"] for r in reports} != expected or len(reports) != len(expected):
         raise ValueError("heldout reports must cover each frozen question exactly once")
+    # Snapshots encode times at datetime's microsecond precision. Compare the
+    # freeze at that same precision without changing its stored value or hash.
+    frozen_at = datetime.fromtimestamp(freeze["frozen_at"], timezone.utc).timestamp()
     failures = []
     for report in reports:
         _live(report)
@@ -375,7 +378,7 @@ def evaluate_heldout(freeze: dict, reports: list[dict], *, versions: dict, quest
         question = next(q for q in question_set["heldout"] if q["id"] == report["question_id"])
         if report["question_hash"] != fingerprint(question) or report["prompt_hash"] != fingerprint(question["prompts"][report["prompt_id"]]):
             raise ValueError("heldout question/prompt data differs from frozen input")
-        if datetime.fromisoformat(report["snapshot_captured_at"]).timestamp() < freeze["frozen_at"]:
+        if datetime.fromisoformat(report["snapshot_captured_at"]).timestamp() < frozen_at:
             raise ValueError("heldout capture predates freeze; independent evaluation unavailable")
         policy_id = freeze["selection"]["policy_id"]
         spec: dict = next((s for s in report["policy_specs"] if s["id"] == policy_id), {})

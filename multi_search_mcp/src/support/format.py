@@ -1,5 +1,6 @@
 """Markdown formatters for results + scraped content sections."""
 import re
+from html import unescape
 
 from .models import ANSWER_SOURCES, as_dicts, is_empty_result
 from .dedup import consensus_weight, rank_results
@@ -28,6 +29,55 @@ _UNTRUSTED_BANNER = (
 _SCRIPT_STYLE_RE = re.compile(r"<\s*(script|style)\b[^>]*>.*?<\s*/\s*\1\s*>", re.I | re.S)
 _HTML_RE = re.compile(r"<[^>]+>")
 _IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+
+
+def body_preview_start(body: str, title: str, max_chars: int, snippet: str = "") -> int:
+    """Locate an exact H1 or quoted snippet without rewriting acquired text.
+
+    Prefer an exact plain/link H1. A sufficiently long verbatim snippet may
+    locate a paragraph when no title matches; only whitespace may differ.
+    """
+    if len(body) <= max_chars:
+        return 0
+    expected = unescape(title).strip().casefold()
+    words = snippet.split()
+    # Short labels such as "Python" are too ambiguous to identify a passage.
+    excerpt = re.compile(r" {0,3}" + r"\s+".join(re.escape(word) for word in words)) if len("".join(words)) >= 32 else None
+    excerpt_offset = None
+    lines = body.splitlines(keepends=True)
+    offset = 0
+    fence = ""
+    for index, line in enumerate(lines):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if fence:
+            if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not line[marker.end():].strip():
+                fence = ""
+        elif marker:
+            fence = marker[1]
+        else:
+            if (
+                excerpt is not None and excerpt_offset is None
+                and (index == 0 or not lines[index - 1].strip())
+                and excerpt.match(body, offset)
+            ):
+                excerpt_offset = offset
+            heading = re.fullmatch(r" {0,3}#\s+(.+?)\s*", line.rstrip("\r\n"))
+            label = re.sub(r"\s+#+$", "", heading[1]) if heading else ""
+            if (
+                not label and index + 1 < len(lines)
+                and (index == 0 or not lines[index - 1].strip())
+                and re.fullmatch(r" {0,3}=+\s*", lines[index + 1])
+            ):
+                # Four-space indentation denotes a code block, not a title.
+                if line.strip() and not line.expandtabs(4).startswith("    "):
+                    label = line.strip()
+            link = re.fullmatch(r"\[(.+)\]\(.+\)", label)
+            if link:
+                label = link[1]
+            if expected and unescape(label).strip().casefold() == expected:
+                return offset
+        offset += len(line)
+    return excerpt_offset if excerpt_offset is not None else 0
 
 
 def _cell(value, limit: int | None = None) -> str:

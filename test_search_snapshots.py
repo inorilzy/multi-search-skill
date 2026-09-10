@@ -1,4 +1,5 @@
 import copy
+import io
 import json
 import socket
 import time
@@ -27,6 +28,25 @@ def fixed_providers():
 
 
 class SearchSnapshotTests(unittest.TestCase):
+    def test_parallel_publication_date_survives_search_capture_and_replay(self):
+        from multi_search_mcp.src.search.searchers import parallel
+        from multi_search_mcp.src.search.snapshots import capture_snapshot, replay_snapshot
+
+        payload = {"results": [{
+            "url": "https://example.test/release", "title": "Release",
+            "publish_date": "2026-09-09", "excerpts": ["Release details"],
+        }]}
+        providers = {"parallel": ProviderSpec("parallel", "parallel", lambda query, cfg, ctx, key:
+            parallel.search_parallel(query, key or "fixture-key", cfg.counts["parallel"], timeout=ctx.timeout))}
+        request = {"query": "release", "sources": ["parallel"], "use_state": False}
+        with mock.patch.object(parallel, "urlopen_retry", side_effect=lambda *_args, **_kwargs:
+                               io.BytesIO(json.dumps(payload).encode())):
+            actual = _run_search_candidates(request, providers=providers, keys={}, config={})
+            snapshot = capture_snapshot(request, expand=[], providers=providers, keys={}, config={})
+        self.assertEqual(actual["results"][0]["published_at"], "2026-09-09")
+        self.assertEqual(snapshot["query_runs"][0]["rows"][0]["published_at"], "2026-09-09")
+        self.assertEqual(replay_snapshot(snapshot)["results"][0]["published_at"], "2026-09-09")
+
     def test_windowed_legacy_or_mismatched_algorithm_cannot_be_replayed(self):
         from multi_search_mcp.src.search.snapshots import capture_snapshot, load_snapshot, replay_snapshot
 

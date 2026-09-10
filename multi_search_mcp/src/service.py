@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
+import json
 import time
 import uuid
 from collections.abc import Callable
@@ -9,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .support.config import ConfigError, config_list, load_config, resolve_config_path
-from .support.format import format_results, format_scrapes
+from .support.format import body_preview_start, format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager
 from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, load_keys
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content
@@ -222,11 +224,31 @@ def run_fetch_source(
         source = {"providers": ["direct"]}
     max_chars = None if request.full_content else max(1, min(int(request.max_chars), 20_000))
 
-    content_store = ContentStore(store) if store is not None else None
+    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None
     cached = content_store.get(source_id) if content_store and source_id else None
     if cached is not None and not retention.persist_body:
         content_store.delete_source(source_id)
         cached = None
+    cache_scope = ""
+    resolved_config = None
+    runtime_keys = keys
+    if cached is None:
+        resolved_config = (
+            _load_config_safe(request.config_path) if config is None else dict(config)
+        )
+        if not prefetched_body:
+            runtime_keys = load_keys() if keys is None else dict(keys)
+            if content_store and retention.persist_body:
+                # Hash the permission context; never persist credentials. Provider
+                # prefetches and older unscoped entries remain source-ID-only.
+                cache_scope = hashlib.sha256(json.dumps({
+                    "providers": sorted(source_providers),
+                    "backends": list(request.backends or []),
+                    "keys": runtime_keys,
+                }, sort_keys=True).encode("utf-8")).hexdigest()
+                cached = content_store.reuse_for_url(
+                    source_id, canonical_url=canonicalize_url(url), cache_scope=cache_scope,
+                )
     if cached is not None:
         return {
             "source_id": source_id,
@@ -242,9 +264,6 @@ def run_fetch_source(
             "untrusted_content": True,
         }
 
-    resolved_config = (
-        _load_config_safe(request.config_path) if config is None else dict(config)
-    )
     updates = []
     if prefetched_body:
         result = {"markdown": prefetched_body, "via": "provider:prefetch"}
@@ -261,7 +280,7 @@ def run_fetch_source(
             ),
             state_store=store,
             scraper=scraper,
-            keys=keys,
+            keys=runtime_keys,
             config=resolved_config,
             url_resolver=url_resolver,
             deadline=deadline,
@@ -272,9 +291,11 @@ def run_fetch_source(
     if not body:
         raise ValueError("fetch_source returned empty body")
     stored = (
-        ContentStore(
-            store, ttl_seconds=retention.max_ttl_seconds
-        ).put(source_id, body)
+        content_store.put(
+            source_id, body,
+            canonical_url=canonicalize_url(url) if cache_scope else "",
+            cache_scope=cache_scope,
+        )
         if content_store and source_id and retention.persist_body
         else None
     )
@@ -370,13 +391,17 @@ def _run_search_candidates(
         key_manager=key_manager,
     )
     query_results: dict[str, list[dict]] = {}
+    search_deadline = time.monotonic() + plan.timeout
     if len(queries) == 1:
-        query_results[queries[0]] = runner.run(queries[0])
+        query_results[queries[0]] = runner.run(queries[0], deadline=search_deadline)
     else:
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=min(len(queries), MAX_EXPAND_CONCURRENCY)
         ) as pool:
-            futures = {pool.submit(runner.run, query): query for query in queries}
+            futures = {
+                pool.submit(runner.run, query, deadline=search_deadline): query
+                for query in queries
+            }
             for future in concurrent.futures.as_completed(futures):
                 query = futures[future]
                 try:
@@ -504,6 +529,7 @@ def _query_provider_status(
     output = []
     for source in sources:
         hits = 0
+        succeeded = False
         errors = []
         for query, rows in query_runs:
             for row in rows:
@@ -511,9 +537,11 @@ def _query_provider_status(
                     continue
                 if row.get("error"):
                     errors.append({"query": query, "error": str(row["error"])})
-                elif not is_empty_result(row) and row.get("url"):
-                    hits += 1
-        status = "partial" if hits and errors else "error" if errors else "ok"
+                else:
+                    succeeded = True
+                    if not is_empty_result(row) and row.get("url"):
+                        hits += 1
+        status = "partial" if succeeded and errors else "error" if errors else "ok"
         output.append({
             "source": source,
             "status": status,
@@ -600,7 +628,7 @@ def run_search_web(
         try:
             return run_fetch_source(
                 FetchSourceRequest(
-                    source_id=hit["source_id"], max_chars=max_chars,
+                    source_id=hit["source_id"], full_content=True,
                     timeout=remaining, use_state=request.use_state,
                 ),
                 state_store=store, scraper=scraper, keys=runtime_keys,
@@ -629,6 +657,13 @@ def run_search_web(
             hit["body_error"] = page["error"]
             hit["body_available"] = False
             continue
+        body = page["markdown"]
+        start = body_preview_start(body, hit["title"], max_chars, hit.get("content") or "")
+        end = min(len(body), start + max_chars)
+        page.update(
+            markdown=body[start:end], preview_start=start, preview_end=end,
+            truncated=page["truncated"] or start > 0 or end < len(body),
+        )
         hit.update(
             body_available=True,
             body_truncated=page["truncated"],
@@ -817,19 +852,54 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         # failure becomes unusable.
         keys_error = str(exc)
     store = StateStore()
+    config_path = resolve_config_path()
+    config_error = None
+    try:
+        config = load_config()
+        resolve_search_plan(MultiSearchRequest(query="doctor"), config)
+        variants = config_list(config, "expand") or config_list(config, "expand_queries")
+        query_plan = build_query_plan("doctor", variants)
+        QueryFusionPolicy.from_config(config).weights(query_plan.queries, query_plan.primary_query)
+    except (ValueError, TypeError) as exc:
+        config_error = scrub_secrets(exc, keys)
     data = {
         "server": "multi-search-mcp",
         "state_path": str(store.path),
-        "config_path": str(resolve_config_path()),
-        "config_loaded": resolve_config_path().exists(),
+        "config_path": str(config_path),
+        "config_loaded": config_error is None and config_path.exists(),
+        "config_status": "error" if config_error else "ok" if config_path.exists() else "defaults",
         "key_sources": {
             "env": KEY_ENV_NAMES,
             "file": "~/.search-keys.json",
             "state": str(store.path),
         },
         "routes": available_routes(),
-        "network_checked": bool(include_network),
+        "network_checked": False,
+        "network_ok": None,
+        "network_checks": [],
     }
+    if config_error:
+        data["config_error"] = config_error
+    if include_network:
+        from .support.http import urlopen_retry
+
+        deadline = time.monotonic() + 5.0
+        for url in (
+            "https://hn.algolia.com/api/v1/search?query=python&hitsPerPage=1",
+            "https://api.github.com/rate_limit",
+        ):
+            check = {"url": url, "status": "ok"}
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("network probe budget exhausted")
+                with urlopen_retry(url, timeout=remaining) as response:
+                    response.read(1)
+            except Exception as exc:  # diagnostic boundary: report each failed probe
+                check.update(status="error", error=scrub_secrets(exc, keys))
+            data["network_checks"].append(check)
+        data["network_checked"] = True
+        data["network_ok"] = all(row["status"] == "ok" for row in data["network_checks"])
     if keys_error:
         data["keys_error"] = keys_error
     if include_keys:

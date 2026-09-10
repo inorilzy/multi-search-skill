@@ -54,7 +54,9 @@ def canonicalize_url(url: str) -> str:
             )
             if not _is_tracking_param(key)
         ]
-        query.sort(key=lambda pair: (pair[0], pair[1]))
+        # Stable key sorting keeps repeated business parameters in their
+        # original order (servers may interpret the first or last value).
+        query.sort(key=lambda pair: pair[0])
         return urllib.parse.urlunsplit(
             (
                 scheme,
