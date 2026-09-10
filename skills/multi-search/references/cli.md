@@ -5,10 +5,10 @@ The CLI runs Core directly; no MCP server or MCP client configuration is needed.
 
 ## Install
 
-From GitHub's current `main`:
+Install the pinned release:
 
 ```sh
-uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@main"
+uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.1"
 multi-search --help
 ```
 
@@ -19,10 +19,14 @@ uv tool install --force .
 multi-search --help
 ```
 
-The GitHub command installs remote code, so unpublished local changes require
-the local command. For a reproducible release, replace `main` with a verified
-published tag or commit. Do not invent a release tag. To update from GitHub,
-repeat installation with `--force --reinstall` after the fixes are pushed.
+The GitHub command installs the pinned release. Replace `v0.3.1` with `main`
+only when following development changes; unpublished local changes require
+the local command. To update an existing installation to this release:
+
+```sh
+uv tool install --force --reinstall "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.1"
+```
+
 If the command is absent from PATH, run `uv tool update-shell` and reopen the
 terminal. Without uv, use a virtual environment and `python -m pip install .`
 from the checkout, then `python -m multi_search_mcp.cli --help`.

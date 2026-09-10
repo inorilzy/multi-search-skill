@@ -1,6 +1,6 @@
 # 搜索排序与正文获取发布说明
 
-源码版本：`0.3.0`。本版本包含下述默认搜索行为变化；远端 tag 发布与实际客户端联调需分别验证。
+发布版本：`0.3.1`（[GitHub Release](https://github.com/inorilzy/multi-search-skill/releases/tag/v0.3.1)）。本版本包含下述默认搜索行为变化；实际客户端联调需分别验证。
 
 当前契约统一为：搜索取得候选，全部有效排名参与两级 RRF，最终取前 15 条并自动获取正文；已有 URL 直接用 `fetch_source` / `scrape_url`。`search_web` 和 `multi_search` 共用流程，MCP 和 CLI 保留各自的参数及展示入口。本文件沿用原路径，内容描述当前发布契约。
 

@@ -1,6 +1,6 @@
 [project]
 name = "multi-search-mcp"
-version = "0.3.0"
+version = "0.3.1"
 description = "Aggregated search MCP server for the multi-search skill."
 requires-python = ">=3.10"
 dependencies = [
