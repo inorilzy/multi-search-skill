@@ -137,7 +137,7 @@ def _prepare_scrape_target(url: str, *, resolver=None) -> tuple[str, str]:
 def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
                      exa_key: str = "", tavily_key: str = "",
-                     primary: str = "jina",
+                     primary: str | None = None,
                      *,
                      backends: list[str] | tuple[str, ...] | None = None,
                      jina_key: str = "",
@@ -298,8 +298,9 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         return None
 
     enabled = list(policy["backends"])
-    # Honor the planner's per-URL ``primary`` for load spreading: lift it to the
-    # front before site memory reorders. With ``use_state=True`` (the default)
+    # Honor an explicit per-URL ``primary`` for load spreading: lift it to the
+    # front before site memory reorders. When omitted, a caller-supplied backend
+    # order remains authoritative. With ``use_state=True`` (the default)
     # ``site_memory`` is non-None, so previously the primary was dropped and
     # every URL collapsed onto ``enabled[0]``. Site memory still wins for pinned
     # or learned backends because its ranking outranks the input order, only

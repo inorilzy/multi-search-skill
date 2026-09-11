@@ -464,6 +464,33 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             self.assertEqual(result["via"], "tavily")
             self.assertEqual(calls[:1], ["tavily"])
 
+    def test_explicit_backend_order_leads_when_primary_is_omitted(self):
+        calls: list[str] = []
+
+        def fake_jina(url, *args, **kwargs):
+            calls.append("jina")
+            return {"url": url, "title": "j", "markdown": "j" * 1000, "via": "jina"}
+
+        def fake_exa(url, *args, **kwargs):
+            calls.append("exa")
+            return {"url": url, "title": "e", "markdown": "e" * 1000, "via": "exa"}
+
+        with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", side_effect=fake_jina), \
+             mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_exa", side_effect=fake_exa):
+            result = service_module.run_fetch_source(
+                service_module.FetchSourceRequest(
+                    url="https://example.com/article",
+                    backends=["exa", "jina"],
+                    use_state=False,
+                ),
+                keys={"exa": "ek"},
+                config={},
+                url_resolver=lambda _host: ["93.184.216.34"],
+            )
+
+        self.assertEqual(result["backend"], "exa")
+        self.assertEqual(calls, ["exa"])
+
     def test_primary_backend_still_leads_without_site_memory(self):
         calls: list[str] = []
 
