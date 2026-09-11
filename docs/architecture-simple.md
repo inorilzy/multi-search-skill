@@ -12,7 +12,7 @@ flowchart TB
 
     CFG["行为配置 + 凭据<br/>配置文件 / 环境变量 / keys 文件"] -.-> C
     C -->|search_web / multi_search| S["检索计划与并发调度<br/>route / sources / expand"]
-    S --> P["并行调用选定搜索源<br/>已注册 13 个：网页 / 技术 / 社区"]
+    S --> P["并行调用选定搜索源<br/>已注册 12 个：网页 / 技术 / 社区"]
     P --> R["URL 去重 + RRF 排序<br/>保留前 15 条"]
     R --> F["正文获取<br/>fetch_source / scrape_url"]
     C -->|已知 URL，直接抓取| F
@@ -33,9 +33,9 @@ flowchart TB
 |---|---|
 | 网页 | Brave、Parallel、Baidu、Tavily、Exa、SerpAPI、Firecrawl |
 | 技术 | GitHub Repos、Hacker News、Stack Overflow |
-| 社交与社区 | Twitter/X、V2EX、Linux Do API |
+| 社交与社区 | Twitter/X、V2EX |
 
-`route` 或 `sources` 决定本次调用哪些源；`all` 包含 12 个，Linux Do API 需要显式选择。全局禁用配置仍会进一步过滤。
+`route` 或 `sources` 决定本次调用哪些源；`all` 包含全部 12 个搜索源。全局禁用配置仍会进一步过滤。
 
 ## 关键边界
 

@@ -290,18 +290,6 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         timeout_default=20,
         best_for=("social discussion", "tweet text"),
     ),
-    "linuxdo_api": ProviderCapability(
-        name="linuxdo_api",
-        public_name="linuxdo-api",
-        kind=ProviderKind.PLATFORM_SEARCHER,
-        search=SearchCapability(can_search=True, supports_pagination=True, max_count=10),
-        output=OutputCapability(returns_urls=True, returns_content=True, returns_platform_metadata=True, returns_engagement=True),
-        operation=_op(AuthMode.COOKIE, "linuxdo", rate_limit_sensitive=True),
-        scrape_policy=ScrapePolicy.PREFETCH,
-        count_key="linuxdo_api",
-        timeout_default=20,
-        best_for=("Linux Do API/cookie results",),
-    ),
     "v2ex": ProviderCapability(
         name="v2ex",
         public_name="v2ex",

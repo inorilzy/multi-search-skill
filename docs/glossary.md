@@ -10,7 +10,7 @@
 | 术语 | 定义 | 代码出处 |
 |------|------|---------|
 | **source（搜索源）** | 单个搜索后端，最小调用单位。如 `brave`、`github_repos`、`twitter`。 | `search_runner.py` → `ALL_SOURCE_NAMES` |
-| **source 别名** | source 的对外友好写法，调用时会被归一化。如 `github` → `github_repos`、`linuxdo-api` → `linuxdo_api`。 | `search_runner.py` → `SOURCE_ALIASES` |
+| **source 别名** | source 的对外友好写法，调用时会被归一化。如 `github` → `github_repos`、`baidu-ai-search` → `baidu`。 | `search_runner.py` → `SOURCE_ALIASES` |
 | **route（路由）** | 一组预设 source，负责粗粒度选源。两个公共搜索入口使用相同的排序和正文获取流程。 | `search_runner.py` → `ROUTE_PROFILES` |
 | **profile（源集合）** | 某个 route 对应的那组 source 集合。`profile` 和 `route` 常被混用，但严格说 profile 只指「源集合」这一部分。 | `ROUTE_PROFILES` 的 value |
 | **route_meta（兼容行为参数）** | route 的搜索超时、每源召回数量和展示默认值等。旧抓取数量字段不再控制公共流程；最终 RRF 前 15 条统一获取正文。 | `search_runner.py` → `ROUTE_META` / `DEFAULT_ROUTE_META` |

@@ -1,17 +1,13 @@
 """Regression tests for removed search providers and configuration inputs."""
-import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 from multi_search_mcp.src.search.capabilities import PROVIDER_CAPABILITIES
 from multi_search_mcp.src.search.registry import build_provider_registry
 from multi_search_mcp.src.search.resolve import _resolve_sources, resolve_disabled_sources
 from multi_search_mcp.src.search.search_runner import (
     ALL_SOURCE_NAMES,
-    SearchContext,
-    SearchRunnerConfig,
     available_routes,
     resolve_route,
 )
@@ -53,10 +49,10 @@ class RemovedRedditTests(unittest.TestCase):
 class RemovedFilteredSourceTests(unittest.TestCase):
     SEARCH_SOURCES = {
         "baidu", "brave", "exa", "firecrawl", "parallel", "serpapi", "tavily",
-        "github_repos", "hackernews", "stackoverflow", "twitter", "linuxdo_api", "v2ex",
+        "github_repos", "hackernews", "stackoverflow", "twitter", "v2ex",
     }
 
-    def test_registry_and_advertised_sources_match_current_thirteen(self):
+    def test_registry_and_advertised_sources_match_current_twelve(self):
         self.assertEqual(set(build_provider_registry()), self.SEARCH_SOURCES)
         self.assertEqual(ALL_SOURCE_NAMES, self.SEARCH_SOURCES)
         searchable = {
@@ -67,10 +63,10 @@ class RemovedFilteredSourceTests(unittest.TestCase):
         advertised = list_sources()
         self.assertEqual(set(advertised["sources"]), self.SEARCH_SOURCES)
         self.assertNotIn("cn-community", advertised["routes"])
-        self.assertEqual(resolve_route("all"), self.SEARCH_SOURCES - {"linuxdo_api"})
+        self.assertEqual(resolve_route("all"), self.SEARCH_SOURCES)
 
     def test_removed_source_names_and_aliases_are_rejected(self):
-        for name in ("linuxdo", "linux-do", "zhihu"):
+        for name in ("linuxdo", "linux-do", "linuxdo_api", "linuxdo-api", "zhihu"):
             with self.subTest(source=name):
                 with self.assertRaisesRegex(ValueError, "unknown source"):
                     _resolve_sources("default", [name])
@@ -89,35 +85,6 @@ class RemovedFilteredSourceTests(unittest.TestCase):
                 environ={"ZHIHU_ACCESS_SECRET": "unused-secret"},
             )
         self.assertEqual(keys, {})
-
-    def test_linuxdo_api_alias_and_legacy_cookie_key_still_work(self):
-        self.assertEqual(_resolve_sources("default", ["linuxdo_api"]), {"linuxdo_api"})
-        self.assertEqual(_resolve_sources("default", ["linuxdo-api"]), {"linuxdo_api"})
-        with tempfile.TemporaryDirectory() as temp:
-            keys_path = Path(temp) / "keys.json"
-            keys_path.write_text(json.dumps({"linuxdo": "session=test-cookie"}), encoding="utf-8")
-            keys = load_keys(keys_path, environ={})
-        self.assertEqual(keys, {"linuxdo": "session=test-cookie"})
-        cfg = SearchRunnerConfig(
-            route="default", counts={"linuxdo_api": 7}, timeout=10,
-            serpapi_engine="google_light", keys=keys,
-        )
-        ctx = SearchContext(source="linuxdo-api", timeout=5, deadline=100, keys=keys)
-        received = {}
-
-        def fake_search(query, cookie, count, timeout):
-            received.update(query=query, cookie=cookie, count=count, timeout=timeout)
-            return [{"source": "linuxdo-api", "url": "https://linux.do/t/topic/123"}]
-
-        with mock.patch("multi_search_mcp.src.search.registry.search_linuxdo_api", fake_search):
-            spec = build_provider_registry()["linuxdo_api"]
-            self.assertIsNone(spec.key_name)
-            rows = spec.call("python asyncio", cfg, ctx, None)
-
-        self.assertEqual(received, {
-            "query": "python asyncio", "cookie": "session=test-cookie", "count": 7, "timeout": 5,
-        })
-        self.assertEqual(rows[0]["source"], "linuxdo-api")
 
 
 if __name__ == "__main__":

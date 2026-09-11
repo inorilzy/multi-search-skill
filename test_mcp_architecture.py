@@ -925,9 +925,9 @@ class PluginServiceConfigTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
-            run_multi_search(MultiSearchRequest(query="q", sources=["github", "linuxdo-api"], use_state=False))
+            run_multi_search(MultiSearchRequest(query="q", sources=["github", "baidu-ai-search"], use_state=False))
 
-        self.assertEqual(captured["sources"], {"github_repos", "linuxdo_api"})
+        self.assertEqual(captured["sources"], {"github_repos", "baidu"})
 
     def test_expand_query_thread_pool_is_capped(self):
         captured: dict[str, int] = {}

@@ -61,7 +61,6 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 - `multi_search_mcp/tools.py`：MCP tool wrapper。
 - `multi_search_mcp/src/`：自包含搜索、抓取、状态、key 与 service 实现。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
-- `package.json`：可选 Node 依赖，主要服务 `linuxdo_api.mjs` 的 Patchright 路径；默认 MCP 启动不需要 Node。
 
 主要 MCP tools 是 `search_web`、`fetch_source`、`read_source`。`multi_search` 与 `search_web` 共用搜索和正文流程，保留兼容展示；`scrape_url` 可直接抓 URL。诊断和状态工具仍包括 `list_sources`、`doctor`、`get_key_status`、`reset_key_state` 等。
 
@@ -103,7 +102,7 @@ Python 包依赖由 `pyproject.toml` 管理，包含 `mcp`、`beautifulsoup4`、
 python -m pip install -e .
 ```
 
-Twitter/X 还需要 cookies；`twikit-ng` 只是客户端依赖。`linuxdo_api` 使用独立的站内搜索接口，通过 `sources` 显式选择；Cookie 读取 keys file 的 `linuxdo` 字段。
+Twitter/X 还需要 cookies；`twikit-ng` 只是客户端依赖。
 
 Reddit 帖子抓取使用专用适配器，复用 [eddrit 0.19.0](https://github.com/corenting/eddrit) 的 MIT 许可访客认证流程。`fetch_source`、`scrape_url` 和搜索后的正文抓取遇到 `reddit.com`（含子域）或 `redd.it` 时自动使用它，返回 `via`/`backend=reddit`；这些 URL 不进入通用后端链，即使抓取计划传入了通用 backends。其他域名沿用原有规则，Reddit 没有重新加入搜索源。
 
@@ -123,7 +122,7 @@ MCP 和 CLI 都是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工
 
 ## 搜索源、注册和免费额度
 
-当前注册 13 个搜索源；`all` 路由包含其中 12 个，`linuxdo_api` 通过 `sources` 显式选择。Jina 仅负责抓取正文，不计入搜索源。
+当前注册 12 个搜索源；`all` 路由包含全部 12 个。Jina 仅负责抓取正文，不计入搜索源。
 
 免费额度来自当前公开页面或常见免费层，可能被服务商调整；以各平台控制台为准。
 
@@ -141,7 +140,6 @@ MCP 和 CLI 都是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工
 | Stack Overflow | Stack Overflow question search | https://api.stackexchange.com/docs/advanced-search | 匿名可用，使用 Stack Exchange advanced search | 100 |
 | Twitter/X | 社交讨论、推文和 top replies | https://x.com | 无官方搜索 API 免费层；使用 `twikit-ng` + cookies，受账号状态和限流影响 | 20 |
 | V2EX / SOV2EX | V2EX 专用索引搜索 | [SOV2EX API 文档](https://github.com/gexiao/sov2ex/blob/v2/API.md) | 第三方搜索 API，匿名可用，无需 Key、Cookie 或 Firecrawl | 50 |
-| Linux Do API | Linux Do 站内搜索 | https://linux.do | 直接请求 Discourse `/search.json`；Cookie 使用 `linuxdo` 配置字段 | 10 |
 | Jina Reader | 额外网页正文抓取 | https://r.jina.ai/docs | 匿名可用，约 20 rpm；key 是固定额度，可作为匿名限流后的 fallback | scrape only |
 
 `v2ex` 直接请求 SOV2EX `/api/search`，默认按相关性排序（`sort=sumup`），每源默认召回 10 条，上限 50 条。SOV2EX 是第三方 V2EX 专用索引，不是 V2EX 官方 API；收录范围和更新速度取决于该服务。搜索阶段返回标题、URL 和清理后的高亮摘要，忽略 API 的 `_source.content`，主题 URL 指向 `https://www.v2ex.com/t/<id>`。最终入选 RRF 前 15 条后，再统一抓取原帖 URL 或复用此前 URL 抓取的正文缓存。
@@ -158,7 +156,7 @@ MCP 和 CLI 都是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工
 | `fast` | Baidu + Tavily + Firecrawl + Exa | 较小的搜索源集合；排序后同样获取正文 |
 | `social` | Twitter/X | 看社交反馈、口碑、讨论 |
 | `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
-| `all` | default + social + dev + v2ex（12 源；`linuxdo_api` 需显式指定） | 尽可能广的 API 召回 |
+| `all` | default + social + dev + v2ex（12 源） | 尽可能广的 API 召回 |
 | 指定源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` | 绕过 route，直接指定一个或多个源 |
 
 搜索自动返回正文预览；Agent 选读来源后用 `fetch_source(full_content=True)` 获取已取得全文，`read_source` 用于定向查证缓存片段。已有 URL 无需搜索，直接用 `fetch_source` / `scrape_url`。
@@ -195,8 +193,7 @@ MCP 和 CLI 都是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工
   "firecrawl": "fc-xxxx",
   "serpapi": "xxxx",
   "github": "ghp_xxxx",
-  "twitter": {"auth_token": "...", "ct0": "..."},
-  "linuxdo": "optional_linuxdo_cookie"
+  "twitter": {"auth_token": "...", "ct0": "..."}
 }
 ```
 
@@ -320,7 +317,6 @@ multi_search({ "query": "rust async runtime", "route": "default" })
 
 // 指定单源或专用 route 的语义不变
 search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
-search_web({ "query": "AI Agent", "sources": ["linuxdo_api"] })
 search_web({ "query": "python", "sources": ["v2ex"] })
 ```
 

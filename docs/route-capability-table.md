@@ -57,7 +57,6 @@
 | hackernews | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 讨论、技术 | HN 标题、URL、points/comments 适合发现讨论源。 |
 | stackoverflow | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 技术 | Q&A 发现源，正文靠 scrape 或 StackExchange API 扩展。 |
 | v2ex | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | `all` 或显式 `sources=["v2ex"]` | SOV2EX 第三方专用索引 API；只返回标题、URL 和高亮摘要，忽略索引正文。默认 10 条，上限 50 条。 |
-| linuxdo-api | 否 | 是 | 是 | 是 | prefetch | cookie | 不接入 SQLite key 轮换 | 讨论、中文技术 | API/cookie 可直接得到帖子内容。 |
 | jina | 否 | 否 | 否 | 是 | scraper | 可选 api_key | 仅 active key 池 | 专家模式抓正文阶段 | 不是搜索 provider，只负责 URL -> Markdown/text。 |
 
 ## want_content 行为与注意事项
@@ -84,7 +83,7 @@
 | `social` | `twitter` | 15 | 社交反馈、用户评价、讨论热度。 |
 | `dev` | `github_repos`, `stackoverflow`, `hackernews` | 15 | 技术资料、项目、实现方案搜索。默认不要混入纯社交源。 |
 
-当前共 13 个搜索源，`all` 包含 12 个；`linuxdo_api` 需显式选择。单 provider 调用不再放进 `ROUTE_PROFILES`，统一走 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` 或 `sources=["v2ex"]`。
+当前共 12 个搜索源，`all` 包含全部 12 个。单 provider 调用不再放进 `ROUTE_PROFILES`，统一走 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` 或 `sources=["v2ex"]`。
 
 上表同时适用于 `search_web` 与 `multi_search`。`count` 仅控制每源召回；`scrape_top` / `scrape_per_source` 仍接受但不再二次裁剪或关闭抓取，显式传入时 diagnostics 会说明。
 
@@ -143,7 +142,7 @@
 - 用户问“发生了什么 / 快速总结 / 最新情况 / news”：`search_web(route=fast)`，按预览选读来源。
 - 用户问“比较 / 决策 / 验证 / 架构 review / 为什么 / 给证据”：`search_web(route=default, expand=[...])`，选读关键来源并追查原始材料。
 - 用户问“给我链接 / 找来源”：`search_web(route=web)`；明确找 repo/Q&A/HN 时走 `dev`。
-- 用户问“大家怎么说 / 评价 / 社区反馈 / 踩坑”：走 `social`；V2EX 讨论可显式指定 `sources=["v2ex"]`，Linux Do 站内讨论可显式指定 `sources=["linuxdo_api"]`。
+- 用户问“大家怎么说 / 评价 / 社区反馈 / 踩坑”：走 `social`；V2EX 讨论可显式指定 `sources=["v2ex"]`。
 
 ## 已确定边界
 

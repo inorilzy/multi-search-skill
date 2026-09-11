@@ -22,4 +22,4 @@ build-backend = "setuptools.build_meta"
 include = ["multi_search_mcp*"]
 
 [tool.setuptools.package-data]
-multi_search_mcp = ["src/search/searchers/*.mjs", "src/support/*.ps1"]
+multi_search_mcp = ["src/support/*.ps1"]

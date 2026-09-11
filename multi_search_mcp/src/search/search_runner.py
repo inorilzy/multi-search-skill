@@ -27,7 +27,6 @@ SOURCE_ALIASES = {
     "baidu-ai-search": "baidu",
     "github": "github_repos",
     "github-repos": "github_repos",
-    "linuxdo-api": "linuxdo_api",
     "qianfan": "baidu",
 }
 
@@ -36,7 +35,6 @@ ROUTE_PROFILES = {
     "fast": {"baidu", "tavily", "firecrawl", "exa"},
     "social": {"twitter"},
     "dev": {"stackoverflow", "github_repos", "hackernews"},
-    # linuxdo_api remains opt-in via explicit sources.
     "all": {
         "brave", "parallel", "tavily", "exa", "serpapi", "baidu",
         "firecrawl", "twitter", "stackoverflow", "github_repos",

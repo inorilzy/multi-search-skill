@@ -8,7 +8,6 @@ from multi_search_mcp.src.search.searchers.brave import search_brave
 from multi_search_mcp.src.search.searchers.exa import search_exa
 from multi_search_mcp.src.search.searchers.github import search_github_repos
 from multi_search_mcp.src.search.searchers.hackernews import search_hackernews
-from multi_search_mcp.src.search.searchers.linuxdo import search_linuxdo_api
 from multi_search_mcp.src.search.searchers.parallel import search_parallel
 from multi_search_mcp.src.search.searchers.serpapi import search_serpapi
 from multi_search_mcp.src.search.searchers.stackoverflow import search_stackoverflow
@@ -188,25 +187,6 @@ class ProviderContentKindTests(unittest.TestCase):
             rows = search_hackernews("q")
 
         self.assertEqual(rows[0]["content_kind"], "metadata")
-
-    def test_linuxdo_blurb_rows_are_excerpt(self):
-        payload = {
-            "posts": [{
-                "topic_id": 123,
-                "blurb": "forum excerpt",
-                "username": "alice",
-                "like_count": 5,
-            }]
-        }
-
-        with mock.patch(
-            "multi_search_mcp.src.search.searchers.linuxdo.urllib.request.urlopen",
-            return_value=_FakeResponse(payload),
-        ):
-            rows = search_linuxdo_api("q", cookie="cookie")
-
-        self.assertEqual(rows[0]["content_kind"], "excerpt")
-        self.assertEqual(rows[0]["content"], "forum excerpt")
 
     def test_parallel_excerpts_are_excerpt(self):
         payload = {

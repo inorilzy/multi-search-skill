@@ -10,7 +10,6 @@ from .searchers.exa import search_exa
 from .searchers.firecrawl import search_firecrawl
 from .searchers.github import search_github_repos
 from .searchers.hackernews import search_hackernews
-from .searchers.linuxdo import search_linuxdo_api
 from .searchers.parallel import search_parallel
 from .searchers.serpapi import search_serpapi
 from .searchers.stackoverflow import search_stackoverflow
@@ -103,12 +102,6 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             missing_message="missing FIRECRAWL_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, want_content=cfg.want_content,
-            ),
-        ),
-        "linuxdo_api": _provider_spec(
-            "linuxdo_api",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_linuxdo_api, q, cfg.keys.get("linuxdo", ""), cfg.counts["linuxdo_api"], timeout=ctx.timeout,
             ),
         ),
         "v2ex": _provider_spec(
