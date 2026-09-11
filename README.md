@@ -17,7 +17,7 @@ MCP server 入口在仓库根目录：
 python -m multi_search_mcp.server
 ```
 
-当前版本为 **0.3.3**（[发布说明](docs/candidate-first-release.md)）。在仓库根目录可直接运行 CLI，无需先启动 MCP server：
+当前版本为 **0.4.0**（[发布说明](docs/candidate-first-release.md)）。在仓库根目录可直接运行 CLI，无需先启动 MCP server：
 
 ```powershell
 uv run --locked multi-search --help
@@ -30,11 +30,11 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 `uv run --locked` 使用项目虚拟环境并按锁文件同步依赖。已在激活的虚拟环境中安装项目时，也可以直接执行 `multi-search` 或 `python -m multi_search_mcp.cli`，子命令参数相同。
 
-只使用独立 CLI 时，运行 `uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.3"`，之后在任意目录执行 `multi-search --help`。GitHub 安装、更新、参数示例和完整工作流统一见 [CLI-only 指南](skills/multi-search/references/cli.md)。本地开发安装使用 `uv tool install --force .`。
+只使用独立 CLI 时，运行 `uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@v0.4.0"`，之后在任意目录执行 `multi-search --help`。GitHub 安装、更新、参数示例和完整工作流统一见 [CLI-only 指南](skills/multi-search/references/cli.md)。本地开发安装使用 `uv tool install --force .`。
 
 搜索全部活动源失败时 CLI 退出 `1`，JSON 仍保留完整错误；正常零匹配和部分成功退出 `0`。human/Markdown 同样展示错误。`doctor` 真正解析配置；显式配置路径不存在会报错。`doctor --network` 对 Hacker News/GitHub 公共 API 做总预算 5 秒的连接检查，结果以 `network_ok` / `network_checks` 为准，不代表所有源的 key 或搜索质量正常。
 
-在支持 `uvx --from` 的 MCP 配置界面中使用固定版本 `v0.3.3`：
+在支持 `uvx --from` 的 MCP 配置界面中使用固定版本 `v0.4.0`：
 
 ```json
 {
@@ -43,7 +43,7 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
     "command": "uvx",
     "args": [
       "--from",
-      "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.3",
+      "git+https://github.com/inorilzy/multi-search-skill.git@v0.4.0",
       "multi-search-mcp"
     ],
     "timeoutMs": 60000

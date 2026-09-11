@@ -1,8 +1,15 @@
 # 搜索排序与正文获取发布说明
 
-发布版本：`0.3.3`（[版本源码](https://github.com/inorilzy/multi-search-skill/tree/v0.3.3)）。本版本包含下述默认搜索行为变化；实际客户端联调需分别验证。
+发布版本：`0.4.0`（[版本源码](https://github.com/inorilzy/multi-search-skill/tree/v0.4.0)）。本版本包含下述默认搜索行为变化；实际客户端联调需分别验证。
 
 当前契约统一为：搜索取得候选，全部有效排名参与两级 RRF，最终取前 15 条并自动获取正文；已有 URL 直接用 `fetch_source` / `scrape_url`。`search_web` 和 `multi_search` 共用流程，MCP 和 CLI 保留各自的参数及展示入口。本文件沿用原路径，内容描述当前发布契约。
+
+## 0.4.0 变更
+
+- 移除无法稳定访问的 `linuxdo_api` 搜索源、别名、Cookie 接口及其 Node/Patchright 辅助依赖；当前注册源为 12 个，`all` 包含全部 12 个。
+- 显式使用 `sources=["linuxdo_api"]` 或 `sources=["linuxdo-api"]` 的调用方会收到 `unknown source`，需改用现有网页或社区来源。其他 source、route、缓存和 SQLite 数据结构不变。
+- 修正 Windows/Python 版本间的 deadline 测试竞争；生产超时语义不变。
+- 收录搜索工作流调研与实施状态，`.scratch/` 和 `build/` 保持为本地产物。
 
 ## 0.3.3 修复
 
