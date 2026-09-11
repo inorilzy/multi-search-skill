@@ -8,7 +8,7 @@ The CLI runs Core directly; no MCP server or MCP client configuration is needed.
 Install the pinned release:
 
 ```sh
-uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.2"
+uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.3"
 multi-search --help
 ```
 
@@ -19,12 +19,12 @@ uv tool install --force .
 multi-search --help
 ```
 
-The GitHub command installs the pinned release. Replace `v0.3.2` with `main`
+The GitHub command installs the pinned release. Replace `v0.3.3` with `main`
 only when following development changes; unpublished local changes require
 the local command. To update an existing installation to this release:
 
 ```sh
-uv tool install --force --reinstall "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.2"
+uv tool install --force --reinstall "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.3"
 ```
 
 If the command is absent from PATH, run `uv tool update-shell` and reopen the

@@ -1,8 +1,15 @@
 # 搜索排序与正文获取发布说明
 
-发布版本：`0.3.2`（[版本源码](https://github.com/inorilzy/multi-search-skill/tree/v0.3.2)）。本版本包含下述默认搜索行为变化；实际客户端联调需分别验证。
+发布版本：`0.3.3`（[版本源码](https://github.com/inorilzy/multi-search-skill/tree/v0.3.3)）。本版本包含下述默认搜索行为变化；实际客户端联调需分别验证。
 
 当前契约统一为：搜索取得候选，全部有效排名参与两级 RRF，最终取前 15 条并自动获取正文；已有 URL 直接用 `fetch_source` / `scrape_url`。`search_web` 和 `multi_search` 共用流程，MCP 和 CLI 保留各自的参数及展示入口。本文件沿用原路径，内容描述当前发布契约。
+
+## 0.3.3 修复
+
+- SerpAPI 分页共享搜索截止时间，超时停止后续请求并保留已取得结果；单次 HTTP 请求仍最多 20 秒。
+- 显式指定抓取后端顺序时保留调用方顺序，默认 Jina 不再抢占首位。
+- GitHub 仓库根 URL 保持原样，不再猜测根目录 README.md 路径。
+- MCP 工具描述与 Skill 的无固定来源配额、按需全文读取策略一致。
 
 ## 0.3.2 Skill 更新
 
