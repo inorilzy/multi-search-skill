@@ -5,15 +5,10 @@ from ..support.auth import is_key_retryable_error
 from ..support.models import normalize_scrape_result
 from ..support.url_security import (
     UrlSecurityError,
-    validate_redirect_target,
     validate_scrape_url,
 )
 from ..state.key_state import KeyCandidate, key_fingerprint, key_id_for
-from .scrapers import (
-    _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
-    _GH_REPO_RE,
-    _rewrite_for_clean_scrape,
-)
+from .scrapers import _DEFAULT_SCRAPE_TIMEOUT_SECONDS
 from .scrapers.exa import scrape_url_exa
 from .scrapers.firecrawl import scrape_url_firecrawl
 from .scrapers.jina import (
@@ -136,9 +131,7 @@ def _scrape_with_optional_key_pool(provider: str, keys: list[str], call, deadlin
 
 def _prepare_scrape_target(url: str, *, resolver=None) -> tuple[str, str]:
     safe_url = validate_scrape_url(url, resolver=resolver)
-    target_url = _rewrite_for_clean_scrape(safe_url)
-    validate_redirect_target(target_url, resolver=resolver)
-    return safe_url, target_url
+    return safe_url, safe_url
 
 
 def scrape_url_smart(url: str, firecrawl_key: str | None = None,
