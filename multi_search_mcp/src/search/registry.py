@@ -95,6 +95,7 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_serpapi, q, key, cfg.counts["serpapi"], cfg.serpapi_engine,
                 timeout=ctx.timeout,
+                deadline=ctx.deadline, publish_partial=ctx.publish_partial,
             ),
         ),
         "firecrawl": _provider_spec(

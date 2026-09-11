@@ -1,7 +1,9 @@
 """SerpAPI (Google) search."""
 import json
+import time
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 
 from ...support.http import urlopen_retry
 from ...support.secrets import scrub_secrets
@@ -29,11 +31,19 @@ def search_serpapi(
     engine: str = "google_light",
     timeout: float = 20,
     search_depth: str = "normal",
+    *,
+    deadline: float | None = None,
+    publish_partial: Callable[[list], None] | None = None,
 ) -> list:
     """Call SerpAPI to fetch SERP results.
     Default engine: google_light — 3x faster, 250 searches/month free (vs 100 for regular google).
     Switch to engine='google' for full knowledge_graph / shopping / things_to_know etc.
+
+    Pages share the caller's deadline; timeout caps each HTTP request. Without
+    a caller deadline, timeout is also the total pagination budget.
     """
+    if deadline is None:
+        deadline = time.monotonic() + timeout
     results = []
     depth = (search_depth or "normal").lower()
     engine = "google_light" if depth == "fast" else engine
@@ -48,6 +58,9 @@ def search_serpapi(
     for start in range(0, target_count, page_size):
         if organic_count >= target_count:
             break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _return_error("SerpAPI search deadline exceeded")
         params = {
             "engine": engine,
             "q": query,
@@ -61,7 +74,7 @@ def search_serpapi(
             params["gl"] = "us"
         url = "https://serpapi.com/search?" + urllib.parse.urlencode(params)
         try:
-            with urlopen_retry(url, timeout=timeout) as resp:
+            with urlopen_retry(url, timeout=min(timeout, remaining)) as resp:
                 data = json.loads(resp.read())
         except Exception as e:
             return _return_error(str(scrub_secrets(e, api_key)))
@@ -103,4 +116,6 @@ def search_serpapi(
                 "provider_depth": engine,
             })
             organic_count += 1
+        if publish_partial is not None:
+            publish_partial(list(results))
     return results
