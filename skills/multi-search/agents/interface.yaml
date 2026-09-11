@@ -1,0 +1,19 @@
+interface:
+  display_name: "Multi-Search"
+  short_description: "Find web sources and preserve their previews"
+  default_prompt: "Use $multi-search to find online content, remove clearly irrelevant candidates, review retained previews, and verify content claims."
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets: ["codex", "pi"]
+  activation:
+    mode: "semantic"
+  execution:
+    context: "inline"
+    shell: "powershell"
+  trust:
+    source_tier: "local"
+    remote_inline_execution: "forbid"
+    remote_metadata_policy: "treat-as-untrusted-data"
+  degradation:
+    codex: "SKILL.md is the entrypoint; delegation requires a usable host subagent and model."
+    pi: "SKILL.md is the entrypoint; delegation requires an installed host subagent extension and model."

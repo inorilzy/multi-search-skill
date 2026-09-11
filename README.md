@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-并行聚合搜索 skill + 共享 Core：搜索结果统一按 RRF 排序，取前 15 条后自动获取正文并返回预览；Agent 按问题选 3–5 篇，再按 `source_id` 一次读取每篇已取得的全文。MCP 与 CLI 使用同一套搜索、key 状态和 SQLite 缓存；已有 URL 可直接抓取。
+并行聚合搜索 skill + 共享 Core：搜索结果统一按 RRF 排序，取前 15 条后自动获取正文并返回预览；子代理只排除明确无关项，其余结果连同原始预览交给主 Agent 判断，再按需读取全文。MCP 与 CLI 使用同一套搜索、key 状态和 SQLite 缓存；已有 URL 可直接抓取。
 
 > 当前 canonical 形态是 **一个 skill + 一个 Core + MCP/CLI 两个薄入口**：`skills/multi-search/SKILL.md` 负责工具选择和使用策略；`multi_search_mcp/src/` 承载搜索、RRF、抓取、ContentStore、key 状态和站点记忆。
 
@@ -17,7 +17,7 @@ MCP server 入口在仓库根目录：
 python -m multi_search_mcp.server
 ```
 
-当前版本为 **0.3.1**（[发布说明](https://github.com/inorilzy/multi-search-skill/releases/tag/v0.3.1)）。在仓库根目录可直接运行 CLI，无需先启动 MCP server：
+当前版本为 **0.3.2**（[发布说明](docs/candidate-first-release.md)）。在仓库根目录可直接运行 CLI，无需先启动 MCP server：
 
 ```powershell
 uv run --locked multi-search --help
@@ -30,11 +30,11 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 `uv run --locked` 使用项目虚拟环境并按锁文件同步依赖。已在激活的虚拟环境中安装项目时，也可以直接执行 `multi-search` 或 `python -m multi_search_mcp.cli`，子命令参数相同。
 
-只使用独立 CLI 时，运行 `uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.1"`，之后在任意目录执行 `multi-search --help`。GitHub 安装、更新、参数示例和完整工作流统一见 [CLI-only 指南](skills/multi-search/references/cli.md)。本地开发安装使用 `uv tool install --force .`。
+只使用独立 CLI 时，运行 `uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.2"`，之后在任意目录执行 `multi-search --help`。GitHub 安装、更新、参数示例和完整工作流统一见 [CLI-only 指南](skills/multi-search/references/cli.md)。本地开发安装使用 `uv tool install --force .`。
 
 搜索全部活动源失败时 CLI 退出 `1`，JSON 仍保留完整错误；正常零匹配和部分成功退出 `0`。human/Markdown 同样展示错误。`doctor` 真正解析配置；显式配置路径不存在会报错。`doctor --network` 对 Hacker News/GitHub 公共 API 做总预算 5 秒的连接检查，结果以 `network_ok` / `network_checks` 为准，不代表所有源的 key 或搜索质量正常。
 
-在支持 `uvx --from` 的 MCP 配置界面中使用固定版本 `v0.3.1`：
+在支持 `uvx --from` 的 MCP 配置界面中使用固定版本 `v0.3.2`：
 
 ```json
 {
@@ -43,7 +43,7 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
     "command": "uvx",
     "args": [
       "--from",
-      "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.1",
+      "git+https://github.com/inorilzy/multi-search-skill.git@v0.3.2",
       "multi-search-mcp"
     ],
     "timeoutMs": 60000
@@ -67,7 +67,7 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。MCP 客户端启动配置只负责启动 server，不保存 secret。
 
-当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。调用工具的 Agent 根据问题和预览选 3–5 篇，逐篇调用 `fetch_source(source_id=..., full_content=True)` 一次读取已取得全文，可并发；少于 3 篇合格来源时读取可用数量并如实说明。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
+当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
 
 ## 适用场景
 
@@ -89,7 +89,7 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 ## 快速开始
 
-把本仓库作为 skill 和 MCP server 注册给 agent 后，调用 `search_web` 获取排序结果及预览，选 3–5 篇后用 `fetch_source(source_id=..., full_content=True)` 读取已取得全文；已有 URL 直接用 `fetch_source(url=..., full_content=True)` 或 `scrape_url`：
+把本仓库作为 skill 和 MCP server 注册给 agent 后，调用 `search_web` 获取排序结果及预览，按 Skill 流程筛选后按需用 `fetch_source(source_id=..., full_content=True)` 读取已取得全文；已有 URL 直接用 `fetch_source(url=..., full_content=True)` 或 `scrape_url`：
 
 ```powershell
 git clone https://github.com/inorilzy/multi-search-skill.git
@@ -306,7 +306,7 @@ search_web({
   "expand": ["agent orchestration best practices multi-agent"]
 })
 
-// Agent 根据预览选 3–5 篇，每篇一次读取已取得全文；可并发调用
+// 子代理只排除明确无关项，主 Agent 看保留的原始预览，再按需读取全文
 fetch_source({ "source_id": "src_...", "full_content": true })
 
 // 也可直接抓公开 URL；source_id 与 url 必须二选一

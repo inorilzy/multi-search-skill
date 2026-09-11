@@ -1,10 +1,17 @@
 # 搜索排序与正文获取发布说明
 
-发布版本：`0.3.1`（[GitHub Release](https://github.com/inorilzy/multi-search-skill/releases/tag/v0.3.1)）。本版本包含下述默认搜索行为变化；实际客户端联调需分别验证。
+发布版本：`0.3.2`（[版本源码](https://github.com/inorilzy/multi-search-skill/tree/v0.3.2)）。本版本包含下述默认搜索行为变化；实际客户端联调需分别验证。
 
 当前契约统一为：搜索取得候选，全部有效排名参与两级 RRF，最终取前 15 条并自动获取正文；已有 URL 直接用 `fetch_source` / `scrape_url`。`search_web` 和 `multi_search` 共用流程，MCP 和 CLI 保留各自的参数及展示入口。本文件沿用原路径，内容描述当前发布契约。
 
-## 新增能力
+## 0.3.2 Skill 更新
+
+- 明确子代理粗筛与主 Agent 最终判断的职责，保留候选原始预览。
+- 精简 Skill 入口，将搜索、委派、验证与 CLI 细节放入按需参考文件。
+- 委派失败明确报错，后续搜索继承预算和停止计数。Core 排序及抓取接口不变。
+- 已验证 Codex 子代理搜索及共享来源读取；最新无数量配额的交接规则通过静态检查，尚未重跑端到端测试。Pi 尚未实测。
+
+## 已有能力
 
 - `search_web`：返回 RRF 最终前 15 条与正文预览，抓取失败保留结果并显式报告 `body_error`。
 - `fetch_source`：按 `source_id` 或显式 URL 抓取单条正文，优先复用缓存；`full_content=True` 覆盖 `max_chars`，一次返回全部已取得文本。
@@ -31,7 +38,7 @@
 
 ### Phase 2：切 skill 默认流程
 
-- 普通联网查询默认调用 `search_web`，Agent 根据问题、摘要和每篇最多 1200 字符预览选 3–5 篇，逐篇调用 `fetch_source(source_id=..., full_content=True)` 一次读取已取得全文，可并发；不足 3 篇合格来源时读取可用数量并说明。
+- 普通联网查询由宿主配置的轻量子代理执行搜索，只排除明确无关项。其余候选（包括不确定项）按原顺序连同每篇最多 1200 字符的原始预览交给主 Agent，不设保留数量配额；主 Agent 最终筛选并按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文。无子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。
 - 选读由调用工具的 Agent 完成，Core 继续获取 RRF 最终 15 条并按策略缓存；不增加服务端 AI 选择器、摘要或智能摘录。`read_source` 保留用于定向查证。
 - 保留 `body_error` 和每次读取错误。缓存缺失或过期但 `source_id` 有效时，`fetch_source(source_id=..., full_content=True)` 按原 ID 重新抓取；只有 ID 本身未知或失效时，才按已观察到的 URL 显式 `fetch_source(url=..., full_content=True)`，使用返回的新 `source_id`。
 - route 只用于选源，不作为正文开关；所有 route 都获取最终 RRF 前 15 条。
