@@ -98,6 +98,17 @@ class FullContentInterfaceTests(unittest.TestCase):
         self.assertNotIn("full_content", schema.get("required", []))
         self.assertEqual(schema["properties"]["max_chars"]["default"], 20_000)
 
+    def test_search_tool_descriptions_do_not_impose_a_source_quota(self):
+        registered = {tool.name: tool for tool in self.loop.run_until_complete(mcp.list_tools())}
+        for name in ("search_web", "multi_search"):
+            with self.subTest(tool=name):
+                description = " ".join(registered[name].description.split())
+                self.assertNotIn("3-5", description)
+                self.assertIn("only clearly irrelevant candidates", description)
+                self.assertIn("relevant or uncertain candidate without a fixed quota", description)
+                self.assertIn("Find-only requests can return matching links", description)
+                self.assertIn("fetch selected full bodies", description)
+
     def test_registered_mcp_call_preserves_limits_unless_full_content_is_true(self):
         def fetch_fixture(request):
             return service.run_fetch_source(

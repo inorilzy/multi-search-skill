@@ -47,9 +47,11 @@ def search_web(
     joined by `source_id`. Bounded previews may skip a prefix before an exact
     matching page H1 or a paragraph matching the complete search snippet;
     `preview_start/end` are original-body character offsets.
-    The calling Agent reviews these previews, selects
-    3-5 relevant sources, then calls fetch_source(source_id=..., full_content=True)
-    for each. If fewer than 3 sources qualify, use the available number.
+    The calling Agent removes only clearly irrelevant candidates and retains
+    every relevant or uncertain candidate without a fixed quota. Find-only
+    requests can return matching links from these previews. For uncertain
+    matches or claims about contents, fetch selected full bodies with
+    fetch_source(source_id=..., full_content=True) and verify the evidence.
     Core does not make this selection or summarize with AI.
     Use read_source for bounded slices of cached text.
     `results[].body_error` marks failures. Fetching never changes rank.
@@ -112,10 +114,12 @@ def multi_search(query: str, route: str | None = None,
     bodies occur once in `scrapes[].markdown`. With output=markdown/both, bodies
     occur once in top-level `markdown`, and `scrapes` contains metadata only.
     Markdown sections include `source_id` for continued cached reading.
-    The calling Agent reviews the previews, selects 3-5 relevant sources, then
-    calls fetch_source(source_id=..., full_content=True) for each. If fewer than
-    3 sources qualify, use the available number. Core does not make this
-    selection or summarize with AI.
+    The calling Agent removes only clearly irrelevant candidates and retains
+    every relevant or uncertain candidate without a fixed quota. Find-only
+    requests can return matching links from these previews. For uncertain
+    matches or claims about contents, fetch selected full bodies with
+    fetch_source(source_id=..., full_content=True) and verify the evidence.
+    Core does not make this selection or summarize with AI.
     Use fetch_source(url=...) or scrape_url for a known URL without searching.
     On invalid input returns a structured {"error", "error_type"} dict.
     """
