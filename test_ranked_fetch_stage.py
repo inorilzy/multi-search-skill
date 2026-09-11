@@ -160,24 +160,20 @@ class RankedFetchStageTests(unittest.TestCase):
             pool.shutdown(wait=True, cancel_futures=True)
 
     def test_worker_rechecks_deadline_before_invoking_callback(self):
-        release = threading.Event()
         fetch = mock.Mock(return_value={"content": "body"})
         submit = self.pool.submit_before
 
         def delay_worker(deadline, callback, hit):
             def delayed():
-                release.wait(timeout=2)
+                time.sleep(max(0, deadline - time.monotonic()) + 0.02)
                 return callback(hit)
 
             return submit(deadline, delayed)
 
-        try:
-            with mock.patch.object(self.pool, "submit_before", side_effect=delay_worker):
-                result = stage.run_ranked_fetch_stage(_hits(1), fetch=fetch, timeout=0.04)
-            self.assertEqual(len(result["errors"]), 1)
-        finally:
-            release.set()
-            self.pool.shutdown(wait=True, cancel_futures=True)
+        with mock.patch.object(self.pool, "submit_before", side_effect=delay_worker):
+            result = stage.run_ranked_fetch_stage(_hits(1), fetch=fetch, timeout=0.04)
+        self.assertEqual(len(result["errors"]), 1)
+        self.pool.shutdown(wait=True, cancel_futures=True)
         fetch.assert_not_called()
 
     def test_invalid_concurrency_is_explicit(self):

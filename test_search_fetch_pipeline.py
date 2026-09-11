@@ -1,4 +1,5 @@
 import threading
+import time
 import unittest
 from contextlib import ExitStack
 from dataclasses import replace
@@ -330,16 +331,19 @@ class SearchFetchPipelineTests(unittest.TestCase):
         from multi_search_mcp.src.scrape import scrape
 
         provider = _provider("brave", {"primary": [_row("brave", "slow")]})
-        release = threading.Event()
         finished = threading.Event()
         started = threading.Event()
+        batch_deadline = None
 
         def slow_jina(url, *args, **kwargs):
             started.set()
-            release.wait(timeout=5)
+            while time.monotonic() <= batch_deadline:
+                time.sleep(0.005)
             return {"url": url, "error": "Jina did not finish in time"}
 
         def real_scraper(url, **kwargs):
+            nonlocal batch_deadline
+            batch_deadline = kwargs["deadline"]
             try:
                 return scrape.scrape_url_smart(url, **kwargs)
             finally:
@@ -354,17 +358,14 @@ class SearchFetchPipelineTests(unittest.TestCase):
             mock.patch.object(scrape, "scrape_url_tavily", side_effect=AssertionError("unexpected Tavily")),
             mock.patch.object(scrape, "scrape_url_firecrawl", side_effect=AssertionError("unexpected Firecrawl")),
         ):
-            try:
-                response = service.run_search_web(
-                    service.SearchWebRequest(query="primary", sources=["brave"], use_state=False),
-                    providers={"brave": provider}, keys={"exa": "fake-exa-key"}, config={},
-                    scraper=real_scraper, url_resolver=_resolver, scrape_timeout=2,
-                )
-                self.assertTrue(started.is_set())
-                self.assertIn("timeout", response["results"][0]["body_error"])
-            finally:
-                release.set()
-                self.assertTrue(finished.wait(timeout=2))
+            response = service.run_search_web(
+                service.SearchWebRequest(query="primary", sources=["brave"], use_state=False),
+                providers={"brave": provider}, keys={"exa": "fake-exa-key"}, config={},
+                scraper=real_scraper, url_resolver=_resolver, scrape_timeout=2,
+            )
+            self.assertTrue(started.is_set())
+            self.assertIn("timeout", response["results"][0]["body_error"])
+            self.assertTrue(finished.wait(timeout=2))
             exa.assert_not_called()
 
     def test_mixed_provider_retention_is_not_bypassed_by_prefetched_body(self):

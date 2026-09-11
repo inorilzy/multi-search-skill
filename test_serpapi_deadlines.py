@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -97,7 +98,6 @@ class SerpAPIDeadlineTests(unittest.TestCase):
         })
 
     def test_runner_timeout_keeps_first_page_and_stops_late_worker_pagination(self):
-        release = threading.Event()
         second_started = threading.Event()
         starts = []
         pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-serpapi-deadline")
@@ -107,7 +107,7 @@ class SerpAPIDeadlineTests(unittest.TestCase):
             starts.append(start)
             if start:
                 second_started.set()
-                release.wait(timeout=2)
+                time.sleep(float(timeout) + 0.05)
             return response(page(start))
 
         runner = SearchRunner(
@@ -123,7 +123,6 @@ class SerpAPIDeadlineTests(unittest.TestCase):
                 self.assertEqual([row["provider_rank"] for row in hits], list(range(1, 11)))
                 self.assertIn("timeout", rows[-1]["error"])
             finally:
-                release.set()
                 pool.shutdown(wait=True)
         self.assertEqual(starts, [0, 10])
 
