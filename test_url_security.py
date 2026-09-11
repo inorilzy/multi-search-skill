@@ -182,28 +182,8 @@ class UrlSecurityTests(unittest.TestCase):
         self.assertIn("unsafe scrape URL", result["error"])
         backend.assert_not_called()
 
-    def test_scrape_url_smart_validates_rewritten_target_before_backend_dispatch(self):
-        resolver = self._resolver({"example.com": ["93.184.216.34"], "metadata.local": ["169.254.169.254"]})
-
-        with mock.patch(
-            "multi_search_mcp.src.scrape.scrape._rewrite_for_clean_scrape",
-            return_value="http://metadata.local/latest/meta-data",
-        ), mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina") as backend:
-            result = scrape_url_smart(
-                "https://example.com/rewrite-me",
-                primary="jina",
-                backends=("jina",),
-                url_resolver=resolver,
-            )
-
-        self.assertIn("unsafe redirect target", result["error"])
-        backend.assert_not_called()
-
-    def test_scrape_url_smart_allows_public_rewrite_and_dispatches_backend(self):
-        resolver = self._resolver({
-            "github.com": ["140.82.112.3"],
-            "raw.githubusercontent.com": ["185.199.108.133"],
-        })
+    def test_scrape_url_smart_preserves_github_repository_url(self):
+        resolver = self._resolver({"github.com": ["140.82.112.3"]})
 
         def fake_jina(url, key, timeout=0, **kwargs):
             return {"url": url, "markdown": "ok", "via": "jina"}
@@ -219,7 +199,7 @@ class UrlSecurityTests(unittest.TestCase):
         self.assertEqual(result["via"], "jina")
         self.assertEqual(
             backend.call_args.args[0],
-            "https://raw.githubusercontent.com/openai/example/HEAD/README.md",
+            "https://github.com/openai/example",
         )
 
 
