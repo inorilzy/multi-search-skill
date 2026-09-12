@@ -598,6 +598,14 @@ def run_search_web(
     if isinstance(request, dict):
         request = SearchWebRequest(**request)
     resolved_config = _load_config_safe(request.config_path) if config is None else dict(config)
+    # Candidate planning also validates scrape defaults. Preserve explicit
+    # overrides there, before provider calls, as well as in the fetch stage.
+    resolved_config.update({
+        key: value for key, value in (
+            ("scrape_chars", scrape_chars), ("scrape_timeout", scrape_timeout),
+            ("scrape_concurrency", scrape_concurrency),
+        ) if value is not None
+    })
     runtime_keys = load_keys() if keys is None else dict(keys)
     store = (state_store or StateStore()) if request.use_state else None
     query_runs = []
@@ -701,7 +709,8 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             sources=request.sources, timeout=request.timeout, expand=request.expand,
             config_path=request.config_path, use_state=request.use_state,
         ),
-        config=config, query_runs_observer=query_runs.extend,
+        config={**config, "scrape_per_source": plan.scrape_per_source},
+        query_runs_observer=query_runs.extend,
         scrape_chars=request.scrape_chars, scrape_timeout=request.scrape_timeout,
         scrape_concurrency=request.scrape_concurrency,
     )

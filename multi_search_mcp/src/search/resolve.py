@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..support.config import config_bool, config_list
+from ..support.config import ConfigError, config_bool, config_int, config_list
 from .capabilities import PROVIDER_CAPABILITIES
 from .search_runner import (
     ALL_SOURCE_NAMES,
@@ -86,19 +86,28 @@ def resolve_search_plan(request: Any, config: dict) -> ResolvedSearchPlan:
 
 
 def build_counts(config: dict, global_count: int | None = None, route_default: int = 10) -> dict[str, int]:
-    counts_cfg = config.get("counts") if isinstance(config.get("counts"), dict) else {}
+    # An explicit request count overrides every configured count. Null retains
+    # its historical meaning of no per-provider defaults.
+    counts_cfg = config.get("counts") if global_count is None else None
+    if counts_cfg is None:
+        counts_cfg = {}
+    if not isinstance(counts_cfg, dict):
+        raise ConfigError("counts requires a JSON object or null")
     configured_global = global_count if global_count is not None else config.get("count")
     counts = {}
     for source in DEFAULT_COUNTS:
         if global_count is not None:
             value = global_count
+            key = "count"
         else:
             value = counts_cfg.get(source, config.get(f"{source}_count"))
+            key = f"counts.{source}" if source in counts_cfg else f"{source}_count"
             if value is None and configured_global is not None:
                 value = configured_global
+                key = "count"
         if value is None:
             value = route_default
-        counts[source] = max(1, min(int(value), COUNT_CAPS[source]))
+        counts[source] = max(1, min(config_int(value, key), COUNT_CAPS[source]))
     return counts
 
 
@@ -158,15 +167,8 @@ def _resolve_value(request_value: Any, config: dict, key: str, default: Any) -> 
     return default
 
 
-def _int_or_default(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
 def _resolve_int(request_value: Any, config: dict, key: str, default: int) -> int:
-    return _int_or_default(_resolve_value(request_value, config, key, default), default)
+    return config_int(_resolve_value(request_value, config, key, default), key)
 
 
 def _resolve_nonnegative(request_value: Any, config: dict, key: str, default: int) -> int:
