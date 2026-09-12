@@ -172,9 +172,9 @@ def list_sources(include_key_status: bool = False, include_scraper_stats: bool =
 
 
 @mcp.tool(name="doctor")
-def doctor(include_keys: bool = True, include_network: bool = False) -> dict:
+async def doctor(include_keys: bool = True, include_network: bool = False) -> dict:
     """Return local MCP/config/key/provider health without exposing secret key values."""
-    return doctor_tool(include_keys, include_network)
+    return await _run_tool(doctor_tool, include_keys, include_network)
 
 
 @mcp.tool(name="get_key_status")
