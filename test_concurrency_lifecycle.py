@@ -1,8 +1,10 @@
+import gc
 import subprocess
 import sys
 import threading
 import time
 import unittest
+import weakref
 from unittest import mock
 
 import multi_search_mcp.src.search.search_runner as search_runner_module
@@ -17,6 +19,39 @@ def _live_threads(prefix: str) -> list[threading.Thread]:
         thread for thread in threading.enumerate()
         if thread.name.startswith(prefix) and thread.is_alive()
     ]
+
+
+class _LifecyclePayload:
+    def __init__(self, size: int = 1):
+        self.data = bytearray(size)
+
+
+def _success_task_factory(closure_payload, result_payload):
+    def task(_value):
+        if closure_payload is None:
+            raise AssertionError("fixture closure was unexpectedly cleared")
+        return result_payload
+
+    return task
+
+
+def _failure_task_factory(closure_payload):
+    def task(value):
+        if closure_payload is None:
+            raise AssertionError("fixture closure was unexpectedly cleared")
+        # Keep value in the traceback frame without putting it in the exception.
+        raise RuntimeError("fixture task failed")
+
+    return task
+
+
+def _search_provider_factory(payload):
+    def provider(*_args):
+        if payload is None:
+            raise AssertionError("fixture provider payload was unexpectedly cleared")
+        return []
+
+    return provider
 
 
 class BoundedDaemonExecutorTests(unittest.TestCase):
@@ -42,6 +77,78 @@ class BoundedDaemonExecutorTests(unittest.TestCase):
             self.assertTrue(both_started.wait(timeout=0.5))
         finally:
             release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_success_releases_argument_closure_and_result_references(self):
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-reference-success")
+        try:
+            argument = _LifecyclePayload(10_000_000)
+            closure = _LifecyclePayload()
+            result = _LifecyclePayload()
+            references = tuple(weakref.ref(item) for item in (argument, closure, result))
+            task = _success_task_factory(closure, result)
+            future = pool.submit_nowait(task, argument)
+            self.assertIsNotNone(future)
+            self.assertIs(future.result(timeout=2), result)
+            pool._tasks.join()
+            del future, task, argument, closure, result
+
+            gc.collect()
+
+            for reference in references:
+                self.assertIsNone(reference())
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_failure_releases_argument_closure_and_traceback_references(self):
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-reference-failure")
+        try:
+            argument = _LifecyclePayload(10_000_000)
+            closure = _LifecyclePayload()
+            references = tuple(weakref.ref(item) for item in (argument, closure))
+            task = _failure_task_factory(closure)
+            future = pool.submit_nowait(task, argument)
+            self.assertIsNotNone(future)
+            self.assertIsInstance(future.exception(timeout=2), RuntimeError)
+            pool._tasks.join()
+            del future, task, argument, closure
+
+            gc.collect()
+
+            for reference in references:
+                self.assertIsNone(reference())
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_search_runner_releases_provider_closure_after_completion(self):
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-reference-search")
+        try:
+            payload = _LifecyclePayload(10_000_000)
+            reference = weakref.ref(payload)
+            provider_call = _search_provider_factory(payload)
+            del payload
+            providers = {
+                "fixture": ProviderSpec(
+                    "fixture", "fixture", provider_call, key_required=False,
+                ),
+            }
+            runner = SearchRunner(
+                SearchRunnerConfig("test", {}, 0.2, "google", {}),
+                providers,
+                route_resolver=lambda _route: ["fixture"],
+            )
+            with mock.patch.object(search_runner_module, "_SEARCH_POOL", pool):
+                self.assertEqual(
+                    runner.run("query"),
+                    [{"source": "fixture", "status": "ok", "raw_hits": 0, "_empty": True}],
+                )
+            pool._tasks.join()
+            del runner, providers, provider_call
+
+            gc.collect()
+
+            self.assertIsNone(reference())
+        finally:
             pool.shutdown(wait=True, cancel_futures=True)
 
 

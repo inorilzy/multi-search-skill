@@ -95,6 +95,16 @@ class BoundedDaemonExecutor:
         self._threads.append(worker)
         worker.start()
 
+    @staticmethod
+    def _execute_task(task) -> None:
+        future, fn, args, kwargs = task
+        if not future.set_running_or_notify_cancel():
+            return
+        try:
+            future.set_result(fn(*args, **kwargs))
+        except BaseException as exc:
+            future.set_exception(exc)
+
     def _worker(self) -> None:
         while True:
             with self._lock:
@@ -107,16 +117,11 @@ class BoundedDaemonExecutor:
             try:
                 if task is _STOP:
                     return
-                future, fn, args, kwargs = task
-                if not future.set_running_or_notify_cancel():
-                    continue
-                try:
-                    future.set_result(fn(*args, **kwargs))
-                except BaseException as exc:
-                    future.set_exception(exc)
+                self._execute_task(task)
             finally:
                 if task is not _STOP:
                     self._slots.release()
+                task = None
                 self._tasks.task_done()
 
     def _cancel_queued_tasks(self) -> None:
