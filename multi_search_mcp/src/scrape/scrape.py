@@ -98,7 +98,9 @@ def _candidate_for(provider: str, key: str) -> KeyCandidate:
 
 
 def _record_key_result(provider: str, key: str, result: dict, key_manager) -> None:
-    if key_manager is None:
+    # A target-page failure is neutral to credential health, including any
+    # auth failure another in-flight request may already have recorded.
+    if key_manager is None or result.get("error_origin") == "target":
         return
     candidate = _candidate_for(provider, key)
     key_manager.record_result(provider, candidate, key_manager.classify_result(provider, result))

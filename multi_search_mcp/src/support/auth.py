@@ -10,6 +10,8 @@ KEY_RETRY_PATTERNS = (
     "billing", "payment", "insufficient",
 )
 
+KEY_RETRY_ERROR_TYPES = frozenset({"invalid", "quota_exhausted", "rate_limit"})
+
 
 def is_key_retryable_error(results: list | dict | None) -> bool:
     """Return True when provider rows indicate a key/quota/rate-limit failure."""
@@ -19,5 +21,14 @@ def is_key_retryable_error(results: list | dict | None) -> bool:
     error_rows = [row for row in rows if isinstance(row, dict) and "error" in row]
     if not error_rows:
         return False
-    msg = " ".join(str(row.get("error", "")) for row in error_rows).lower()
-    return any(pattern in msg for pattern in KEY_RETRY_PATTERNS)
+    for row in error_rows:
+        if row.get("error_origin") == "target":
+            continue
+        if row.get("error_type"):
+            if row["error_type"] in KEY_RETRY_ERROR_TYPES:
+                return True
+            continue
+        msg = str(row.get("error", "")).lower()
+        if any(pattern in msg for pattern in KEY_RETRY_PATTERNS):
+            return True
+    return False
