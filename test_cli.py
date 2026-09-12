@@ -52,6 +52,19 @@ class CliTests(unittest.TestCase):
             ["retrieval augmented generation", "rrf ranking"],
         )
 
+    def test_search_without_expand_leaves_request_unset(self):
+        captured = {}
+
+        def fake_run(request):
+            captured["request"] = request
+            return {"query": request.query, "results": [], "provider_status": [], "diagnostics": {}}
+
+        with mock.patch.object(cli, "run_search_web", side_effect=fake_run):
+            code, _stdout, stderr = self.run_cli(["search", "primary"])
+
+        self.assertEqual(code, 0, stderr)
+        self.assertIsNone(captured["request"].expand)
+
     def test_search_markdown_renders_compact_search_hits(self):
         with mock.patch.object(cli, "run_search_web", return_value={
             "query": "python",

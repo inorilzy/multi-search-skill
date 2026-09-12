@@ -38,7 +38,7 @@ class QueryIdentityTests(unittest.TestCase):
         finally:
             release.set()
 
-    def search(self, *, query="primary", expand=(), config=None, count=10, call=None,
+    def search(self, *, query="primary", expand=None, config=None, count=10, call=None,
                query_runs_observer=None):
         calls = []
 
@@ -53,7 +53,7 @@ class QueryIdentityTests(unittest.TestCase):
             }]
 
         response = _run_search_candidates(
-            SearchWebRequest(query=query, expand=list(expand), sources=["brave"],
+            SearchWebRequest(query=query, expand=None if expand is None else list(expand), sources=["brave"],
                              count=count, use_state=False),
             providers={"brave": ProviderSpec("brave", "brave", provider)},
             keys={}, config={} if config is None else config,
