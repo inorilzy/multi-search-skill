@@ -1,8 +1,11 @@
 import json
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
-from multi_search_mcp.src.scrape.scrape_planner import plan_scrapes
+from multi_search_mcp.src import service
+from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.search.searchers.baidu import _rows_from_response
 from multi_search_mcp.src.search.searchers.brave import search_brave
 from multi_search_mcp.src.search.searchers.exa import search_exa
@@ -12,7 +15,7 @@ from multi_search_mcp.src.search.searchers.parallel import search_parallel
 from multi_search_mcp.src.search.searchers.serpapi import search_serpapi
 from multi_search_mcp.src.search.searchers.stackoverflow import search_stackoverflow
 from multi_search_mcp.src.search.searchers.tavily import search_tavily
-from multi_search_mcp.src.support.dedup import _norm_url, apply_scraped_content
+from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support.models import SearchResult
 
 
@@ -247,9 +250,36 @@ class ProviderContentKindTests(unittest.TestCase):
         self.assertEqual(rows[0]["content_kind"], "metadata")
 
 
-class ScrapePlannerContentKindTests(unittest.TestCase):
+class SearchWebContentKindTests(unittest.TestCase):
+    def setUp(self):
+        temp = TemporaryDirectory(prefix="search-content-semantics-")
+        self.addCleanup(temp.cleanup)
+        self.store = StateStore(Path(temp.name) / "state.sqlite")
+
+    def _search(self, rows, scraper, *, use_state=True):
+        providers = {
+            source: ProviderSpec(
+                name=source,
+                public_name=source,
+                call=lambda _query, _config, _context, _key, source=source: [
+                    dict(row) for row in rows if row["source"] == source
+                ],
+            )
+            for source in {row["source"] for row in rows}
+        }
+        with (
+            mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")),
+            mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected connection")),
+        ):
+            return service.run_search_web(
+                service.SearchWebRequest(query="query", sources=list(providers), use_state=use_state),
+                providers=providers, keys={}, config={}, state_store=self.store,
+                scraper=scraper, url_resolver=lambda _host: ["93.184.216.34"],
+            )
+
     def test_excerpt_does_not_block_scrape_even_when_long(self):
-        plan = plan_scrapes(
+        scraper = mock.Mock(return_value={"markdown": "fetched body", "via": "fake"})
+        response = self._search(
             [{
                 "source": "exa",
                 "title": "Example",
@@ -258,68 +288,87 @@ class ScrapePlannerContentKindTests(unittest.TestCase):
                 "scraped_content": "x" * 1200,
                 "content_kind": "excerpt",
             }],
-            keys={},
-            scrape_top=5,
-            scrape_per_source=5,
+            scraper,
         )
 
-        self.assertEqual(plan.with_content, [])
-        self.assertEqual([item["url"] for item in plan.items_to_scrape], ["https://example.com/excerpt"])
+        self.assertEqual(response["errors"], [])
+        scraper.assert_called_once()
+        self.assertEqual(scraper.call_args.args[0], "https://example.com/excerpt")
+        self.assertEqual(response["results"][0]["content"], "x" * 1200)
+        self.assertEqual(response["results"][0]["content_kind"], "excerpt")
+        self.assertEqual(response["scrapes"][0]["markdown"], "fetched body")
 
     def test_short_body_skips_scrape_without_length_threshold(self):
-        plan = plan_scrapes(
-            [{
-                "source": "baidu",
-                "title": "Example",
-                "url": "https://example.com/body",
-                "scraped_content": "short body",
-                "content_kind": "body",
-            }],
-            keys={},
-            scrape_top=5,
-            scrape_per_source=5,
-        )
+        for use_state in (True, False):
+            with self.subTest(use_state=use_state):
+                scraper = mock.Mock(side_effect=AssertionError("body must skip fetch"))
+                response = self._search(
+                    [{
+                        "source": "baidu",
+                        "title": "Example",
+                        "url": "https://example.com/body",
+                        "scraped_content": "short body",
+                        "content_kind": "body",
+                    }],
+                    scraper, use_state=use_state,
+                )
 
-        self.assertEqual(plan.items_to_scrape, [])
-        self.assertEqual([item["url"] for item in plan.with_content], ["https://example.com/body"])
+                self.assertEqual(response["errors"], [])
+                scraper.assert_not_called()
+                self.assertTrue(response["results"][0]["body_available"])
+                self.assertEqual(response["scrapes"][0]["markdown"], "short body")
 
     def test_prefetched_body_skips_duplicate_excerpt_scrape(self):
-        plan = plan_scrapes(
-            [
-                {
-                    "source": "baidu",
-                    "title": "Body",
-                    "url": "https://example.com/shared",
-                    "scraped_content": "body",
-                    "content_kind": "body",
-                },
-                {
-                    "source": "exa",
-                    "title": "Excerpt",
-                    "url": "https://example.com/shared",
-                    "description": "summary",
-                    "content_kind": "excerpt",
-                },
-            ],
-            keys={},
-            scrape_top=5,
-            scrape_per_source=5,
-        )
+        rows = [
+            {
+                "source": "baidu",
+                "title": "Body",
+                "url": "https://example.com/shared",
+                "scraped_content": "body",
+                "content_kind": "body",
+            },
+            {
+                "source": "exa",
+                "title": "Excerpt",
+                "url": "https://example.com/shared",
+                "description": "summary",
+                "content_kind": "excerpt",
+            },
+        ]
+        for use_state in (True, False):
+            with self.subTest(use_state=use_state):
+                scraper = mock.Mock(side_effect=AssertionError("duplicate body must be reused"))
+                response = self._search(rows, scraper, use_state=use_state)
 
-        self.assertEqual(plan.items_to_scrape, [])
-        self.assertEqual(set(plan.content_pool), {_norm_url("https://example.com/shared")})
+                self.assertEqual(response["errors"], [])
+                scraper.assert_not_called()
+                self.assertEqual(len(response["results"]), 1)
+                self.assertEqual(response["results"][0]["providers"], ["baidu", "exa"])
+                self.assertEqual(response["results"][0]["content"], "summary")
+                self.assertEqual(response["scrapes"][0]["markdown"], "body")
 
-
-class ScrapeWritebackTests(unittest.TestCase):
-    def test_apply_scraped_content_marks_rows_as_body(self):
-        rows = [{"source": "brave", "url": "https://example.com", "description": "snippet"}]
-        apply_scraped_content(
+    def test_fetched_body_keeps_public_snippet_separate(self):
+        rows = [{
+            "source": "brave", "url": "https://example.com",
+            "description": "snippet", "content_kind": "excerpt",
+        }]
+        response = self._search(
             rows,
-            {_norm_url("https://example.com"): {"markdown": "body", "via": "jina"}},
+            mock.Mock(return_value={"markdown": "body", "via": "fake"}),
         )
 
-        self.assertEqual(rows[0]["scraped_content"], "body")
-        self.assertEqual(rows[0]["content_kind"], "body")
+        self.assertEqual(response["errors"], [])
+        hit = response["results"][0]
+        self.assertEqual(hit["content"], "snippet")
+        self.assertEqual(hit["content_kind"], "excerpt")
+        self.assertTrue(hit["body_available"])
+        self.assertNotIn("body", hit)
+        self.assertNotIn("scraped_content", hit)
+        self.assertEqual(response["scrapes"][0]["markdown"], "body")
+        cached = service.run_read_source(
+            service.ReadSourceRequest(source_id=hit["source_id"]), state_store=self.store,
+        )
+        self.assertEqual(cached["content"], "body")
 
 
 if __name__ == "__main__":

@@ -168,8 +168,8 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             if backend not in KNOWN_BACKENDS:
                 return normalize_scrape_result({"error": f"unknown scrape backend: {backend}"}, url=url)
 
-    # Domain dispatch precedes generic key/backend selection. The scrape planner
-    # can pass its generic backend list even for Reddit candidates.
+    # Domain dispatch precedes generic key/backend selection, including when
+    # callers pass a generic backend list for Reddit URLs.
     if is_reddit_url(url):
         try:
             safe_url = validate_scrape_url(url, resolver=url_resolver)

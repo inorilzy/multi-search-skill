@@ -115,6 +115,87 @@ class SearchFetchPipelineTests(unittest.TestCase):
         self.assertEqual(len(fetched_urls), 15)
         self.assertCountEqual(fetched_urls, [hit["url"] for hit in response["results"]])
 
+    def test_fusion_keeps_business_urls_distinct_and_merges_tracking_aliases(self):
+        first = {**_row("brave", "shared"), "url": "https://evidence.example/shared?ref_id=1"}
+        duplicate = {**first, "source": "tavily", "url": first["url"] + "&utm_source=fixture",
+                     "description": "A longer independent snippet"}
+        second = {**first, "url": "https://evidence.example/shared?ref_id=2"}
+        providers = {
+            "brave": _provider("brave", {"primary": [first, second]}),
+            "tavily": _provider("tavily", {"primary": [duplicate]}),
+        }
+        scraper = mock.Mock(side_effect=lambda url, **kwargs: {
+            "url": url, "markdown": "Fetched body", "via": "fake",
+        })
+        response = self._search(providers, scraper)
+        self.assertEqual(response["errors"], [])
+        self.assertEqual(len(response["results"]), 2)
+        shared = response["results"][0]
+        self.assertEqual(shared["providers"], ["brave", "tavily"])
+        self.assertEqual(shared["content"], duplicate["description"])
+        self.assertEqual({hit["canonical_url"] for hit in response["results"]},
+                         {first["url"], second["url"]})
+        self.assertEqual(scraper.call_count, 2)
+
+    def test_fetch_uses_search_title_and_configured_timeout(self):
+        row = {**_row("brave", "article"), "title": "Real Article Title"}
+        provider = _provider("brave", {"primary": [row]})
+        for backend_title in (None, row["url"], "Backend Title"):
+            with self.subTest(backend_title=backend_title):
+                scraper = mock.Mock(return_value={
+                    "url": row["url"], "title": backend_title, "markdown": "body", "via": "fake",
+                })
+                response = self._search({"brave": provider}, scraper, scrape_timeout=7)
+                self.assertEqual(response["errors"], [])
+                self.assertEqual(response["scrapes"][0]["title"], row["title"])
+                self.assertEqual(response["results"][0]["title"], row["title"])
+                self.assertGreater(scraper.call_args.kwargs["timeout"], 0)
+                self.assertLessEqual(scraper.call_args.kwargs["timeout"], 7)
+
+    def test_provider_answer_does_not_skip_its_url_or_video_results(self):
+        rows = [
+            {"source": "tavily_answer", "answer": "Synthesized answer"},
+            _row("tavily", "article"),
+            {**_row("tavily", "video"), "url": "https://youtube.com/watch?v=fixture"},
+        ]
+        scraper = mock.Mock(side_effect=lambda url, **kwargs: {
+            "url": url, "markdown": "Fetched body", "via": "fake",
+        })
+        response = self._search({"tavily": _provider("tavily", {"primary": rows})}, scraper)
+        self.assertEqual(response["errors"], [])
+        self.assertEqual(len(response["results"]), 2)
+        self.assertCountEqual([call.args[0] for call in scraper.call_args_list],
+                              [row["url"] for row in rows[1:]])
+
+    def test_keyless_fetch_tries_jina_before_anonymous_firecrawl(self):
+        from multi_search_mcp.src.scrape import scrape
+
+        calls = []
+
+        def jina(url, *args, **kwargs):
+            calls.append("jina")
+            return {"url": url, "error": "fixture target unavailable"}
+
+        def firecrawl(url, key, **kwargs):
+            calls.append("firecrawl")
+            self.assertFalse(key)
+            return {"url": url, "markdown": "Anonymous body", "via": "firecrawl"}
+
+        with (
+            mock.patch.object(scrape, "_jina_anonymous_cooling_down", return_value=False),
+            mock.patch.object(scrape, "scrape_url_jina", side_effect=jina),
+            mock.patch.object(scrape, "scrape_url_firecrawl", side_effect=firecrawl),
+            mock.patch.object(scrape, "scrape_url_exa", side_effect=AssertionError("unexpected Exa")),
+            mock.patch.object(scrape, "scrape_url_tavily", side_effect=AssertionError("unexpected Tavily")),
+        ):
+            response = self._search(
+                {"brave": _provider("brave", {"primary": [_row("brave", "anonymous")]})},
+                scrape.scrape_url_smart,
+            )
+        self.assertEqual(response["errors"], [])
+        self.assertEqual(calls, ["jina", "firecrawl"])
+        self.assertEqual(response["scrapes"][0]["markdown"], "Anonymous body")
+
     def test_fetch_failure_keeps_position_and_explicit_diagnostics(self):
         rows = [_row("brave", name) for name in ("first", "broken", "third")]
         provider = _provider("brave", {"primary": rows})

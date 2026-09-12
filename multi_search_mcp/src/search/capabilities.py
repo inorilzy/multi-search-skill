@@ -1,6 +1,6 @@
 """Provider capability contracts for searchers and scrapers.
 
-The contracts drive content classification, scrape planning, retention, and
+The contracts describe provider output, fetch policy, retention, and
 operator-facing capability tables. Runtime provider registries still live in
 ``search.registry`` and the scraper modules.
 """
@@ -8,16 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-
-from ..support.models import (
-    ANSWER_SOURCES,
-    CONTENT_KIND_ANSWER,
-    CONTENT_KIND_BODY,
-    CONTENT_KIND_CONTENT,
-    CONTENT_KIND_EXCERPT,
-    CONTENT_KIND_METADATA,
-    normalize_content_kind,
-)
 
 
 class ProviderKind(str, Enum):
@@ -387,42 +377,6 @@ def normalize_provider_name(name: str) -> str:
         if capability.public_name.replace("-", "_") == normalized:
             return internal
     return normalized
-
-
-def infer_content_kind(row: dict | None) -> str:
-    data = row or {}
-    explicit = str(data.get("content_kind") or "").strip()
-    if explicit:
-        return normalize_content_kind(explicit)
-
-    source = str(data.get("source") or "")
-    normalized_source = normalize_provider_name(source)
-    if source in ANSWER_SOURCES or source.replace("-", "_").endswith("_answer") or data.get("answer"):
-        return CONTENT_KIND_ANSWER
-
-    if data.get("scraped_content"):
-        if normalized_source == "twitter":
-            return CONTENT_KIND_CONTENT
-        capability = get_capability_optional(normalized_source)
-        if capability and capability.output.returns_content and capability.scrape_policy == ScrapePolicy.PREFETCH:
-            return CONTENT_KIND_BODY
-        return CONTENT_KIND_CONTENT
-
-    if data.get("description"):
-        capability = get_capability_optional(normalized_source)
-        if capability and capability.output.returns_snippet:
-            return CONTENT_KIND_EXCERPT
-    return CONTENT_KIND_METADATA
-
-
-def content_kind_blocks_scrape(source_name: str, content_kind: str) -> bool:
-    kind = normalize_content_kind(content_kind)
-    if kind == CONTENT_KIND_BODY:
-        return True
-    if kind != CONTENT_KIND_CONTENT:
-        return False
-    capability = get_capability_optional(source_name)
-    return bool(capability and capability.output.returns_content)
 
 
 def capability_table_rows(names: list[str] | tuple[str, ...] | None = None) -> list[dict[str, object]]:
