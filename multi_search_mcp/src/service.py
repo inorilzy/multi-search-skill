@@ -147,9 +147,16 @@ def run_read_source(
     limit = max(1, min(int(request.limit), 8_000))
     match_offset = None
     if request.keyword:
-        match_offset = body.lower().find(str(request.keyword).lower())
-        if match_offset < 0:
+        lower_match_offset = body.lower().find(str(request.keyword).lower())
+        if lower_match_offset < 0:
             raise ValueError("keyword was not found in cached content")
+        # Preserve lower() matching, but map expanded characters (e.g. İ) back
+        # to their original positions before applying character offsets.
+        lower_end = 0
+        for match_offset, char in enumerate(body):
+            lower_end += len(char.lower())
+            if lower_end > lower_match_offset:
+                break
         start = min(len(body), match_offset + offset)
     else:
         start = min(len(body), offset)
