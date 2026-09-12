@@ -114,6 +114,7 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             "github_repos",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
                 search_github_repos, q, cfg.counts["github"], cfg.keys.get("github", ""), timeout=ctx.timeout,
+                deadline=ctx.deadline,
             ),
         ),
         "hackernews": _provider_spec(
