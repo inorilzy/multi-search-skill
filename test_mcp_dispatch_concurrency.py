@@ -1,8 +1,10 @@
 """MCP scheduling regressions with controlled Core work and no network access."""
 import asyncio
 import json
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from mcp import types
@@ -48,6 +50,158 @@ class MCPDispatchConcurrencyTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 release.set()
                 await search
+
+    async def test_network_doctor_runs_off_loop_while_light_tool_finishes(self):
+        loop_thread = threading.get_ident()
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        captured = {}
+        payload = {
+            "network_checked": True,
+            "network_ok": True,
+            "network_checks": [{"status": "ok"}],
+        }
+
+        def slow_doctor(include_keys=True, include_network=False):
+            captured["thread"] = threading.get_ident()
+            captured["include_keys"] = include_keys
+            captured["include_network"] = include_network
+            started.set()
+            try:
+                if not release.wait(3):
+                    raise RuntimeError("test watchdog released a blocked doctor")
+                return payload
+            finally:
+                finished.set()
+
+        with mock.patch("multi_search_mcp.server.doctor_tool", side_effect=slow_doctor):
+            release_timer = threading.Timer(0.3, release.set)
+            release_timer.daemon = True
+            release_timer.start()
+            doctor = asyncio.create_task(server.mcp.call_tool(
+                "doctor", {"include_keys": False, "include_network": True}
+            ))
+            try:
+                await asyncio.wait_for(asyncio.to_thread(started.wait, 1), 1)
+                content = await asyncio.wait_for(server.mcp.call_tool("list_sources", {}), 1)
+                self.assertIn("sources", json.loads(content[0].text))
+                self.assertFalse(finished.is_set(), "list_sources waited for network doctor")
+                self.assertNotEqual(captured["thread"], loop_thread)
+                self.assertFalse(captured["include_keys"])
+                self.assertTrue(captured["include_network"])
+            finally:
+                release.set()
+                release_timer.cancel()
+                content = await doctor
+            self.assertEqual(json.loads(content[0].text), payload)
+
+    async def test_doctor_preserves_defaults_and_structured_network_failures(self):
+        success_payload = {
+            "network_checked": False,
+            "network_ok": None,
+            "network_checks": [],
+        }
+        with mock.patch("multi_search_mcp.server.doctor_tool", return_value=success_payload) as doctor_tool:
+            content = await server.mcp.call_tool("doctor", {})
+        doctor_tool.assert_called_once_with(True, False)
+        self.assertEqual(json.loads(content[0].text), success_payload)
+
+        failure_payload = {
+            "network_checked": True,
+            "network_ok": False,
+            "network_checks": [{"status": "error", "error": "probe failed"}],
+        }
+        with mock.patch("multi_search_mcp.server.doctor_tool", return_value=failure_payload) as doctor_tool:
+            content = await server.mcp.call_tool(
+                "doctor", {"include_keys": False, "include_network": True}
+            )
+        doctor_tool.assert_called_once_with(False, True)
+        self.assertEqual(json.loads(content[0].text), failure_payload)
+
+    async def test_cancelled_doctors_keep_capacity_until_probes_finish(self):
+        release = threading.Event()
+        all_started = threading.Event()
+        started_threads = []
+        started_lock = threading.Lock()
+        calls = []
+        payload = {
+            "network_checked": True,
+            "network_ok": True,
+            "network_checks": [{"status": "ok"}],
+        }
+
+        def slow_doctor(include_keys=True, include_network=False):
+            with started_lock:
+                started_threads.append(threading.get_ident())
+                if len(started_threads) == 4:
+                    all_started.set()
+            if not release.wait(3):
+                raise RuntimeError("test watchdog released blocked doctors")
+            return payload
+
+        with mock.patch("multi_search_mcp.server.doctor_tool", side_effect=slow_doctor) as doctor_tool:
+            try:
+                calls = [asyncio.create_task(server.mcp.call_tool(
+                    "doctor", {"include_keys": False, "include_network": True}
+                )) for _ in range(4)]
+                await asyncio.wait_for(asyncio.to_thread(all_started.wait, 2), 2)
+                self.assertEqual(len(started_threads), 4)
+
+                for call in calls:
+                    call.cancel()
+                for call in calls:
+                    with self.assertRaises(asyncio.CancelledError):
+                        await call
+
+                for _ in range(8):
+                    content = await server.mcp.call_tool(
+                        "doctor", {"include_keys": False, "include_network": True}
+                    )
+                    error = json.loads(content[0].text)
+                    self.assertEqual(error["error_type"], "runtime_error")
+                    self.assertIn("capacity exhausted", error["error"])
+                self.assertEqual(doctor_tool.call_count, 4)
+
+                content = await server.mcp.call_tool("list_sources", {})
+                self.assertIn("sources", json.loads(content[0].text))
+            finally:
+                release.set()
+                await asyncio.gather(*calls, return_exceptions=True)
+
+        await asyncio.to_thread(self.pool._tasks.join)
+        with mock.patch("multi_search_mcp.server.doctor_tool", return_value=payload):
+            content = await server.mcp.call_tool(
+                "doctor", {"include_keys": False, "include_network": True}
+            )
+        self.assertEqual(json.loads(content[0].text), payload)
+
+    async def test_network_doctor_reports_probe_failure_over_mcp(self):
+        from multi_search_mcp.src import service
+        from multi_search_mcp.src.state.state_store import StateStore
+
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            store = StateStore(temp_path / "state.sqlite")
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.read.return_value = b"{}"
+            with mock.patch.object(service, "StateStore", return_value=store), \
+                 mock.patch.object(service, "load_keys", return_value={}), \
+                 mock.patch.object(service, "load_config", return_value={}), \
+                 mock.patch.object(service, "resolve_config_path", return_value=temp_path / "config.json"), \
+                 mock.patch("multi_search_mcp.src.support.http.urlopen_retry",
+                            side_effect=[response, TimeoutError("probe timeout")]) as opener:
+                content = await server.mcp.call_tool(
+                    "doctor", {"include_keys": False, "include_network": True}
+                )
+
+        result = json.loads(content[0].text)
+        self.assertEqual(opener.call_count, 2)
+        self.assertTrue(result["network_checked"])
+        self.assertFalse(result["network_ok"])
+        self.assertEqual([row["status"] for row in result["network_checks"]], ["ok", "error"])
+        self.assertIn("probe timeout", result["network_checks"][1]["error"])
 
     async def test_all_expensive_tools_run_core_off_loop_and_preserve_results(self):
         cases = [
