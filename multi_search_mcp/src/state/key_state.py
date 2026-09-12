@@ -180,19 +180,26 @@ class SQLiteKeyManager(BasicKeyManager):
         exhausted_until = None
         rate_inc = 0
         quota_inc = 0
+        status_sql = "?"
+        cooldown_sql = "?"
         strike_assignment = "invalid_strikes = invalid_strikes"
         if error_type == "invalid":
             # A single 401/403 is often a transient upstream blip (Cloudflare,
             # gateway, brief rate misclassification). Cool the key down and only
             # escalate to a permanent INVALID after repeated consecutive hits.
-            current_strikes = self._invalid_strikes(provider, candidate.key_id)
-            new_strikes = current_strikes + 1
-            strike_assignment = f"invalid_strikes = {int(new_strikes)}"
-            if new_strikes >= INVALID_STRIKE_LIMIT:
-                status = INVALID
-            else:
-                status = TRANSIENT_INVALID
-                cooldown_until = _iso(_now() + INVALID_COOLDOWN)
+            # All expressions in this UPDATE use the same pre-update row, so
+            # concurrent outcomes increment and choose state in commit order.
+            strike_assignment = "invalid_strikes = invalid_strikes + 1"
+            status_sql = (
+                f"CASE WHEN invalid_strikes + 1 >= {INVALID_STRIKE_LIMIT} "
+                f"THEN '{INVALID}' ELSE ? END"
+            )
+            cooldown_sql = (
+                f"CASE WHEN invalid_strikes + 1 >= {INVALID_STRIKE_LIMIT} "
+                "THEN NULL ELSE ? END"
+            )
+            status = TRANSIENT_INVALID
+            cooldown_until = _iso(_now() + INVALID_COOLDOWN)
         elif error_type == "rate_limit":
             status = COOLDOWN
             cooldown_until = _iso(_now() + timedelta(minutes=15))
@@ -207,10 +214,10 @@ class SQLiteKeyManager(BasicKeyManager):
         self.store.execute(
             f"""
             UPDATE key_state
-            SET status = ?, failure_count = failure_count + 1,
+            SET status = {status_sql}, failure_count = failure_count + 1,
                 rate_limit_count = rate_limit_count + ?, quota_error_count = quota_error_count + ?,
                 last_failure_at = ?, last_error_type = ?, last_error_message = ?,
-                cooldown_until = ?, exhausted_until = ?, {strike_assignment}, updated_at = ?
+                cooldown_until = {cooldown_sql}, exhausted_until = ?, {strike_assignment}, updated_at = ?
             WHERE provider = ? AND key_id = ?
             """,
             (
@@ -219,16 +226,6 @@ class SQLiteKeyManager(BasicKeyManager):
                 exhausted_until, now, provider, candidate.key_id,
             ),
         )
-
-    def _invalid_strikes(self, provider: str, key_id: str) -> int:
-        rows = self.store.rows(
-            "SELECT invalid_strikes FROM key_state WHERE provider = ? AND key_id = ?",
-            (provider, key_id),
-        )
-        if not rows:
-            return 0
-        value = rows[0].get("invalid_strikes")
-        return int(value or 0)
 
     def status_rows(self, provider: str | None = None) -> list[dict]:
         if provider:
