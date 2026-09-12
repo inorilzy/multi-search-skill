@@ -24,26 +24,29 @@
       background: #181818;
     }
 
-    body {
-      overflow: hidden;
-    }
+    body { overflow: auto; }
 
     main {
       width: 100%;
-      height: 100vh;
-      padding: 8px 8vw 24px;
+      padding: 24px;
       border-top: 2px solid #2a2a2a;
     }
 
-    p {
-      margin: 34px 0 46px;
-      font-size: 28px;
-      line-height: 1.5;
+    h1 { margin: 0 0 12px; font-size: 26px; }
+    p { margin: 8px 0; font-size: 14px; line-height: 1.7; }
+    a { color: #9dcef3; }
+    nav, .controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+    button {
+      padding: 8px 12px; border: 1px solid #617084; border-radius: 6px;
+      background: #292f38; color: #eee; font: inherit; cursor: pointer;
     }
+    button:focus-visible, a:focus-visible { outline: 2px solid #9dcef3; outline-offset: 3px; }
+    details { margin-top: 20px; max-width: 1000px; font-size: 14px; line-height: 1.8; }
+    li { margin: 8px 0; }
 
     code {
-      padding: 4px 12px;
-      border-radius: 10px;
+      padding: 2px 5px;
+      border-radius: 4px;
       background: #303030;
       color: #dedede;
       font-family: Consolas, "Cascadia Mono", monospace;
@@ -53,9 +56,10 @@
     .diagram-viewport {
       position: relative;
       width: 100%;
-      height: calc(100vh - 126px);
+      height: 72vh;
       min-height: 420px;
       overflow: hidden;
+      border: 1px solid #3a4655;
       touch-action: none;
       cursor: grab;
     }
@@ -68,7 +72,7 @@
       position: absolute;
       inset: 0 auto auto 0;
       display: block;
-      width: 4450.46875px;
+      width: 3174.53125px;
       max-width: none;
       height: auto;
       transform-origin: 0 0;
@@ -82,33 +86,58 @@
         padding-right: 24px;
       }
 
-      p {
-        font-size: 20px;
-      }
-
-      .diagram-viewport {
-        height: calc(100vh - 106px);
-      }
+      main { padding: 16px; }
     }
   </style>
 </head>
 <body>
   <main>
-    <p>这版以当前 <code>HEAD f66e441</code> 为准：</p>
-    <div class="diagram-viewport" id="diagram-viewport">
-      <img id="architecture-diagram" src="./current-architecture.svg" alt="Multi Search 当前中文架构图" draggable="false">
+    <h1>当前架构：共享搜索与正文获取</h1>
+    <p>2026-09-12 核对 · 代码基准 <code>6775ab0</code>。两个搜索入口共用 RRF，再为最终最多 15 条结果获取正文。</p>
+    <nav aria-label="架构资料">
+      <a href="./architecture-simple.md">简易说明</a>
+      <a href="./current-architecture.mmd">Mermaid 源码</a>
+      <a href="./current-architecture.svg">独立 SVG</a>
+      <a href="../CONTEXT.md">概念定义</a>
+    </nav>
+    <div class="controls" aria-label="图的视图">
+      <button type="button" data-panel="SEARCH">01 共享搜索</button>
+      <button type="button" data-panel="BODY">02 正文获取</button>
+      <button type="button" data-panel="STATE">03 缓存与状态</button>
+      <button type="button" id="fit">显示全图</button>
+      <button type="button" id="actual-size">原始字号</button>
     </div>
+    <p id="diagram-help">按模块阅读；滚轮缩放、拖动平移。实线表示调用或数据流，虚线表示可选持久化或状态访问。重复名称指向同一个函数或存储。</p>
+    <div class="diagram-viewport" id="diagram-viewport">
+      <img id="architecture-diagram" src="./current-architecture.svg" alt="三个分区：search_web 与 multi_search 共享 RRF 和最终十五条正文获取；fetch 复用缓存或抓取、read 仅读缓存；来源、正文与运行状态各有所有者。" aria-describedby="diagram-help" draggable="false">
+    </div>
+    <details open>
+      <summary>关键边界与代码依据</summary>
+      <ul>
+        <li><strong>摘要、预览、缓存全文分开：</strong><code>results[].content</code> 是搜索摘要；正文在 <code>scrapes[].markdown</code>，默认预览 1200 字符，以 <code>source_id</code> 关联。<code>multi_search</code> 的 Markdown/both 模式只在顶层 <code>markdown</code> 放正文。<a href="../multi_search_mcp/src/service.py">service.py</a> 负责共享流程和展示；正文失败保留排名。</li>
+        <li><strong>获取顺序：</strong>解析来源并校验 URL → source-ID 缓存 → 条件允许的 URL/scope 缓存 → Provider 预取正文或实际抓取。URL/scope 复用仅适用于无预取正文的请求，受来源、后端及权限范围约束。<code>fetch_source(full_content=True)</code> 返回已取得全文；<a href="../multi_search_mcp/src/state/content_store.py">ContentStore</a> 仍受保留策略、大小和过期限制。预览缩短不会截短已存正文。</li>
+        <li><strong>read 仅缓存：</strong>缺失或过期时明确报错，不发起抓取；读取仍会维护访问时间及清理过期数据。<code>use_state=False</code> 跳过 SQLite，公共 source-ID fetch/read 需要状态；直接 URL fetch 仍可用。<code>scrape_url</code> 不建立 source-ID 正文缓存。</li>
+        <li><strong>入口与配置：</strong><a href="../skills/multi-search/SKILL.md">Skill</a> 指导工具选择；配置文件、环境变量与 keys 文件提供行为配置和凭据。MCP 的搜索/抓取经 <a href="../multi_search_mcp/tools.py">tools.py</a> 进入 Core，CLI search/fetch/read 直接调用 Core；key/site 管理工具也会直接访问状态类。图不把明文凭据画入 SQLite。</li>
+        <li><strong>MCP 调度：</strong><a href="../multi_search_mcp/server.py">server.py</a> 将 search_web、multi_search、fetch_source、scrape_url 转交独立 4 槽位有界线程池，再调用同步工具与 Core。满池返回明确的 <code>runtime_error</code>；取消等待不能中止正在运行的线程，工作实际结束才释放槽位，Core deadline 仍有效。轻量工具不进入这个池。</li>
+        <li><strong>预取正文只选一次：</strong>候选阶段按 URL 生成 <code>prefetched_bodies</code>；最长正文优先，等长时按 provider、正文文本升序选择。缓存写入与当前响应复用同一结果；<code>use_state</code> 控制持久化，不改变这个选择。</li>
+        <li><strong>Exa 错误边界：</strong><a href="../multi_search_mcp/src/scrape/scrapers/exa.py">adapter</a> 区分目标网页错误与 provider 凭据错误。目标失败保留使用记录及明确错误，不触发 key 健康转换或 key 轮换；provider 认证/额度/限流仍由 key manager 分类处理。</li>
+        <li><strong>非生产路径：</strong>旧 <code>ScrapePlanner / run_scrape_stage</code> 与正文回写链已删除；当前生产使用 <a href="../multi_search_mcp/src/scrape/stage.py">run_ranked_fetch_stage</a>。格式化仍使用 <code>rank_results</code>；<code>scrape_top / scrape_per_source</code> 兼容参数仍被接受，但不限制最终正文获取。<code>provider_runs</code> 只有建表，没有生产写入；<code>scrape_attempts</code> 由 <a href="../multi_search_mcp/src/state/site_memory.py">SiteScraperMemory</a> 写入。<a href="../multi_search_mcp/src/search/snapshots.py">快照采集与回放</a> 是显式开发工具，不是生产缓存层。带日期的历史审查图保持原语境。</li>
+      </ul>
+      <p>核对提交：MCP <code>cb742a9</code>、Exa <code>172f104</code>、正文选择 <code>66feda8</code>、旧链清理 <code>3bcf721</code>。渲染源为同目录 MMD，使用 Mermaid 11.17.2 生成静态 SVG，无 CDN 依赖；更新时同步 SVG 尺寸和分区坐标。</p>
+    </details>
   </main>
   <script>
     (() => {
-      const diagramWidth = 4450.46875;
-      const diagramHeight = 2770.38525390625;
+      const diagramWidth = 3174.53125;
+      const diagramHeight = 1893.6875;
+      const panels = {"SEARCH":{"x":8,"y":74,"width":675,"height":1746},"BODY":{"x":712,"y":8,"width":1229,"height":1878},"STATE":{"x":1971,"y":421,"width":1196,"height":1051}};
       const viewport = document.getElementById('diagram-viewport');
       const diagram = document.getElementById('architecture-diagram');
 
       let state = { scale: 1, x: 0, y: 0 };
       let minimumScale = 1;
       let dragStart = null;
+      let selectedPanel = 'SEARCH';
 
       function viewportSize() {
         const rect = viewport.getBoundingClientRect();
@@ -134,11 +163,33 @@
       }
 
       function fit() {
+        selectedPanel = null;
         const size = viewportSize();
         minimumScale = Math.min(size.width / diagramWidth, size.height / diagramHeight);
         state = { scale: minimumScale, x: 0, y: 0 };
         render();
       }
+
+      function focusPanel(name) {
+        selectedPanel = name;
+        const size = viewportSize();
+        const panel = panels[name];
+        minimumScale = Math.min(size.width / diagramWidth, size.height / diagramHeight);
+        const scale = Math.min(1, (size.width - 32) / panel.width);
+        state = { scale, x: 16 - panel.x * scale, y: 16 - panel.y * scale };
+        render();
+      }
+
+      document.querySelectorAll('[data-panel]').forEach(button => {
+        button.addEventListener('click', () => focusPanel(button.dataset.panel));
+      });
+      document.getElementById('fit').addEventListener('click', fit);
+      document.getElementById('actual-size').addEventListener('click', () => {
+        state.x /= state.scale;
+        state.y /= state.scale;
+        state.scale = 1;
+        render();
+      });
 
       viewport.addEventListener('wheel', (event) => {
         event.preventDefault();
@@ -179,8 +230,10 @@
 
       viewport.addEventListener('pointerup', stopDragging);
       viewport.addEventListener('pointercancel', stopDragging);
-      window.addEventListener('resize', fit);
-      diagram.addEventListener('load', fit, { once: true });
+      window.addEventListener('resize', () => selectedPanel ? focusPanel(selectedPanel) : fit());
+      const initialize = () => focusPanel('SEARCH');
+      diagram.addEventListener('load', initialize, { once: true });
+      if (diagram.complete && diagram.naturalWidth) initialize();
     })();
   </script>
 </body>

@@ -3,166 +3,121 @@ config:
   theme: base
   themeVariables:
     background: "#181818"
-    primaryColor: "#353535"
-    primaryTextColor: "#d8d8d8"
-    primaryBorderColor: "#454545"
-    secondaryColor: "#353535"
-    secondaryTextColor: "#d8d8d8"
-    secondaryBorderColor: "#454545"
-    tertiaryColor: "#1f1f1f"
-    tertiaryTextColor: "#d8d8d8"
-    tertiaryBorderColor: "#3a3a3a"
-    mainBkg: "#353535"
-    secondBkg: "#353535"
-    nodeBorder: "#454545"
-    clusterBkg: "#1f1f1f"
-    clusterBorder: "#3a3a3a"
-    lineColor: "#888888"
-    arrowheadColor: "#888888"
+    primaryColor: "#292f38"
+    primaryTextColor: "#eeeeee"
+    primaryBorderColor: "#617084"
+    secondaryColor: "#292f38"
+    tertiaryColor: "#202328"
+    clusterBkg: "#202328"
+    clusterBorder: "#515b6a"
+    lineColor: "#a9b7c9"
     edgeLabelBackground: "#181818"
-    textColor: "#d8d8d8"
+    textColor: "#eeeeee"
     fontFamily: "Microsoft YaHei UI, Microsoft YaHei, PingFang SC, sans-serif"
+    fontSize: "18px"
+  flowchart:
+    nodeSpacing: 30
+    rankSpacing: 42
+    padding: 16
+    wrappingWidth: 360
 ---
+%% Current implementation verified on 2026-09-12, code baseline 6775ab0.
+%% MCP cb742a9; Exa 172f104; prefetch 66feda8; legacy cleanup 3bcf721.
+%% Three focused panels. Repeated names refer to the same function/store.
+%% Solid edges: calls/data. Dotted edges: optional persistence/state access.
+%% Evidence: service.py, search/candidate.py, search/registry.py,
+%% scrape/stage.py, scrape/scrape.py, state/{content_store,site_memory}.py.
 flowchart TB
-    U["智能体 / 用户"]
-    SK["Skill<br/>仅定义工作流选择"]
-    U -. 遵循 .-> SK
+    subgraph STATE["03 · 缓存与运行状态（use_state=True）"]
+        direction TB
+        CAND["候选阶段 · _run_search_candidates<br/>登记来源；一次选择 prefetched_bodies<br/>缓存与当前响应共用该选择"]
+        SOURCES[("SourceRegistry · search_sources<br/>短期来源引用 / URL / 搜索摘要")]
+        CONTENT[("ContentStore<br/>content_objects / content_sources<br/>正文全文与 source_id 绑定")]
+        FSTATE["fetch_source<br/>读取来源；复用 / 保存正文"]
+        RSTATE["read_source · run_read_source<br/>仅缓存切片；无网络抓取<br/>缺失 / 过期明确报错"]
+        KEYOPS["SearchRunner / 通用抓取 key pool<br/>SQLiteKeyManager：使用记录与健康<br/>Exa target 错误仅记使用，不变更健康"]
+        KEYS[("key_state<br/>使用记录 / 冷却 / 健康状态<br/>不保存明文凭据")]
+        SITEOPS["抓取编排 · SiteScraperMemory<br/>站点顺序 / 偏好 / 抓取尝试"]
+        SITE[("site_scraper_stats<br/>scrape_attempts")]
+        OPS["诊断与管理入口<br/>Core：doctor / list_sources<br/>key / site 工具也直接访问状态类"]
 
-    subgraph ENTRY["薄入口层"]
-        direction LR
-        MCP["FastMCP server.py<br/>全部 MCP 工具"]
-        TOOLS["tools.py<br/>参数校验 / 错误封装"]
-        CLI["cli.py<br/>search · fetch · read · doctor · keys"]
-        MCP --> TOOLS
+        CAND -. 保留策略 .-> SOURCES
+        CAND -. 同一份预取正文，按保留策略 .-> CONTENT
+        CAND -- prefetched_bodies --> FSTATE
+        FSTATE -. 查询 / 直接 URL 登记 .-> SOURCES
+        FSTATE <-. 受保留策略和 scope 约束 .-> CONTENT
+        RSTATE -.-> CONTENT
+        KEYOPS <-.-> KEYS
+        SITEOPS <-.-> SITE
+        OPS -.-> KEYS
+        OPS -.-> SITE
+        SOURCES ~~~ KEYOPS
+        CONTENT ~~~ SITEOPS
     end
 
-    U --> MCP
-    U --> CLI
-
-    subgraph SERVICE["共享 Core · src/service.py"]
-        direction LR
-        SW["search_web"]
-        FS["fetch_source"]
-        RS["read_source"]
-        MS["multi_search<br/>兼容重型路径"]
-        SU["scrape_url"]
-        OPS["doctor / key / site<br/>诊断"]
-    end
-
-    TOOLS --> SW
-    TOOLS --> FS
-    TOOLS --> RS
-    TOOLS --> MS
-    TOOLS --> SU
-    TOOLS --> OPS
-
-    CLI --> SW
-    CLI --> FS
-    CLI --> RS
-    CLI --> OPS
-
-    SK -. 默认候选流 .-> SW
-    SK -. 按需正文 .-> FS
-    SK -. 显式深抓取 .-> MS
-
-    subgraph SEARCH["共享搜索基座"]
-        direction LR
-        CFG["配置 / 环境变量 / 密钥文件"]
-        PLAN["resolve_search_plan<br/>route · sources · count · timeout"]
-        CAP["ProviderCapability<br/>→ Provider 注册表"]
-        RUN["SearchRunner<br/>并发扇出 · provider_rank · 密钥状态"]
-        ADAPTER["Provider 适配器"]
-        RAW["Provider 结果列表"]
-
-        CFG --> PLAN
-        CFG --> RUN
-        CAP --> RUN
-        PLAN --> RUN
-        RUN --> ADAPTER
-        ADAPTER --> RAW
-    end
-
-    SW --> PLAN
-    MS --> PLAN
-    ADAPTER <--> SEARCH_EXT[("搜索 API / 浏览器来源")]
-
-    subgraph CANDIDATE["候选优先主路径"]
-        direction LR
-        RRF["URL 身份<br/>两阶段等权 RRF"]
-        HIT["紧凑 SearchHit<br/>response_id · source_id"]
-        PREFETCH["真实 Provider 正文<br/>按保留策略可选保存"]
-
-        RRF --> HIT
-    end
-
-    RAW -- search_web --> RRF
-    HIT --> SOURCES
-    RAW -. Provider 预取正文 .-> PREFETCH
-    CAP -. 保留策略 .-> PREFETCH
-    PREFETCH --> CONTENT
-
-    subgraph BODY["按需正文路径"]
-        direction LR
-        REF["解析 source_id<br/>或直接 URL"]
-        CACHE{"ContentStore 命中？"}
-        SCRAPE["抓取编排<br/>后端失败切换"]
-        STORE["按保留策略写入"]
-        FOUT["受限长度正文<br/>标记为不可信"]
-        READ["仅缓存读取<br/>切片返回 · 不访问网络"]
-        SOUT["scrape_url 直接结果"]
+    subgraph BODY["02 · 正文获取与继续阅读"]
+        direction TB
+        REF["fetch_source · run_fetch_source<br/>source_id → 来源记录，或直接 URL<br/>URL 安全校验"]
+        CACHE{"可复用缓存？<br/>source_id；有条件的 URL + scope"}
+        PREFETCH{"有 Provider 预取正文？"}
+        RAW["_run_scrape_raw → scrape_url_smart<br/>URL 安全 / deadline / 抓取状态"]
+        REDDIT["Reddit 域名专用 scraper<br/>eddrit 匿名 Token → Reddit API<br/>帖子正文 + 已加载评论"]
+        GENERIC["其他域名 · 通用后端<br/>Jina / Exa / Tavily / Firecrawl<br/>按配置和站点记忆选择顺序"]
+        ACQUIRED["实际取得的正文或明确错误"]
+        STORE["成功正文按保留策略写 ContentStore<br/>缓存已取得正文，受 TTL / 大小限制<br/>输出预览长度不截断缓存"]
+        FOUT["fetch_source 响应 · 不可信正文<br/>body 默认最多 20000 字符<br/>full_content=True 返回已取得全文"]
+        SU["scrape_url · run_scrape<br/>直接抓取入口"]
+        SOUT["scrape_url 展示结果<br/>不建立 source_id 正文缓存"]
+        ERROR["fetch_source 失败 / 空正文<br/>搜索：逐条 body_error，保留排名<br/>直接调用：入口封装明确错误"]
 
         REF --> CACHE
         CACHE -- 命中 --> FOUT
-        CACHE -- 未命中 --> SCRAPE
-        SCRAPE -- fetch_source --> STORE
-        STORE --> FOUT
+        CACHE -- 未命中 --> PREFETCH
+        PREFETCH -- 有 --> STORE
+        PREFETCH -- 无 --> RAW
+        SU --> RAW
+        RAW -- Reddit 域名 --> REDDIT --> ACQUIRED
+        RAW -- 其他域名 --> GENERIC --> ACQUIRED
+        ACQUIRED -- fetch_source 成功 --> STORE --> FOUT
+        ACQUIRED -- fetch_source 失败或空正文 --> ERROR
+        ACQUIRED -- scrape_url --> SOUT
     end
 
-    FS --> REF
-    SOURCES --> REF
-    CACHE <--> CONTENT
-    STORE --> CONTENT
-    RS --> READ
-    READ <--> CONTENT
-    SU --> SCRAPE
-    SCRAPE -- scrape_url --> SOUT
+    subgraph SEARCH["01 · 共享搜索流程"]
+        direction TB
+        MCP["MCP · server.py · stdio<br/>四个耗时工具 → 独立 4 槽位异步池<br/>→ tools.py 同步 Core"]
+        CLI["CLI · cli.py<br/>search 命令"]
+        MS["multi_search<br/>run_multi_search：兼容包装"]
+        SW["search_web<br/>run_search_web：共享 Core"]
+        PLAN["_run_search_candidates<br/>查询计划 / route / sources / count"]
+        RUN["SearchRunner → Provider 注册表<br/>并发搜索 · want_content=False<br/>当前注册 12 个搜索源"]
+        RRF["fuse_search_results · URL 去重<br/>先 provider RRF，再扩展 query RRF<br/>默认等权；加权为显式实验选项"]
+        HIT["最终最多 15 条 SearchHit<br/>response_id / source_id<br/>content 保留搜索摘要"]
+        FETCH["run_ranked_fetch_stage<br/>逐条 run_fetch_source（见 02）<br/>复用缓存 / 预取正文 / 联网抓取"]
+        OUT["共享搜索响应 · 排名保持<br/>results：摘要及 body_error<br/>scrapes：正文预览，默认 1200 字符"]
+        FORMAT["multi_search 兼容展示<br/>JSON：scrapes[].markdown<br/>Markdown / both：正文只在 markdown"]
 
-    subgraph LEGACY["兼容重型路径 · multi_search"]
-        direction LR
-        STAGE["ScrapePlanner + 批量阶段<br/>content_kind · capability · quota"]
-        MERGE["未抓取行 + 正文回写行"]
-        RANK["deduplicate<br/>→ rank_results"]
-        FORMAT["JSON / Markdown"]
-
-        STAGE --> MERGE
-        MERGE --> RANK
-        RANK --> FORMAT
+        MCP --> SW
+        MCP --> MS
+        CLI --> SW
+        MS --> SW
+        SW --> PLAN --> RUN --> RRF --> HIT --> FETCH --> OUT
+        OUT -- multi_search 返回时 --> FORMAT
     end
 
-    RAW -- multi_search --> STAGE
-    CAP -. 抓取策略 .-> STAGE
-    STAGE --> SCRAPE
-    SCRAPE -- multi_search --> MERGE
+    classDef core fill:#263c50,stroke:#80b9e4,color:#f1f7ff
+    classDef data fill:#283e37,stroke:#7bb6a0,color:#effaf5
+    classDef boundary fill:#413729,stroke:#cfad75,color:#fff7e9
+    class MS,SW,RRF,FETCH,REF,RAW core
+    class HIT,OUT,CONTENT,SOURCES,KEYS,SITE data
+    class FORMAT,RSTATE,SOUT,ERROR boundary
 
-    subgraph STATE["共享 StateStore · ~/.multi-search/state.sqlite"]
-        direction LR
-        KEYS["SQLiteKeyManager<br/>key_state"]
-        SITE["SiteScraperMemory<br/>site_scraper_stats"]
-        SOURCES["SourceRegistry<br/>search_sources"]
-        CONTENT["ContentStore<br/>content_objects / content_sources"]
-        LOGS["provider_runs<br/>scrape_attempts"]
-    end
-
-    RUN <--> KEYS
-    RUN --> LOGS
-    SCRAPE <--> KEYS
-    SCRAPE <--> SITE
-    SCRAPE --> LOGS
-    OPS <--> KEYS
-    OPS <--> SITE
-    OPS <--> LOGS
-
-    SECURITY["URL 安全<br/>HTTP(S) · DNS · 私网拦截 · 本地重定向校验"]
-    FS -. 使用 .-> SECURITY
-    SCRAPE -. 使用 .-> SECURITY
-    SCRAPE <--> SCRAPE_EXT[("Jina / Exa / Tavily / Firecrawl")]
+    %% Skill guides tool choice; configuration/credentials feed Core at runtime.
+    %% Candidate prefetch selection uses (-length, provider, body) once per URL.
+    %% MCP pool exhaustion is runtime_error; running work holds its slot after cancellation.
+    %% Exa target errors record usage but skip key health transitions/rotation.
+    %% use_state=False skips SQLite; public source_id fetch/read require state.
+    %% provider_runs is schema-only: no production writer is currently wired.
+    %% ScrapePlanner / run_scrape_stage and old writeback were removed.
+    %% rank_results remains in formatting; legacy scrape parameters remain accepted.
+    %% snapshots.py is explicit development capture/replay, not runtime caching.
