@@ -45,6 +45,15 @@ class BoundedDaemonExecutor:
         if remaining <= 0 or not self._slots.acquire(timeout=remaining):
             return None
 
+        return self._submit_acquired(fn, *args, **kwargs)
+
+    def submit_nowait(self, fn: Callable[..., Any], /, *args, **kwargs) -> Future | None:
+        """Admit work without blocking the caller or queuing beyond capacity."""
+        if not self._slots.acquire(blocking=False):
+            return None
+        return self._submit_acquired(fn, *args, **kwargs)
+
+    def _submit_acquired(self, fn: Callable[..., Any], /, *args, **kwargs) -> Future:
         future = Future()
         with self._lock:
             if self._shutdown:
