@@ -118,6 +118,8 @@ skill 入口在 [skills/multi-search/SKILL.md](skills/multi-search/SKILL.md)，�
 
 MCP 和 CLI 都是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；业务能力只落在 `multi_search_mcp/src/`。
 
+MCP 的四个耗时工具使用独立有界线程调度，支持及时处理其他请求和取消消息；容量与取消边界见 [MCP 入口调度](docs/mcp-dispatch.md)。
+
 同步个人 Skill 时，将整个 `skills/multi-search/`（含 `references/`）复制到自己的 Skill 目录；先备份现有文件并保留个人定制，核对文件内容或 hash 后替换。只复制 `SKILL.md` 会缺少 CLI 指南。已加载的旧 Skill 需要在新任务中重新读取。
 
 ## 搜索源、注册和免费额度

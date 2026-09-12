@@ -2,8 +2,13 @@
 """MCP stdio server entrypoint for multi-search."""
 from __future__ import annotations
 
+import asyncio
+import contextvars
+from typing import Callable
+
 from mcp.server.fastmcp import FastMCP
 
+from .src.support.concurrency import BoundedDaemonExecutor
 from .tools import (
     doctor_tool,
     fetch_source_tool,
@@ -20,6 +25,21 @@ from .tools import (
 )
 
 
+# Separate from the provider/fetch pools: cancelled waiters must not free slots
+# while their synchronous Core calls are still running.
+_TOOL_POOL = BoundedDaemonExecutor(max_workers=4, thread_name_prefix="mcp-tool")
+
+
+async def _run_tool(fn: Callable[..., dict], *args) -> dict:
+    future = _TOOL_POOL.submit_nowait(contextvars.copy_context().run, fn, *args)
+    if future is None:
+        return {"error": "MCP tool capacity exhausted; retry after active calls finish",
+                "error_type": "runtime_error"}
+    # Cancels queued work if possible, but cannot stop a running thread/network
+    # call. The executor retains its slot until actual completion.
+    return await asyncio.wrap_future(future)
+
+
 mcp = FastMCP(
     "multi-search",
     instructions=(
@@ -30,7 +50,7 @@ mcp = FastMCP(
 
 
 @mcp.tool(name="search_web")
-def search_web(
+async def search_web(
     query: str,
     route: str | None = None,
     count: int | None = None,
@@ -57,13 +77,14 @@ def search_web(
     `results[].body_error` marks failures. Fetching never changes rank.
     Use fetch_source(url=...) to read a known URL without searching.
     """
-    return search_web_tool(
+    return await _run_tool(
+        search_web_tool,
         query, route, count, sources, timeout, expand, use_state
     )
 
 
 @mcp.tool(name="fetch_source")
-def fetch_source(
+async def fetch_source(
     source_id: str | None = None,
     url: str | None = None,
     backends: list[str] | None = None,
@@ -78,7 +99,8 @@ def fetch_source(
     `max_chars` output limit. Otherwise output is bounded by `max_chars`
     (default and maximum: 20000 characters). The body occurs once in `body`.
     """
-    return fetch_source_tool(
+    return await _run_tool(
+        fetch_source_tool,
         source_id, url, backends, max_chars, timeout, use_state, full_content
     )
 
@@ -96,7 +118,7 @@ def read_source(
 
 
 @mcp.tool(name="multi_search")
-def multi_search(query: str, route: str | None = None,
+async def multi_search(query: str, route: str | None = None,
                   count: int | None = None,
                   sources: list[str] | None = None, scrape_top: int | None = None,
                   scrape_chars: int | None = None, timeout: int | None = None,
@@ -123,12 +145,12 @@ def multi_search(query: str, route: str | None = None,
     Use fetch_source(url=...) or scrape_url for a known URL without searching.
     On invalid input returns a structured {"error", "error_type"} dict.
     """
-    return multi_search_tool(query, route, count, sources, scrape_top, scrape_chars,
-                             timeout, scrape_timeout, expand, use_state, output)  # type: ignore[arg-type]
+    return await _run_tool(multi_search_tool, query, route, count, sources, scrape_top, scrape_chars,
+                           timeout, scrape_timeout, expand, use_state, output)
 
 
 @mcp.tool(name="scrape_url")
-def scrape_url(url: str, backends: list[str] | None = None, scrape_chars: int | None = None,
+async def scrape_url(url: str, backends: list[str] | None = None, scrape_chars: int | None = None,
                scrape_timeout: int | None = None, use_state: bool = True,
                output: str = "both") -> dict:
     """Fetch readable page content using state-aware scraper backend ordering.
@@ -140,7 +162,7 @@ def scrape_url(url: str, backends: list[str] | None = None, scrape_chars: int | 
     output=json returns the normalized page in `result`; markdown/both returns
     its body only in top-level `markdown`, retaining `result` metadata.
     """
-    return scrape_url_tool(url, backends, scrape_chars, scrape_timeout, use_state, output)  # type: ignore[arg-type]
+    return await _run_tool(scrape_url_tool, url, backends, scrape_chars, scrape_timeout, use_state, output)
 
 
 @mcp.tool(name="list_sources")
