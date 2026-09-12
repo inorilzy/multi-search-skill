@@ -1,10 +1,12 @@
 """Tavily-backed URL scraping."""
 import json
 import time
+import urllib.error
 import urllib.request
 
 from ...support.http import urlopen_retry
 from ...support.secrets import scrub_secrets
+from ...support.tavily import tavily_http_error
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
 
 
@@ -86,5 +88,13 @@ def scrape_url_tavily(
         ):
             merged.update(error_origin="target", error_type="target")
         return merged
+    except urllib.error.HTTPError as exc:
+        message, error_type = tavily_http_error(exc, api_key)
+        return {
+            "url": url,
+            "error": f"Tavily: {message}",
+            "error_origin": "provider",
+            "error_type": error_type,
+        }
     except Exception as exc:
         return {"url": url, "error": f"Tavily: {scrub_secrets(exc, api_key)}"}
