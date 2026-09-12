@@ -1,6 +1,6 @@
 """Pure-logic and key/state tests for the multi-search MCP runtime.
 
-These exercise the packaged MCP modules under multi_search_mcp/src (dedup, scrape planner,
+These exercise the packaged MCP modules under multi_search_mcp/src (URL normalization,
 routes, capabilities, models, secrets, keys). The companion
 test_mcp_architecture.py covers the MCP/service wiring and the C' architecture
 fixes; this file covers the provider-agnostic core logic.
@@ -21,7 +21,6 @@ from multi_search_mcp.src.search.capabilities import (
     get_capability,
 )
 from multi_search_mcp.src.search.search_runner import ROUTE_PROFILES, available_routes, resolve_route
-from multi_search_mcp.src.scrape.scrape_planner import plan_scrapes
 from multi_search_mcp.src.scrape.scrape import KNOWN_BACKENDS
 from multi_search_mcp.src.state.keys import (
     count_jina_keys,
@@ -33,7 +32,7 @@ from multi_search_mcp.src.state.keys import (
 )
 from multi_search_mcp.src.state.key_state import BasicKeyManager
 from multi_search_mcp.src.state.mark_exhausted import _mark_config_exhausted
-from multi_search_mcp.src.support.dedup import _norm_url, deduplicate, split_by_content
+from multi_search_mcp.src.support.dedup import _norm_url
 from multi_search_mcp.src.support.models import ProviderError, ScrapeResult, SearchResult, empty_result_row, is_empty_result
 from multi_search_mcp.src.support.secrets import scrub_secrets
 from multi_search_mcp.src.search.searchers import baidu as baidu_searcher
@@ -529,153 +528,6 @@ class DedupTests(unittest.TestCase):
             _norm_url("http://Example.com/path/?utm_source=x&keep=1#frag"),
             "https://example.com/path?keep=1",
         )
-
-    def test_duplicate_urls_merge_sources_and_richer_fields(self):
-        results = [
-            {"source": "brave", "title": "A", "url": "https://example.com/a", "description": "short"},
-            {
-                "source": "tavily",
-                "title": "Longer title",
-                "url": "https://example.com/a?utm_campaign=x",
-                "description": "a longer description",
-                "scraped_content": "full text",
-            },
-        ]
-        deduped, raw_counts = deduplicate(results)
-        self.assertEqual(raw_counts, {"brave": 1, "tavily": 1})
-        self.assertEqual(len(deduped), 1)
-        self.assertEqual(deduped[0]["also_from"], ["tavily"])
-        self.assertEqual(deduped[0]["title"], "Longer title")
-        self.assertEqual(deduped[0]["scraped_content"], "full text")
-
-    def test_split_by_content_keeps_summarized_url_rows_when_skipping(self):
-        # A provider with a query-level answer should keep its URL rows out of
-        # scraping when skip_summarized_sources is enabled, while a URL-only
-        # source (github) still needs scraping.
-        rows = [
-            {"source": "tavily_answer", "answer": "synthesized summary"},
-            {"source": "tavily", "title": "A", "url": "https://example.com/a"},
-            {"source": "github-repos", "title": "Y", "url": "https://github.com/x/y"},
-        ]
-
-        with_content, without_content, _passthrough, _raw = split_by_content(
-            rows, skip_summarized_sources=True
-        )
-        self.assertIn(
-            "https://example.com/a", {item.get("url") for item in with_content}
-        )
-        self.assertIn(
-            "https://github.com/x/y", {item.get("url") for item in without_content}
-        )
-
-    def test_split_by_content_scrapes_summarized_url_rows_by_default(self):
-        # Without skip_summarized_sources (normal level), a summarized source's
-        # URL row is still a scrape candidate.
-        rows = [
-            {"source": "tavily_answer", "answer": "synthesized summary"},
-            {"source": "tavily", "title": "A", "url": "https://example.com/a"},
-        ]
-
-        _with, without_content, _pass, _raw = split_by_content(rows)
-        self.assertIn(
-            "https://example.com/a", {item.get("url") for item in without_content}
-        )
-
-
-class ScrapePlannerTests(unittest.TestCase):
-    def test_prefetched_content_does_not_enter_scrape_items(self):
-        rows = [
-            {"source": "tavily", "title": "Full", "url": "https://example.com/full", "scraped_content": "x" * 400},
-            {"source": "brave", "title": "Needs", "url": "https://example.com/needs", "description": "snippet"},
-        ]
-
-        plan = plan_scrapes(rows, keys={}, scrape_top=2, scrape_per_source=6)
-
-        self.assertEqual([item["url"] for item in plan.items_to_scrape], ["https://example.com/needs"])
-        self.assertIn("https://example.com/full", {row["url"] for row in plan.content_pool.values()})
-
-    def test_web_video_urls_are_not_scrape_candidates(self):
-        rows = [
-            {"source": "brave", "title": "Video", "url": "https://youtube.com/watch?v=1"},
-            {"source": "brave", "title": "Video", "url": "https://youtu.be/1"},
-            {"source": "brave", "title": "Video", "url": "https://www.bilibili.com/video/BV1"},
-            {"source": "brave", "title": "Doc", "url": "https://example.com/doc"},
-        ]
-
-        plan = plan_scrapes(rows, keys={}, scrape_top=5, scrape_per_source=6)
-
-        self.assertEqual([item["url"] for item in plan.items_to_scrape], ["https://example.com/doc"])
-
-    def test_skip_summarized_sources_skips_scraping_sources_with_a_summary(self):
-        rows = [
-            {"source": "tavily_answer", "answer": "synthesized summary"},
-            {"source": "tavily", "title": "A", "url": "https://example.com/a", "description": "snippet"},
-            {"source": "github-repos", "title": "Y", "url": "https://github.com/x/y", "description": "snippet"},
-        ]
-
-        normal = plan_scrapes(rows, keys={}, scrape_top=5, scrape_per_source=6)
-        self.assertEqual(
-            {item["url"] for item in normal.items_to_scrape},
-            {"https://example.com/a", "https://github.com/x/y"},
-        )
-
-        skipped = plan_scrapes(
-            rows, keys={}, scrape_top=5, scrape_per_source=6, skip_summarized_sources=True
-        )
-        # tavily provided a summary -> its URL is not scraped; github (URL-only) is.
-        self.assertEqual(
-            [item["url"] for item in skipped.items_to_scrape], ["https://github.com/x/y"]
-        )
-
-    def test_preferred_sources_and_source_quota_are_applied(self):
-        rows = [
-            {"source": "exa", "title": "Generic", "url": "https://example.com/generic"},
-            {"source": "brave", "title": "Preferred 1", "url": "https://example.com/p1"},
-            {"source": "brave", "title": "Preferred 2", "url": "https://example.com/p2"},
-        ]
-
-        plan = plan_scrapes(rows, keys={}, scrape_top=5, scrape_per_source=1)
-
-        self.assertEqual(
-            [item["url"] for item in plan.items_to_scrape],
-            ["https://example.com/p1", "https://example.com/generic"],
-        )
-        self.assertEqual(plan.source_quota, {"brave": 1, "exa": 1})
-
-    def test_key_pools_rotate_per_url(self):
-        rows = [
-            {"source": "brave", "title": f"Doc {idx}", "url": f"https://example.com/{idx}"}
-            for idx in range(3)
-        ]
-
-        with mock.patch("multi_search_mcp.src.state.keys.random.shuffle", side_effect=lambda xs: None):
-            plan = plan_scrapes(
-                rows,
-                keys={"exa": ["e1", "e2"], "tavily": ["t1", "t2"]},
-                scrape_top=3,
-                scrape_per_source=6,
-            )
-
-        self.assertEqual(
-            [tuple(item.key_pools.exa) for item in plan.plan_items],
-            [("e1", "e2"), ("e2", "e1"), ("e1", "e2")],
-        )
-        self.assertEqual(
-            [item.primary_backend for item in plan.plan_items],
-            ["jina", "exa", "tavily"],
-        )
-
-    def test_anonymous_firecrawl_is_fallback_not_primary(self):
-        rows = [
-            {"source": "brave", "title": f"Doc {idx}", "url": f"https://example.com/{idx}"}
-            for idx in range(4)
-        ]
-
-        plan = plan_scrapes(rows, keys={}, scrape_top=4, scrape_per_source=6)
-
-        self.assertEqual(plan.backend_order, ["jina", "firecrawl"])
-        self.assertEqual([item.primary_backend for item in plan.plan_items], ["jina"] * 4)
-
 
 class KeyTests(unittest.TestCase):
     def test_pick_key_supports_key_pool_arrays(self):

@@ -29,7 +29,7 @@ from multi_search_mcp.src.state.site_memory import ScrapeAttempt, SiteScraperMem
 from multi_search_mcp.src.support.format import format_results
 from multi_search_mcp import tools
 from multi_search_mcp.src.support import config as config_module
-from multi_search_mcp.src.support.dedup import _norm_url, apply_scraped_content, deduplicate, rank_results
+from multi_search_mcp.src.support.dedup import _norm_url, rank_results
 from multi_search_mcp.src import service as service_module
 
 
@@ -325,20 +325,6 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
 
         self.assertEqual(result["via"], "exa")
         self.assertEqual(captured["max_chars"], 2048)
-
-    def test_backfill_scrape_title_uses_search_title_when_missing(self):
-        url = "https://example.com/article"
-        search_titles = {_norm_url(url): "Real Article Title"}
-
-        # Backend returned the URL as a placeholder title (Tavily behavior).
-        result = {"url": url, "title": url, "markdown": "body"}
-        service_module._backfill_scrape_title(result, search_titles)
-        self.assertEqual(result["title"], "Real Article Title")
-
-        # A real backend title is left untouched.
-        result2 = {"url": url, "title": "Backend Title", "markdown": "body"}
-        service_module._backfill_scrape_title(result2, search_titles)
-        self.assertEqual(result2["title"], "Backend Title")
 
     def test_firecrawl_anonymous_request_omits_authorization_header(self):
         from multi_search_mcp.src.scrape.scrapers import firecrawl as firecrawl_mod
@@ -879,7 +865,16 @@ class PluginServiceConfigTests(unittest.TestCase):
         real_result = {"source": "tavily", "title": "t", "url": "https://e.com"}
         meta_row = {"source": "tavily", "status": "ok", "raw_hits": 0}
 
-        self.assertEqual(service_module._valid_result_count([real_result, meta_row]), 1)
+        with (
+            mock.patch.object(service_module, "_load_config_safe", return_value={}),
+            mock.patch.object(service_module, "load_keys", return_value={}),
+            mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}),
+            mock.patch.object(service_module.SearchRunner, "run", return_value=[real_result, meta_row]),
+            mock.patch.object(service_module, "run_ranked_fetch_stage", side_effect=_fake_ranked_fetch_stage),
+        ):
+            response = run_multi_search(MultiSearchRequest(query="q", sources=["tavily"], use_state=False))
+        self.assertEqual(response["diagnostics"]["valid_result_count"], 1)
+        self.assertEqual([hit["url"] for hit in response["results"]], [real_result["url"]])
 
         # A meta-only result set (no real results) for a route with primary
         # sources must report degradation; adding a real primary result clears it.
@@ -1377,106 +1372,6 @@ class PluginNormUrlTests(unittest.TestCase):
         for token in ("ref_id=99", "reference=abc", "referrer=g", "source_id=7", "q=hi"):
             self.assertIn(token, norm)
 
-    def test_distinct_ref_id_not_merged(self):
-        deduped, _ = deduplicate([
-            {"source": "brave", "url": "https://x.com/a?ref_id=1", "title": "A"},
-            {"source": "tavily", "url": "https://x.com/a?ref_id=2", "title": "B"},
-        ])
-        urls = {row["url"] for row in deduped}
-        self.assertEqual(len(urls), 2)
-
-
-class PluginScrapeWritebackTests(unittest.TestCase):
-    def test_apply_scraped_content_promotes_longer_markdown(self):
-        rows = [{"source": "brave", "url": "https://x.com/a", "scraped_content": "short"}]
-        pool = {_norm_url("https://x.com/a"): {"markdown": "x" * 500, "via": "jina"}}
-        apply_scraped_content(rows, pool)
-        self.assertEqual(rows[0]["scraped_content"], "x" * 500)
-        self.assertTrue(rows[0]["scraped"])
-        self.assertEqual(rows[0]["scrape_via"], "jina")
-
-    def test_apply_scraped_content_ignores_unrelated_and_shorter(self):
-        rows = [{"source": "brave", "url": "https://x.com/a", "scraped_content": "y" * 100}]
-        pool = {_norm_url("https://x.com/a"): {"markdown": "z" * 10, "via": "jina"}}
-        apply_scraped_content(rows, pool)
-        # shorter pooled content must not clobber the existing longer content,
-        # but the row is still flagged as scraped.
-        self.assertEqual(rows[0]["scraped_content"], "y" * 100)
-        self.assertTrue(rows[0]["scraped"])
-
-    def test_scrape_stage_writes_content_back_to_result_rows(self):
-        all_results = [{"source": "brave", "url": "https://x.com/a", "title": "A", "description": "d"}]
-
-        def fake_scrape(url, *a, **k):
-            return {"url": url, "markdown": "BODY " * 100, "via": "jina"}
-
-        with mock.patch("multi_search_mcp.src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
-            stage = service_module._run_scrape_stage(
-                all_results, keys={"jina": "k"}, scrape_top=3,
-                scrape_per_source=6, scrape_timeout=30, scrape_concurrency=2,
-                site_memory=None, key_manager=None,
-            )
-        enriched = stage["final_without_content"]
-        self.assertTrue(any(r.get("scraped_content") for r in enriched))
-        self.assertTrue(any(r.get("scraped") for r in enriched))
-
-    def test_scrape_stage_uses_configured_per_url_timeout_not_hardcoded(self):
-        # P2-G: the orchestrator per-URL scrape timeout is config-driven, no
-        # longer the old hardcoded ``timeout=30``.
-        all_results = [{"source": "brave", "url": "https://x.com/a", "title": "A", "description": "d"}]
-        seen: list[int] = []
-
-        def fake_scrape(url, *a, **k):
-            seen.append(k.get("timeout"))
-            return {"url": url, "markdown": "BODY " * 100, "via": "jina"}
-
-        with mock.patch("multi_search_mcp.src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
-            service_module._run_scrape_stage(
-                all_results, keys={"jina": "k"}, scrape_top=3,
-                scrape_per_source=6, scrape_timeout=120, scrape_concurrency=2,
-                site_memory=None, key_manager=None, scrape_url_timeout=7,
-            )
-        self.assertTrue(seen)
-        # Bounded by the configured per-URL cap (7), not 30 and not the 120s stage.
-        self.assertTrue(all(0 < t <= 7 for t in seen), seen)
-
-    def test_scrape_stage_completion_is_driven_by_plan_items_not_candidates(self):
-        from multi_search_mcp.src.scrape.scrape_planner import ScrapeKeyPools, ScrapePlan, ScrapePlanItem
-        candidates = [
-            {"source": "brave", "url": "https://x.com/a", "title": "A"},
-            {"source": "brave", "url": "https://x.com/b", "title": "B"},
-        ]
-        fake_plan = ScrapePlan(
-            with_content=[],
-            final_without_content=list(candidates),
-            passthrough=[],
-            raw_counts={"brave": 2},
-            content_pool={},
-            scrape_candidates=list(candidates),
-            items_to_scrape=list(candidates),
-            source_quota={"brave": 2},
-            backend_order=["jina"],
-            plan_items=[ScrapePlanItem(0, candidates[0], "jina", ScrapeKeyPools(jina=["jk"]))],
-        )
-
-        def fake_scrape(url, *a, **k):
-            return {"url": url, "markdown": "BODY " * 100, "via": "jina"}
-
-        started = time.monotonic()
-        with mock.patch("multi_search_mcp.src.scrape.stage.plan_scrapes", return_value=fake_plan), \
-             mock.patch("multi_search_mcp.src.scrape.stage.scrape_url_smart", side_effect=fake_scrape):
-            stage = service_module._run_scrape_stage(
-                candidates, keys={"jina": "jk"}, scrape_top=2,
-                scrape_per_source=6, scrape_timeout=1, scrape_concurrency=1,
-                site_memory=None, key_manager=None,
-            )
-        elapsed = time.monotonic() - started
-
-        self.assertLess(elapsed, 0.5)
-        self.assertEqual(len(stage["scrape_errors"]), 0)
-        self.assertEqual(stage["scrapes"][0]["url"], "https://x.com/a")
-
-
 class PluginRankingTests(unittest.TestCase):
     def test_scraped_row_ranks_above_consensus_only(self):
         rows = [
@@ -1627,26 +1522,6 @@ class PluginRRFSearchContractTests(unittest.TestCase):
         markdown = responses[1]["markdown"]
         self.assertLess(markdown.index("https://example.com/first"),
                         markdown.index("https://example.com/second"))
-
-
-class PluginCanonicalSourceTests(unittest.TestCase):
-    def test_github_repos_claims_canonical_over_brave(self):
-        deduped, _ = deduplicate([
-            {"source": "brave", "url": "https://github.com/foo/bar", "title": "repo"},
-            {"source": "github-repos", "url": "https://github.com/foo/bar", "title": "repo", "stars": 10},
-        ])
-        self.assertEqual(len(deduped), 1)
-        row = deduped[0]
-        self.assertEqual(row["source"], "github-repos")
-        self.assertIn("brave", row.get("also_from", []))
-
-    def test_non_authoritative_host_keeps_first_seen_source(self):
-        deduped, _ = deduplicate([
-            {"source": "brave", "url": "https://example.com/x", "title": "a"},
-            {"source": "tavily", "url": "https://example.com/x", "title": "a"},
-        ])
-        self.assertEqual(deduped[0]["source"], "brave")
-        self.assertIn("tavily", deduped[0].get("also_from", []))
 
 
 class PluginRegistryConsistencyTests(unittest.TestCase):

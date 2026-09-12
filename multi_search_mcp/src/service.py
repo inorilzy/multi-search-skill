@@ -16,11 +16,7 @@ from .state.key_state import BasicKeyManager, SQLiteKeyManager
 from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, load_keys
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content
 from .scrape.scrape import scrape_url_smart
-from .scrape.stage import (
-    _backfill_scrape_title,
-    run_scrape_stage as _run_scrape_stage,
-    run_ranked_fetch_stage,
-)
+from .scrape.stage import run_ranked_fetch_stage
 from .search.search_runner import (
     ALL_SOURCE_NAMES,
     SearchRunner,
@@ -825,10 +821,6 @@ def _limit_scrape_row(row: dict, max_chars: int) -> dict:
     return limited
 
 
-def _limit_scrape_rows(rows: list[dict], max_chars: int) -> list[dict]:
-    return [_limit_scrape_row(row, max_chars) for row in rows]
-
-
 def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
     response = {"routes": available_routes(), "sources": sorted(ALL_SOURCE_NAMES)}
     store = None
@@ -941,18 +933,6 @@ def _route_degradation(route: str, results: list[dict], source_names: set[str] |
     }
 
 
-def _provider_status(results: list[dict]) -> list[dict]:
-    rows = as_dicts(results)
-    sources = sorted({row.get("source", "?") for row in rows})
-    status = []
-    for source in sources:
-        source_rows = [row for row in rows if row.get("source") == source]
-        errors = [row.get("error") for row in source_rows if row.get("error")]
-        hits = len([row for row in source_rows if not row.get("error") and not is_empty_result(row)])
-        status.append({"source": source, "raw_hits": hits, "status": "error" if errors and not hits else "ok", "errors": errors})
-    return status
-
-
 def _summarize_key_status(rows: list[dict]) -> list[dict]:
     return [{
         "provider": row.get("provider"),
@@ -963,14 +943,6 @@ def _summarize_key_status(rows: list[dict]) -> list[dict]:
         "cooldown_until": row.get("cooldown_until"),
         "exhausted_until": row.get("exhausted_until"),
     } for row in rows]
-
-
-def _valid_result_count(results: list[dict]) -> int:
-    return len([
-        row for row in as_dicts(results)
-        if "error" not in row and not is_empty_result(row)
-        and row.get("source") not in ANSWER_SOURCES
-    ])
 
 
 def _display_results(results: list[dict]) -> list[dict]:
@@ -991,26 +963,6 @@ def _display_results(results: list[dict]) -> list[dict]:
             ),
         })
     return rows
-
-
-def _add_public_content_aliases(results: list[dict]) -> None:
-    """Expose stable public field names without dropping legacy ones."""
-    for row in results:
-        if not isinstance(row, dict) or row.get("error"):
-            continue
-        description = row.get("description")
-        if description and not row.get("content"):
-            row["content"] = description
-
-
-def _strip_public_body_fields(results: list[dict]) -> None:
-    """Remove body aliases from public search results."""
-    for row in results:
-        if not isinstance(row, dict):
-            continue
-        row.pop("scraped_content", None)
-        row.pop("body", None)
-        row.pop("full_content", None)
 
 
 def _extract_summaries(results: list[dict]) -> list[dict]:

@@ -8,7 +8,7 @@ from unittest import mock
 import multi_search_mcp.src.search.search_runner as search_runner_module
 import multi_search_mcp.src.scrape.stage as scrape_stage_module
 from multi_search_mcp.src.search.search_runner import ProviderSpec, SearchRunner, SearchRunnerConfig
-from multi_search_mcp.src.scrape.stage import run_scrape_stage
+from multi_search_mcp.src.scrape.stage import run_ranked_fetch_stage
 from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
 
 
@@ -154,37 +154,31 @@ runner.run("query")
             pool.shutdown(wait=True, cancel_futures=True)
 
 
-class ScrapeStageLifecycleTests(unittest.TestCase):
-    def test_scrape_stage_timeouts_do_not_spawn_unbounded_workers(self):
-        prefix = "test-scrape-stage-lifecycle"
+class RankedFetchStageLifecycleTests(unittest.TestCase):
+    def test_ranked_fetch_timeouts_do_not_spawn_unbounded_workers(self):
+        prefix = "test-ranked-fetch-stage-lifecycle"
         unblock = threading.Event()
         pool = BoundedDaemonExecutor(max_workers=2, thread_name_prefix=prefix)
 
-        def blocking_scrape(url, **_kwargs):
+        def blocking_fetch(hit, _remaining):
             unblock.wait(timeout=5)
-            return {"url": url, "title": "done", "markdown": "body"}
+            return {"source_id": hit["source_id"], "url": hit["url"], "body": "body"}
 
-        all_results = [
-            {"source": "brave", "title": "Doc", "url": "https://example.com/doc"}
+        hits = [
+            {"source_id": "src_doc", "title": "Doc", "url": "https://example.com/doc"}
         ]
 
         try:
-            with mock.patch.object(scrape_stage_module, "_SCRAPE_POOL", pool, create=True):
-                with mock.patch.object(scrape_stage_module, "scrape_url_smart", side_effect=blocking_scrape):
-                    for _ in range(6):
-                        started = time.monotonic()
-                        result = run_scrape_stage(
-                            all_results,
-                            keys={},
-                            scrape_top=1,
-                            scrape_per_source=1,
-                            scrape_timeout=0.05,
-                            scrape_concurrency=1,
-                            site_memory=None,
-                        )
-                        self.assertLess(time.monotonic() - started, 0.25)
-                        self.assertEqual(len(result["scrape_errors"]), 1)
-                        self.assertIn("scrape timeout after 0.05s", result["scrape_errors"][0]["error"])
+            with mock.patch.object(scrape_stage_module, "_SCRAPE_POOL", pool):
+                for _ in range(6):
+                    started = time.monotonic()
+                    result = run_ranked_fetch_stage(
+                        hits, fetch=blocking_fetch, timeout=0.05, concurrency=1,
+                    )
+                    self.assertLess(time.monotonic() - started, 0.25)
+                    self.assertEqual(len(result["errors"]), 1)
+                    self.assertEqual(result["errors"][0]["source_id"], "src_doc")
+                    self.assertIn("fetch timeout after 0.05s", result["errors"][0]["error"])
 
                 time.sleep(0.05)
                 self.assertLessEqual(len(_live_threads(prefix)), 2)
