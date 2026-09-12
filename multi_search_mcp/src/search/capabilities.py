@@ -85,6 +85,14 @@ class OperationalProfile:
     requires_dependency: str | None = None
     risk_notes: tuple[str, ...] = ()
 
+    @property
+    def uses_api_key_pool(self) -> bool:
+        return self.auth_mode in {AuthMode.API_KEY, AuthMode.OPTIONAL_API_KEY}
+
+    @property
+    def requires_api_key(self) -> bool:
+        return self.auth_mode == AuthMode.API_KEY
+
 
 @dataclass(frozen=True)
 class RetentionPolicy:
