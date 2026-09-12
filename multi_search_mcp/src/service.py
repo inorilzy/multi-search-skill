@@ -7,7 +7,7 @@ import json
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from .support.config import ConfigError, config_list, load_config, resolve_config_path
@@ -67,7 +67,7 @@ class MultiSearchRequest:
     timeout: int | None = None
     output: str = "both"
     config_path: str | None = None
-    expand: list[str] = field(default_factory=list)
+    expand: list[str] | None = None
     brief: bool = False
     verbose: bool = False
     title_url_only: bool = False
@@ -92,7 +92,7 @@ class SearchWebRequest:
     sources: list[str] | None = None
     timeout: int | None = None
     config_path: str | None = None
-    expand: list[str] = field(default_factory=list)
+    expand: list[str] | None = None
     use_state: bool = True
 
 
@@ -336,11 +336,15 @@ def _run_search_candidates(
     resolved_config = (
         _load_config_safe(request.config_path) if config is None else dict(config)
     )
+    expand = (
+        request.expand
+        if request.expand is not None
+        else config_list(resolved_config, "expand")
+        or config_list(resolved_config, "expand_queries")
+    )
     query_plan = build_query_plan(
         request.query,
-        request.expand
-        or config_list(resolved_config, "expand")
-        or config_list(resolved_config, "expand_queries")
+        expand,
     )
     queries = list(query_plan.queries)
     query_policy = QueryFusionPolicy.from_config(resolved_config)

@@ -57,7 +57,7 @@ def search_web_tool(
         count=count,
         sources=sources,
         timeout=timeout,
-        expand=list(expand) if expand else [],
+        expand=None if expand is None else list(expand),
         use_state=use_state,
     )))
 
@@ -126,7 +126,7 @@ def multi_search_tool(
         scrape_chars=scrape_chars,
         timeout=timeout,
         scrape_timeout=scrape_timeout,
-        expand=list(expand) if expand else [],
+        expand=None if expand is None else list(expand),
         output=output,
         use_state=use_state,
     )))
