@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 
 CONFIG_ENV_VAR = "MULTI_SEARCH_CONFIG"
@@ -28,6 +29,16 @@ def resolve_config_path() -> Path:
 
 class ConfigError(ValueError):
     """Raised when a config file is present but cannot be used safely."""
+
+
+def config_int(value: Any, key: str) -> int:
+    """Keep historical int conversion while rejecting invalid explicit values."""
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        # Do not echo the value or conversion error: defaults can contain secrets
+        # pasted into the wrong field, before the key store has been loaded.
+        raise ConfigError(f"{key} requires a number or integer string") from None
 
 
 def load_config(path: str | None = None) -> dict:
