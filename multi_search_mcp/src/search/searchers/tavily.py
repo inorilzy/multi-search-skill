@@ -1,9 +1,11 @@
 """Tavily Search API."""
 import json
+import urllib.error
 import urllib.request
 
 from ...support.http import urlopen_retry
 from ...support.secrets import scrub_secrets
+from ...support.tavily import tavily_http_error
 
 
 def search_tavily(
@@ -40,6 +42,14 @@ def search_tavily(
     try:
         with urlopen_retry(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        message, error_type = tavily_http_error(e, api_key)
+        return [{
+            "source": "tavily",
+            "error": message,
+            "error_origin": "provider",
+            "error_type": error_type,
+        }]
     except Exception as e:
         return [{"source": "tavily", "error": scrub_secrets(e, api_key)}]
 
