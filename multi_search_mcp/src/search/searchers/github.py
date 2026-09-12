@@ -1,6 +1,7 @@
 """GitHub repository search via REST API (or gh CLI fallback)."""
 import json
 import subprocess
+import time
 import urllib.parse
 import urllib.request
 
@@ -8,11 +9,21 @@ from ...support.http import urlopen_retry
 from ...support.secrets import scrub_secrets
 
 
-def _run_gh(args: list, timeout: int = 20, retries: int = 2) -> tuple[int, str, str]:
-    """Run a gh CLI command, returning (returncode, stdout, stderr)."""
+def _run_gh(
+    args: list, timeout: float = 20, retries: int = 2, *, deadline: float | None = None,
+) -> tuple[int, str, str]:
+    """Run gh with retries sharing a deadline; timeout caps each process.
+
+    Without a caller deadline, timeout is also the total retry budget.
+    """
+    if deadline is None:
+        deadline = time.monotonic() + timeout
     for attempt in range(retries + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return -1, "", "timeout"
         try:
-            result = subprocess.run(args, capture_output=True, timeout=timeout)
+            result = subprocess.run(args, capture_output=True, timeout=min(timeout, remaining))
             stdout = result.stdout.decode("utf-8", errors="replace")
             stderr = result.stderr.decode("utf-8", errors="replace")
             if result.returncode != 0 and "EOF" in stderr and attempt < retries:
@@ -25,7 +36,9 @@ def _run_gh(args: list, timeout: int = 20, retries: int = 2) -> tuple[int, str, 
     return -1, "", "EOF after retries"
 
 
-def _github_api(endpoint: str, token: str = "", timeout: float = 20) -> tuple[int, str, str]:
+def _github_api(
+    endpoint: str, token: str = "", timeout: float = 20, *, deadline: float | None = None,
+) -> tuple[int, str, str]:
     """Call GitHub REST API directly when token provided, else fall back to gh CLI."""
     if token:
         url = f"https://api.github.com/{endpoint}"
@@ -43,13 +56,15 @@ def _github_api(endpoint: str, token: str = "", timeout: float = 20) -> tuple[in
                 return 0, resp.read().decode("utf-8", errors="replace"), ""
         except Exception as e:
             return -1, "", scrub_secrets(e, token)
-    return _run_gh(["gh", "api", endpoint], timeout=timeout)
+    return _run_gh(["gh", "api", endpoint], timeout=timeout, deadline=deadline)
 
 
-def search_github_repos(query: str, count: int = 10, token: str = "", timeout: float = 20) -> list:
+def search_github_repos(
+    query: str, count: int = 10, token: str = "", timeout: float = 20, *, deadline: float | None = None,
+) -> list:
     """Search GitHub repositories. Uses token directly if provided, else gh CLI."""
     endpoint = f"search/repositories?q={urllib.parse.quote_plus(query)}&sort=stars&per_page={count}"
-    rc, stdout, stderr = _github_api(endpoint, token, timeout=timeout)
+    rc, stdout, stderr = _github_api(endpoint, token, timeout=timeout, deadline=deadline)
     if rc != 0:
         return [{"source": "github-repos", "error": stderr.strip() or f"exit {rc}"}]
     try:
