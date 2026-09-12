@@ -330,8 +330,9 @@ def _run_search_candidates(
     config: dict | None = None,
     state_store: StateStore | None = None,
     query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,
+    prefetched_bodies: dict[str, str] | None = None,
 ) -> dict:
-    """Run candidate-only search and return compact, RRF-ranked SearchHits."""
+    """Return compact SearchHits and optionally fill the selected-body map."""
     if isinstance(request, dict):
         request = SearchWebRequest(**request)
     if not request.query:
@@ -464,26 +465,30 @@ def _run_search_candidates(
                 store, ttl_seconds=retention.max_ttl_seconds
             ).register(response_id, [registry_hit])
     content_store_errors = []
+    # Select once for both persistence and fetching, independently of use_state.
+    # Longest body wins; ties use source then body text in ascending order.
+    bodies: dict[str, tuple[int, str, str]] = {}
+    for _query, query_rows in query_runs:
+        for row in query_rows:
+            body = search_content(row).body
+            if not body or not row.get("url") or row.get("error"):
+                continue
+            url = canonicalize_url(str(row["url"]))
+            candidate = (-len(body), str(row.get("source") or ""), body)
+            previous = bodies.get(url)
+            if previous is None or candidate < previous:
+                bodies[url] = candidate
+    selected_bodies = {url: candidate[2] for url, candidate in bodies.items()}
+    if prefetched_bodies is not None:
+        prefetched_bodies.update(selected_bodies)
     if store is not None:
-        bodies: dict[str, list[tuple[str, str]]] = {}
-        for _query, query_rows in query_runs:
-            for row in query_rows:
-                body = search_content(row).body
-                if not body or not row.get("url") or row.get("error"):
-                    continue
-                bodies.setdefault(canonicalize_url(str(row["url"])), []).append(
-                    (str(row.get("source") or ""), body)
-                )
         for hit in hits:
             retention = retention_policy_for_sources(list(hit.get("providers") or []))
             if not retention.persist_body:
                 continue
-            candidates = bodies.get(str(hit["canonical_url"])) or []
-            if not candidates:
+            body = selected_bodies.get(str(hit["canonical_url"]))
+            if not body:
                 continue
-            _provider, body = sorted(
-                candidates, key=lambda item: (-len(item[1]), item[0], item[1])
-            )[0]
             try:
                 ContentStore(
                     store, ttl_seconds=retention.max_ttl_seconds
@@ -615,26 +620,12 @@ def run_search_web(
     })
     runtime_keys = load_keys() if keys is None else dict(keys)
     store = (state_store or StateStore()) if request.use_state else None
-    query_runs = []
-
-    def observe(runs):
-        query_runs.extend(runs)
-        if query_runs_observer is not None:
-            query_runs_observer(runs)
-
+    prefetched = {}
     response = _run_search_candidates(
         request, providers=providers, keys=runtime_keys, config=resolved_config,
-        state_store=store, query_runs_observer=observe,
+        state_store=store, query_runs_observer=query_runs_observer,
+        prefetched_bodies=prefetched,
     )
-    prefetched = {}
-    for _query, rows in query_runs:
-        for row in rows:
-            body = search_content(row).body
-            url = canonicalize_url(str(row.get("url") or ""))
-            if body and url and not row.get("error"):
-                previous = prefetched.get(url, "")
-                if (len(body), body) > (len(previous), previous):
-                    prefetched[url] = body
     max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 1200), 20_000))
     body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
     concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))
