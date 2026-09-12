@@ -27,7 +27,7 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 def site_key(url: str) -> str:
     parsed = urlparse(str(url))
-    host = (parsed.netloc or "").lower().split("@").pop().split(":")[0]
+    host = (parsed.hostname or "").lower()
     if host.startswith("www."):
         host = host[4:]
     path_parts = [part for part in parsed.path.split("/") if part]
@@ -37,7 +37,7 @@ def site_key(url: str) -> str:
         return "github.com/repo"
     if host in {"reddit.com", "old.reddit.com"} or host.endswith(".reddit.com"):
         return host
-    if host.endswith("zhihu.com"):
+    if host == "zhihu.com" or host.endswith(".zhihu.com"):
         return "zhihu.com"
     return host or "unknown"
 
