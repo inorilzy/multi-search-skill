@@ -1,5 +1,6 @@
 """Exa-backed URL scraping."""
 import json
+import urllib.error
 import urllib.request
 
 from ...support.http import urlopen_retry
@@ -43,7 +44,11 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
             elif error:
                 detail = str(error)
             msg = f"Exa status: {status}" + (f": {detail}" if detail else "")
-            return {"url": url, "error": scrub_secrets(msg, api_key)}
+            # /contents succeeded; statuses describe the target page, not the key.
+            return {
+                "url": url, "error": scrub_secrets(msg, api_key),
+                "error_origin": "target", "error_type": "target",
+            }
         results = data.get("results") or []
         if not results:
             return {"url": url, "error": "Exa: no results returned"}
@@ -57,6 +62,12 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
             "markdown": text,
             "length": len(text),
             "via": "exa",
+        }
+    except urllib.error.HTTPError as exc:
+        return {
+            "url": url, "error": f"Exa: {scrub_secrets(exc, api_key)}",
+            "error_origin": "provider",
+            "error_type": {401: "invalid", 403: "invalid", 402: "quota_exhausted", 429: "rate_limit"}.get(exc.code, "error"),
         }
     except Exception as exc:
         return {"url": url, "error": f"Exa: {scrub_secrets(exc, api_key)}"}

@@ -228,9 +228,13 @@ def normalize_scrape_result(data: Any, *, url: str = "", via: str = "") -> dict:
     elif not error and (not isinstance(markdown, str) or not markdown.strip()):
         error = "invalid scrape response: expected non-empty markdown"
     if error:
+        metadata = {
+            key: row[key] for key in ("error_origin", "error_type")
+            if isinstance(row.get(key), str) and row[key]
+        }
         return ScrapeResult(
             url=target, title=title, via=backend,
-            raw={"truncated": False, "error": str(error)},
+            raw={"truncated": False, "error": str(error), **metadata},
         ).to_dict()
     length = row.get("length")
     if isinstance(length, bool) or not isinstance(length, int) or length < len(markdown):

@@ -85,11 +85,23 @@ class BasicKeyManager:
         if not error_rows:
             return KeyOutcome(success=True, retryable=False)
         message = "; ".join(str(row.get("error", "")) for row in error_rows)
+        # Target failures carry no evidence that a provider credential failed.
+        error_rows = [row for row in error_rows if row.get("error_origin") != "target"]
+        if not error_rows:
+            return KeyOutcome(False, False, "target", message)
         if any(row.get("exhausted") or row.get("key_exhausted") for row in error_rows):
             return KeyOutcome(False, True, "quota_exhausted", message)
         if any(row.get("rate_limited") for row in error_rows):
             return KeyOutcome(False, True, "rate_limit", message)
-        return KeyOutcome(False, is_key_retryable_error(rows), classify_error(message), message)
+        error_types = [
+            classify_error(str(row["error"]), error_type=row.get("error_type", ""))
+            for row in error_rows
+        ]
+        error_type = next((
+            kind for kind in ("invalid", "quota_exhausted", "rate_limit", "timeout", "network")
+            if kind in error_types
+        ), error_types[0])
+        return KeyOutcome(False, is_key_retryable_error(error_rows), error_type, message)
 
     def record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:
         return None
@@ -266,7 +278,9 @@ class SQLiteKeyManager(BasicKeyManager):
         )
 
 
-def classify_error(message: str) -> str:
+def classify_error(message: str, *, error_type: str = "") -> str:
+    if error_type:
+        return error_type
     text = str(message or "").lower()
     if any(token in text for token in ("invalid api", "invalid key", "unauthorized", "forbidden", "401", "403")):
         return "invalid"
