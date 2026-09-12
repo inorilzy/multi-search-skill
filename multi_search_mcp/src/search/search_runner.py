@@ -15,6 +15,7 @@ from ..state.key_state import BasicKeyManager, KeyCandidate
 from ..state.keys import key_pool
 from ..support.models import ANSWER_SOURCES, as_dicts, empty_result_row, is_empty_result
 from ..support.secrets import scrub_secrets
+from .candidate import canonicalize_url
 
 
 ALL_SOURCE_NAMES = {
@@ -197,6 +198,52 @@ def call_optional_timeout(fn, *positional, timeout: float, **keyword_options):
     return fn(*positional, **accepted_options)
 
 
+def _merge_partial_rows(
+    source: str, partial_rows: list[dict], current_rows: list[dict]
+) -> list[dict]:
+    """Merge partial provider rows without repeating a candidate identity."""
+    merged: list[dict] = []
+    positions: dict[tuple[str, str], int] = {}
+
+    def provider_rank(row: dict) -> int | None:
+        try:
+            rank = row.get("provider_rank")
+            return int(rank) if rank is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    for row in (*partial_rows, *current_rows):
+        row = dict(row)
+        if (
+            row.get("error")
+            or is_empty_result(row)
+            or row.get("source") in ANSWER_SOURCES
+            or not row.get("url")
+        ):
+            merged.append(row)
+            continue
+        identity = (
+            str(row.get("source") or source),
+            canonicalize_url(str(row.get("url") or "")),
+        )
+        if not identity[1]:
+            merged.append(row)
+            continue
+        existing_index = positions.get(identity)
+        if existing_index is None:
+            positions[identity] = len(merged)
+            merged.append(row)
+            continue
+        existing = merged[existing_index]
+        current_rank = provider_rank(row)
+        existing_rank = provider_rank(existing)
+        if current_rank is not None and (
+            existing_rank is None or current_rank < existing_rank
+        ):
+            merged[existing_index] = row
+    return merged
+
+
 def run_keyed_source(
     source: str, key_value, call_with_key, deadline: float | None = None,
     key_manager=None, *, provider: str | None = None, key_required: bool = True,
@@ -218,13 +265,14 @@ def run_keyed_source(
         key = candidate.key if isinstance(candidate, KeyCandidate) else str(candidate)
         if hasattr(manager, "record_use") and isinstance(candidate, KeyCandidate):
             manager.record_use(provider, candidate)
-        results = as_dicts(call_with_key(key) or [])
+        results = _attach_provider_ranks(as_dicts(call_with_key(key) or []))
         outcome = manager.classify_result(provider, results)
         manager.record_result(provider, candidate, outcome)
         if not outcome.retryable:
-            if any("error" in row for row in results):
-                return partial_rows + results
-            return results
+            return (
+                _merge_partial_rows(source, partial_rows, results)
+                if partial_rows else results
+            )
         partial_rows.extend(row for row in results if "error" not in row)
         last_results = results
         if idx == len(candidates) - 1:
@@ -232,7 +280,8 @@ def run_keyed_source(
     error_rows = [row for row in last_results if "error" in row]
     err = error_rows[0].get("error", "key pool exhausted") if error_rows else "key pool exhausted"
     err = scrub_secrets(err, key_value)
-    return partial_rows + [{"source": source, "error": f"key pool exhausted after {len(candidates)} key(s): {err}"}]
+    error = {"source": source, "error": f"key pool exhausted after {len(candidates)} key(s): {err}"}
+    return _merge_partial_rows(source, partial_rows, [error]) if partial_rows else [error]
 
 
 _SEARCH_POOL = BoundedDaemonExecutor(
@@ -265,7 +314,9 @@ class SearchRunner:
             snapshot = _attach_provider_ranks(rows)
             with partial_lock:
                 if time.monotonic() < source_deadline:
-                    partial_results[source] = snapshot
+                    partial_results[source] = _merge_partial_rows(
+                        source, partial_results.get(source, []), snapshot
+                    )
 
         def call_provider(spec: ProviderSpec, api_key) -> list:
             remaining = source_deadline - time.monotonic()
