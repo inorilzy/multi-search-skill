@@ -1,6 +1,8 @@
 # 当前项目简易架构
 
-按 2026-09-09 当前工作区代码核对。箭头表示主要调用或数据流；MCP 和 CLI 共用同一个 Core。
+按 2026-09-12 已提交代码核对。箭头表示主要调用或数据流；MCP 和 CLI 共用同一个 Core。
+
+详细流程与缓存边界见[当前架构图](current-architecture.html)（[SVG](current-architecture.svg) / [Mermaid 源码](current-architecture.mmd)，按 2026-09-12 代码核对）。
 
 ```mermaid
 flowchart TB
@@ -39,6 +41,7 @@ flowchart TB
 
 ## 关键边界
 
+- MCP 的 search_web、multi_search、fetch_source、scrape_url 通过独立 4 槽位有界线程池异步调用同步 Core；满池明确报错，取消等待不提前释放仍在执行的工作槽位。
 - 搜索先排序，再为最终最多 15 条结果获取正文；可以复用已有正文或缓存，正文失败不会改变排名。结果包含摘要、正文预览及明确错误，MCP/CLI 按各自接口输出 JSON 或 Markdown。
 - Reddit 仅位于正文抓取层，不是搜索源。`reddit.com` 及子域、`redd.it` 进入专用适配器；不支持的链接或请求失败明确报错。匿名 Token 保存在进程内，不写入 SQLite，也不需要账号 Cookie。
 - `fetch_source` 可留存取得的正文，预览长度不截断缓存，仍受大小和保留期限约束；`read_source` 只读缓存。`scrape_url` 是直接抓取入口，不负责建立 `source_id` 正文缓存。
