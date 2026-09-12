@@ -157,6 +157,7 @@ class ProviderSpec:
     key_name: str | None = None
     missing_message: str = "missing API key"
     timeout_default: float = 20
+    key_required: bool = True
 
 
 def missing(source: str, message: str) -> list[dict]:
@@ -196,10 +197,18 @@ def call_optional_timeout(fn, *positional, timeout: float, **keyword_options):
     return fn(*positional, **accepted_options)
 
 
-def run_keyed_source(source: str, key_value, call_with_key, deadline: float | None = None, key_manager=None) -> list[dict]:
+def run_keyed_source(
+    source: str, key_value, call_with_key, deadline: float | None = None,
+    key_manager=None, *, provider: str | None = None, key_required: bool = True,
+) -> list[dict]:
     manager = key_manager or BasicKeyManager()
-    candidates = manager.candidates(source, key_value)
+    # Credential health uses the config provider identity (e.g. github), while
+    # result rows retain the public source name (e.g. github-repos).
+    provider = provider or source
+    candidates = manager.candidates(provider, key_value)
     if not candidates:
+        if key_value and not key_required:
+            return [{"source": source, "error": "no usable API keys"}]
         return missing(source, "missing API key")
     last_results: list[dict] = []
     partial_rows: list[dict] = []
@@ -208,10 +217,10 @@ def run_keyed_source(source: str, key_value, call_with_key, deadline: float | No
             break
         key = candidate.key if isinstance(candidate, KeyCandidate) else str(candidate)
         if hasattr(manager, "record_use") and isinstance(candidate, KeyCandidate):
-            manager.record_use(source, candidate)
+            manager.record_use(provider, candidate)
         results = as_dicts(call_with_key(key) or [])
-        outcome = manager.classify_result(source, results)
-        manager.record_result(source, candidate, outcome)
+        outcome = manager.classify_result(provider, results)
+        manager.record_result(provider, candidate, outcome)
         if not outcome.retryable:
             if any("error" in row for row in results):
                 return partial_rows + results
@@ -275,20 +284,21 @@ class SearchRunner:
             spec = self.providers.get(source)
             if spec is None:
                 continue
-            if spec.key_name:
-                key_value = self.config.keys.get(spec.key_name)
-                if key_value:
-                    jobs.append((
+            key_value = self.config.keys.get(spec.key_name) if spec.key_name else None
+            if spec.key_name and key_value:
+                jobs.append((
+                    spec.public_name,
+                    lambda spec=spec, key_value=key_value: self._run_keyed_source(
                         spec.public_name,
-                        lambda spec=spec, key_value=key_value: self._run_keyed_source(
-                            spec.public_name,
-                            key_value,
-                            lambda api_key: call_provider(spec, api_key),
-                            deadline=source_deadline,
-                        ),
-                    ))
-                else:
-                    results.extend(missing(spec.public_name, spec.missing_message))
+                        key_value,
+                        lambda api_key: call_provider(spec, api_key),
+                        deadline=source_deadline,
+                        provider=spec.key_name,
+                        key_required=spec.key_required,
+                    ),
+                ))
+            elif spec.key_name and spec.key_required:
+                results.extend(missing(spec.public_name, spec.missing_message))
             else:
                 jobs.append((
                     spec.public_name,
@@ -345,5 +355,11 @@ class SearchRunner:
             results.append({"source": source, "error": f"timeout after {timeout_seconds}s"})
         return results
 
-    def _run_keyed_source(self, source: str, key_value, call_with_key, deadline: float | None = None) -> list[dict]:
-        return run_keyed_source(source, key_value, call_with_key, deadline=deadline, key_manager=self.key_manager)
+    def _run_keyed_source(
+        self, source: str, key_value, call_with_key, deadline: float | None = None,
+        *, provider: str | None = None, key_required: bool = True,
+    ) -> list[dict]:
+        return run_keyed_source(
+            source, key_value, call_with_key, deadline=deadline,
+            key_manager=self.key_manager, provider=provider, key_required=key_required,
+        )

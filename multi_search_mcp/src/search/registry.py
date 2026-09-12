@@ -1,5 +1,5 @@
 """Provider registry used by the search service."""
-from .capabilities import AuthMode, get_capability
+from .capabilities import get_capability
 from .search_runner import (
     ProviderSpec,
     call_optional_timeout,
@@ -18,15 +18,12 @@ from .searchers.twitter import search_twitter
 from .searchers.v2ex import search_v2ex
 
 
-def _capability_metadata(name: str) -> tuple[str, str | None, int]:
+def _capability_metadata(name: str) -> tuple[str, str | None, int, bool]:
     cap = get_capability(name)
     if cap.timeout_default is None:
         raise ValueError(f"{name} is missing capability.timeout_default")
-    # SearchRunner only knows one preflight key gate. Reuse capability key_name
-    # only for strictly-required API-key providers so optional/cookie/fallback
-    # providers keep their current runtime behavior.
-    key_name = cap.operation.key_name if cap.operation.auth_mode == AuthMode.API_KEY else None
-    return cap.public_name, key_name, cap.timeout_default
+    key_name = cap.operation.key_name if cap.operation.uses_api_key_pool else None
+    return cap.public_name, key_name, cap.timeout_default, cap.operation.requires_api_key
 
 
 def _provider_spec(
@@ -35,11 +32,12 @@ def _provider_spec(
     *,
     missing_message: str = "missing API key",
 ) -> ProviderSpec:
-    public_name, key_name, timeout_default = _capability_metadata(name)
+    public_name, key_name, timeout_default, key_required = _capability_metadata(name)
     return ProviderSpec(
         name=name,
         public_name=public_name,
         key_name=key_name,
+        key_required=key_required,
         missing_message=missing_message,
         timeout_default=timeout_default,
         call=call,
@@ -113,7 +111,7 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
         "github_repos": _provider_spec(
             "github_repos",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_github_repos, q, cfg.counts["github"], cfg.keys.get("github", ""), timeout=ctx.timeout,
+                search_github_repos, q, cfg.counts["github"], key or "", timeout=ctx.timeout,
                 deadline=ctx.deadline,
             ),
         ),

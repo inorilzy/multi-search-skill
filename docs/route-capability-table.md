@@ -52,7 +52,7 @@
 
 | Provider | `summary` | `content` | `title/url` | 搜索器正文能力 | 原始返回策略 | 认证方式 | 当前 key 轮换 | 建议路由 | 说明 |
 |---|---:|---:|---:|---:|---|---|---|---|---|
-| github-repos | 否 | 是 | 是 | 否 | candidate | 可选 api_key | 不接入 | 发现、技术 | repo description/metadata 进 `content`，README 正文靠后续 scrape。 |
+| github-repos | 否 | 是 | 是 | 否 | candidate | 可选 api_key | 已配置 token 使用共享 key 池与健康状态（`github`） | 发现、技术 | 无 token 时使用既有 gh 认证；已配置但全部不可用时报错。repo description/metadata 进 `content`，README 正文靠后续 scrape。 |
 | twitter | 否 | 是 | 是 | 是 | prefetch | cookie | 不接入 SQLite key 轮换 | 讨论 | tweet 文本本身就是平台内容，可作为 `body`；互动数据是元数据。 |
 | hackernews | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 讨论、技术 | HN 标题、URL、points/comments 适合发现讨论源。 |
 | stackoverflow | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 技术 | Q&A 发现源，正文靠 scrape 或 StackExchange API 扩展。 |
