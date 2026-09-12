@@ -49,7 +49,10 @@ def scrape_url_tavily(
         if not results:
             failed = data.get("failed_results") or []
             message = failed[0].get("error", "no content") if failed else "no results"
-            return {"url": url, "error": f"Tavily {depth}: {scrub_secrets(message, api_key)}"}
+            error = {"url": url, "error": f"Tavily {depth}: {scrub_secrets(message, api_key)}"}
+            if failed:
+                error.update(error_origin="target", error_type="target")
+            return error
         result = results[0]
         markdown = result.get("raw_content") or ""
         if not markdown:
@@ -73,9 +76,15 @@ def scrape_url_tavily(
         basic = _parse(_extract("basic"), "basic")
         if "error" not in basic:
             return basic
-        return {
+        merged = {
             "url": url,
             "error": f"{advanced['error']}; fallback {basic['error']}",
         }
+        if (
+            advanced.get("error_origin") == "target"
+            or basic.get("error_origin") == "target"
+        ):
+            merged.update(error_origin="target", error_type="target")
+        return merged
     except Exception as exc:
         return {"url": url, "error": f"Tavily: {scrub_secrets(exc, api_key)}"}
