@@ -125,12 +125,19 @@ class FetchSourceCoreTests(unittest.TestCase):
         from multi_search_mcp.src.service import FetchSourceRequest, run_fetch_source
 
         observed = {}
+        now = [100.0]
+
+        def resolver(_host):
+            now[0] += 0.25
+            return ["93.184.216.34"]
 
         def fake_scraper(url, **kwargs):
             observed.update(kwargs)
             return {"url": url, "markdown": "configured body", "via": "fake"}
 
-        with TemporaryDirectory() as tmp:
+        with TemporaryDirectory() as tmp, mock.patch(
+            "multi_search_mcp.src.service.time.monotonic", side_effect=lambda: now[0],
+        ):
             config_path = Path(tmp) / "config.json"
             config_path.write_text('{"scrape_timeout": 7}', encoding="utf-8")
             store = StateStore(Path(tmp) / "state.sqlite")
@@ -142,10 +149,11 @@ class FetchSourceCoreTests(unittest.TestCase):
                 state_store=store,
                 scraper=fake_scraper,
                 keys={},
-                url_resolver=lambda _host: ["93.184.216.34"],
+                url_resolver=resolver,
             )
 
-        self.assertEqual(observed["timeout"], 7)
+        self.assertEqual(observed["deadline"], 107.0)
+        self.assertEqual(observed["timeout"], 6.75)
 
     def test_prefetched_provider_body_is_reused_without_scraping(self):
         from multi_search_mcp.src.service import (
