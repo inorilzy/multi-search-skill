@@ -144,8 +144,8 @@ _auth = AnonymousAuth()
 def get_post_json(post_id: str, params: dict, deadline: float, *, resolver=None):
     # All requests go to fixed Reddit endpoints; redirects never carry the token.
     api_url = f"{API_ORIGIN}/comments/{post_id}.json"
-    validate_public_http_url(TOKEN_URL, resolver=resolver)
-    validate_public_http_url(api_url, resolver=resolver)
+    validate_public_http_url(TOKEN_URL, resolver=resolver, deadline=deadline)
+    validate_public_http_url(api_url, resolver=resolver, deadline=deadline)
     from curl_cffi.requests import Session
 
     proxies = getproxies()

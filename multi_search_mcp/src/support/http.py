@@ -1,6 +1,8 @@
 """HTTP requests with safe redirects and a shared retry/read deadline."""
 import http.client
+import ipaddress
 import io
+import socket
 import ssl
 import time
 from collections.abc import Iterable
@@ -8,7 +10,11 @@ from functools import partial
 import urllib.parse
 import urllib.request
 
-from .url_security import UrlSecurityError, validate_redirect_target
+from .url_security import (
+    UrlSecurityError,
+    resolve_host_addresses,
+    validate_redirect_target,
+)
 
 
 _ssl_ctx = ssl.create_default_context()
@@ -34,6 +40,14 @@ def _remaining(deadline: float) -> float:
     if remaining <= 0:
         raise TimeoutError("HTTP request deadline exceeded")
     return remaining
+
+
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return True
 
 
 class _DeadlineReader(io.RawIOBase):
@@ -91,16 +105,43 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
             tunnel = conn._tunnel
 
             def connect_socket(address, timeout=None, source_address=None, **socket_options):
-                sock = create_connection(
-                    address, timeout=_remaining(deadline),
-                    source_address=source_address, **socket_options,
+                remaining = _remaining(deadline)
+                if timeout is not None:
+                    remaining = min(remaining, timeout)
+                target_host, target_port = address
+                if _is_ip_literal(target_host):
+                    sock = create_connection(
+                        address, timeout=remaining,
+                        source_address=source_address, **socket_options,
+                    )
+                    try:
+                        sock.settimeout(_remaining(deadline))
+                    except BaseException:
+                        sock.close()
+                        raise
+                    return sock
+
+                addresses = resolve_host_addresses(
+                    target_host, target_port, deadline=deadline,
                 )
-                try:
-                    sock.settimeout(_remaining(deadline))
-                except BaseException:
-                    sock.close()
-                    raise
-                return sock
+                last_error = None
+                for family, socktype, proto, _canonname, sockaddr in addresses:
+                    sock = None
+                    try:
+                        sock = socket.socket(family, socktype, proto)
+                        sock.settimeout(_remaining(deadline))
+                        if source_address:
+                            sock.bind(source_address)
+                        sock.connect(sockaddr)
+                        sock.settimeout(_remaining(deadline))
+                        return sock
+                    except OSError as exc:
+                        last_error = exc
+                        if sock is not None:
+                            sock.close()
+                if last_error is not None:
+                    raise last_error
+                raise OSError("HTTP DNS resolution returned no addresses")
 
             def connect_tunnel():
                 tunnel()
@@ -136,7 +177,10 @@ class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         try:
-            validate_redirect_target(newurl, resolver=self._resolver)
+            deadline = getattr(req, "_multi_search_deadline", None)
+            validate_redirect_target(
+                newurl, resolver=self._resolver, deadline=deadline,
+            )
             old_origin, new_origin = _origin(req.full_url), _origin(newurl)
             if old_origin[0] == "https" and new_origin[0] == "http":
                 raise UrlSecurityError("HTTPS redirect must not downgrade to HTTP")
@@ -144,11 +188,10 @@ class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
             if old_origin != new_origin and has_credentials:
                 raise UrlSecurityError("cross-origin redirect must not forward credentials")
             redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-            deadline = getattr(req, "_multi_search_deadline", None)
             if redirected is not None and deadline is not None:
                 redirected._multi_search_deadline = deadline
                 # urllib follows the redirect with the original request's timeout.
-                req.timeout = _remaining(deadline)
+                req.timeout = redirected.timeout = _remaining(deadline)
             return redirected
         except Exception:
             fp.close()
@@ -176,6 +219,7 @@ def urlopen_retry(
     timeout: int | float,
     retries: int = 2,
     *,
+    deadline: float | None = None,
     redirect_resolver=None,
     extra_handlers: Iterable[urllib.request.BaseHandler] = (),
 ):
@@ -183,7 +227,10 @@ def urlopen_retry(
 
     Returns the standard HTTPResponse protocol, including HTTPError bodies.
     """
-    deadline = time.monotonic() + timeout
+    call_started = time.monotonic()
+    deadline = min(
+        call_started + float(timeout), float(deadline)
+    ) if deadline is not None else call_started + float(timeout)
     request = req_or_url if isinstance(req_or_url, urllib.request.Request) else urllib.request.Request(req_or_url)
     request._multi_search_deadline = deadline
     last_exc = None

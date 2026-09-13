@@ -115,7 +115,9 @@ def scrape_url_reddit(url: str, timeout: float = 60, *, deadline: float | None =
         end = min(end, deadline)
     try:
         remaining(end)
-        safe_url = validate_scrape_url(url, resolver=url_resolver)
+        safe_url = validate_scrape_url(
+            url, resolver=url_resolver, deadline=end,
+        )
         post_id, params = _post_target(safe_url)
         data = get_post_json(post_id, params, end, resolver=url_resolver)
         title, markdown = _render(data, post_id)
