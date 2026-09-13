@@ -1,6 +1,7 @@
 """MCP scheduling regressions with controlled Core work and no network access."""
 import asyncio
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -12,6 +13,7 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from multi_search_mcp import server
+from multi_search_mcp import tools
 from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
 
 
@@ -22,6 +24,246 @@ class MCPDispatchConcurrencyTests(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(self.pool.shutdown)
+
+    def _start_sqlite_write_lock(self, path: Path):
+        locked = threading.Event()
+        release = threading.Event()
+
+        def hold_lock():
+            connection = sqlite3.connect(str(path), timeout=0)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                locked.set()
+                release.wait(2)
+                if connection.in_transaction:
+                    connection.rollback()
+            finally:
+                connection.close()
+
+        thread = threading.Thread(target=hold_lock, name="test-sqlite-lock")
+        thread.start()
+        if not locked.wait(1):
+            release.set()
+            thread.join(2)
+            self.fail("test SQLite writer did not acquire its lock")
+
+        # Keep a broken implementation bounded even if it blocks the loop until
+        # SQLite's normal ten-second connection timeout would expire.
+        watchdog = threading.Timer(2, release.set)
+        watchdog.daemon = True
+        watchdog.start()
+        return release, thread, watchdog
+
+    async def _finish_sqlite_write_lock(self, release, thread, watchdog):
+        release.set()
+        watchdog.cancel()
+        await asyncio.to_thread(thread.join, 3)
+        self.assertFalse(thread.is_alive(), "test SQLite lock thread did not finish")
+
+    async def test_stateful_entrypoints_yield_while_sqlite_write_lock_is_held(self):
+        from multi_search_mcp.src import service
+        from multi_search_mcp.src.state.state_store import StateStore
+
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.sqlite"
+            StateStore(state_path)
+
+            def store_factory():
+                return StateStore(state_path)
+
+            cases = [
+                ("read_source", {"source_id": "missing-source"}, "error_type"),
+                ("list_sources", {"include_key_status": True}, "key_status"),
+                ("list_sources", {"include_scraper_stats": True}, "site_scraper_stats"),
+                ("get_key_status", {}, "key_status"),
+                ("reset_key_state", {}, "updated"),
+                ("get_site_scraper_stats", {}, "site_scraper_stats"),
+                ("set_site_scraper_preference", {
+                    "site": "example.com", "scraper": "jina",
+                }, "pinned"),
+                ("reset_site_scraper_stats", {}, "deleted"),
+            ]
+
+            with mock.patch.object(tools, "StateStore", side_effect=store_factory), \
+                 mock.patch.object(service, "StateStore", side_effect=store_factory):
+                for name, arguments, expected_key in cases:
+                    with self.subTest(tool=name, arguments=arguments):
+                        release, thread, watchdog = self._start_sqlite_write_lock(state_path)
+                        call = asyncio.create_task(server.mcp.call_tool(name, arguments))
+                        heartbeat = asyncio.Event()
+                        asyncio.get_running_loop().call_later(0.05, heartbeat.set)
+                        try:
+                            await asyncio.wait_for(heartbeat.wait(), 1)
+                            self.assertFalse(call.done(), "stateful call completed while its DB was locked")
+                            release.set()
+                            content = await asyncio.wait_for(call, 3)
+                            result = json.loads(content[0].text)
+                            self.assertIn(expected_key, result)
+                            if name == "read_source":
+                                self.assertEqual(result["error_type"], "invalid_request")
+                            if name == "set_site_scraper_preference":
+                                self.assertTrue(result["pinned"])
+                        finally:
+                            await self._finish_sqlite_write_lock(release, thread, watchdog)
+                            await asyncio.gather(call, return_exceptions=True)
+
+    async def test_stateless_and_invalid_paths_bypass_full_state_pool(self):
+        from multi_search_mcp.src import service
+
+        loop = asyncio.get_running_loop()
+        started = [asyncio.Event() for _ in range(4)]
+        release = threading.Event()
+        calls = []
+
+        def slow_core(request):
+            index = int(request.query)
+            loop.call_soon_threadsafe(started[index].set)
+            if not release.wait(3):
+                raise RuntimeError("test watchdog released blocked workers")
+            return {"results": []}
+
+        with mock.patch("multi_search_mcp.tools.run_search_web", side_effect=slow_core) as core, \
+             mock.patch.object(tools, "StateStore", side_effect=AssertionError("stateless path touched state")), \
+             mock.patch.object(service, "StateStore", side_effect=AssertionError("stateless path touched state")):
+            try:
+                calls = [
+                    asyncio.create_task(server.mcp.call_tool(
+                        "search_web", {"query": str(index)}
+                    ))
+                    for index in range(4)
+                ]
+                await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started)), 2)
+
+                listed = await asyncio.wait_for(server.mcp.call_tool("list_sources", {}), 1)
+                self.assertIn("sources", json.loads(listed[0].text))
+
+                read = await asyncio.wait_for(server.mcp.call_tool(
+                    "read_source", {"source_id": "missing", "use_state": False}
+                ), 1)
+                read_result = json.loads(read[0].text)
+                self.assertEqual(read_result["error_type"], "invalid_request")
+
+                invalid = await asyncio.wait_for(server.mcp.call_tool(
+                    "set_site_scraper_preference", {
+                        "site": "example.com", "scraper": "not-a-backend",
+                    }
+                ), 1)
+                invalid_result = json.loads(invalid[0].text)
+                self.assertEqual(invalid_result["error_type"], "invalid_request")
+                self.assertIn("jina", invalid_result["valid_scrapers"])
+                self.assertEqual(core.call_count, 4)
+            finally:
+                release.set()
+                await asyncio.gather(*calls, return_exceptions=True)
+
+    async def test_stateful_sqlite_failures_keep_structured_tool_errors(self):
+        from multi_search_mcp.src import service
+
+        with mock.patch.object(service, "StateStore", side_effect=RuntimeError("fixture sqlite failed")):
+            content = await server.mcp.call_tool("read_source", {"source_id": "fixture"})
+        self.assertEqual(json.loads(content[0].text), {
+            "error": "fixture sqlite failed", "error_type": "runtime_error",
+        })
+
+    async def test_stateful_sqlite_failures_keep_mcp_error_flag_for_raising_tools(self):
+        with mock.patch.object(tools, "StateStore", side_effect=RuntimeError("fixture sqlite failed")):
+            async with create_connected_server_and_client_session(server.mcp) as client:
+                result = await client.call_tool("get_key_status", {})
+        self.assertTrue(result.isError)
+        self.assertIsNone(result.structuredContent)
+        self.assertIn("fixture sqlite failed", result.content[0].text)
+
+    async def test_cancelled_state_calls_keep_capacity_until_sqlite_finishes(self):
+        from multi_search_mcp.src.state.state_store import StateStore
+
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.sqlite"
+            StateStore(state_path)
+            release, lock_thread, watchdog = self._start_sqlite_write_lock(state_path)
+            entered = threading.Event()
+            entered_count = 0
+            entered_lock = threading.Lock()
+
+            def store_factory():
+                nonlocal entered_count
+                with entered_lock:
+                    entered_count += 1
+                    if entered_count == 4:
+                        entered.set()
+                return StateStore(state_path)
+
+            calls = []
+            with mock.patch.object(tools, "StateStore", side_effect=store_factory):
+                try:
+                    calls = [asyncio.create_task(server.mcp.call_tool(
+                        "get_key_status", {}
+                    )) for _ in range(4)]
+                    await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), 2)
+
+                    for call in calls:
+                        call.cancel()
+                    for call in calls:
+                        with self.assertRaises(asyncio.CancelledError):
+                            await call
+
+                    saturated = await server.mcp.call_tool("get_key_status", {})
+                    saturated_result = json.loads(saturated[0].text)
+                    self.assertEqual(saturated_result["error_type"], "runtime_error")
+                    self.assertIn("capacity exhausted", saturated_result["error"])
+                    light = await server.mcp.call_tool("list_sources", {})
+                    self.assertIn("sources", json.loads(light[0].text))
+                finally:
+                    await self._finish_sqlite_write_lock(release, lock_thread, watchdog)
+                    await asyncio.gather(*calls, return_exceptions=True)
+
+            await asyncio.to_thread(self.pool._tasks.join)
+            with mock.patch.object(tools, "StateStore", return_value=StateStore(state_path)):
+                recovered = await server.mcp.call_tool("get_key_status", {})
+            self.assertEqual(json.loads(recovered[0].text), {"key_status": []})
+
+    async def test_protocol_cancel_reaches_stateful_call_before_sqlite_finishes(self):
+        from multi_search_mcp.src.state.state_store import StateStore
+
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.sqlite"
+            StateStore(state_path)
+            release, lock_thread, watchdog = self._start_sqlite_write_lock(state_path)
+            entered = threading.Event()
+            finished = threading.Event()
+
+            def store_factory():
+                entered.set()
+                try:
+                    return StateStore(state_path)
+                finally:
+                    finished.set()
+
+            with mock.patch.object(tools, "StateStore", side_effect=store_factory):
+                async with create_connected_server_and_client_session(server.mcp) as client:
+                    await client.list_tools()
+                    request_id = client._request_id
+                    call = asyncio.create_task(client.call_tool("get_key_status", {}))
+                    try:
+                        await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), 2)
+                        light = await asyncio.wait_for(client.call_tool("list_sources", {}), 1)
+                        self.assertFalse(light.isError)
+                        await client.send_notification(types.ClientNotification(
+                            types.CancelledNotification(
+                                params=types.CancelledNotificationParams(
+                                    requestId=request_id, reason="fixture"
+                                )
+                            )
+                        ))
+                        with self.assertRaises(McpError) as error:
+                            await asyncio.wait_for(call, 1)
+                        self.assertEqual(error.exception.error.message, "Request cancelled")
+                        self.assertFalse(finished.is_set(), "cancel waited for SQLite to finish")
+                    finally:
+                        release.set()
+                        await asyncio.gather(call, return_exceptions=True)
+            await self._finish_sqlite_write_lock(release, lock_thread, watchdog)
+            await asyncio.to_thread(self.pool._tasks.join)
+
 
     async def test_light_tool_finishes_while_search_core_is_still_running(self):
         loop = asyncio.get_running_loop()

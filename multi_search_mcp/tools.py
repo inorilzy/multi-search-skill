@@ -177,18 +177,24 @@ def get_site_scraper_stats_tool(site: str | None = None) -> dict[str, Any]:
     return {"site_scraper_stats": SiteScraperMemory(StateStore()).stats(site)}
 
 
+def scraper_preference_error(scraper: str) -> dict[str, Any] | None:
+    if scraper in KNOWN_BACKENDS:
+        return None
+    return _error(
+        f"unknown scraper: {scraper!r}",
+        "invalid_request",
+        valid_scrapers=list(KNOWN_BACKENDS),
+    )
+
+
 def set_site_scraper_preference_tool(
     site: str,
     scraper: str,
     priority: int | None = None,
     note: str | None = None,
 ) -> dict[str, Any]:
-    if scraper not in KNOWN_BACKENDS:
-        return _error(
-            f"unknown scraper: {scraper!r}",
-            "invalid_request",
-            valid_scrapers=list(KNOWN_BACKENDS),
-        )
+    if error := scraper_preference_error(scraper):
+        return error
     memory = SiteScraperMemory(StateStore())
     memory.set_preference(site, scraper, priority=priority, note=note)
     return {"site": site, "scraper": scraper, "pinned": True, "priority": priority}
