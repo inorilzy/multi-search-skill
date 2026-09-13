@@ -76,16 +76,22 @@
 
 ## 5. Key 与状态
 
+> `~/.search-keys.json` 中 Jina 的 `exhausted` 与 SQLite 状态库中的 `quota_exhausted` 是两层独立状态：前者是操作员维护的配置级静态排除，后者是运行时健康状态。配置仍启用不代表运行时一定可用；运行时暂不可用也不会自动改写配置。
+
 | 术语 | 定义 | 代码出处 |
 |------|------|---------|
 | **key 轮换** | 同一 provider 有多个 key 时，按「未用过优先 → 最久未用（LRU）」挑选。每次选中更新 `last_used_at` / `use_count`。 | `state/key_state.py` → `SQLiteKeyManager.candidates` |
-| **key 状态：active** | 正常可用。 | `key_state.py` → `ACTIVE` |
-| **key 状态：cooldown** | 临时失败（如限流），冷却期内跳过。 | `key_state.py` → `COOLDOWN` |
-| **key 状态：quota_exhausted** | 配额用尽，恢复期内跳过。 | `key_state.py` → `QUOTA_EXHAUSTED` |
-| **key 状态：invalid** | key 无效，跳过。 | `key_state.py` → `INVALID` |
-| **key 状态：disabled** | 被手动禁用，跳过。 | `key_state.py` → `DISABLED` |
+| **Jina 配置 `exhausted`** | `~/.search-keys.json` 中的静态排除标记，由操作员手动维护；为 `true` 时 `jina_config_keys()` 不会将该 key 交给轮换。它不是运行态状态，不由 HTTP 402 自动写入，也没有 24 小时恢复期。 | `state/keys.py` → `jina_config_keys`；`state/mark_exhausted.py` |
+| **key 状态：active** | 运行态当前没有阻止使用的健康状态；若 `manually_disabled` 仍为真，候选选择仍会跳过；也不覆盖 Jina 配置中的静态 `exhausted` 排除。成功回报会将运行态写回 `active`。 | `state/key_state.py` → `ACTIVE` / `SQLiteKeyManager.record_result` |
+| **key 状态：cooldown** | 运行态临时失败（如限流）；当前冷却 15 分钟，`cooldown_until` 未到期时跳过，期满后重新允许尝试。 | `state/key_state.py` → `COOLDOWN` / `cooldown_until` |
+| **key 状态：quota_exhausted** | 运行态收到配额/余额用尽信号；当前恢复期 24 小时，`exhausted_until` 未到期时跳过，期满后重新允许尝试。它不等于配置级 `exhausted`，不会写回 keys file。 | `state/key_state.py` → `QUOTA_EXHAUSTED` / `exhausted_until` |
+| **key 状态：transient_invalid** | 运行态暂时视为无效；invalid 分类失败后先冷却 15 分钟并在冷却期跳过，`invalid_strikes` 达到 3 次才升级为 `invalid`。 | `state/key_state.py` → `TRANSIENT_INVALID` / `INVALID_COOLDOWN` / `INVALID_STRIKE_LIMIT` |
+| **key 状态：invalid** | 运行态达到 invalid 计数阈值后的长期排除状态；候选选择会跳过，需调用 `reset_key_state` 或明确重置后才会重新使用。 | `state/key_state.py` → `INVALID` / `SQLiteKeyManager.candidates` |
+| **key 状态：disabled** | 运行态被操作员手动禁用（`manually_disabled` 或 `disabled`）；无自动到期恢复，候选选择会跳过，需清除该标记或调用 `reset_key_state`。它也不等于 Jina 配置级 `exhausted`。 | `state/key_state.py` → `DISABLED` / `manually_disabled` |
 | **StateStore（状态库）** | SQLite 状态库，存 key 状态、站点记忆、短期 source registry 与 ContentStore，默认 `~/.multi-search/state.sqlite`。 | `state/state_store.py` |
 | **use_state（状态开关）** | 工具参数。`false` 时跳过 SQLite 状态、key 轮换、站点记忆，用于干净测试。 | `tools.py` / `service.py` |
+
+`transient_invalid` 的阈值规则按当前产品意图是连续的 invalid 分类失败；但当前实现中 `invalid_strikes` 在 invalid 回报时递增，成功或一般错误时清零，而 `rate_limit` / `quota_exhausted` 分支会保留已有计数。因此本表只把“达到 3 次才升级”作为可观察实现规则，不保证所有非 invalid 回报都严格清零；这项实现边界不在本文档票内修复。时间字段到期后候选选择器会重新允许尝试，但数据库的 `status` 不会仅因时间流逝自动改写为 `active`。
 
 ## 6. 入口与配置
 
