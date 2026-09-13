@@ -8,4 +8,4 @@ MCP 取消通知可以在耗时调用期间被处理。取消 await 会尝试取
 
 这层调度不改变 Core 的搜索/抓取 deadline、超时后的部分成功结果、provider/fetch 全局执行池或其容量。Core 预算仍在实际执行时计算；入口满载立即拒绝，所以没有额外的排队等待预算。状态 SQLite I/O 同样不在事件循环中执行。现有底层取消/超时边界仍适用；取消与状态写入的边界是：等待被取消后，已经运行的状态任务仍可能完成写入，并继续占用槽位直到真正返回。
 
-验证入口：`python -m unittest test_mcp_dispatch_concurrency -v`。测试用事件保持慢 Core 或 SQLite 写锁未完成，通过真实 FastMCP 调度检查轻量调用；覆盖 7 个状态入口（含 `list_sources` 两种状态开关）的锁竞争、无状态/无效参数对照、四个耗时入口、满载拒绝、取消后容量保留和实际结束后的容量恢复；通过 MCP 内存传输的 ClientSession/ServerSession 检查真实取消通知和工具错误。网络均模拟。
+验证入口：`python -m unittest tests.test_mcp_dispatch_concurrency -v`。测试用事件保持慢 Core 或 SQLite 写锁未完成，通过真实 FastMCP 调度检查轻量调用；覆盖 7 个状态入口（含 `list_sources` 两种状态开关）的锁竞争、无状态/无效参数对照、四个耗时入口、满载拒绝、取消后容量保留和实际结束后的容量恢复；通过 MCP 内存传输的 ClientSession/ServerSession 检查真实取消通知和工具错误。网络均模拟。

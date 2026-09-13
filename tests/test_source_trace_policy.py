@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "scripts/source_trace_fixture.py"
 
 

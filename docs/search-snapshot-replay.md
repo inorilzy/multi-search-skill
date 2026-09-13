@@ -51,4 +51,4 @@ assert result["fidelity"] == "sanitized_content"
 
 `collection.elapsed_seconds` 是原始采集耗时；`provider_attempt_count` 包括实际发生的重试，`provider_attempts` 提供逐调用耗时，超时尚未完成时为 `null`。`offline_replay_seconds` 只测本次内存离线融合。合成 fixture 的调用耗时只针对注入函数，不能当成服务商时延。价格不可得时为 `null` / `unknown`；这些数值都不是完整工作流成本。缺失查询、候选行或原始名次会明确报错。
 
-验证：`.venv/Scripts/python.exe -m unittest test_search_snapshots -v`。
+验证：`.venv/Scripts/python.exe -m unittest tests.test_search_snapshots -v`。

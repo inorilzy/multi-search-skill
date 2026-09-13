@@ -92,7 +92,7 @@ the calls and its final claims must be reviewed against the traces. The driver
 cannot authenticate a person's identity from a JSON declaration; keep the
 actual human review evidence with the freeze. All responses remain the same
 offline fixtures and provide no live-network quality or cost evidence.
-`test_source_trace_policy.py` uses temporary synthetic review declarations
+`tests/test_source_trace_policy.py` uses temporary synthetic review declarations
 solely to test this CLI mechanism; those declarations are not actual human
 reviews or evidence that ticket 05 or the frozen-policy AI workflow passed.
 

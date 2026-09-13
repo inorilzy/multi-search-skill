@@ -9,10 +9,10 @@ import unittest
 class HostOpenerIsolationTests(unittest.TestCase):
     def _run_probe(self, source):
         environment = os.environ.copy()
-        environment["PYTHONPATH"] = str(Path(__file__).resolve().parent)
+        environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
         result = subprocess.run(
             [sys.executable, "-B", "-c", textwrap.dedent(source)],
-            cwd=Path(__file__).resolve().parent,
+            cwd=Path(__file__).resolve().parents[1],
             env=environment,
             capture_output=True,
             text=True,

@@ -6,7 +6,7 @@ from multi_search_mcp.src.search.resolve import resolve_search_plan
 from multi_search_mcp.src.support.config import load_config
 
 
-ROOT_CONFIG_PATH = Path(__file__).resolve().parent / "multi-search-config.json"
+ROOT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "multi-search-config.json"
 
 
 def make_request(*, route="default", scrape_top=None):

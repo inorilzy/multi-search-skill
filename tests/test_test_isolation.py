@@ -21,7 +21,7 @@ from scripts.test_isolation import (
 )
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestIsolationTests(unittest.TestCase):

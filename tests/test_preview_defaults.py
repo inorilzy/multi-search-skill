@@ -18,7 +18,7 @@ from multi_search_mcp.src.support.config import load_config
 URL = "https://evidence.example/preview"
 MARKER = "UNIQUE_PREVIEW_BODY"
 BODY = MARKER + "正文abc0123;" * 1000
-ROOT_CONFIG_PATH = Path(__file__).resolve().parent / "multi-search-config.json"
+ROOT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "multi-search-config.json"
 
 
 def _resolver(_host):

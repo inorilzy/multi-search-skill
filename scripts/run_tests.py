@@ -11,7 +11,9 @@ from scripts.test_isolation import NetworkIsolationError, isolated_test_environm
 
 def main():
     with isolated_test_environment(source_root=ROOT) as isolation:
-        suite = unittest.defaultTestLoader.discover(str(ROOT), pattern="test_*.py")
+        suite = unittest.defaultTestLoader.discover(
+            str(ROOT / "tests"), pattern="test_*.py", top_level_dir=str(ROOT),
+        )
         result = unittest.TextTestRunner(verbosity=1).run(suite)
         try:
             isolation.assert_clean()

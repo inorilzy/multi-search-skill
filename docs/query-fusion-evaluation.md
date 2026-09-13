@@ -58,4 +58,4 @@ AI 参与开发选择时冻结状态为 `ai_selected`；纯人工选择保留 `h
 
 blind、private、review、报告及 Markdown 副本继承快照 TTL，过期加载明确拒绝；维护者负责到期前删除全部副本，工具不启动后台服务。冻结记录只含配置、版本、题集／报告摘要 hash 和复核选择信息，不复制候选或正文。所有写入拒绝覆盖既有文件。
 
-验证：`.venv/Scripts/python.exe -m unittest test_query_evaluation -v`。
+验证：`.venv/Scripts/python.exe -m unittest tests.test_query_evaluation -v`。

@@ -405,6 +405,8 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-se
 
 ## 开发验证
 
+回归测试统一放在 `tests/`。新增测试也放入该目录；运行单个模块时使用 `python -m unittest tests.test_mcp_dispatch_concurrency -v` 这样的包路径。
+
 `uv run --locked python scripts/run_tests.py` 在测试发现前切换到临时 home、配置、密钥文件和 SQLite，并默认拒绝非 loopback 的 DNS、socket、urllib 代理与 `curl_cffi` 外联；受控 loopback HTTP、MCP stdio 和内存 handler 仍可运行。Python 子进程会继承隔离 bootstrap，违规即使被测试捕获也会使 runner 失败。
 
 干净环境先非 editable 安装 `python -m pip install .`，再运行 `python scripts/smoke_install.py`；该 smoke 会把同一组临时环境显式传给 CLI/MCP 子进程，并检查仓库外 CLI 入口、MCP stdio 握手与工具调用。上述检查不等于真实 provider、远程主机或所有平台/运行时矩阵验收；GitHub Actions 对 Windows/Linux、Python 3.10/3.14 执行这两类检查。
