@@ -169,7 +169,6 @@ def _build_safe_opener(
 
 
 _shared_opener = _build_safe_opener()
-urllib.request.install_opener(_shared_opener)
 
 
 def urlopen_retry(
