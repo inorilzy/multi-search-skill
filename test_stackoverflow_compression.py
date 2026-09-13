@@ -170,6 +170,7 @@ class StackOverflowCompressionTests(unittest.TestCase):
                         "markdown": "fixture body",
                         "via": "fixture",
                     },
+                    url_resolver=lambda _host: ["93.184.216.34"],
                 )
 
             self.assertIn("stackoverflow", response["diagnostics"]["route_sources"])

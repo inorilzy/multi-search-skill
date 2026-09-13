@@ -153,7 +153,12 @@ def main() -> None:
             # Fixed public provider names exercise normal fusion and provenance.
             # Any query receives the same candidate set. Query quality is for
             # the human reviewer, never keyword matching in this driver.
-            result = run_search_web(arguments, providers={name: provider(name) for name in ("brave", "exa")}, keys={}, config=config, state_store=store)
+            result = run_search_web(
+                arguments,
+                providers={name: provider(name) for name in ("brave", "exa")},
+                keys={}, config=config, state_store=store,
+                scraper=scraper, url_resolver=lambda _host: ["127.0.0.1"],
+            )
         elif options.tool == "fetch_source":
             result = run_fetch_source(arguments, scraper=scraper, keys={}, config={}, state_store=store, url_resolver=lambda _host: ["93.184.216.34"])
         else:

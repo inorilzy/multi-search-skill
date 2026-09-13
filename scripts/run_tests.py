@@ -1,19 +1,24 @@
-"""Run the regression suite with disposable runtime state."""
+"""Run the regression suite with disposable state and denied external network."""
 import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.test_isolation import NetworkIsolationError, isolated_test_environment
 
 
 def main():
-    root = Path(__file__).resolve().parents[1]
-    sys.path.insert(0, str(root))
-    with tempfile.TemporaryDirectory(prefix="multi-search-tests-") as temp:
-        with patch("multi_search_mcp.src.state.state_store.DEFAULT_STATE_PATH", Path(temp) / "state.sqlite"):
-            suite = unittest.defaultTestLoader.discover(str(root), pattern="test_*.py")
-            result = unittest.TextTestRunner(verbosity=1).run(suite)
-            return not result.wasSuccessful()
+    with isolated_test_environment(source_root=ROOT) as isolation:
+        suite = unittest.defaultTestLoader.discover(str(ROOT), pattern="test_*.py")
+        result = unittest.TextTestRunner(verbosity=1).run(suite)
+        try:
+            isolation.assert_clean()
+        except NetworkIsolationError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        return int(not result.wasSuccessful())
 
 
 if __name__ == "__main__":
