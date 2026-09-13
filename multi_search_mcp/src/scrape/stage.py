@@ -17,17 +17,19 @@ _SCRAPE_POOL = BoundedDaemonExecutor(
 
 def run_ranked_fetch_stage(
     hits: list[dict], *, fetch: Callable[[dict, float], dict],
-    timeout: float, concurrency: int = 5,
+    timeout: float, concurrency: int = 5, deadline: float | None = None,
 ) -> dict:
     """Fetch already-ranked hits under one deadline without changing their order.
 
     The callback receives the time remaining for the whole batch. Running work
     retains its bounded pool slot after timeout; queued work is cancelled and
-    checks the deadline again before invoking the callback.
+    checks the deadline again before invoking the callback. A supplied
+    deadline is also bounded by ``timeout``.
     """
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
-    deadline = time.monotonic() + timeout
+    now = time.monotonic()
+    deadline = now + timeout if deadline is None else min(deadline, now + timeout)
     results: list[dict | None] = [None] * len(hits)
     active: dict[Future, int] = {}
     next_index = 0

@@ -183,6 +183,7 @@ def run_fetch_source(
     source_record: dict | None = None,
     prefetched_body: str | None = None,
     deadline: float | None = None,
+    runtime_timeout: float | None = None,
 ) -> dict:
     """Fetch one registered source and persist its untrusted body briefly."""
     if isinstance(request, dict):
@@ -287,6 +288,7 @@ def run_fetch_source(
             config=resolved_config,
             url_resolver=url_resolver,
             deadline=deadline,
+            runtime_timeout=runtime_timeout,
         )
     if result.get("error"):
         raise ValueError(str(result["error"]))
@@ -629,18 +631,20 @@ def run_search_web(
     max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 1200), 20_000))
     body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
     concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))
+    body_deadline = time.monotonic() + body_timeout
 
     def fetch(hit, remaining):
         try:
             return run_fetch_source(
                 FetchSourceRequest(
                     source_id=hit["source_id"], full_content=True,
-                    timeout=remaining, use_state=request.use_state,
+                    use_state=request.use_state,
                 ),
                 state_store=store, scraper=scraper, keys=runtime_keys,
                 config=resolved_config, url_resolver=url_resolver, source_record=hit,
                 prefetched_body=prefetched.get(hit["canonical_url"]),
-                deadline=time.monotonic() + remaining,
+                deadline=body_deadline,
+                runtime_timeout=remaining,
             )
         except Exception as exc:
             return {"source_id": hit["source_id"], "url": hit["url"],
@@ -648,6 +652,7 @@ def run_search_web(
 
     fetched = run_ranked_fetch_stage(
         response["results"], fetch=fetch, timeout=body_timeout, concurrency=concurrency,
+        deadline=body_deadline,
     )
     scrapes = []
     for hit, body_result in zip(response["results"], fetched["results"]):
@@ -793,13 +798,21 @@ def _run_scrape_raw(
     config: dict | None = None,
     url_resolver=None,
     deadline: float | None = None,
+    runtime_timeout: float | None = None,
 ) -> tuple[dict, list[dict], int]:
     """Execute shared state-aware scraping before applying a public projection."""
     resolved_config = _load_config_safe(None) if config is None else dict(config)
     runtime_keys = load_keys() if keys is None else dict(keys)
-    timeout = _resolve_nonnegative(request.timeout, resolved_config, "scrape_timeout", 60)
+    # Public timeout/config values stay integer seconds; the fetch stage passes
+    # its already-resolved floating remainder through this private path.
+    if runtime_timeout is None:
+        timeout = _resolve_nonnegative(request.timeout, resolved_config, "scrape_timeout", 60)
+    else:
+        timeout = max(0.0, float(runtime_timeout))
     if deadline is None:
         deadline = time.monotonic() + timeout
+    else:
+        timeout = min(timeout, max(0.0, deadline - time.monotonic()))
     scrape_chars = max(1, _resolve_int(request.scrape_chars, resolved_config, "scrape_chars", 1200))
     store = (state_store or StateStore()) if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
