@@ -187,6 +187,11 @@ class SQLiteKeyManager(BasicKeyManager):
             )
             return
         error_type = outcome.error_type or classify_error(outcome.error_message)
+        if error_type == "target":
+            # Target-page failures carry no credential-health evidence. The
+            # scrape entry point normally filters these before this method;
+            # keep the state boundary neutral if one reaches it directly.
+            return
         status = ACTIVE
         cooldown_until = None
         exhausted_until = None
@@ -194,7 +199,10 @@ class SQLiteKeyManager(BasicKeyManager):
         quota_inc = 0
         status_sql = "?"
         cooldown_sql = "?"
-        strike_assignment = "invalid_strikes = invalid_strikes"
+        # Every provider result other than an invalid authentication failure
+        # breaks the consecutive-invalid streak. The invalid branch below
+        # replaces this with an atomic increment.
+        strike_assignment = "invalid_strikes = 0"
         if error_type == "invalid":
             # A single 401/403 is often a transient upstream blip (Cloudflare,
             # gateway, brief rate misclassification). Cool the key down and only
@@ -220,9 +228,6 @@ class SQLiteKeyManager(BasicKeyManager):
             status = QUOTA_EXHAUSTED
             exhausted_until = _iso(_now() + timedelta(hours=24))
             quota_inc = 1
-        else:
-            # Any other failure type breaks the consecutive-invalid streak.
-            strike_assignment = "invalid_strikes = 0"
         self.store.execute(
             f"""
             UPDATE key_state

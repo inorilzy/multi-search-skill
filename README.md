@@ -267,7 +267,7 @@ flowchart LR
 - 搜索阶段统一获取 RRF 最终前 15 条的正文；有效候选不足 15 条时全部获取。已有可用正文缓存时直接复用。
 - `scrape_top` / `scrape_per_source` 仅保留兼容接收，不改变最终抓取列表；显式传入时 diagnostics 会说明其不再生效。
 - 默认抓取后端从可用能力构建：Jina 匿名优先；Exa / Tavily 只有配置对应 key 后才进入 fallback 链；Firecrawl `/v2/scrape` 无 key 也会作为最后 fallback，但匿名额度是 IP 级免费日额度，不参与批量抓取 primary 轮换。抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
-- Jina、Parallel、Exa、Tavily、Firecrawl 等带 key 的 provider/backend 走 SQLite key state：`invalid` / `disabled` 无自动恢复，需明确重置或人工清除后才会重新使用；`cooldown` 和 `transient_invalid` 在 `cooldown_until` 未到期时跳过，当前冷却为 15 分钟；`quota_exhausted` 在 `exhausted_until` 未到期时跳过，当前恢复期为 24 小时，期满后重新允许尝试。从未使用过的 key 优先；同等情况下按 `last_used_at` 最早优先；每次选中会更新 `last_used_at` 和 `use_count`。
+- Jina、Parallel、Exa、Tavily、Firecrawl 等带 key 的 provider/backend 走 SQLite key state：`invalid` 只累计连续的 provider 认证失败，前两次为 `transient_invalid`，第三次才升级为永久 `invalid`；success、`rate_limit`、`quota_exhausted` 或其它非 invalid provider 结果都会清零 `invalid_strikes`，而 target 错误是中立事件，不改变既有 key 健康、冷却或计数。`invalid` / `disabled` 无自动恢复，需明确重置或人工清除后才会重新使用；`cooldown` 和 `transient_invalid` 在 `cooldown_until` 未到期时跳过，当前冷却为 15 分钟；`quota_exhausted` 在 `exhausted_until` 未到期时跳过，当前恢复期为 24 小时，期满后重新允许尝试。从未使用过的 key 优先；同等情况下按 `last_used_at` 最早优先；每次选中会更新 `last_used_at` 和 `use_count`。
 - 每个候选 URL 只走一次完整 fallback 链；失败或 `scrape_timeout` 后记录 Errors，不自动补位。
 - GitHub repo 根 URL 保持原地址，由抓取后端解析仓库页面；不猜测 README 的文件名或位置。
 
