@@ -21,6 +21,7 @@ from .tools import (
     read_source_tool,
     scrape_url_tool,
     search_web_tool,
+    scraper_preference_error,
     set_site_scraper_preference_tool,
 )
 
@@ -106,7 +107,7 @@ async def fetch_source(
 
 
 @mcp.tool(name="read_source")
-def read_source(
+async def read_source(
     source_id: str,
     keyword: str | None = None,
     offset: int = 0,
@@ -114,7 +115,9 @@ def read_source(
     use_state: bool = True,
 ) -> dict:
     """Read a bounded slice of cached untrusted content without network access."""
-    return read_source_tool(source_id, keyword, offset, limit, use_state)
+    if not use_state:
+        return read_source_tool(source_id, keyword, offset, limit, use_state)
+    return await _run_tool(read_source_tool, source_id, keyword, offset, limit, use_state)
 
 
 @mcp.tool(name="multi_search")
@@ -166,9 +169,11 @@ async def scrape_url(url: str, backends: list[str] | None = None, scrape_chars: 
 
 
 @mcp.tool(name="list_sources")
-def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
+async def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
     """List available routes/sources and optional local key/scraper state."""
-    return list_sources_tool(include_key_status, include_scraper_stats)
+    if not include_key_status and not include_scraper_stats:
+        return list_sources_tool(False, False)
+    return await _run_tool(list_sources_tool, include_key_status, include_scraper_stats)
 
 
 @mcp.tool(name="doctor")
@@ -178,34 +183,36 @@ async def doctor(include_keys: bool = True, include_network: bool = False) -> di
 
 
 @mcp.tool(name="get_key_status")
-def get_key_status(provider: str | None = None) -> dict:
+async def get_key_status(provider: str | None = None) -> dict:
     """Return stored key health rows for all providers or one provider."""
-    return get_key_status_tool(provider)
+    return await _run_tool(get_key_status_tool, provider)
 
 
 @mcp.tool(name="reset_key_state")
-def reset_key_state(provider: str | None = None, key_id: str | None = None) -> dict:
+async def reset_key_state(provider: str | None = None, key_id: str | None = None) -> dict:
     """Reset local key health state for all keys, one provider, or one key id."""
-    return reset_key_state_tool(provider, key_id)
+    return await _run_tool(reset_key_state_tool, provider, key_id)
 
 
 @mcp.tool(name="get_site_scraper_stats")
-def get_site_scraper_stats(site: str | None = None) -> dict:
+async def get_site_scraper_stats(site: str | None = None) -> dict:
     """Return site-to-scraper success/failure memory rows."""
-    return get_site_scraper_stats_tool(site)
+    return await _run_tool(get_site_scraper_stats_tool, site)
 
 
 @mcp.tool(name="set_site_scraper_preference")
-def set_site_scraper_preference(site: str, scraper: str, priority: int | None = None,
-                                note: str | None = None) -> dict:
+async def set_site_scraper_preference(site: str, scraper: str, priority: int | None = None,
+                                      note: str | None = None) -> dict:
     """Pin a scraper preference for a site/domain."""
-    return set_site_scraper_preference_tool(site, scraper, priority, note)
+    if error := scraper_preference_error(scraper):
+        return error
+    return await _run_tool(set_site_scraper_preference_tool, site, scraper, priority, note)
 
 
 @mcp.tool(name="reset_site_scraper_stats")
-def reset_site_scraper_stats(site: str | None = None) -> dict:
+async def reset_site_scraper_stats(site: str | None = None) -> dict:
     """Clear scraper memory for all sites or one site."""
-    return reset_site_scraper_stats_tool(site)
+    return await _run_tool(reset_site_scraper_stats_tool, site)
 
 
 if __name__ == "__main__":
