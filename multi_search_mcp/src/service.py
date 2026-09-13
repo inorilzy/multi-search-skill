@@ -203,7 +203,16 @@ def run_fetch_source(
             "source_id is unknown or expired; call search_web again before fetch_source"
         )
     url = str(request.url or source["url"])
-    validate_public_http_url(url, resolver=url_resolver)
+    resolved_config = dict(config) if config is not None else None
+    if deadline is None:
+        budget_started = time.monotonic()
+        if resolved_config is None and request.timeout is None:
+            resolved_config = _load_config_safe(request.config_path)
+        timeout = _resolve_nonnegative(
+            request.timeout, resolved_config or {}, "scrape_timeout", 60,
+        )
+        deadline = budget_started + timeout
+    validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
     source_providers = list((source or {}).get("providers") or ["direct"])
     retention = retention_policy_for_sources(source_providers)
     source_id = str(request.source_id or "")
@@ -233,12 +242,10 @@ def run_fetch_source(
         content_store.delete_source(source_id)
         cached = None
     cache_scope = ""
-    resolved_config = None
     runtime_keys = keys
     if cached is None:
-        resolved_config = (
-            _load_config_safe(request.config_path) if config is None else dict(config)
-        )
+        if resolved_config is None:
+            resolved_config = _load_config_safe(request.config_path)
         if not prefetched_body:
             runtime_keys = load_keys() if keys is None else dict(keys)
             if content_store and retention.persist_body:

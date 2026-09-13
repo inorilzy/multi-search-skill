@@ -131,8 +131,10 @@ def _scrape_with_optional_key_pool(provider: str, keys: list[str], call, deadlin
     return call("")
 
 
-def _prepare_scrape_target(url: str, *, resolver=None) -> tuple[str, str]:
-    safe_url = validate_scrape_url(url, resolver=resolver)
+def _prepare_scrape_target(
+    url: str, *, resolver=None, deadline: float | None = None,
+) -> tuple[str, str]:
+    safe_url = validate_scrape_url(url, resolver=resolver, deadline=deadline)
     return safe_url, safe_url
 
 
@@ -161,7 +163,7 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return 0.0
-        return min(float(timeout), max(0.1, remaining))
+        return min(float(timeout), remaining)
 
     if backends is not None:
         for backend in backends:
@@ -172,7 +174,9 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
     # callers pass a generic backend list for Reddit URLs.
     if is_reddit_url(url):
         try:
-            safe_url = validate_scrape_url(url, resolver=url_resolver)
+            safe_url = validate_scrape_url(
+                url, resolver=url_resolver, deadline=deadline,
+            )
         except UrlSecurityError as exc:
             return normalize_scrape_result({"error": str(exc)}, url=url, via="reddit")
         started = time.monotonic()
@@ -201,7 +205,9 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                 return normalize_scrape_result({"error": f"missing key for backend: {backend}"}, url=url, via=backend)
 
     try:
-        safe_url, scrape_target = _prepare_scrape_target(url, resolver=url_resolver)
+        safe_url, scrape_target = _prepare_scrape_target(
+            url, resolver=url_resolver, deadline=deadline,
+        )
     except UrlSecurityError as exc:
         return normalize_scrape_result({"error": str(exc)}, url=url)
 
