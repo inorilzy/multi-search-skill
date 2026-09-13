@@ -118,7 +118,7 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                             self.assertEqual(row["invalid_strikes"], 1 if reset_first else 0)
                             self.assertEqual(row["status"], TRANSIENT_INVALID if reset_first else ACTIVE)
 
-    def test_rate_and_quota_preserve_strikes_and_success_preserves_quota_expiry(self):
+    def test_non_invalid_results_clear_strikes_and_success_preserves_quota_expiry(self):
         now = datetime(2026, 9, 12, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as temp, mock.patch(
             "multi_search_mcp.src.state.key_state._now", return_value=now
@@ -130,9 +130,9 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                 manager.record_result("exa", candidate, invalid)
             cases = (
                 (KeyOutcome(False, True, "rate_limit", "429"), COOLDOWN,
-                 2, 3, 0, 1, 0, (now + timedelta(minutes=15)).isoformat(), None),
+                 0, 3, 0, 1, 0, (now + timedelta(minutes=15)).isoformat(), None),
                 (KeyOutcome(False, True, "quota_exhausted", "quota"), QUOTA_EXHAUSTED,
-                 2, 4, 0, 1, 1, None, (now + timedelta(hours=24)).isoformat()),
+                 0, 4, 0, 1, 1, None, (now + timedelta(hours=24)).isoformat()),
                 (KeyOutcome(True, False), ACTIVE,
                  0, 4, 1, 1, 1, None, (now + timedelta(hours=24)).isoformat()),
                 (invalid, TRANSIENT_INVALID,
