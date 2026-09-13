@@ -161,7 +161,7 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return 0.0
-        return min(float(timeout), max(0.1, remaining))
+        return min(float(timeout), remaining)
 
     if backends is not None:
         for backend in backends:
@@ -215,22 +215,28 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             key_pool = list(jina_keys or ([] if not jina_key else [jina_key]))
 
             def _scrape_anonymous() -> dict:
+                call_timeout = _remaining_timeout()
+                if call_timeout <= 0:
+                    return {"url": scrape_target, "error": "scrape deadline exceeded"}
                 if _jina_anonymous_cooling_down():
                     return {
                         "url": scrape_target,
                         "error": "Jina: anonymous rate limit cooldown active",
                         "rate_limited": True,
                     }
-                result = scrape_url_jina(scrape_target, "", timeout=_remaining_timeout(), **policy["jina"])
+                result = scrape_url_jina(scrape_target, "", timeout=call_timeout, **policy["jina"])
                 if "error" in result and result.get("rate_limited"):
                     _record_jina_anonymous_rate_limit()
                 return result
 
             def _scrape_keyed(key: str) -> dict:
+                call_timeout = _remaining_timeout()
+                if call_timeout <= 0:
+                    return {"url": scrape_target, "error": "scrape deadline exceeded"}
                 return scrape_url_jina(
                     scrape_target,
                     key,
-                    timeout=_remaining_timeout(),
+                    timeout=call_timeout,
                     skip_anonymous=True,
                     **policy["jina"],
                 )
@@ -262,16 +268,19 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
         if backend == "tavily":
             candidates = _key_candidates(tavily_key, tavily_keys)
             def _scrape_tavily(key: str) -> dict:
+                call_timeout = _remaining_timeout()
+                if call_timeout <= 0:
+                    return {"url": scrape_target, "error": "scrape deadline exceeded"}
                 tavily_options = policy["tavily"]
                 if tavily_options:
                     return scrape_url_tavily(
                         scrape_target,
                         key,
-                        timeout=_remaining_timeout(),
+                        timeout=call_timeout,
                         deadline=deadline,
                         **tavily_options,
                     )
-                return scrape_url_tavily(scrape_target, key, timeout=_remaining_timeout(), deadline=deadline)
+                return scrape_url_tavily(scrape_target, key, timeout=call_timeout, deadline=deadline)
             return _scrape_with_key_pool(
                 "tavily",
                 candidates,
@@ -281,19 +290,29 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             )
         if backend == "exa":
             candidates = _key_candidates(exa_key, exa_keys)
+            def _scrape_exa(key: str) -> dict:
+                call_timeout = _remaining_timeout()
+                if call_timeout <= 0:
+                    return {"url": scrape_target, "error": "scrape deadline exceeded"}
+                return scrape_url_exa(scrape_target, key, timeout=call_timeout, max_chars=scrape_chars)
             return _scrape_with_key_pool(
                 "exa",
                 candidates,
-                lambda key: scrape_url_exa(scrape_target, key, timeout=_remaining_timeout(), max_chars=scrape_chars),
+                _scrape_exa,
                 deadline=deadline,
                 key_manager=key_manager,
             )
         if backend == "firecrawl":
             candidates = _key_candidates(firecrawl_key or "", firecrawl_keys)
+            def _scrape_firecrawl(key: str) -> dict:
+                call_timeout = _remaining_timeout()
+                if call_timeout <= 0:
+                    return {"url": scrape_target, "error": "scrape deadline exceeded"}
+                return scrape_url_firecrawl(scrape_target, key, timeout=call_timeout)
             return _scrape_with_optional_key_pool(
                 "firecrawl",
                 candidates,
-                lambda key: scrape_url_firecrawl(scrape_target, key, timeout=_remaining_timeout()),
+                _scrape_firecrawl,
                 deadline=deadline,
                 key_manager=key_manager,
             )
