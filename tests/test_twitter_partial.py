@@ -88,6 +88,59 @@ class TwitterPartialResultsTests(unittest.TestCase):
         finally:
             self.assertTrue(finished.wait(timeout=1))
 
+    def test_runner_deadline_keeps_updated_body_and_removes_resolved_reply_errors(self):
+        from multi_search_mcp.src.search import search_runner
+        from multi_search_mcp.src.search.registry import build_provider_registry
+
+        full_text = "Complete acquired tweet text with its original tail"
+        reply_text = "Already acquired reply"
+        second_started = threading.Event()
+        pool = search_runner.BoundedDaemonExecutor(
+            max_workers=1, thread_name_prefix="test-twitter-updated-partial",
+        )
+
+        class Client(ClientFixture):
+            async def get_tweet_by_id(self, tweet_id):
+                if tweet_id == "1":
+                    return SimpleNamespace(
+                        text=full_text, replies=[tweet("reply", reply_text)], reply_count=1,
+                    )
+                second_started.set()
+                try:
+                    await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    # Keep the provider pending while the runner returns its snapshot.
+                    await asyncio.sleep(0.1)
+                    raise
+
+        runner = search_runner.SearchRunner(
+            search_runner.SearchRunnerConfig("social", {"twitter": 2}, 0.2, "google", {
+                "twitter": {"auth_token": "fixture-token", "ct0": "fixture-csrf"},
+            }), build_provider_registry(),
+        )
+        with mock.patch.dict(sys.modules, {
+            "xkit": SimpleNamespace(Client=Client), "twikit": SimpleNamespace(Client=Client),
+        }), \
+                mock.patch.object(search_runner, "_SEARCH_POOL", pool):
+            try:
+                rows = runner.run("query")
+            finally:
+                pool.shutdown(wait=True)
+
+        self.assertTrue(second_started.is_set())
+        candidates = [row for row in rows if row.get("url") and not row.get("error")]
+        self.assertEqual([row["url"] for row in candidates], [
+            "https://x.com/fixture/status/1", "https://x.com/fixture/status/2",
+        ])
+        self.assertEqual([row["provider_rank"] for row in candidates], [1, 2])
+        self.assertIn(full_text, candidates[0]["scraped_content"])
+        self.assertIn(reply_text, candidates[0]["scraped_content"])
+        self.assertNotIn("Replies incomplete", candidates[0]["scraped_content"])
+        reply_errors = [row for row in rows if row.get("url") and row.get("error")]
+        self.assertEqual(len(reply_errors), 1)
+        self.assertEqual(reply_errors[0]["url"], candidates[1]["url"])
+        self.assertTrue(any("timeout after" in row.get("error", "") for row in rows))
+
     def test_failed_reply_page_keeps_full_text_and_identifies_only_affected_tweet(self):
         reply_text = "Reply " * 60 + "\nUncut reply tail"
         full_text = "Longer acquired tweet text\nOriginal tweet tail"

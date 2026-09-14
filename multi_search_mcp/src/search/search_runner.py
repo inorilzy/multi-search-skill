@@ -310,24 +310,29 @@ class SearchRunner:
         partial_results: dict[str, list[dict]] = {}
         partial_lock = Lock()
 
-        def publish_partial(source: str, rows: list) -> None:
-            snapshot = _attach_provider_ranks(rows)
-            with partial_lock:
-                if time.monotonic() < source_deadline:
-                    partial_results[source] = _merge_partial_rows(
-                        source, partial_results.get(source, []), snapshot
-                    )
-
         def call_provider(spec: ProviderSpec, api_key) -> list:
             remaining = source_deadline - time.monotonic()
             if remaining <= 0:
                 return [{"source": spec.public_name, "error": f"timeout after {timeout_seconds}s"}]
+            with partial_lock:
+                previous_attempt_rows = partial_results.get(spec.public_name, [])
+
+            def publish_partial(rows: list) -> None:
+                snapshot = _attach_provider_ranks(rows)
+                with partial_lock:
+                    if time.monotonic() < source_deadline:
+                        # Each call publishes a complete snapshot. Merge only
+                        # earlier key attempts, not this call's outdated rows/errors.
+                        partial_results[spec.public_name] = _merge_partial_rows(
+                            spec.public_name, previous_attempt_rows, snapshot,
+                        )
+
             ctx = SearchContext(
                 source=spec.public_name,
                 timeout=min(float(spec.timeout_default), remaining),
                 deadline=source_deadline,
                 keys=self.config.keys,
-                publish_partial=lambda rows: publish_partial(spec.public_name, rows),
+                publish_partial=publish_partial,
             )
             return spec.call(query, self.config, ctx, api_key)
 
