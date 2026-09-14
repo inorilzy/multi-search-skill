@@ -23,10 +23,24 @@ from pathlib import Path
 import multi_search_mcp
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from xkit import Client
 
 async def main():
     module_path = Path(multi_search_mcp.__file__).resolve()
     assert "site-packages" in module_path.parts, module_path
+    xkit_version = importlib.metadata.version("xkit-py")
+    try:
+        importlib.metadata.distribution("twikit-ng")
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    else:
+        raise AssertionError("twikit-ng and xkit-py must not share the installed twikit namespace")
+    client = Client("en-US", timeout=1)
+    try:
+        client.set_cookies({"auth_token": "installation-fixture", "ct0": "installation-fixture"})
+        assert callable(client.search_tweet) and callable(client.get_tweet_by_id)
+    finally:
+        await client.http.aclose()
     async with stdio_client(StdioServerParameters(
         command=sys.argv[1], args=[], env=os.environ.copy(),
     )) as (reader, writer):
@@ -36,8 +50,11 @@ async def main():
             assert {"search_web", "fetch_source", "read_source", "doctor"} <= names, names
             result = await session.call_tool("list_sources", {})
             assert not result.isError, result
+            sources = json.loads(result.content[0].text)["sources"]
+            assert "sov2ex" in sources and "v2ex" not in sources, sources
             print(json.dumps({"version": importlib.metadata.version("multi-search-mcp"),
                               "mcp_version": importlib.metadata.version("mcp"),
+                              "xkit_version": xkit_version,
                               "module_path": str(module_path), "registered_tools": sorted(names)}))
 
 asyncio.run(main())

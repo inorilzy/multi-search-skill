@@ -5,7 +5,7 @@ import urllib.error
 import urllib.parse
 from unittest import mock
 
-from multi_search_mcp.src.search.searchers.v2ex import search_v2ex
+from multi_search_mcp.src.search.searchers.sov2ex import search_sov2ex
 from multi_search_mcp.src.support.models import search_content
 
 
@@ -31,10 +31,10 @@ class V2exApiTests(unittest.TestCase):
     def _search(self, payload, **kwargs):
         response = io.BytesIO(json.dumps(payload).encode("utf-8"))
         with mock.patch(
-            "multi_search_mcp.src.search.searchers.v2ex.urlopen_retry",
+            "multi_search_mcp.src.search.searchers.sov2ex.urlopen_retry",
             return_value=response,
         ) as request:
-            rows = search_v2ex("Python 中文 & async", **kwargs)
+            rows = search_sov2ex("Python 中文 & async", **kwargs)
         return rows, request
 
     def test_anonymous_request_encodes_query_and_uses_relevance_without_date_filters(self):
@@ -63,7 +63,7 @@ class V2exApiTests(unittest.TestCase):
         rows, _ = self._search({"hits": [hit], "timed_out": False})
 
         row = rows[0]
-        self.assertEqual(row["source"], "v2ex")
+        self.assertEqual(row["source"], "sov2ex")
         self.assertEqual(row["url"], "https://www.v2ex.com/t/123")
         self.assertEqual(row["title"], hit["_source"]["title"])
         self.assertEqual(row["description"], "Use python & asyncio.")
@@ -169,13 +169,13 @@ class V2exApiTests(unittest.TestCase):
             TimeoutError("request timed out"),
         ):
             with self.subTest(error=error), mock.patch(
-                "multi_search_mcp.src.search.searchers.v2ex.urlopen_retry", side_effect=error,
+                "multi_search_mcp.src.search.searchers.sov2ex.urlopen_retry", side_effect=error,
             ):
-                self.assertIn("error", search_v2ex("python")[0])
+                self.assertIn("error", search_sov2ex("python")[0])
         with mock.patch(
-            "multi_search_mcp.src.search.searchers.v2ex.urlopen_retry", return_value=io.BytesIO(b"not JSON"),
+            "multi_search_mcp.src.search.searchers.sov2ex.urlopen_retry", return_value=io.BytesIO(b"not JSON"),
         ):
-            self.assertIn("error", search_v2ex("python")[0])
+            self.assertIn("error", search_sov2ex("python")[0])
 
 
 if __name__ == "__main__":

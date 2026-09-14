@@ -96,13 +96,19 @@ cd multi-search-skill
 # MCP: python -m multi_search_mcp.server；CLI: multi-search --help
 ```
 
-Python 包依赖由 `pyproject.toml` 管理，包含 `mcp`、`beautifulsoup4`、`twikit-ng`、`curl-cffi`。用 `uvx --from ... multi-search-mcp` 或 pip 安装时会自动安装。若是直接从源码运行，先安装项目依赖：
+Python 包依赖由 `pyproject.toml` 管理，包含 `mcp`、`beautifulsoup4`、`xkit-py`、`curl-cffi`。CLI 和 MCP 安装都会自动安装 [XKit-py](https://github.com/inorilzy/xkit-py)，代码使用 `from xkit import Client`。从源码初始化时，在仓库根目录执行：
 
 ```powershell
-python -m pip install -e .
+uv sync --locked
+# Windows：检查 uv、安装 Python 和全部锁定依赖，再运行 doctor
+.\multi_search_mcp\src\support\init.ps1
 ```
 
-Twitter/X 还需要 cookies；`twikit-ng` 只是客户端依赖。
+初始化不需要单独安装 XKit-py。项目固定安装 GitHub 提交 `c02ff46efd0264b4bc85968e3f5732561ffdbaf3` 的源码：PyPI `xkit-py 2.6.3` 的 wheel 和 sdist 缺少 `twikit/client`，直接安装该发行版会导入失败。**该 GitHub 仓库是私有的，CLI、MCP、CI 的安装环境均需 Git 和该仓库的读取权限**；可先用有权限的账号执行 `gh auth login`、`gh auth setup-git`，已有可用 Git 凭据时无需重复配置。未配置权限时安装会明确失败。
+
+`uv sync --locked` 会移除旧的 `twikit-ng`；这两个发行包共用 `twikit` 模块目录，不应混装。使用已有 pip 环境升级时，先执行 `python -m pip uninstall twikit-ng`，再执行 `python -m pip install .`。
+
+Twitter/X 仍需要 cookies。XKit-py 首次请求会自动从 `x.com` 和 `abs.twimg.com` 获取运行参数，无需额外初始化命令或浏览器安装；网络连接失败、cookies 失效和限流会明确报错。安装依赖本身不代表搜索已通过在线验证。
 
 Reddit 帖子抓取使用专用适配器，复用 [eddrit 0.19.0](https://github.com/corenting/eddrit) 的 MIT 许可访客认证流程。`fetch_source`、`scrape_url` 和搜索后的正文抓取遇到 `reddit.com`（含子域）或 `redd.it` 时自动使用它，返回 `via`/`backend=reddit`；这些 URL 不进入通用后端链，即使抓取计划传入了通用 backends。其他域名沿用原有规则，Reddit 没有重新加入搜索源。
 
@@ -140,11 +146,13 @@ MCP 的四个耗时工具使用独立有界线程调度，支持及时处理其�
 | GitHub Repos | 仓库搜索 | https://github.com/settings/tokens | REST API 常见免费额度：未认证约 60 req/hour，token 约 5,000 req/hour；也可 fallback 到已登录 `gh` CLI | 100 |
 | Hacker News | Hacker News story search | https://hn.algolia.com/api | 匿名可用，使用 Hacker News Algolia 搜索接口 | 100 |
 | Stack Overflow | Stack Overflow question search | https://api.stackexchange.com/docs/advanced-search | 匿名可用，使用 Stack Exchange advanced search | 100 |
-| Twitter/X | 社交讨论、推文和 top replies | https://x.com | 无官方搜索 API 免费层；使用 `twikit-ng` + cookies，受账号状态和限流影响 | 20 |
-| V2EX / SOV2EX | V2EX 专用索引搜索 | [SOV2EX API 文档](https://github.com/gexiao/sov2ex/blob/v2/API.md) | 第三方搜索 API，匿名可用，无需 Key、Cookie 或 Firecrawl | 50 |
+| Twitter/X | 社交讨论、推文和 top replies | https://x.com | 使用 `xkit-py` + cookies，受账号状态和限流影响 | 20 |
+| SOV2EX | V2EX 专用索引搜索 | [SOV2EX API 文档](https://github.com/gexiao/sov2ex/blob/v2/API.md) | 第三方搜索 API，匿名可用，无需 Key、Cookie 或 Firecrawl | 50 |
 | Jina Reader | 额外网页正文抓取 | https://r.jina.ai/docs | 匿名可用，约 20 rpm；key 是固定额度，可作为匿名限流后的 fallback | scrape only |
 
-`v2ex` 直接请求 SOV2EX `/api/search`，默认按相关性排序（`sort=sumup`），每源默认召回 10 条，上限 50 条。SOV2EX 是第三方 V2EX 专用索引，不是 V2EX 官方 API；收录范围和更新速度取决于该服务。搜索阶段返回标题、URL 和清理后的高亮摘要，忽略 API 的 `_source.content`，主题 URL 指向 `https://www.v2ex.com/t/<id>`。最终入选 RRF 前 15 条后，再统一抓取原帖 URL 或复用此前 URL 抓取的正文缓存。
+`sov2ex` 直接请求 SOV2EX `/api/search`，默认按相关性排序（`sort=sumup`），每源默认召回 10 条，上限 50 条。SOV2EX 是第三方 V2EX 专用索引，不是 V2EX 官方 API；收录范围和更新速度取决于该服务。搜索阶段返回标题、URL 和清理后的高亮摘要，忽略 API 的 `_source.content`，主题 URL 指向 `https://www.v2ex.com/t/<id>`。最终入选 RRF 前 15 条后，再统一抓取原帖 URL 或复用此前 URL 抓取的正文缓存。
+
+源列表和搜索响应统一使用 `sov2ex`，没有单独的 V2EX 搜索源。旧 `v2ex` 输入仅作为兼容别名，适用于 `sources`、`disabled_sources` 和计数配置；新计数键优先于旧键。
 
 ## 路由：选择搜哪些源
 
@@ -158,7 +166,7 @@ MCP 的四个耗时工具使用独立有界线程调度，支持及时处理其�
 | `fast` | Baidu + Tavily + Firecrawl + Exa | 较小的搜索源集合；排序后同样获取正文 |
 | `social` | Twitter/X | 看社交反馈、口碑、讨论 |
 | `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
-| `all` | default + social + dev + v2ex（12 源） | 尽可能广的 API 召回 |
+| `all` | default + social + dev + sov2ex（12 源） | 尽可能广的 API 召回 |
 | 指定源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` | 绕过 route，直接指定一个或多个源 |
 
 搜索自动返回正文预览；Agent 选读来源后用 `fetch_source(full_content=True)` 获取已取得全文，`read_source` 用于定向查证缓存片段。已有 URL 无需搜索，直接用 `fetch_source` / `scrape_url`。
@@ -319,7 +327,7 @@ multi_search({ "query": "rust async runtime", "route": "default" })
 
 // 指定单源或专用 route 的语义不变
 search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
-search_web({ "query": "python", "sources": ["v2ex"] })
+search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
 CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `doctor`、`keys status`、`keys reset`。

@@ -7,7 +7,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 $skillRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)))
-$venvPython = Join-Path $skillRoot ".venv\Scripts\python.exe"
 
 function Write-Step {
     param([string] $Message)
@@ -30,7 +29,7 @@ function Invoke-Native {
     }
 }
 
-Set-Location $skillRoot
+Set-Location -LiteralPath $skillRoot
 
 Write-Step "Checking uv"
 if (-not (Test-Command "uv")) {
@@ -50,23 +49,18 @@ if (-not (Test-Command "uv")) {
 Write-Step "Installing Python $PythonVersion through uv if needed"
 Invoke-Native "uv" @("python", "install", $PythonVersion)
 
-if (Test-Path $venvPython) {
-    Write-Step "Using existing local virtual environment"
-} else {
-    Write-Step "Creating local virtual environment"
-    Invoke-Native "uv" @("venv", "--python", $PythonVersion)
+if ($SkipTwitter) {
+    Write-Step "-SkipTwitter is deprecated; all project dependencies, including Twitter/X, will be installed. Cookies remain optional."
 }
 
-if (-not $SkipTwitter) {
-    Write-Step "Installing Twitter/X optional dependency"
-    Invoke-Native "uv" @("pip", "install", "twikit-ng")
-} else {
-    Write-Step "Skipping Twitter/X optional dependency"
-}
+Write-Step "Installing all project dependencies from uv.lock"
+Invoke-Native "uv" @("sync", "--locked", "--python", $PythonVersion)
 
 Write-Step "Running multi-search doctor"
-Invoke-Native "uv" @("run", "python", "-c", "import sys; sys.path.insert(0, r'$skillRoot'); from multi_search_mcp.src.service import doctor_data; import json; print(json.dumps(doctor_data(include_keys=True, include_network=False), ensure_ascii=False, indent=2))")
+Invoke-Native "uv" @("run", "--no-sync", "multi-search", "doctor")
 
 Write-Output ""
-Write-Output "Done. Run the MCP server with:"
-Write-Output '  python -m multi_search_mcp.server'
+Write-Output "Done. Run the CLI or MCP server from this project with:"
+Write-Output '  uv run --no-sync multi-search doctor'
+Write-Output '  uv run --no-sync multi-search-mcp'
+Write-Output "Twitter/X still requires cookies with auth_token and ct0 in ~/.search-keys.json, or TWITTER_COOKIES_PATH."

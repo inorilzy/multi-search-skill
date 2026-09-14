@@ -59,7 +59,7 @@ def _row_from_hit(hit: dict) -> dict:
     # fetched by the shared body stage only after RRF ranking.
     description = _description(highlight)
     row = {
-        "source": "v2ex",
+        "source": "sov2ex",
         "title": title,
         "url": f"https://www.v2ex.com/t/{int(topic_id)}",
         "description": description,
@@ -80,7 +80,7 @@ def _row_from_hit(hit: dict) -> dict:
     return row
 
 
-def search_v2ex(query: str, count: int = 10, timeout: float = 20) -> list:
+def search_sov2ex(query: str, count: int = 10, timeout: float = 20) -> list:
     """Search SOV2EX's V2EX index by relevance, returning only candidates."""
     size = min(50, max(1, count))
     params = {"q": query, "from": 0, "size": size, "sort": "sumup"}
@@ -98,17 +98,17 @@ def search_v2ex(query: str, count: int = 10, timeout: float = 20) -> list:
         if not isinstance(data.get("hits"), list):
             raise ValueError("response hits must be an array")
     except Exception as exc:
-        return [{"source": "v2ex", "error": f"SOV2EX: {exc}"[:300]}]
+        return [{"source": "sov2ex", "error": f"SOV2EX: {exc}"[:300]}]
 
     rows = []
     for index, hit in enumerate(data["hits"][:size], start=1):
         try:
             rows.append(_row_from_hit(hit))
         except ValueError as exc:
-            rows.append({"source": "v2ex", "error": f"SOV2EX hit {index}: {exc}"[:300]})
+            rows.append({"source": "sov2ex", "error": f"SOV2EX hit {index}: {exc}"[:300]})
     if data.get("timed_out"):
         rows.append({
-            "source": "v2ex",
+            "source": "sov2ex",
             "error": "SOV2EX search timed out; results may be incomplete",
         })
     return rows

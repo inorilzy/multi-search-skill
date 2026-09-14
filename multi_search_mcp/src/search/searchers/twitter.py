@@ -1,4 +1,4 @@
-"""Twitter/X search via twikit-ng using saved cookies."""
+"""Twitter/X search via XKit-py using saved cookies."""
 import json
 import os
 import re
@@ -31,7 +31,7 @@ def search_twitter(
     publish_partial: Callable[[list], None] | None = None,
     deadline: float | None = None,
 ) -> list:
-    """Search Twitter/X via twikit-ng using saved cookies.
+    """Search Twitter/X via XKit-py using saved cookies.
 
     `cookies` accepts:
       - dict: {auth_token, ct0, ...} (e.g. from ~/.search-keys.json `"twitter": {...}`)
@@ -40,9 +40,9 @@ def search_twitter(
     """
     try:
         import asyncio
-        from twikit import Client  # type: ignore
+        from xkit import Client  # type: ignore
     except ImportError:
-        return [{"source": "twitter", "error": "twikit-ng not installed (pip install twikit-ng)"}]
+        return [{"source": "twitter", "error": "XKit-py unavailable; reinstall multi-search-mcp with its dependencies"}]
 
     if isinstance(cookies, dict):
         cookies_dict = cookies
@@ -86,8 +86,7 @@ def search_twitter(
             raise asyncio.TimeoutError("search deadline exhausted")
         return await asyncio.wait_for(call(*args, **kwargs), timeout=remaining)
 
-    async def search() -> list:
-        client = Client("en-US")
+    async def search(client) -> list:
         client.set_cookies(cookies_dict)
         try:
             tweets = await request(client.search_tweet, query, "Top", count=count)
@@ -160,7 +159,17 @@ def search_twitter(
             publish()
         return result_rows()
 
+    async def run() -> list:
+        # HTTPX otherwise imposes its own 5-second timeout during X's lazy
+        # transaction initialization, before the provider budget is exhausted.
+        request_timeout = max(0.001, deadline - time.monotonic()) if deadline is not None else 20.0
+        client = Client("en-US", timeout=request_timeout)
+        try:
+            return await search(client)
+        finally:
+            await client.http.aclose()
+
     try:
-        return asyncio.run(search())
+        return asyncio.run(run())
     except Exception as exc:
         return result_rows() + [{"source": "twitter", "error": _scrub(str(exc) or type(exc).__name__, cookies_dict)}]

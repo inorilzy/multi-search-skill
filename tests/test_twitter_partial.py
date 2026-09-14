@@ -16,8 +16,8 @@ def tweet(tweet_id, text=None):
 
 
 class ClientFixture:
-    def __init__(self, *_args):
-        pass
+    def __init__(self, *_args, **_kwargs):
+        self.http = SimpleNamespace(aclose=mock.AsyncMock())
 
     def set_cookies(self, _cookies):
         pass
@@ -31,7 +31,7 @@ class ClientFixture:
 
 class TwitterPartialResultsTests(unittest.TestCase):
     def test_fast_details_do_not_lose_tweets_to_fixed_waits(self):
-        with mock.patch.dict(sys.modules, {"twikit": SimpleNamespace(Client=ClientFixture)}):
+        with mock.patch.dict(sys.modules, {"xkit": SimpleNamespace(Client=ClientFixture), "twikit": None}):
             rows = search_twitter("query", count=2, cookies={}, timeout=0.05)
         self.assertEqual(len(rows), 2)
         self.assertTrue(all(not row.get("error") for row in rows))
@@ -42,7 +42,7 @@ class TwitterPartialResultsTests(unittest.TestCase):
             async def get_tweet_by_id(self, _tweet_id):
                 await asyncio.sleep(1)
 
-        with mock.patch.dict(sys.modules, {"twikit": SimpleNamespace(Client=Client)}):
+        with mock.patch.dict(sys.modules, {"xkit": SimpleNamespace(Client=Client), "twikit": None}):
             rows = search_twitter("query", count=2, cookies={}, timeout=0.05)
         candidates = [row for row in rows if not row.get("error")]
         self.assertEqual([row["url"] for row in candidates], [
@@ -76,7 +76,7 @@ class TwitterPartialResultsTests(unittest.TestCase):
             }), build_provider_registry(),
         )
         try:
-            with mock.patch.dict(sys.modules, {"twikit": SimpleNamespace(Client=Client)}):
+            with mock.patch.dict(sys.modules, {"xkit": SimpleNamespace(Client=Client), "twikit": None}):
                 rows = runner.run("query")
             candidates = [row for row in rows if row.get("url") and not row.get("error")]
             self.assertEqual(len(candidates), 2)
@@ -157,7 +157,7 @@ class TwitterPartialResultsTests(unittest.TestCase):
                     return SimpleNamespace(text=full_text, replies=Page([tweet("reply", reply_text)]))
                 return SimpleNamespace(replies=None)
 
-        with mock.patch.dict(sys.modules, {"twikit": SimpleNamespace(Client=Client)}):
+        with mock.patch.dict(sys.modules, {"xkit": SimpleNamespace(Client=Client), "twikit": None}):
             rows = search_twitter("query", count=2, cookies={}, timeout=1)
         candidates = [row for row in rows if not row.get("error")]
         self.assertEqual(len(candidates), 2)
@@ -180,12 +180,38 @@ class TwitterPartialResultsTests(unittest.TestCase):
                     async def get_tweet_by_id(self, _tweet_id):
                         return SimpleNamespace(replies=[tweet(str(index)) for index in range(reply_count)])
 
-                with mock.patch.dict(sys.modules, {"twikit": SimpleNamespace(Client=Client)}):
+                with mock.patch.dict(sys.modules, {"xkit": SimpleNamespace(Client=Client), "twikit": None}):
                     rows = search_twitter("query", count=1, cookies={}, timeout=1)
                 self.assertEqual(rows[0]["scraped_content"].count("  - @fixture"), 20)
                 errors = [row for row in rows if row.get("error")]
                 self.assertEqual(len(errors), int(reply_count > 20))
                 self.assertEqual("Replies incomplete" in rows[0]["scraped_content"], reply_count > 20)
+
+    def test_xkit_uses_request_budget_and_closes_http_session(self):
+        clients = []
+
+        class Client(ClientFixture):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.options = kwargs
+                clients.append(self)
+
+        with mock.patch.dict(sys.modules, {"xkit": SimpleNamespace(Client=Client), "twikit": None}):
+            rows = search_twitter("query", count=1, cookies={}, timeout=12)
+        self.assertEqual(len(rows), 1)
+        self.assertGreater(clients[0].options["timeout"], 11)
+        self.assertLessEqual(clients[0].options["timeout"], 12)
+        clients[0].http.aclose.assert_awaited_once()
+
+    def test_xkit_initial_search_failure_closes_session_and_redacts_cookie(self):
+        client = ClientFixture()
+        client.search_tweet = mock.AsyncMock(side_effect=RuntimeError("auth_token=fixture-secret"))
+        with mock.patch.dict(sys.modules, {"xkit": SimpleNamespace(Client=lambda *a, **kw: client), "twikit": None}):
+            rows = search_twitter("query", cookies={"auth_token": "fixture-secret"}, timeout=1)
+        self.assertEqual(len(rows), 1)
+        self.assertIn("error", rows[0])
+        self.assertNotIn("fixture-secret", str(rows))
+        client.http.aclose.assert_awaited_once()
 
 
 if __name__ == "__main__":

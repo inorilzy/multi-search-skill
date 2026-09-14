@@ -14,7 +14,7 @@
     "hackernews": 10,
     "stackoverflow": 10,
     "twitter": 10,
-    "v2ex": 10
+    "sov2ex": 10
   },
   "serpapi_engine": "google_light",
   "timeout": 60,

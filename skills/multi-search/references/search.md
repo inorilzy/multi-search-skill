@@ -19,7 +19,7 @@ the main query; do not turn variants into new research topics.
 - `dev`: GitHub repositories, Stack Overflow, and Hacker News.
 - `all`: broadest API fanout.
 - `sources=[...]` names exact providers and bypasses route profiles.
-  For V2EX topics, use `sources=["v2ex"]` (also included in `all`). Its anonymous
+  For V2EX topics, use `sources=["sov2ex"]` (also included in `all`). Its anonymous
   third-party SOV2EX API supplies titles, URLs, and highlight snippets. Indexed
   topic bodies are discarded; selected URLs are fetched after ranking.
 

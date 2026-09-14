@@ -49,7 +49,7 @@ class RemovedRedditTests(unittest.TestCase):
 class RemovedFilteredSourceTests(unittest.TestCase):
     SEARCH_SOURCES = {
         "baidu", "brave", "exa", "firecrawl", "parallel", "serpapi", "tavily",
-        "github_repos", "hackernews", "stackoverflow", "twitter", "v2ex",
+        "github_repos", "hackernews", "stackoverflow", "twitter", "sov2ex",
     }
 
     def test_registry_and_advertised_sources_match_current_twelve(self):

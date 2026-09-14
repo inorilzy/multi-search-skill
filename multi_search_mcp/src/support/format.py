@@ -15,7 +15,7 @@ SOURCE_ICONS = {
     "github-repos": "📦",
     "serpapi": "🔎",
     "twitter": "🐦",
-    "v2ex": "V2",
+    "sov2ex": "SV2",
     "baidu": "BD",
 }
 

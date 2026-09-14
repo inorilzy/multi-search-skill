@@ -6,7 +6,8 @@ requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.28.1,<2",
     "beautifulsoup4>=4.12",
-    "twikit-ng>=2.5",
+    # PyPI 2.6.3 omits twikit/client; use the complete, pinned upstream source.
+    "xkit-py @ git+https://github.com/inorilzy/xkit-py.git@c02ff46efd0264b4bc85968e3f5732561ffdbaf3",
     "curl-cffi>=0.16.3,<0.17",
 ]
 

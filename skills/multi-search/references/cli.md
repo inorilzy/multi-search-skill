@@ -36,6 +36,20 @@ locations. No credentials belong in these commands. Non-secret configuration
 resolves from `MULTI_SEARCH_CONFIG`, `~/.multi-search/multi-search-config.json`,
 then the checkout default. An explicitly configured missing file is an error.
 
+CLI and MCP installations include `xkit-py` for Twitter/X automatically, from
+the GitHub commit pinned in the project dependencies. The PyPI 2.6.3 archives
+omit the client subpackage, so installing `xkit-py` separately is insufficient.
+The pinned repository is private: installation requires Git credentials with
+read access, including in CI. For an authorized GitHub CLI account, run
+`gh auth login` and `gh auth setup-git` if working Git credentials are absent;
+do not put credentials in dependency URLs. In a
+checkout, `uv sync --locked` installs all dependencies and removes the retired
+`twikit-ng` distribution. Both distributions own the `twikit` module directory;
+when upgrading an existing pip environment, uninstall `twikit-ng` before
+installing the project. XKit uses saved cookies and initializes its X web
+session on the first request; no browser installation or separate setup command
+is needed. Installation success does not verify X connectivity or authentication.
+
 ## Search, select, fetch, verify
 
 In delegated mode, the search subagent runs the search commands and returns the

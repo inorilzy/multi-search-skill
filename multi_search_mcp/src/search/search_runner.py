@@ -29,6 +29,7 @@ SOURCE_ALIASES = {
     "github": "github_repos",
     "github-repos": "github_repos",
     "qianfan": "baidu",
+    "v2ex": "sov2ex",
 }
 
 ROUTE_PROFILES = {
@@ -39,7 +40,7 @@ ROUTE_PROFILES = {
     "all": {
         "brave", "parallel", "tavily", "exa", "serpapi", "baidu",
         "firecrawl", "twitter", "stackoverflow", "github_repos",
-        "hackernews", "v2ex",
+        "hackernews", "sov2ex",
     },
 }
 

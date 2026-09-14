@@ -102,6 +102,11 @@ def build_counts(config: dict, global_count: int | None = None, route_default: i
         else:
             value = counts_cfg.get(source, config.get(f"{source}_count"))
             key = f"counts.{source}" if source in counts_cfg else f"{source}_count"
+            # Accept the old name only when neither canonical count key was
+            # supplied. Explicit sov2ex values (including null) take priority.
+            if source == "sov2ex" and source not in counts_cfg and "sov2ex_count" not in config:
+                value = counts_cfg.get("v2ex", config.get("v2ex_count"))
+                key = "counts.v2ex" if "v2ex" in counts_cfg else "v2ex_count"
             if value is None and configured_global is not None:
                 value = configured_global
                 key = "count"

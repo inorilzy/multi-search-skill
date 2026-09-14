@@ -51,8 +51,8 @@ function Test-PythonCommand {
 Write-Output "# multi-search environment check"
 
 $uv = Get-Command uv -ErrorAction SilentlyContinue
-Write-Check ($null -ne $uv) "uv" $(if ($uv) { $uv.Source } else { "missing; run ./scripts/init.ps1 -InstallUv or winget install --id astral-sh.uv -e" })
-Write-Check (Test-Path $venvPython) "local .venv" $(if (Test-Path $venvPython) { $venvPython } else { "missing; run ./scripts/init.ps1" })
+Write-Check ($null -ne $uv) "uv" $(if ($uv) { $uv.Source } else { "missing; run ./multi_search_mcp/src/support/init.ps1 -InstallUv or winget install --id astral-sh.uv -e" })
+Write-Check (Test-Path $venvPython) "local .venv" $(if (Test-Path $venvPython) { $venvPython } else { "missing; run ./multi_search_mcp/src/support/init.ps1" })
 
 $candidates = @(
     @($venvPython),
@@ -74,11 +74,11 @@ if (-not $python) {
     Write-Output ""
     if ($uv) {
         Write-Output "No usable Python command was found yet, but uv is available. Initialize this skill with:"
-        Write-Output "  ./scripts/init.ps1"
+        Write-Output "  ./multi_search_mcp/src/support/init.ps1"
     } else {
         Write-Output "No usable Python command was found. Install uv, then initialize this skill:"
         Write-Output "  winget install --id astral-sh.uv -e"
-        Write-Output "  ./scripts/init.ps1"
+        Write-Output "  ./multi_search_mcp/src/support/init.ps1"
     }
     Write-Output "If python points to Microsoft Store, you can also disable App execution aliases for python.exe / python3.exe."
     exit 1
@@ -87,22 +87,24 @@ if (-not $python) {
 Write-Output ""
 Write-Output ("Using Python: " + ($python -join " "))
 
+Push-Location -LiteralPath $skillRoot
 try {
     $pythonArgs = @()
     if ($python.Length -gt 1) {
         $pythonArgs = $python[1..($python.Length - 1)]
     }
-    $doctorScript = "import sys; sys.path.insert(0, r'$skillRoot'); from multi_search_mcp.src.service import doctor_data; import json; print(json.dumps(doctor_data(include_keys=True, include_network=False), ensure_ascii=False, indent=2))"
-    & $python[0] @pythonArgs -c $doctorScript
+    & $python[0] @pythonArgs -m multi_search_mcp.cli doctor
     $doctorExit = $LASTEXITCODE
 } catch {
     Write-Check $false "multi-search doctor" $_.Exception.Message
     exit 1
+} finally {
+    Pop-Location
 }
 
 Write-Output ""
-Write-Output "Twitter/X optional setup:"
-Write-Output ("  " + ($python -join " ") + " -m pip install twikit-ng")
+Write-Output "Twitter/X setup:"
+Write-Output "  xkit-py is installed with all project dependencies by ./multi_search_mcp/src/support/init.ps1 (uv sync --locked)."
 Write-Output "  Add twitter cookies to ~/.search-keys.json with auth_token and ct0, or set TWITTER_COOKIES_PATH."
 
 exit $doctorExit

@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from multi_search_mcp.src.search.capabilities import PROVIDER_CAPABILITIES, ScrapePolicy
 from multi_search_mcp.src.search.registry import build_provider_registry
-from multi_search_mcp.src.search.resolve import _resolve_sources
+from multi_search_mcp.src.search.resolve import _resolve_sources, build_counts, resolve_disabled_sources
 from multi_search_mcp.src.search.search_runner import (
     SearchContext,
     SearchRunnerConfig,
@@ -20,12 +20,14 @@ from multi_search_mcp.src.service import (
     ReadSourceRequest,
     SearchWebRequest,
     _run_search_candidates,
+    list_sources,
     run_fetch_source,
     run_read_source,
     run_search_web,
 )
 from multi_search_mcp.src.state.content_store import ContentStore
 from multi_search_mcp.src.state.state_store import StateStore
+from multi_search_mcp.src.support.config import ConfigError
 
 
 def topic(topic_id, body, *, score=1):
@@ -49,31 +51,74 @@ def api_response(hits):
     return io.BytesIO(json.dumps({"took": 7, "total": len(hits), "hits": hits}).encode())
 
 
-class V2EXIntegrationTests(unittest.TestCase):
-    def test_v2ex_uses_an_independent_count_and_no_firecrawl_key(self):
+class SOV2EXSourceNameTests(unittest.TestCase):
+    def test_only_sov2ex_is_advertised_as_a_search_source(self):
+        advertised = list_sources()
+        for names in (advertised["sources"], build_provider_registry(), resolve_route("all")):
+            self.assertIn("sov2ex", names)
+            self.assertNotIn("v2ex", names)
+            self.assertEqual(len(names), 12)
+
+    def test_old_and_new_source_inputs_select_one_provider(self):
+        self.assertEqual(_resolve_sources("default", ["v2ex", "sov2ex"]), {"sov2ex"})
+        self.assertEqual(resolve_disabled_sources({"disabled_sources": ["v2ex", "sov2ex"]}), {"sov2ex"})
+
+    def test_old_count_inputs_remain_accepted_with_new_keys_taking_precedence(self):
+        cases = (
+            ({"counts": {"sov2ex": 17}}, 17),
+            ({"sov2ex_count": 16}, 16),
+            ({"counts": {"v2ex": 13}}, 13),
+            ({"v2ex_count": 11}, 11),
+            ({"counts": {"v2ex": 13}, "v2ex_count": 11}, 13),
+            ({"counts": {"v2ex": 13}, "sov2ex_count": 16}, 16),
+            ({"counts": {"sov2ex": 17, "v2ex": 13}, "sov2ex_count": 16}, 17),
+            ({"counts": {"sov2ex": None, "v2ex": 13}}, 10),
+            ({"sov2ex_count": None, "v2ex_count": 11}, 10),
+        )
+        for config, expected in cases:
+            with self.subTest(config=config):
+                counts = build_counts(config)
+                self.assertEqual(counts["sov2ex"], expected)
+                self.assertNotIn("v2ex", counts)
+                self.assertEqual(build_counts(config, global_count=3)["sov2ex"], 3)
+        self.assertEqual(build_counts({"counts": {"v2ex": 99}})["sov2ex"], 50)
+
+    def test_invalid_count_values_are_not_hidden_by_old_aliases(self):
+        for config, key in (
+            ({"counts": {"sov2ex": "invalid", "v2ex": 13}}, "counts.sov2ex"),
+            ({"sov2ex_count": "invalid", "v2ex_count": 11}, "sov2ex_count"),
+            ({"counts": {"v2ex": "invalid"}}, "counts.v2ex"),
+            ({"v2ex_count": "invalid"}, "v2ex_count"),
+        ):
+            with self.subTest(config=config), self.assertRaisesRegex(ConfigError, key):
+                build_counts(config)
+
+
+class SOV2EXIntegrationTests(unittest.TestCase):
+    def test_sov2ex_uses_an_independent_count_and_no_firecrawl_key(self):
         cfg = SearchRunnerConfig(
-            route="default", counts={"v2ex": 7}, timeout=10,
+            route="default", counts={"sov2ex": 7}, timeout=10,
             serpapi_engine="google_light", keys={},
         )
-        ctx = SearchContext(source="v2ex", timeout=4, deadline=100, keys={})
+        ctx = SearchContext(source="sov2ex", timeout=4, deadline=100, keys={})
         with mock.patch(
-            "multi_search_mcp.src.search.registry.search_v2ex", autospec=True, return_value=[]
+            "multi_search_mcp.src.search.registry.search_sov2ex", autospec=True, return_value=[]
         ) as search, mock.patch(
             "multi_search_mcp.src.search.registry.search_firecrawl",
             side_effect=AssertionError("V2EX must not call Firecrawl"),
         ):
-            spec = build_provider_registry()["v2ex"]
+            spec = build_provider_registry()["sov2ex"]
             self.assertIsNone(spec.key_name)
             self.assertEqual(spec.call("python", cfg, ctx, None), [])
         search.assert_called_once_with("python", 7, timeout=4)
-        self.assertEqual(PROVIDER_CAPABILITIES["v2ex"].count_key, "v2ex")
-        self.assertIsNone(PROVIDER_CAPABILITIES["v2ex"].operation.key_name)
-        self.assertFalse(PROVIDER_CAPABILITIES["v2ex"].output.returns_content)
-        self.assertEqual(PROVIDER_CAPABILITIES["v2ex"].scrape_policy, ScrapePolicy.CANDIDATE)
+        self.assertEqual(PROVIDER_CAPABILITIES["sov2ex"].count_key, "sov2ex")
+        self.assertIsNone(PROVIDER_CAPABILITIES["sov2ex"].operation.key_name)
+        self.assertFalse(PROVIDER_CAPABILITIES["sov2ex"].output.returns_content)
+        self.assertEqual(PROVIDER_CAPABILITIES["sov2ex"].scrape_policy, ScrapePolicy.CANDIDATE)
 
-    def test_only_all_and_explicit_source_selection_include_v2ex(self):
-        self.assertEqual(_resolve_sources("default", ["v2ex"]), {"v2ex"})
-        self.assertIn("v2ex", resolve_route("all"))
+    def test_only_all_and_explicit_source_selection_include_sov2ex(self):
+        self.assertEqual(_resolve_sources("default", ["sov2ex"]), {"sov2ex"})
+        self.assertIn("sov2ex", resolve_route("all"))
         self.assertEqual(resolve_route("default"), {
             "brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu",
         })
@@ -87,7 +132,7 @@ class V2EXIntegrationTests(unittest.TestCase):
         hits = [topic(i, f"INDEXED BODY MUST NOT BE USED: {i}") for i in range(101, 121)]
         query_runs = []
         with tempfile.TemporaryDirectory() as temp, mock.patch(
-            "multi_search_mcp.src.search.searchers.v2ex.urlopen_retry",
+            "multi_search_mcp.src.search.searchers.sov2ex.urlopen_retry",
             return_value=api_response(hits),
         ), mock.patch(
             "multi_search_mcp.src.service.load_keys",
@@ -95,7 +140,7 @@ class V2EXIntegrationTests(unittest.TestCase):
         ):
             store = StateStore(Path(temp) / "state.sqlite")
             response = _run_search_candidates(
-                SearchWebRequest(query="python", sources=["v2ex"], count=20),
+                SearchWebRequest(query="python", sources=["sov2ex"], count=20),
                 keys={}, config={}, state_store=store,
                 query_runs_observer=query_runs.extend,
             )
@@ -124,7 +169,7 @@ class V2EXIntegrationTests(unittest.TestCase):
 
         scraper = mock.Mock(side_effect=scrape)
         with tempfile.TemporaryDirectory() as temp, mock.patch(
-            "multi_search_mcp.src.search.searchers.v2ex.urlopen_retry",
+            "multi_search_mcp.src.search.searchers.sov2ex.urlopen_retry",
             return_value=api_response(hits),
         ) as http, mock.patch(
             "multi_search_mcp.src.service.load_keys",
@@ -135,12 +180,12 @@ class V2EXIntegrationTests(unittest.TestCase):
         ):
             store = StateStore(Path(temp) / "state.sqlite")
             response = run_search_web(
-                SearchWebRequest(query="python", sources=["v2ex"], count=20),
+                SearchWebRequest(query="python", sources=["sov2ex"], count=20),
                 keys={}, config={}, state_store=store, scraper=scraper,
                 url_resolver=lambda _host: ["93.184.216.34"], scrape_chars=12,
             )
             self.assertEqual(response["errors"], [])
-            self.assertEqual(response["diagnostics"]["active_sources"], ["v2ex"])
+            self.assertEqual(response["diagnostics"]["active_sources"], ["sov2ex"])
             rows = response["results"]
             self.assertEqual([row["url"] for row in rows], expected_urls)
             self.assertEqual(scraper.call_count, 15)
@@ -179,11 +224,11 @@ class V2EXIntegrationTests(unittest.TestCase):
         self.assertEqual(params["q"], ["python"])
         self.assertEqual(params["size"], ["20"])
 
-    def test_search_without_state_still_fetches_url_instead_of_indexed_body(self):
+    def test_old_source_alias_returns_sov2ex_and_fetches_url_without_state(self):
         body = "Freshly fetched body without SQLite state."
         scraper = mock.Mock(return_value={"markdown": body, "via": "fake"})
         with mock.patch(
-            "multi_search_mcp.src.search.searchers.v2ex.urlopen_retry",
+            "multi_search_mcp.src.search.searchers.sov2ex.urlopen_retry",
             return_value=api_response([topic(103, "INDEXED BODY MUST NOT BE USED")]),
         ):
             result = run_search_web(
@@ -192,6 +237,8 @@ class V2EXIntegrationTests(unittest.TestCase):
                 url_resolver=lambda _host: ["93.184.216.34"],
             )
         self.assertEqual(result["errors"], [])
+        self.assertEqual(result["results"][0]["source"], "sov2ex")
+        self.assertEqual(result["diagnostics"]["active_sources"], ["sov2ex"])
         self.assertEqual(result["scrapes"][0]["markdown"], body)
         self.assertEqual(result["results"][0]["body_backend"], "fake")
         scraper.assert_called_once()
@@ -200,11 +247,11 @@ class V2EXIntegrationTests(unittest.TestCase):
     def test_missing_indexed_body_fetches_topic_url_after_rrf(self):
         scraper = mock.Mock(return_value={"markdown": "Fetched topic body", "via": "fake"})
         with mock.patch(
-            "multi_search_mcp.src.search.searchers.v2ex.urlopen_retry",
+            "multi_search_mcp.src.search.searchers.sov2ex.urlopen_retry",
             return_value=api_response([topic(104, "")]),
         ):
             result = run_search_web(
-                SearchWebRequest(query="python", sources=["v2ex"], use_state=False),
+                SearchWebRequest(query="python", sources=["sov2ex"], use_state=False),
                 keys={}, config={}, scraper=scraper,
                 url_resolver=lambda _host: ["93.184.216.34"],
             )

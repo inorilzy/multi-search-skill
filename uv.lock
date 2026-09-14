@@ -577,7 +577,7 @@ dependencies = [
     { name = "beautifulsoup4" },
     { name = "curl-cffi" },
     { name = "mcp" },
-    { name = "twikit-ng" },
+    { name = "xkit-py" },
 ]
 
 [package.metadata]
@@ -585,7 +585,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "curl-cffi", specifier = ">=0.16.3,<0.17" },
     { name = "mcp", specifier = ">=1.28.1,<2" },
-    { name = "twikit-ng", specifier = ">=2.5" },
+    { name = "xkit-py", git = "https://github.com/inorilzy/xkit-py.git?rev=c02ff46efd0264b4bc85968e3f5732561ffdbaf3" },
 ]
 
 [[package]]
@@ -1155,25 +1155,6 @@ wheels = [
 ]
 
 [[package]]
-name = "twikit-ng"
-version = "2.5.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "filetype" },
-    { name = "httpx", extra = ["socks"] },
-    { name = "js2py-3-13" },
-    { name = "lxml" },
-    { name = "m3u8" },
-    { name = "pyotp" },
-    { name = "webvtt-py" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/cc/d4/fcbd6c617a33e2945259a3a5929b9578412af903644e3529e33cef97efb0/twikit_ng-2.5.1.tar.gz", hash = "sha256:62569104f56c4ff0d37fdabedea19d70d40794fe79585a7153ac19e9f753a0dd", size = 77047, upload-time = "2026-05-29T08:15:05.775Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/de/98696e59ea1b46d7fc0e3a67583077e27332595b2431c6dec585692f6645/twikit_ng-2.5.1-py3-none-any.whl", hash = "sha256:6051618f911c59e68cf508df824bfeef7178eef8aa4da1be28f975818394067d", size = 89132, upload-time = "2026-05-29T08:15:04.396Z" },
-]
-
-[[package]]
 name = "typing-extensions"
 version = "4.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1236,4 +1217,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5e/f6/7c9c964681fb148e0293e6860108d378e09ccab2218f9063fd3eb87f840a/webvtt-py-0.5.1.tar.gz", hash = "sha256:2040dd325277ddadc1e0c6cc66cbc4a1d9b6b49b24c57a0c3364374c3e8a3dc1", size = 55128, upload-time = "2024-05-30T13:40:17.189Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f3/ed/aad7e0f5a462d679f7b4d2e0d8502c3096740c883b5bbed5103146480937/webvtt_py-0.5.1-py3-none-any.whl", hash = "sha256:9d517d286cfe7fc7825e9d4e2079647ce32f5678eb58e39ef544ffbb932610b7", size = 19802, upload-time = "2024-05-30T13:40:14.661Z" },
+]
+
+[[package]]
+name = "xkit-py"
+version = "2.6.3"
+source = { git = "https://github.com/inorilzy/xkit-py.git?rev=c02ff46efd0264b4bc85968e3f5732561ffdbaf3#c02ff46efd0264b4bc85968e3f5732561ffdbaf3" }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "filetype" },
+    { name = "httpx", extra = ["socks"] },
+    { name = "js2py-3-13" },
+    { name = "lxml" },
+    { name = "m3u8" },
+    { name = "pyotp" },
+    { name = "webvtt-py" },
 ]

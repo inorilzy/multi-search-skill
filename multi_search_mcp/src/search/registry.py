@@ -15,7 +15,7 @@ from .searchers.serpapi import search_serpapi
 from .searchers.stackoverflow import search_stackoverflow
 from .searchers.tavily import search_tavily
 from .searchers.twitter import search_twitter
-from .searchers.v2ex import search_v2ex
+from .searchers.sov2ex import search_sov2ex
 
 
 def _capability_metadata(name: str) -> tuple[str, str | None, int, bool]:
@@ -102,10 +102,10 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
                 search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, want_content=cfg.want_content,
             ),
         ),
-        "v2ex": _provider_spec(
-            "v2ex",
+        "sov2ex": _provider_spec(
+            "sov2ex",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_v2ex, q, cfg.counts["v2ex"], timeout=ctx.timeout,
+                search_sov2ex, q, cfg.counts["sov2ex"], timeout=ctx.timeout,
             ),
         ),
         "github_repos": _provider_spec(

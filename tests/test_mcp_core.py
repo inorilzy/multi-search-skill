@@ -253,7 +253,7 @@ class ProviderMetadataDriftTests(unittest.TestCase):
         "firecrawl": "firecrawl",
         "github_repos": "github",
         "hackernews": "hackernews", "stackoverflow": "stackoverflow",
-        "twitter": "twitter", "v2ex": "v2ex",
+        "twitter": "twitter", "sov2ex": "sov2ex",
     }
 
     # Frozen snapshot of current count membership, so derivation cannot silently
@@ -261,7 +261,7 @@ class ProviderMetadataDriftTests(unittest.TestCase):
     COUNT_CAPS_KEYS = {
         "baidu", "brave", "parallel", "tavily", "exa", "github", "hackernews", "serpapi",
         "stackoverflow", "firecrawl",
-        "twitter", "v2ex",
+        "twitter", "sov2ex",
     }
     DEFAULT_COUNTS_KEYS = COUNT_CAPS_KEYS
 
@@ -278,7 +278,7 @@ class ProviderMetadataDriftTests(unittest.TestCase):
             "baidu": 50, "brave": 20, "parallel": 20, "tavily": 20, "exa": 100, "github": 100,
             "hackernews": 100, "serpapi": 100,
             "stackoverflow": 100, "firecrawl": 100,
-            "twitter": 20, "v2ex": 50,
+            "twitter": 20, "sov2ex": 50,
         }
         self.assertEqual(COUNT_CAPS, expected_caps)
         self.assertEqual(DEFAULT_COUNTS, {k: 10 for k in expected_caps})
