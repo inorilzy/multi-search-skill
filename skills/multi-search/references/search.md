@@ -15,7 +15,10 @@ the main query; do not turn variants into new research topics.
 
 - Omit it for ordinary web search (`default`; `web` is an alias).
 - `fast`: smaller set of low-latency, content-capable web providers.
-- `social`: Twitter/X feedback.
+- `social`: Twitter/X feedback. Search supplies candidates and text snippets;
+  selected X URLs use the dedicated XKit scraper for `.full_text` and up to
+  20 loaded replies. Reply omissions or failures are stated in the Markdown.
+  `full_content` means all acquired text, not all replies in the conversation.
 - `dev`: GitHub repositories, Stack Overflow, and Hacker News.
 - `all`: broadest API fanout.
 - `sources=[...]` names exact providers and bypasses route profiles.

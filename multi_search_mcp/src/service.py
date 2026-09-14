@@ -16,6 +16,7 @@ from .state.key_state import BasicKeyManager, SQLiteKeyManager
 from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, load_keys
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content
 from .scrape.scrape import scrape_url_smart
+from .scrape.scrapers.twitter import is_twitter_url, validate_twitter_url
 from .scrape.stage import run_ranked_fetch_stage
 from .search.search_runner import (
     ALL_SOURCE_NAMES,
@@ -213,7 +214,10 @@ def run_fetch_source(
             request.timeout, resolved_config or {}, "scrape_timeout", 60,
         )
         deadline = budget_started + timeout
-    validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
+    if is_twitter_url(url):
+        validate_twitter_url(url)
+    else:
+        validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
     source_providers = list((source or {}).get("providers") or ["direct"])
     retention = retention_policy_for_sources(source_providers)
     source_id = str(request.source_id or "")
@@ -239,6 +243,11 @@ def run_fetch_source(
 
     content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None
     cached = content_store.get(source_id) if content_store and source_id else None
+    # Previous X search prefetches (and generic scrapes) did not acquire XKit
+    # details. Only reuse bodies produced by the dedicated detail scraper.
+    if cached is not None and is_twitter_url(url) and not str(cached.get("cache_scope") or "").startswith("twitter-detail-v1:"):
+        content_store.delete_source(source_id)
+        cached = None
     if cached is not None and not retention.persist_body:
         content_store.delete_source(source_id)
         cached = None
@@ -257,6 +266,8 @@ def run_fetch_source(
                     "backends": list(request.backends or []),
                     "keys": runtime_keys,
                 }, sort_keys=True).encode("utf-8")).hexdigest()
+                if is_twitter_url(url):
+                    cache_scope = "twitter-detail-v1:" + cache_scope
                 cached = content_store.reuse_for_url(
                     source_id, canonical_url=canonicalize_url(url), cache_scope=cache_scope,
                 )
@@ -481,6 +492,10 @@ def _run_search_candidates(
         for row in query_rows:
             body = search_content(row).body
             if not body or not row.get("url") or row.get("error"):
+                continue
+            # X details and replies must come from the authenticated scraper,
+            # including X links discovered by a generic search provider.
+            if is_twitter_url(str(row["url"])):
                 continue
             url = canonicalize_url(str(row["url"]))
             candidate = (-len(body), str(row.get("source") or ""), body)
@@ -838,6 +853,8 @@ def _run_scrape_raw(
         key_manager=key_manager,
         scrape_chars=scrape_chars,
         url_resolver=url_resolver,
+        **({"twitter_cookies": runtime_keys.get("twitter") or runtime_keys.get("twitter_cookies", "")}
+           if is_twitter_url(request.url) else {}),
     )
     result = normalize_scrape_result(result, url=request.url)
     return result, site_memory.consume_updates() if site_memory else [], scrape_chars

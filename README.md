@@ -110,6 +110,10 @@ uv sync --locked
 
 Twitter/X 仍需要 cookies。XKit-py 首次请求会自动从 `x.com` 和 `abs.twimg.com` 获取运行参数，无需额外初始化命令或浏览器安装；网络连接失败、cookies 失效和限流会明确报错。安装依赖本身不代表搜索已通过在线验证。
 
+X 搜索只取得候选列表，返回 URL、标题、正文摘要和互动数据。统一去重、排序后，仅为最终入选的帖子调用 X 专用 scraper：通过 XKit `get_tweet_by_id()` 的 `.full_text` 读取正文，并加载最多 20 条评论（评论也读取 `.full_text`）。`x.com` / `twitter.com` 帖子链接可直接交给 `fetch_source`，无需先搜索；沿用同一份 Cookie，不切换到通用网页抓取器。正文进入统一缓存，后续短预览和 `read_source` 不会重新请求 X。旧版本的搜索片段缓存会在获取正文时重新抓取。
+
+`.full_text` 保留 X 响应已经提供的长推文文本，不代表整串对话或全部评论。评论达到上限、仍有未加载评论或分页失败时，Markdown 会明确标注；`truncated` 仍表示已取得文本的输出裁剪，`full_content=True` 读取全部已取得文本。首次详情请求失败会作为抓取错误返回，并保留搜索候选。
+
 Reddit 帖子抓取使用专用适配器，复用 [eddrit 0.19.0](https://github.com/corenting/eddrit) 的 MIT 许可访客认证流程。`fetch_source`、`scrape_url` 和搜索后的正文抓取遇到 `reddit.com`（含子域）或 `redd.it` 时自动使用它，返回 `via`/`backend=reddit`；这些 URL 不进入通用后端链，即使抓取计划传入了通用 backends。其他域名沿用原有规则，Reddit 没有重新加入搜索源。
 
 支持帖子/评论永久链接和 `redd.it/{post_id}`，正文与已加载评论输出为 Markdown，评论最多 100 条、8 层，并标注未展开部分。社区列表、wiki 和 `/s/` 分享跳转链接目前会明确报不支持。无需 Reddit 账号 Cookie、API key 或 Valkey；匿名 Token 仅缓存在进程内。网络使用 `HTTPS_PROXY`/`ALL_PROXY`，也兼容 eddrit 的 `PROXY`；不会自动配置本机代理。HTTP 拦截、限流或认证错误直接返回错误，不切换到通用 scraper。

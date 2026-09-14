@@ -85,23 +85,24 @@ class ContentFlowRegressionTests(unittest.TestCase):
         self.assertEqual(first["body"], body[:10])
         self.assertTrue(first["truncated"])
 
-    def test_twitter_platform_body_is_cached_without_leaking_into_candidate(self):
+    def test_twitter_search_excerpt_is_not_cached_as_body(self):
         body = "Full post and replies"
         hit = self.search({
             "source": "twitter", "title": "Post", "url": "https://x.com/example/status/1",
-            "description": "comments: 2 likes: 3", "scraped_content": body,
-            "content_kind": "content",
+            "description": "Post excerpt", "scraped_content": "",
+            "content_kind": "excerpt",
         })
-        self.assertTrue(hit["body_available"])
+        self.assertFalse(hit["body_available"])
         self.assertNotIn(body, hit["content"])
         self.assertNotIn("body", hit)
         fetched = service.run_fetch_source(
             service.FetchSourceRequest(source_id=hit["source_id"]),
-            scraper=lambda *_args, **_kwargs: self.fail("cached provider body must be reused"),
+            scraper=lambda url, **_kwargs: {"url": url, "markdown": body, "via": "twitter"},
             **self.fetch_options,
         )
         self.assertEqual(fetched["body"], body)
-        self.assertTrue(fetched["cache_hit"])
+        self.assertFalse(fetched["cache_hit"])
+        self.assertEqual(ContentStore(self.store).get(hit["source_id"])["content"], body)
 
     def test_body_row_preserves_its_independent_excerpt(self):
         hit = self.search({

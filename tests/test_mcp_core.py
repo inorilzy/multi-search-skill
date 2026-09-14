@@ -194,10 +194,16 @@ class CapabilityTests(unittest.TestCase):
         self.assertNotIn("video", advertised["routes"])
 
     def test_content_searchers_return_content_and_prefetch(self):
-        for name in ("tavily", "exa", "twitter"):
+        for name in ("tavily", "exa"):
             capability = PROVIDER_CAPABILITIES[name]
             self.assertTrue(capability.output.returns_content)
             self.assertEqual(capability.scrape_policy, ScrapePolicy.PREFETCH)
+
+    def test_twitter_advertises_candidates_and_deferred_details(self):
+        capability = PROVIDER_CAPABILITIES["twitter"]
+        self.assertTrue(capability.output.returns_snippet)
+        self.assertFalse(capability.output.returns_content)
+        self.assertEqual(capability.scrape_policy, ScrapePolicy.CANDIDATE)
 
     def test_capability_table_rows_are_flat_for_markdown_rendering(self):
         rows = capability_table_rows(["brave", "tavily"])

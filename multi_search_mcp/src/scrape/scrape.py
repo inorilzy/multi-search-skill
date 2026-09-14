@@ -1,4 +1,4 @@
-"""URL scraping with Reddit domain dispatch and generic page backends."""
+"""URL scraping with platform domain dispatch and generic page backends."""
 import time
 
 from ..support.auth import is_key_retryable_error
@@ -19,11 +19,12 @@ from .scrapers.jina import (
 )
 from .scrapers.tavily import scrape_url_tavily
 from .scrapers.reddit import is_reddit_url, scrape_url_reddit
+from .scrapers.twitter import is_twitter_url, scrape_url_twitter, validate_twitter_url
 from .url_classify import is_zhihu_blocked_text, is_zhihu_url
 from ..state.site_memory import ScrapeAttempt
 
 
-# Selectable generic backends. Reddit is selected exclusively by URL domain.
+# Selectable generic backends. Platform scrapers are selected by URL domain.
 KNOWN_BACKENDS = ("jina", "exa", "tavily", "firecrawl")
 # Keyed backends whose only requirement to run is a configured key. Used to
 # distinguish "no key configured" from "backend unknown" when a caller forces
@@ -154,8 +155,9 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                      key_manager=None,
                      scrape_chars: int | None = None,
                      jina_prefer_keyed: bool = False,
+                     twitter_cookies: dict | str = "",
                      url_resolver=None) -> dict:
-    """Dispatch Reddit URLs to eddrit; otherwise use the generic backend order."""
+    """Dispatch platform URLs to their scrapers; use generic backends otherwise."""
 
     def _remaining_timeout() -> float:
         if deadline is None:
@@ -171,20 +173,30 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                 return normalize_scrape_result({"error": f"unknown scrape backend: {backend}"}, url=url)
 
     # Domain dispatch precedes generic key/backend selection, including when
-    # callers pass a generic backend list for Reddit URLs.
-    if is_reddit_url(url):
+    # callers pass a generic backend list for platform URLs.
+    if is_reddit_url(url) or is_twitter_url(url):
+        backend = "reddit" if is_reddit_url(url) else "twitter"
         try:
-            safe_url = validate_scrape_url(
-                url, resolver=url_resolver, deadline=deadline,
-            )
-        except UrlSecurityError as exc:
-            return normalize_scrape_result({"error": str(exc)}, url=url, via="reddit")
+            if backend == "twitter":
+                safe_url = validate_twitter_url(url)
+            else:
+                safe_url = validate_scrape_url(
+                    url, resolver=url_resolver, deadline=deadline,
+                )
+        except ValueError as exc:
+            return normalize_scrape_result({"error": str(exc)}, url=url, via=backend)
         started = time.monotonic()
-        result = scrape_url_reddit(safe_url, timeout=timeout, deadline=deadline, url_resolver=url_resolver)
-        result = normalize_scrape_result(result, url=safe_url, via="reddit")
+        if backend == "twitter":
+            result = scrape_url_twitter(
+                safe_url, cookies=twitter_cookies, timeout=timeout,
+                deadline=deadline, url_resolver=url_resolver,
+            )
+        else:
+            result = scrape_url_reddit(safe_url, timeout=timeout, deadline=deadline, url_resolver=url_resolver)
+        result = normalize_scrape_result(result, url=safe_url, via=backend)
         if site_memory is not None:
             site_memory.record_attempt(ScrapeAttempt(
-                url=safe_url, scraper="reddit", success="error" not in result,
+                url=safe_url, scraper=backend, success="error" not in result,
                 content_length=len(result.get("markdown") or ""),
                 error_message=result.get("error"),
                 elapsed_ms=int((time.monotonic() - started) * 1000),

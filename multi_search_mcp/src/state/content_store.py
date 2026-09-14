@@ -199,6 +199,7 @@ class ContentStore:
             SELECT
               s.source_id,
               s.expires_at,
+              s.cache_scope,
               o.content_hash,
               o.content,
               o.content_bytes,
