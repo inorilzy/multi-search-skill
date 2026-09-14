@@ -157,7 +157,7 @@ def main() -> None:
                 arguments,
                 providers={name: provider(name) for name in ("brave", "exa")},
                 keys={}, config=config, state_store=store,
-                scraper=scraper, url_resolver=lambda _host: ["127.0.0.1"],
+                scraper=scraper, url_resolver=lambda _host: ["93.184.216.34"],
             )
         elif options.tool == "fetch_source":
             result = run_fetch_source(arguments, scraper=scraper, keys={}, config={}, state_store=store, url_resolver=lambda _host: ["93.184.216.34"])

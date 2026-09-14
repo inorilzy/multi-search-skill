@@ -7,6 +7,8 @@ import sys
 from tempfile import TemporaryDirectory
 import unittest
 
+from scripts.test_isolation import isolated_test_environment
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "scripts/source_trace_fixture.py"
@@ -25,6 +27,31 @@ class SourceTracePolicyTests(unittest.TestCase):
         args.update(overrides or {})
         return subprocess.run(command, input=json.dumps(args), capture_output=True,
                               text=True, encoding="utf-8", cwd=ROOT)
+
+    def test_search_fetches_fixture_bodies_and_records_acquisitions_without_network(self):
+        fixtures = json.loads((ROOT / "docs/examples/source-tracing/scenarios.json").read_text(encoding="utf-8"))
+        pages = fixtures["technical"]["pages"]
+        expected_urls = {row["url"] for row in fixtures["technical"]["candidates"][:2]}
+        with isolated_test_environment(source_root=ROOT) as isolation:
+            session = isolation.root / "source-trace"
+            completed = self.invoke(session, expand=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            result = json.loads(completed.stdout)
+            self.assertEqual(result["errors"], [])
+            self.assertEqual({row["url"] for row in result["results"]}, expected_urls)
+            self.assertTrue(all(row["body_available"] for row in result["results"]))
+            self.assertEqual(len(result["scrapes"]), len(expected_urls))
+            for scrape in result["scrapes"]:
+                self.assertEqual(scrape["via"], "offline-fixture")
+                self.assertTrue(scrape["markdown"])
+                self.assertEqual(scrape["length"], len(pages[scrape["url"]]["body"]))
+            trace = json.loads((session / "calls.jsonl").read_text(encoding="utf-8"))
+            acquisitions = [event for event in trace["events"] if event["boundary"] == "scraper"]
+            self.assertEqual(len(acquisitions), len(expected_urls))
+            self.assertEqual({event["url"] for event in acquisitions}, expected_urls)
+            for event in acquisitions:
+                self.assertEqual(event["acquired_chars"], len(pages[event["url"]]["body"]))
+            isolation.assert_clean()
 
     def test_explicit_config_changes_actual_core_fusion_and_marks_unfrozen_run(self):
         with TemporaryDirectory() as directory:
