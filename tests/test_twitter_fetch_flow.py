@@ -8,12 +8,14 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
 
+from multi_search_mcp.src.scrape import stage as scrape_stage
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.service import run_fetch_source, run_read_source, run_search_web
 from multi_search_mcp.src.state.content_store import ContentStore
 from multi_search_mcp.src.state.source_registry import SourceRegistry
 from multi_search_mcp.src.state.state_store import StateStore
+from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
 
 
 def public_resolver(_hostname):
@@ -79,6 +81,15 @@ class TwitterFetchFlowTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        scrape_pool = BoundedDaemonExecutor(
+            max_workers=5, thread_name_prefix="test-twitter-fetch",
+        )
+        pool_patch = mock.patch.object(scrape_stage, "_SCRAPE_POOL", scrape_pool)
+        pool_patch.start()
+        self.addCleanup(pool_patch.stop)
+        # Deadline returns can precede worker state writes; join before the
+        # patch is restored and the temporary SQLite directory is removed.
+        self.addCleanup(scrape_pool.shutdown, wait=True)
         self.store = StateStore(Path(self.directory.name) / "state.sqlite")
         self.cookies = {"auth_token": "fixture-auth-token", "ct0": "fixture-csrf-token"}
         self.options = {
