@@ -428,6 +428,7 @@ impl Drop for RequestFile {
     }
 }
 
+#[cfg(feature = "native-window")]
 fn run_migration_cli(
     manager: &DesktopManager,
     cli: &Path,
@@ -444,6 +445,7 @@ fn run_migration_cli(
     Ok(output)
 }
 
+#[cfg(feature = "native-window")]
 impl DesktopManager {
     /// Masked preview of the legacy keys file via the CLI.
     pub(crate) fn migration_plan(&self, cli: PathBuf, keys_file: &Path) -> Result<MigrationPlan, String> {
