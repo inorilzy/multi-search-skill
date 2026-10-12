@@ -14,7 +14,8 @@ fn main() {
                 std::process::exit(7);
             }
             Ok("hang") => thread::sleep(Duration::from_secs(30)),
-            _ => println!("multi-search 0.4.0"),
+            Ok(version) => println!("multi-search {version}"),
+            Err(_) => println!("multi-search 0.4.0"),
         }
         return;
     }

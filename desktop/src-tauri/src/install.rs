@@ -308,19 +308,33 @@ fn read_source(dir: &Path, expected_anchor: &str) -> Result<(Manifest, Vec<u8>),
     Ok((manifest, raw))
 }
 
-/// Installed only when the recorded manifest matches the anchor and every listed file still verifies.
-fn installed(root: &Path, expected_anchor: &str) -> Option<Active> {
-    let active: Active = serde_json::from_str(&fs::read_to_string(root.join(ACTIVE)).ok()?).ok()?;
-    if active.manifest_sha256 != expected_anchor {
+/// A recorded install is one this tool owns whose installed manifest still matches the anchor recorded
+/// at activation (not the current bundle's anchor, so an older install can still be updated) and whose
+/// every listed file still verifies.
+fn recorded(root: &Path) -> Option<Active> {
+    if ownership(root) != Ownership::Owned {
         return None;
     }
+    let active: Active = serde_json::from_str(&fs::read_to_string(root.join(ACTIVE)).ok()?).ok()?;
     let raw = fs::read(root.join(MANIFEST)).ok()?;
-    let manifest = parse_manifest(&raw, expected_anchor).ok()?;
+    if hex_digest(&raw) != active.manifest_sha256 {
+        return None;
+    }
+    let manifest = parse_manifest(&raw, &active.manifest_sha256).ok()?;
     if manifest.version != active.version {
         return None;
     }
     verify_files(root, &manifest).ok()?;
     Some(active)
+}
+
+/// A managed pointer exists but no longer verifies: reported as `unverified`, never as "not installed".
+fn unverified(root: &Path) -> bool {
+    root.join(ACTIVE).exists() && recorded(root).is_none()
+}
+
+fn unverified_failure() -> Failure {
+    ("unverified", "已有安装记录无法验证，已阻止覆盖或更新，请先修复或卸载".into())
 }
 
 fn probe(path: &Path, env: &RuntimeEnvironment) -> Result<String, String> {
@@ -441,6 +455,103 @@ fn rollback(root: &Path, names: &[String]) {
     }
 }
 
+/// Names of the top-level entries the recorded manifest owns; empty when the manifest is unreadable.
+fn read_manifest_names(root: &Path, recorded_anchor: &str) -> Vec<String> {
+    let Ok(raw) = fs::read(root.join(MANIFEST)) else {
+        return Vec::new();
+    };
+    match parse_manifest(&raw, recorded_anchor) {
+        Ok(manifest) => top_level_names(&manifest),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Stages and verifies the new bundle, probes it, then swaps it in keeping the previous CLI as a backup.
+fn perform_update(
+    env: &RuntimeEnvironment,
+    root: &Path,
+    source: &Path,
+    steps: &mut Vec<InstallStep>,
+) -> Result<(String, PathBuf), Failure> {
+    let expected = anchor(env);
+    if expected.is_empty() {
+        return Err(unbound_anchor());
+    }
+    let Some(active) = recorded(root) else {
+        return Err(if unverified(root) {
+            unverified_failure()
+        } else {
+            ("not_installed", "未发现由本工具安装的 CLI，无法更新".into())
+        });
+    };
+    let (manifest, raw) = read_source(source, &expected)?;
+    step(steps, "检查安装来源与完整性", true, "清单锚点与全部文件 SHA-256 一致");
+    if manifest.version == active.version {
+        return Err(("already_installed", format!("已安装 CLI {}，无需更新", active.version)));
+    }
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let staging = root.join(format!("staging-{nonce}"));
+    fs::create_dir(&staging).map_err(|e| ("failed", format!("无法创建暂存目录：{e}")))?;
+    for file in &manifest.files {
+        let from = resolve(source, &file.path)?;
+        let to = staging.join(&file.path);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|e| ("failed", format!("无法暂存产物：{e}")))?;
+        }
+        fs::copy(&from, &to).map_err(|e| ("failed", format!("无法暂存产物：{e}")))?;
+    }
+    fs::write(staging.join(MANIFEST), &raw).map_err(|e| ("failed", format!("无法暂存清单：{e}")))?;
+    verify_files(&staging, &manifest)?;
+    let version = probe(&staging.join("bin").join(ARTIFACT), env).map_err(|e| ("failed", e))?;
+    if version != manifest.version {
+        return Err(("failed", "CLI 版本与安装清单不一致，已拒绝更新".into()));
+    }
+    if let Err(reason) = DesktopManager::new(env.clone())
+        .check_compatibility(&staging.join("bin").join(ARTIFACT).to_string_lossy())
+    {
+        return Err(("failed", format!("新 CLI 与已安装 Skill 不兼容，未更新：{reason}")));
+    }
+    step(steps, "暂存、校验并探测新 CLI", true, &format!("multi-search {version}"));
+
+    // Keep the previous CLI reachable until the new one is active and probed.
+    let names = top_level_names(&manifest);
+    let backup = root.join(format!("backup-{}", active.version));
+    let _ = fs::remove_dir_all(&backup);
+    fs::create_dir(&backup).map_err(|e| ("failed", format!("无法创建回滚目录：{e}")))?;
+    for name in &names {
+        let current = root.join(name);
+        if fs::symlink_metadata(&current).is_ok() {
+            fs::rename(&current, backup.join(name)).map_err(|e| ("failed", format!("无法备份旧 CLI：{e}")))?;
+        }
+    }
+    let restore = |names: &[String]| {
+        for name in names {
+            let _ = remove_entry(&root.join(name));
+            let _ = fs::rename(backup.join(name), root.join(name));
+        }
+        let _ = fs::remove_file(root.join(ACTIVE));
+        let _ = fs::remove_dir_all(&backup);
+    };
+    let next = Active { version: version.clone(), manifest_sha256: expected };
+    if let Err(error) = activate(root, &staging, &names, &next) {
+        restore(&names);
+        return Err(error);
+    }
+    let bin = root.join("bin").join(ARTIFACT);
+    match probe(&bin, env) {
+        Ok(found) if found == version => {
+            let _ = fs::remove_dir_all(&backup);
+            step(steps, "激活新版本", true, &format!("multi-search {found}"));
+            Ok((version, bin))
+        }
+        _ => {
+            restore(&names);
+            step(steps, "激活新版本", false, "已回滚");
+            Err(("failed", "新 CLI 激活后检测失败，已恢复旧版本".into()))
+        }
+    }
+}
+
 fn perform(
     env: &RuntimeEnvironment,
     root: &Path,
@@ -454,8 +565,11 @@ fn perform(
     let (manifest, raw) = read_source(source, &expected)?;
     step(steps, "检查安装来源与完整性", true, "清单锚点与全部文件 SHA-256 一致");
 
-    if let Some(active) = installed(root, &expected) {
-        return Err(("already_installed", format!("已安装 CLI {}，本票据不覆盖已有安装", active.version)));
+    if let Some(active) = recorded(root) {
+        return Err(("already_installed", format!("已安装 CLI {}，请使用更新而非覆盖安装", active.version)));
+    }
+    if unverified(root) {
+        return Err(unverified_failure());
     }
     if ownership(root) == Ownership::Unknown {
         return Err(("unknown_existing", "安装目录已有非本工具内容，未做任何修改".into()));
@@ -530,8 +644,24 @@ impl DesktopManager {
             Err(reason) => return row("unavailable", Path::new(""), None, &reason),
         };
         let expected = anchor(&self.environment);
-        if let Some(active) = installed(&lay.root, &expected) {
+        if let Some(active) = recorded(&lay.root) {
+            if let Some(source) = lay.source.as_deref() {
+                if let Ok((manifest, _)) = read_source(source, &expected) {
+                    if manifest.version != active.version {
+                        return row(
+                            "update_available",
+                            &lay.root,
+                            Some(manifest.version),
+                            "有可用的新版本；更新会保留旧版本直至新版本验证通过",
+                        );
+                    }
+                }
+            }
             return row("installed", &lay.root, Some(active.version), "CLI 已由本工具安装");
+        }
+        if unverified(&lay.root) {
+            let (status, reason) = unverified_failure();
+            return row(status, &lay.root, None, &reason);
         }
         if ownership(&lay.root) == Ownership::Unknown {
             return row("unknown_existing", &lay.root, None, "安装目录已有非本工具内容，未做任何修改");
@@ -555,6 +685,59 @@ impl DesktopManager {
 
     pub fn install(&self) -> InstallOutcome {
         self.install_from(None)
+    }
+
+    /// Replaces an owned, active install with a newer verified bundle. The previous CLI is kept as
+    /// `backup-<version>` until the new CLI passes its probe; any failure restores it.
+    pub fn update(&self) -> InstallOutcome {
+        self.update_from(None)
+    }
+
+    pub(crate) fn update_from(&self, bundled: Option<&Path>) -> InstallOutcome {
+        let lay = match layout(&self.environment, bundled) {
+            Ok(lay) => lay,
+            Err(reason) => return outcome("unavailable", Vec::new(), None, reason),
+        };
+        let Some(source) = lay.source else {
+            return outcome("prerequisite_missing", Vec::new(), None, "安装包缺少内置 CLI 资源，未做任何修改".into());
+        };
+        let mut steps = Vec::new();
+        let result = perform_update(&self.environment, &lay.root, &source, &mut steps);
+        clear_staging(&lay.root);
+        match result {
+            Ok(installed) => outcome("installed", steps, Some(installed), String::new()),
+            Err((status, reason)) => {
+                step(&mut steps, status, false, &reason);
+                outcome(status, steps, None, reason)
+            }
+        }
+    }
+
+    /// Removes only the entries the recorded install owns. Config, credentials and Skills are never touched.
+    /// The owned marker is kept so a later reinstall is still recognised as ours.
+    pub fn uninstall(&self) -> InstallOutcome {
+        let lay = match layout(&self.environment, None) {
+            Ok(lay) => lay,
+            Err(reason) => return outcome("unavailable", Vec::new(), None, reason),
+        };
+        let Some(active) = recorded(&lay.root) else {
+            if unverified(&lay.root) {
+                let (status, reason) = unverified_failure();
+                return outcome(status, Vec::new(), None, reason);
+            }
+            return outcome("not_installed", Vec::new(), None, "未发现由本工具安装的 CLI，未做任何修改".into());
+        };
+        let names = read_manifest_names(&lay.root, &active.manifest_sha256);
+        let mut steps = Vec::new();
+        for name in &names {
+            if let Err((status, reason)) = remove_entry(&lay.root.join(name)) {
+                step(&mut steps, status, false, &reason);
+                return outcome(status, steps, None, reason);
+            }
+        }
+        let _ = fs::remove_file(lay.root.join(ACTIVE));
+        step(&mut steps, "卸载 CLI", true, &active.version);
+        outcome("uninstalled", steps, None, String::new())
     }
 
     pub(crate) fn install_from(&self, bundled: Option<&Path>) -> InstallOutcome {
