@@ -101,6 +101,26 @@ async fn install_cli(
 // Every credential command takes a UI source name. `resolve_source` is the only way a
 // provider reaches the store target, so an unknown or crafted name fails before any access.
 #[tauri::command]
+async fn update_cli(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    bundled: tauri::State<'_, BundledCli>,
+) -> Result<crate::install::InstallOutcome, String> {
+    let manager = manager.inner().clone();
+    let bundled = bundled.0.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.update_from(bundled.as_deref()))
+        .await
+        .map_err(|_| "Update worker failed".into())
+}
+#[tauri::command]
+async fn uninstall_cli(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::install::InstallOutcome, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.uninstall())
+        .await
+        .map_err(|_| "Uninstall worker failed".into())
+}
+#[tauri::command]
 async fn credential_status(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
@@ -245,6 +265,8 @@ pub fn run() {
             skill_install,
             install_plan,
             install_cli,
+            update_cli,
+            uninstall_cli,
             credential_status,
             credential_save,
             credential_delete,

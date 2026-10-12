@@ -8,6 +8,8 @@ export function managementApi(invoke) {
     skillInstall: (scope, project) => invoke('skill_install', { scope, project }),
     installPlan: () => invoke('install_plan'),
     install: () => invoke('install_cli'),
+    update: () => invoke('update_cli'),
+    uninstall: () => invoke('uninstall_cli'),
     credentialStatus: source => invoke('credential_status', { source }),
     credentialSave: (source, key) => invoke('credential_save', { source, key }),
     credentialDelete: source => invoke('credential_delete', { source }),
