@@ -11,3 +11,5 @@ import { mountSources } from './sources.js';
 pages.push({ id: 'sources', label: '搜索源', number: '05', mount: mountSources });
 import { mountSettings } from './settings.js';
 pages.push({ id: 'settings', label: '搜索设置', number: '05B', mount: mountSettings });
+import { mountMigration } from './migration.js';
+pages.push({ id: 'migration', label: '旧配置迁移', number: '09', mount: mountMigration });
