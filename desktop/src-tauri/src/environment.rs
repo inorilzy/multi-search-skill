@@ -63,6 +63,7 @@ impl RuntimeEnvironment {
         let app_path =
             std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
         #[cfg(windows)]
+        #[allow(unused_mut)]
         let mut user_path = {
             use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
             let machine = registry_string(
@@ -78,6 +79,7 @@ impl RuntimeEnvironment {
         #[cfg(not(windows))]
         let mut user_path = Vec::new();
         // An isolated acceptance launcher can set a separate disposable user PATH; no registry changes.
+        #[cfg(feature = "install-test-boundary")]
         if variables
             .get("MULTI_SEARCH_TEST_ISOLATION")
             .map(String::as_str)

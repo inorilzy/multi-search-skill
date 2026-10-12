@@ -73,21 +73,28 @@ async fn skill_install(
         .await
         .map_err(|_| "Skill install worker failed".into())
 }
+/// The app's own `cli-bundle` resource directory, resolved once at startup. Never a frontend parameter.
+struct BundledCli(Option<PathBuf>);
+
 #[tauri::command]
 async fn install_plan(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    bundled: tauri::State<'_, BundledCli>,
 ) -> Result<crate::install::InstallPlan, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.install_plan())
+    let bundled = bundled.0.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.install_plan_from(bundled.as_deref()))
         .await
         .map_err(|_| "Install planning failed".into())
 }
 #[tauri::command]
 async fn install_cli(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    bundled: tauri::State<'_, BundledCli>,
 ) -> Result<crate::install::InstallOutcome, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.install())
+    let bundled = bundled.0.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.install_from(bundled.as_deref()))
         .await
         .map_err(|_| "Install worker failed".into())
 }
@@ -181,6 +188,11 @@ fn settings_save(
 pub fn run() {
     tauri::Builder::default()
         .manage(Arc::new(DesktopManager::new(RuntimeEnvironment::system())))
+        .setup(|app| {
+            let bundled = app.path().resource_dir().ok().map(|dir| dir.join("cli-bundle"));
+            app.manage(BundledCli(bundled));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             detect_cli,
             start_test_search,

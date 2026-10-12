@@ -20,6 +20,11 @@ path = "tests/execution.rs"
 [[test]]
 name = "install"
 path = "tests/install.rs"
+required-features = ["install-test-boundary"]
+
+[[test]]
+name = "install_release_boundary"
+path = "tests/install_release_boundary.rs"
 
 [[test]]
 name = "installed_cli"
@@ -57,6 +62,9 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 [features]
 default = ["native-window"]
 native-window = ["dep:tauri", "dep:tauri-build"]
+# Test-only boundary: enables env-driven install source/anchor overrides and the disposable user PATH.
+# Never packageable for release; the default and release builds ignore these environment keys.
+install-test-boundary = []
 
 [dependencies.tauri]
 version = "2"

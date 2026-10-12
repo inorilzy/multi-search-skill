@@ -12,11 +12,11 @@ function setup() {
 
 const plan = (status, extra = {}) => ({ status, root: 'C:\\fixture\\cli', bin: 'C:\\fixture\\cli\\bin\\multi-search.exe', version: null, reason: '', path_hint: 'PATH 提示', ...extra });
 
-test('unconfigured production source shows the prerequisite and keeps install disabled', async () => {
+test('missing bundled CLI resource shows the prerequisite and keeps install disabled', async () => {
   const { window, root } = setup();
-  await mountInstall(root, { installPlan: async () => plan('unconfigured', { reason: '未配置受控发布来源，无法安装' }), install: async () => { throw new Error('must not run'); } });
-  assert.equal(root.querySelector('[data-status="plan"]').textContent, '未配置受控发布来源');
-  assert.match(root.querySelector('[data-info="reason"]').textContent, /未配置受控发布来源/);
+  await mountInstall(root, { installPlan: async () => plan('prerequisite_missing', { reason: '安装包缺少内置 CLI 资源，无法安装' }), install: async () => { throw new Error('must not run'); } });
+  assert.equal(root.querySelector('[data-status="plan"]').textContent, '缺少安装前提');
+  assert.match(root.querySelector('[data-info="reason"]').textContent, /内置 CLI 资源/);
   assert.equal(root.querySelector('[data-action="install"]').disabled, true);
   window.close();
 });
