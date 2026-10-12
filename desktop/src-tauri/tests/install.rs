@@ -331,9 +331,13 @@ fn interrupted_staging_and_partial_bin_residue_are_cleared_by_the_next_run() {
 #[test]
 #[ignore]
 fn real_bundle_installs_against_the_compiled_anchor() {
-    let Ok(bundle) = std::env::var("MULTI_SEARCH_REAL_BUNDLE") else {
-        return;
-    };
+    // Explicit (`--ignored`) runs must never pass vacuously: the bundle path is required.
+    let bundle = std::env::var("MULTI_SEARCH_REAL_BUNDLE").unwrap_or_else(|_| {
+        panic!(
+            "real-bundle acceptance requires MULTI_SEARCH_REAL_BUNDLE=<dir containing manifest.json, bin/, runtime/>; \
+             build it with scripts/build_cli_release.py and rerun with --ignored"
+        )
+    });
     let profile = common::Profile::new();
     let root = profile.root.join("install-real");
     let mut environment = profile.environment.clone();
