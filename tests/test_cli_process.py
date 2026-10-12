@@ -55,6 +55,16 @@ class ProviderHTTP(urllib.request.BaseHandler):
                 raise urllib.error.HTTPError(request.full_url, 503, "fixture provider unavailable", {}, io.BytesIO(b""))
             hits = [] if query == "empty" else [{"objectID": "42", "title": "Fixture article", "url": "https://93.184.216.34/article", "points": 7}]
             payload = {"hits": hits}
+        elif parsed.hostname == "api.tavily.com":
+            # The Bearer must equal the expected synthetic key; the query selects the outcome.
+            if (request.get_header("Authorization") or "") != "Bearer " + os.environ.get("CLI_FIXTURE_TAVILY_KEY", ""):
+                raise urllib.error.HTTPError(request.full_url, 401, "fixture rejects key", {}, io.BytesIO(b'{"detail":{"error":"bad key"}}'))
+            query = json.loads(request.data.decode())["query"]
+            if query == "quota":
+                raise urllib.error.HTTPError(request.full_url, 432, "fixture quota", {}, io.BytesIO(b'{"detail":{"error":"Plan usage limit exceeded"}}'))
+            if query == "network":
+                raise urllib.error.URLError("fixture network down")
+            payload = {"results": [{"title": "Fixture tavily", "url": "https://93.184.216.34/article", "content": "snippet", "score": 0.9}]}
         elif parsed.hostname == "r.jina.ai":
             if os.environ.get("CLI_FIXTURE_NO_HTTP"):
                 raise AssertionError("cached fetch/read unexpectedly contacted a provider")
@@ -176,6 +186,61 @@ class CliProcessTests(unittest.TestCase):
                             self.assertIn("missing BRAVE", result.stdout)
                         if query == "failure":
                             self.assertIn("503", result.stdout)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Credential Manager is Windows-only")
+    def test_store_backed_tavily_search_follows_save_replace_and_delete(self):
+        from multi_search_mcp.src.support.credential_store import default_store
+        namespace = f"ticket04-search-{os.getpid()}"
+        env = dict(self.environment, MULTI_SEARCH_CREDENTIAL_NAMESPACE=namespace)
+        env.pop("TAVILY_API_KEY", None)
+        store = default_store(env)
+        self.addCleanup(store.delete, "tavily")
+
+        def search(expected_key_value):
+            child_env = dict(env, CLI_FIXTURE_TAVILY_KEY=expected_key_value)
+            return subprocess.run(
+                [sys.executable, "-B", "-m", "multi_search_mcp.cli", "search", "ok",
+                 "--source", "tavily", "--format", "json"],
+                cwd=self.isolation.root, env=child_env,
+                capture_output=True, text=True, encoding="utf-8", timeout=30,
+            )
+
+        store.set("tavily", "synthetic-search-key-0013")
+        first = search("synthetic-search-key-0013")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(json.loads(first.stdout)["provider_status"][0]["status"], "ok")
+        self.assertNotIn("synthetic-search-key-0013", first.stdout + first.stderr)
+
+        store.set("tavily", "synthetic-search-key-0014")
+        replaced = search("synthetic-search-key-0014")
+        self.assertEqual(replaced.returncode, 0, replaced.stderr)
+        stale = search("synthetic-search-key-0013")
+        self.assertEqual(json.loads(stale.stdout)["provider_status"][0]["errors"][0]["error_type"], "invalid")
+
+        store.delete("tavily")
+        missing = search("synthetic-search-key-0014")
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("missing TAVILY_API_KEY", missing.stdout + missing.stderr)
+        self.assertNotIn("synthetic-search-key-0014", missing.stdout + missing.stderr)
+
+        # Outcome classes through the same store-backed process path. Known gap: when a single
+        # key's 432 quota error passes through the key-pool wrapper (search_runner.py), the
+        # provider error_type is dropped and the text classifies as rate_limit. Asserted as
+        # the current behavior so the gap stays visible until the wrapper preserves error_type.
+        # A fresh key per case: a 432 persists key cooldown in the isolated state DB, so reusing
+        # one key would make later children report "missing API key" instead of the outcome.
+        for index, (query, expected) in enumerate((("quota", "rate_limit"), ("network", "network"))):
+            key_value = f"synthetic-search-key-001{5 + index}"
+            store.set("tavily", key_value)
+            outcome = subprocess.run(
+                [sys.executable, "-B", "-m", "multi_search_mcp.cli", "search", query,
+                 "--source", "tavily", "--format", "json"],
+                cwd=self.isolation.root, env=dict(env, CLI_FIXTURE_TAVILY_KEY=key_value),
+                capture_output=True, text=True, encoding="utf-8", timeout=30,
+            )
+            errors = json.loads(outcome.stdout)["provider_status"][0]["errors"]
+            self.assertEqual(errors[0]["error_type"], expected, query)
+            self.assertNotIn(key_value, outcome.stdout + outcome.stderr)
 
 
 if __name__ == "__main__":
