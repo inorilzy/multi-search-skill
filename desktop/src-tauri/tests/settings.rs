@@ -36,6 +36,16 @@ impl Sandbox {
             .unwrap_or_default()
     }
 }
+impl Sandbox {
+    /// A dev-fallback path inside the sandbox that does not exist, so tests never read the repo file.
+    fn absent_dev(&self) -> PathBuf {
+        self.0.join("no-dev").join("multi-search-config.json")
+    }
+}
+/// Save through the seam with the sandbox's absent dev path (hermetic: never reads the repo file).
+fn save_h(sandbox: &Sandbox, env: &RuntimeEnvironment, request: &SettingsInput) -> Result<fixture::SettingsView, String> {
+    fixture::save_with_dev(env, request, &sandbox.absent_dev())
+}
 impl Drop for Sandbox {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -55,7 +65,7 @@ fn input(route: &str, timeout: u32, disabled: &[&str]) -> SettingsInput {
 fn save_writes_known_keys_with_sorted_canonical_sources_and_a_trailing_newline() {
     let sandbox = Sandbox::new("canonical");
     let env = sandbox.env(&[]);
-    let view = fixture::save(&env, &input("fast", 30, &["v2ex", "brave", "github", "brave"])).unwrap();
+    let view = save_h(&sandbox, &env, &input("fast", 30, &["v2ex", "brave", "github", "brave"])).unwrap();
     let text = std::fs::read_to_string(sandbox.user_config()).unwrap();
     assert!(text.ends_with('\n'));
     let json: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -78,7 +88,7 @@ fn save_preserves_unknown_fields_and_other_keys() {
         r#"{"count": 7, "no_scrape": true, "counts": {"brave": 3}, "future_field": {"nested": [1, 2]}}"#,
     )
     .unwrap();
-    fixture::save(&env, &input("default", 45, &["tavily"])).unwrap();
+    save_h(&sandbox, &env, &input("default", 45, &["tavily"])).unwrap();
     let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
     assert_eq!(json["count"], 7);
     assert_eq!(json["no_scrape"], true);
@@ -92,7 +102,7 @@ fn save_preserves_unknown_fields_and_other_keys() {
 fn invalid_input_is_rejected_before_any_write_and_keeps_the_old_file_byte_for_byte() {
     let sandbox = Sandbox::new("invalid");
     let env = sandbox.env(&[]);
-    fixture::save(&env, &input("dev", 20, &["hackernews"])).unwrap();
+    save_h(&sandbox, &env, &input("dev", 20, &["hackernews"])).unwrap();
     let before = std::fs::read(sandbox.user_config()).unwrap();
     let bad_inputs = [
         input("nope", 20, &[]),
@@ -105,7 +115,7 @@ fn invalid_input_is_rejected_before_any_write_and_keeps_the_old_file_byte_for_by
         SettingsInput { twitter_cookies_path: Some("x".repeat(2000)), ..input("dev", 20, &[]) },
     ];
     for bad in bad_inputs {
-        assert!(fixture::save(&env, &bad).is_err(), "{:?} must be rejected", bad.route);
+        assert!(save_h(&sandbox, &env, &bad).is_err(), "{:?} must be rejected", bad.route);
         assert_eq!(std::fs::read(sandbox.user_config()).unwrap(), before, "old config must survive");
     }
     assert_eq!(sandbox.leftovers(), vec!["multi-search-config.json"]);
@@ -117,7 +127,7 @@ fn unparsable_existing_file_blocks_save_and_is_not_overwritten() {
     let env = sandbox.env(&[]);
     std::fs::create_dir_all(sandbox.user_config().parent().unwrap()).unwrap();
     std::fs::write(sandbox.user_config(), "{ not json").unwrap();
-    let error = fixture::save(&env, &input("default", 60, &[])).unwrap_err();
+    let error = save_h(&sandbox, &env, &input("default", 60, &[])).unwrap_err();
     assert!(error.contains("未保存"));
     assert_eq!(std::fs::read_to_string(sandbox.user_config()).unwrap(), "{ not json");
 }
@@ -128,7 +138,7 @@ fn env_config_path_is_the_only_target_when_set() {
     let custom = sandbox.0.join("custom").join("cfg.json");
     let env = sandbox.env(&[("MULTI_SEARCH_CONFIG", custom.to_string_lossy().into_owned())]);
     assert_eq!(fixture::config_path(&env).unwrap(), custom);
-    let view = fixture::save(&env, &input("social", 10, &["twitter"])).unwrap();
+    let view = save_h(&sandbox, &env, &input("social", 10, &["twitter"])).unwrap();
     assert!(custom.exists());
     assert!(!sandbox.user_config().exists(), "the user config must not be written when env selects another path");
     assert_eq!(view.path_source, "env");
@@ -142,7 +152,7 @@ fn twitter_reference_is_saved_as_a_path_and_env_is_reported_as_overriding() {
     let env = sandbox.env(&[("TWITTER_COOKIES_PATH", "C:/secret/env-cookies.json".into())]);
     let mut request = input("social", 60, &[]);
     request.twitter_cookies_path = Some("  C:/cookies/twitter.json  ".into());
-    let view = fixture::save(&env, &request).unwrap();
+    let view = save_h(&sandbox, &env, &request).unwrap();
     let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
     assert_eq!(json["twitter_cookies_path"], "C:/cookies/twitter.json");
     assert_eq!(view.twitter_cookies_path.as_deref(), Some("C:/cookies/twitter.json"));
@@ -152,7 +162,7 @@ fn twitter_reference_is_saved_as_a_path_and_env_is_reported_as_overriding() {
 
     let mut cleared = input("social", 60, &[]);
     cleared.twitter_cookies_path = Some("".into());
-    fixture::save(&env, &cleared).unwrap();
+    save_h(&sandbox, &env, &cleared).unwrap();
     let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
     assert!(json.get("twitter_cookies_path").is_none());
 }
@@ -161,7 +171,7 @@ fn twitter_reference_is_saved_as_a_path_and_env_is_reported_as_overriding() {
 fn all_sources_disabled_for_the_route_reports_no_active_source_without_reenabling() {
     let sandbox = Sandbox::new("alldisabled");
     let env = sandbox.env(&[]);
-    let view = fixture::save(&env, &input("default", 60, &["baidu", "brave", "exa", "firecrawl", "parallel", "serpapi", "tavily"])).unwrap();
+    let view = save_h(&sandbox, &env, &input("default", 60, &["baidu", "brave", "exa", "firecrawl", "parallel", "serpapi", "tavily"])).unwrap();
     assert!(view.active_sources.is_empty());
     assert_eq!(view.status, "no_active_source");
     let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
@@ -172,8 +182,8 @@ fn all_sources_disabled_for_the_route_reports_no_active_source_without_reenablin
 fn toggling_a_source_back_on_removes_it_from_disabled_sources() {
     let sandbox = Sandbox::new("toggle");
     let env = sandbox.env(&[]);
-    fixture::save(&env, &input("fast", 60, &["baidu", "exa"])).unwrap();
-    let view = fixture::save(&env, &input("fast", 60, &["exa"])).unwrap();
+    save_h(&sandbox, &env, &input("fast", 60, &["baidu", "exa"])).unwrap();
+    let view = save_h(&sandbox, &env, &input("fast", 60, &["exa"])).unwrap();
     assert_eq!(view.disabled_sources, vec!["exa"]);
     // Route "fast" runs baidu, tavily, firecrawl, exa; only exa stays disabled.
     assert_eq!(view.active_sources, vec!["baidu", "tavily", "firecrawl"]);
@@ -191,14 +201,14 @@ fn handoff_file_for_the_independent_cli_check() {
     let mut request = input("default", 25, &["brave"]);
     // Synthetic path reference only; the CLI test checks it is passed through, never read.
     request.twitter_cookies_path = Some("C:/synthetic/handoff-twitter-cookies.json".into());
-    fixture::save(&env, &request).unwrap();
+    save_h(&sandbox, &env, &request).unwrap();
     std::fs::copy(sandbox.user_config(), PathBuf::from(target)).unwrap();
 }
 
 #[test]
 fn view_without_a_file_reports_defaults_and_path_source() {
     let sandbox = Sandbox::new("view");
-    let view = fixture::view(&sandbox.env(&[]));
+    let view = fixture::view_with_dev(&sandbox.env(&[]), &sandbox.absent_dev());
     assert!(!view.file_present);
     assert_eq!(view.route, "default");
     assert_eq!(view.timeout, 60);
@@ -206,17 +216,101 @@ fn view_without_a_file_reports_defaults_and_path_source() {
     assert_eq!(view.status, "ok");
 }
 
+/// Dev fallback fixture: a file shaped like the repo-root config the CLI reads when no user file exists.
+fn write_dev_fallback(sandbox: &Sandbox) -> PathBuf {
+    let dev = sandbox.0.join("dev").join("multi-search-config.json");
+    std::fs::create_dir_all(dev.parent().unwrap()).unwrap();
+    std::fs::write(
+        &dev,
+        r#"{"type": "dev", "timeout": 40, "count": 9, "no_scrape": true, "counts": {"brave": 3}, "disabled_sources": ["exa"]}"#,
+    )
+    .unwrap();
+    dev
+}
+
+#[test]
+fn save_with_no_user_file_seeds_from_the_dev_fallback_the_cli_reads_and_writes_only_the_user_file() {
+    let sandbox = Sandbox::new("fallback-seed");
+    let dev = write_dev_fallback(&sandbox);
+    let dev_before = std::fs::read(&dev).unwrap();
+    let env = sandbox.env(&[]);
+    let before = fixture::view_with_dev(&env, &dev);
+    assert_eq!(before.read_source, "dev_fallback");
+    assert!(before.save_creates_override, "saving will create a user file that overrides the fallback");
+    assert_eq!(before.route, "dev", "displayed values are the ones the CLI reads today");
+    assert_eq!(before.timeout, 40);
+
+    let view = fixture::save_with_dev(&env, &input("fast", 30, &[]), &dev).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
+    assert_eq!(json["count"], 9, "fields the CLI already honours are kept");
+    assert_eq!(json["no_scrape"], true);
+    assert_eq!(json["counts"]["brave"], 3);
+    assert_eq!(json["type"], "fast");
+    assert_eq!(json["timeout"], 30);
+    assert_eq!(std::fs::read(&dev).unwrap(), dev_before, "the repo-root dev file must never be written");
+    assert_eq!(view.read_source, "user");
+    assert!(!view.save_creates_override, "after the save the user file is the one read");
+}
+
+#[test]
+fn an_existing_user_file_is_read_and_written_and_is_not_overridden_by_the_dev_fallback() {
+    let sandbox = Sandbox::new("user-wins");
+    let dev = write_dev_fallback(&sandbox);
+    let env = sandbox.env(&[]);
+    fixture::save_with_dev(&env, &input("default", 45, &["tavily"]), &dev).unwrap();
+    let view = fixture::view_with_dev(&env, &dev);
+    assert_eq!(view.read_source, "user");
+    assert!(!view.save_creates_override);
+    assert_eq!(view.route, "default");
+    assert_eq!(view.timeout, 45);
+}
+
+#[test]
+fn env_target_is_saved_explicitly_and_never_redirected_to_user_or_dev_files() {
+    let sandbox = Sandbox::new("env-explicit");
+    let dev = write_dev_fallback(&sandbox);
+    let custom = sandbox.0.join("custom").join("cfg.json");
+    let env = sandbox.env(&[("MULTI_SEARCH_CONFIG", custom.to_string_lossy().into_owned())]);
+    let view = fixture::save_with_dev(&env, &input("social", 10, &["twitter"]), &dev).unwrap();
+    assert!(custom.exists());
+    assert!(!sandbox.user_config().exists(), "no user file is created when env selects another target");
+    assert_eq!(view.read_source, "env");
+    assert!(!view.save_creates_override);
+}
+
+#[test]
+fn defaults_without_any_file_report_defaults_and_no_override() {
+    let sandbox = Sandbox::new("defaults-only");
+    let missing_dev = sandbox.0.join("none").join("multi-search-config.json");
+    let env = sandbox.env(&[]);
+    let view = fixture::view_with_dev(&env, &missing_dev);
+    assert_eq!(view.read_source, "defaults");
+    assert!(!view.save_creates_override);
+}
+
+#[test]
+fn source_names_the_settings_page_sends_are_accepted_by_the_execution_allowlist() {
+    use multi_search_desktop::settings_fixture::is_allowed_source;
+    // Every canonical name the settings page sends, plus the CLI aliases it may read back.
+    for name in ["baidu", "brave", "exa", "firecrawl", "github_repos", "hackernews", "parallel",
+                 "serpapi", "sov2ex", "stackoverflow", "tavily", "twitter", "v2ex", "github-repos"] {
+        assert!(is_allowed_source(name), "{name} must be accepted");
+    }
+    assert!(!is_allowed_source("jina"));
+    assert!(!is_allowed_source("../etc"));
+}
+
 #[test]
 fn unreadable_target_blocks_save_and_leaves_the_old_file_and_no_temp_file() {
     let sandbox = Sandbox::new("blocked");
     let env = sandbox.env(&[]);
-    fixture::save(&env, &input("dev", 20, &["hackernews"])).unwrap();
+    save_h(&sandbox, &env, &input("dev", 20, &["hackernews"])).unwrap();
     let before = std::fs::read(sandbox.user_config()).unwrap();
     // A directory at the target path cannot be read as a config, so save stops before any write.
     let blocker = sandbox.0.join("blocked.json");
     std::fs::create_dir_all(&blocker).unwrap();
     let env_blocked = sandbox.env(&[("MULTI_SEARCH_CONFIG", blocker.to_string_lossy().into_owned())]);
-    assert!(fixture::save(&env_blocked, &input("dev", 20, &[])).is_err());
+    assert!(save_h(&sandbox, &env_blocked, &input("dev", 20, &[])).is_err());
     assert_eq!(std::fs::read(sandbox.user_config()).unwrap(), before);
     assert!(sandbox.leftovers().iter().all(|n| !n.contains(".tmp-")));
 }

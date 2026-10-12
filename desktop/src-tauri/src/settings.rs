@@ -76,6 +76,11 @@ pub struct SettingsView {
     /// "env" when MULTI_SEARCH_CONFIG selects the file, otherwise "user".
     pub path_source: String,
     pub file_present: bool,
+    /// Where the displayed values were read from: "env" | "user" | "dev_fallback" | "defaults".
+    pub read_source: String,
+    /// True when the values come from the repo-root dev file and no user file exists yet:
+    /// saving creates the user file, which the CLI then uses instead of the dev file.
+    pub save_creates_override: bool,
     pub route: String,
     pub timeout: u32,
     pub disabled_sources: Vec<String>,
@@ -89,11 +94,16 @@ pub struct SettingsView {
     pub message: String,
 }
 
-/// Path the CLI resolves: `MULTI_SEARCH_CONFIG` when set, else the user config file.
+/// Save target: `MULTI_SEARCH_CONFIG` when set (explicit target, never redirected), else the
+/// user config file. The repo-root dev file is never written.
 pub fn config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
     if let Some(value) = environment.variables.get(CONFIG_ENV).filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(value));
     }
+    user_config_path(environment)
+}
+
+fn user_config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
     let home = environment
         .variables
         .get("USERPROFILE")
@@ -104,6 +114,49 @@ pub fn config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
         path.push(part);
     }
     Some(path)
+}
+
+/// Repo-root development fallback, the same file the CLI's `DEV_CONFIG_PATH` points to.
+/// Read-only for this module: it seeds starting values and is never written.
+fn dev_config_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("multi-search-config.json")
+}
+
+/// Which file the CLI reads now, in its own order: `MULTI_SEARCH_CONFIG`, then the user file
+/// when it exists, then the dev fallback when it exists, else built-in defaults.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadSource {
+    Env,
+    User,
+    DevFallback,
+    Defaults,
+}
+
+fn read_source(environment: &RuntimeEnvironment, dev: &Path) -> (ReadSource, Option<PathBuf>) {
+    if environment.variables.get(CONFIG_ENV).is_some_and(|v| !v.is_empty()) {
+        return (ReadSource::Env, config_path(environment));
+    }
+    if let Some(user) = user_config_path(environment).filter(|p| p.exists()) {
+        return (ReadSource::User, Some(user));
+    }
+    if dev.exists() {
+        return (ReadSource::DevFallback, Some(dev.to_path_buf()));
+    }
+    (ReadSource::Defaults, None)
+}
+
+impl ReadSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            ReadSource::Env => "env",
+            ReadSource::User => "user",
+            ReadSource::DevFallback => "dev_fallback",
+            ReadSource::Defaults => "defaults",
+        }
+    }
 }
 
 fn source_name(raw: &str) -> Result<&'static str, String> {
@@ -212,17 +265,40 @@ fn write_atomic(path: &Path, object: &Map<String, Value>) -> Result<(), String> 
 }
 
 /// Validate, merge into the existing file, and atomically replace it. Returns the new view.
+///
+/// When no user file exists yet, the starting object is what the CLI reads today (the dev
+/// fallback when present), so fields the CLI already honours are kept. The result is written to
+/// the save target only; a dev fallback is never modified.
 pub fn save(environment: &RuntimeEnvironment, input: &SettingsInput) -> Result<SettingsView, String> {
+    save_with_dev(environment, input, &dev_config_path())
+}
+
+/// `save` with the dev fallback location injected (tests point it at a temp file).
+pub fn save_with_dev(
+    environment: &RuntimeEnvironment,
+    input: &SettingsInput,
+    dev: &Path,
+) -> Result<SettingsView, String> {
     let valid = validate(input)?;
     let path = config_path(environment).ok_or("无法确定配置文件位置")?;
-    let existing = read_object(&path)?;
+    let existing = match read_source(environment, dev) {
+        (ReadSource::Env, _) => read_object(&path)?,
+        (ReadSource::User, Some(user)) => read_object(&user)?,
+        (ReadSource::DevFallback, Some(dev)) => read_object(&dev)?,
+        _ => Map::new(),
+    };
     let merged = merge(existing, &valid);
     write_atomic(&path, &merged)?;
-    Ok(view(environment))
+    Ok(view_with_dev(environment, dev))
 }
 
 /// Current saved settings and the source that will actually run for the current route.
 pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
+    view_with_dev(environment, &dev_config_path())
+}
+
+/// `view` with the dev fallback location injected (tests point it at a temp file).
+pub fn view_with_dev(environment: &RuntimeEnvironment, dev: &Path) -> SettingsView {
     let path = config_path(environment);
     let path_source = if environment.variables.get(CONFIG_ENV).is_some_and(|v| !v.is_empty()) {
         "env"
@@ -233,7 +309,10 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
     let file_present = path.as_ref().is_some_and(|p| p.exists());
     let twitter_env_overrides = environment.variables.get(TWITTER_ENV).is_some_and(|v| !v.is_empty());
     let config_path_text = path.as_ref().map(|p| p.to_string_lossy().into_owned());
-    let object = match path.as_deref().map(read_object) {
+    let (read, read_path) = read_source(environment, dev);
+    // Saving writes the user file; that overrides a dev fallback the CLI reads today.
+    let save_creates_override = read == ReadSource::DevFallback && path_source == "user" && !file_present;
+    let object = match read_path.as_deref().map(read_object) {
         Some(Ok(map)) => Some(map),
         Some(Err(_)) => None,
         None => Some(Map::new()),
@@ -243,6 +322,8 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
             config_path: config_path_text,
             path_source,
             file_present,
+            read_source: read.as_str().into(),
+            save_creates_override,
             route: "default".into(),
             timeout: 60,
             disabled_sources: vec![],
@@ -301,6 +382,8 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
         config_path: config_path_text,
         path_source,
         file_present,
+        read_source: read.as_str().into(),
+        save_creates_override,
         route,
         timeout,
         disabled_sources,

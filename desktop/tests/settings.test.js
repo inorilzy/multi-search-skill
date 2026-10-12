@@ -95,6 +95,28 @@ test('env override of the config path and of the Twitter path is shown, values a
   window.close();
 });
 
+test('dev-fallback values show the save-creates-override notice before the user file exists', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, {
+    settingsView: async () => view({
+      file_present: false,
+      read_source: 'dev_fallback',
+      save_creates_override: true,
+    }),
+  });
+  const info = root.querySelector('[data-info="env"]').textContent;
+  assert.match(info, /开发目录/);
+  assert.match(info, /保存会创建用户配置文件/);
+  window.close();
+});
+
+test('once the user file is read, no override notice is shown', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, { settingsView: async () => view({ read_source: 'user', save_creates_override: false }) });
+  assert.equal(root.querySelector('[data-info="env"]').textContent, '');
+  window.close();
+});
+
 test('a rejected save keeps the form and shows the error without writing a status as saved', async () => {
   const { window, root } = setup();
   const api = {

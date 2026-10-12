@@ -59,7 +59,11 @@ export async function mountSettings(root, api) {
     saved = view;
     text('[data-status="path"]', view.config_path || '无法确定配置文件位置');
     text('[data-status="path-source"]', view.path_source === 'env' ? `环境变量 MULTI_SEARCH_CONFIG（${view.file_present ? '文件已存在' : '文件尚未创建'}）` : `用户配置（${view.file_present ? '文件已存在' : '文件尚未创建'}）`);
-    text('[data-info="env"]', view.path_source === 'env' ? '检测到 MULTI_SEARCH_CONFIG，保存会写入该路径，而不是用户配置文件。' : '');
+    const notes = [];
+    if (view.path_source === 'env') notes.push('检测到 MULTI_SEARCH_CONFIG，保存会写入该路径，而不是用户配置文件。');
+    if (view.read_source === 'dev_fallback') notes.push('当前显示的是开发目录中的配置（用户配置尚不存在）。');
+    if (view.save_creates_override) notes.push('保存会创建用户配置文件，之后 CLI 将使用它，不再读取开发目录配置。');
+    text('[data-info="env"]', notes.join(' '));
     text('[data-status="active"]', view.active_sources.length ? view.active_sources.join('、') : '无');
     text('[data-info="active-warning"]', statusText[view.status] ?? view.message ?? '');
     q('[data-field="route"]').value = view.route;
