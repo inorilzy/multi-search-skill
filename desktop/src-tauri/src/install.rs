@@ -61,6 +61,10 @@ pub struct InstallPlan {
     pub root: String,
     pub bin: String,
     pub version: Option<String>,
+    /// Version of the CLI already active in this root, when one is recorded.
+    pub current_version: Option<String>,
+    /// Bundle directory the target version comes from (the install source).
+    pub source: Option<String>,
     pub reason: String,
     pub path_hint: String,
 }
@@ -358,12 +362,33 @@ fn row(status: &str, root: &Path, version: Option<String>, reason: &str) -> Inst
         root: root.to_string_lossy().into_owned(),
         bin: bin_dir.join(ARTIFACT).to_string_lossy().into_owned(),
         version,
+        current_version: None,
+        source: None,
         reason: reason.into(),
         path_hint: format!(
             "安装后请将 {} 加入用户 PATH，并重启终端或 Agent 宿主",
             bin_dir.to_string_lossy()
         ),
     }
+}
+
+/// Lock and permission errors are reported as-is; no process is ever terminated to make progress.
+fn replace_error(error: &std::io::Error) -> String {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => "文件被占用或权限不足，未强制终止进程，请关闭使用该 CLI 的程序后重试".into(),
+        _ => format!("无法替换残留文件：{error}"),
+    }
+}
+
+/// Skill directory for the current user, the one `skill.rs` installs into; `None` without a profile.
+fn kept_skill_directory(environment: &RuntimeEnvironment) -> Option<PathBuf> {
+    environment
+        .variables
+        .get("USERPROFILE")
+        .or_else(|| environment.variables.get("HOME"))
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .map(|home| home.join(".claude").join("skills").join("multi-search"))
 }
 
 fn outcome(status: &str, steps: Vec<InstallStep>, installed: Option<(String, PathBuf)>, reason: String) -> InstallOutcome {
@@ -433,7 +458,7 @@ fn remove_entry(path: &Path) -> Result<(), Failure> {
         Ok(meta) if meta.is_dir() && !is_link(&meta) => fs::remove_dir_all(path),
         Ok(_) => fs::remove_file(path),
     };
-    result.map_err(|e| ("failed", format!("无法替换残留文件：{e}")))
+    result.map_err(|e| ("failed", replace_error(&e)))
 }
 
 /// Swaps the verified staging tree into the root and commits the pointer last.
@@ -648,12 +673,15 @@ impl DesktopManager {
             if let Some(source) = lay.source.as_deref() {
                 if let Ok((manifest, _)) = read_source(source, &expected) {
                     if manifest.version != active.version {
-                        return row(
+                        let mut plan = row(
                             "update_available",
                             &lay.root,
                             Some(manifest.version),
                             "有可用的新版本；更新会保留旧版本直至新版本验证通过",
                         );
+                        plan.current_version = Some(active.version);
+                        plan.source = Some(source.to_string_lossy().into_owned());
+                        return plan;
                     }
                 }
             }
@@ -737,6 +765,16 @@ impl DesktopManager {
         }
         let _ = fs::remove_file(lay.root.join(ACTIVE));
         step(&mut steps, "卸载 CLI", true, &active.version);
+        if let Some(skill) = kept_skill_directory(&self.environment) {
+            if fs::symlink_metadata(&skill).is_ok() {
+                step(
+                    &mut steps,
+                    "保留的 Skill",
+                    false,
+                    "Skill 已保留，但其 CLI 依赖已缺失，请重新安装 CLI 或移除该 Skill",
+                );
+            }
+        }
         outcome("uninstalled", steps, None, String::new())
     }
 
@@ -758,5 +796,17 @@ impl DesktopManager {
                 outcome(status, steps, None, reason)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod lock_error_tests {
+    use super::replace_error;
+
+    #[test]
+    fn permission_denied_is_a_clear_lock_message_that_never_mentions_termination() {
+        let message = replace_error(&std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(message.contains("未强制终止进程"), "{message}");
+        assert!(!message.contains("强制终止，已"), "{message}");
     }
 }

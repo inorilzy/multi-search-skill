@@ -121,3 +121,67 @@ fn corrupt_managed_record_is_unverified_and_blocks_update_install_and_uninstall(
     assert_eq!(manager.uninstall().status, "unverified");
     assert!(root.join("bin").join("multi-search.exe").is_file());
 }
+
+#[test]
+fn update_plan_shows_current_and_target_versions_and_the_source() {
+    let mut profile = common::Profile::new();
+    let root = profile.root.join("plan-versions");
+    let v1 = source(&profile, "src-pv-v1", "0.4.0");
+    assert_eq!(DesktopManager::new(env(&profile, &root, &v1)).install().status, "installed");
+    let v2 = source(&profile, "src-pv-v2", "0.5.0");
+    profile.environment.variables.insert("FIXTURE_VERSION".into(), "0.5.0".into());
+    let plan = DesktopManager::new(env(&profile, &root, &v2)).install_plan();
+    assert_eq!(plan.status, "update_available", "{}", plan.reason);
+    assert_eq!(plan.current_version.as_deref(), Some("0.4.0"));
+    assert_eq!(plan.version.as_deref(), Some("0.5.0"));
+    assert_eq!(plan.source.as_deref(), Some(v2.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn update_refuses_an_unknown_install_and_never_touches_it() {
+    let profile = common::Profile::new();
+    let root = profile.root.join("update-unknown");
+    fs::create_dir_all(root.join("bin")).unwrap();
+    fs::write(root.join("bin").join("multi-search.exe"), b"user copy").unwrap();
+    let v2 = source(&profile, "src-uu-v2", "0.5.0");
+    let outcome = DesktopManager::new(env(&profile, &root, &v2)).update();
+    assert_eq!(outcome.status, "not_installed", "{}", outcome.reason);
+    assert_eq!(fs::read(root.join("bin").join("multi-search.exe")).unwrap(), b"user copy");
+    assert!(!root.join("active.json").exists());
+}
+
+#[test]
+fn update_to_a_cli_that_lacks_the_skill_flags_is_refused_and_keeps_the_previous_cli() {
+    let mut profile = common::Profile::new();
+    let root = profile.root.join("update-compat");
+    let v1 = source(&profile, "src-compat-v1", "0.4.0");
+    assert_eq!(DesktopManager::new(env(&profile, &root, &v1)).install().status, "installed");
+    let before = fs::read(root.join("bin").join("multi-search.exe")).unwrap();
+    let v2 = source(&profile, "src-compat-v2", "0.5.0");
+    profile.environment.variables.insert("FIXTURE_VERSION".into(), "0.5.0".into());
+    profile.environment.variables.insert("FIXTURE_HELP".into(), "stale".into());
+    let outcome = DesktopManager::new(env(&profile, &root, &v2)).update();
+    assert_eq!(outcome.status, "failed", "{}", outcome.reason);
+    assert!(outcome.reason.contains("--expand"), "{}", outcome.reason);
+    assert_eq!(fs::read(root.join("bin").join("multi-search.exe")).unwrap(), before);
+    let active: serde_json::Value = serde_json::from_str(&fs::read_to_string(root.join("active.json")).unwrap()).unwrap();
+    assert_eq!(active["version"], "0.4.0");
+}
+
+#[test]
+fn uninstall_reports_a_kept_skill_whose_cli_dependency_is_now_missing() {
+    let profile = common::Profile::new();
+    let root = profile.root.join("uninstall-skill-kept");
+    let v1 = source(&profile, "src-usk", "0.4.0");
+    assert_eq!(DesktopManager::new(env(&profile, &root, &v1)).install().status, "installed");
+    let skills = profile.root.join(".claude").join("skills").join("multi-search");
+    fs::create_dir_all(&skills).unwrap();
+    fs::write(skills.join(".multi-search-install.json"), "{}").unwrap();
+    let outcome = DesktopManager::new(env(&profile, &root, &v1)).uninstall();
+    assert_eq!(outcome.status, "uninstalled", "{}", outcome.reason);
+    assert!(
+        outcome.steps.iter().any(|s| !s.ok && s.name.contains("Skill") && s.detail.contains("CLI")),
+        "kept Skill must be reported with its missing CLI dependency"
+    );
+    assert!(skills.join(".multi-search-install.json").is_file());
+}
