@@ -79,6 +79,8 @@ test('delete reports removal and refreshes store state', async () => {
   await mountCredentials(root, api);
   root.querySelector('[data-action="delete"]').click();
   await new Promise(resolve => setTimeout(resolve, 0));
+  root.querySelector('[data-action="confirm-delete"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(deleted, true);
   assert.equal(root.querySelector('[data-status="store"]').textContent, '未保存');
   assert.equal(root.querySelector('[data-status="source"]').textContent, '未配置');
@@ -104,6 +106,43 @@ test('test results distinguish success, auth, quota, and network outcomes', asyn
     assert.equal(root.querySelector('[data-status="test"]').textContent, label, result);
     window.close();
   }
+});
+
+test('delete requires an in-page confirmation; cancel never calls the API', async () => {
+  const { window, root } = setup();
+  let deleteCalls = 0;
+  const api = {
+    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store' }),
+    credentialDelete: async () => { deleteCalls += 1; return status(); },
+  };
+  await mountCredentials(root, api);
+  root.querySelector('[data-action="delete"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(deleteCalls, 0);
+  assert.ok(root.querySelector('[data-confirm="delete"]'));
+  root.querySelector('[data-action="cancel-delete"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(deleteCalls, 0);
+  assert.equal(root.querySelector('[data-confirm="delete"]'), null);
+  assert.equal(root.querySelector('[data-status="store"]').textContent, '已保存');
+  window.close();
+});
+
+test('confirmed delete calls the API exactly once and a failure stays visible', async () => {
+  const { window, root } = setup();
+  let deleteCalls = 0;
+  const api = {
+    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store' }),
+    credentialDelete: async () => { deleteCalls += 1; throw '凭据库不可用，未删除 key。'; },
+  };
+  await mountCredentials(root, api);
+  root.querySelector('[data-action="delete"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  root.querySelector('[data-action="confirm-delete"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(deleteCalls, 1);
+  assert.match(root.querySelector('[data-info="error"]').textContent, /未删除/);
+  window.close();
 });
 
 test('test page warns about external requests and quota before running', async () => {

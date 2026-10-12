@@ -58,12 +58,37 @@ export async function mountCredentials(root, api) {
     finally { setBusy(false); }
   });
 
-  root.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+  // Delete is two-step: the first click only opens an in-page confirmation.
+  // Cancel removes the panel without calling the API; confirm calls it once.
+  function closeDeleteConfirm() { root.querySelector('[data-confirm="delete"]')?.remove(); }
+
+  function openDeleteConfirm() {
+    if (root.querySelector('[data-confirm="delete"]')) return;
+    const panel = root.ownerDocument.createElement('div');
+    panel.setAttribute('data-confirm', 'delete');
+    panel.innerHTML = '<p class="note">确定删除已保存的 key 吗？删除后需要重新粘贴 key 才能使用。</p>'
+      + '<div class="run-controls"><button type="button" class="primary" data-action="confirm-delete">确认删除</button>'
+      + '<button type="button" data-action="cancel-delete">取消</button></div>';
+    root.querySelector('[data-action="delete"]').parentElement.append(panel);
+    panel.querySelector('[data-action="confirm-delete"]').addEventListener('click', confirmDelete);
+    panel.querySelector('[data-action="cancel-delete"]').addEventListener('click', closeDeleteConfirm);
+  }
+
+  async function confirmDelete() {
     setBusy(true);
-    try { render(await api.credentialDelete()); text('[data-info="test"]', '已删除。'); }
-    catch (error) { text('[data-info="error"]', typeof error === 'string' ? error : '删除失败，请重试。'); }
+    try {
+      render(await api.credentialDelete());
+      closeDeleteConfirm();
+      text('[data-info="test"]', '已删除。');
+    }
+    catch (error) {
+      closeDeleteConfirm();
+      text('[data-info="error"]', typeof error === 'string' ? error : '删除失败，请重试。');
+    }
     finally { setBusy(false); }
-  });
+  }
+
+  root.querySelector('[data-action="delete"]').addEventListener('click', openDeleteConfirm);
 
   root.querySelector('[data-action="test"]').addEventListener('click', async () => {
     setBusy(true);
