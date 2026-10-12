@@ -1,4 +1,3 @@
-import asyncio
 import io
 import json
 import tempfile
@@ -8,7 +7,6 @@ from unittest import mock
 from urllib.error import HTTPError
 
 from multi_search_mcp import cli, tools
-from multi_search_mcp.server import mcp
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape.scrapers import exa as exa_scraper
 from multi_search_mcp.src.search.searchers import exa as exa_searcher
@@ -214,7 +212,7 @@ class ExaTargetErrorTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 1)
         self.assertIn("forbidden 401 / 403", result["result"]["error"])
 
-    def test_cli_and_mcp_fetch_keep_target_error_visible_and_redacted(self):
+    def test_cli_and_adapter_fetch_keep_target_error_visible_and_redacted(self):
         def fetch_source(request):
             return service.run_fetch_source(
                 request, keys=self.keys, config={}, state_store=self.store,
@@ -241,8 +239,8 @@ class ExaTargetErrorTests(unittest.TestCase):
                     self.assertIn("403", output)
                     for key in KEYS:
                         self.assertNotIn(key, output)
-            result = asyncio.run(mcp.call_tool("fetch_source", {"url": URL, "backends": ["exa"]}))
-            output = "\n".join(item.text for item in result if getattr(item, "type", None) == "text")
+            result = tools.fetch_source_tool(url=URL, backends=["exa"])
+            output = json.dumps(result)
             self.assertIn("SOURCE_NOT_AVAILABLE", output)
             self.assertIn("403", output)
             self.assertEqual(json.loads(output)["error_type"], "invalid_request")
@@ -250,7 +248,7 @@ class ExaTargetErrorTests(unittest.TestCase):
                 self.assertNotIn(key, output)
         self.assertEqual(len(self.manager.candidates("exa", KEYS)), 2)
 
-    def test_mcp_scrape_preserves_nested_error_metadata_in_all_modes(self):
+    def test_adapter_scrape_preserves_nested_error_metadata_in_all_modes(self):
         def scrape(request):
             return service.run_scrape(
                 request, keys=self.keys, config={}, state_store=self.store,
@@ -261,10 +259,8 @@ class ExaTargetErrorTests(unittest.TestCase):
                 mock.patch.object(tools, "run_scrape", side_effect=scrape):
             for mode in ("json", "markdown", "both"):
                 with self.subTest(mode=mode):
-                    result = asyncio.run(mcp.call_tool("scrape_url", {
-                        "url": URL, "backends": ["exa"], "output": mode,
-                    }))
-                    output = "\n".join(item.text for item in result if getattr(item, "type", None) == "text")
+                    result = tools.scrape_url_tool(url=URL, backends=["exa"], output=mode)
+                    output = json.dumps(result)
                     payload = json.loads(output)
                     self.assertEqual(payload["result"]["error_origin"], "target")
                     self.assertEqual(payload["result"]["error_type"], "target")

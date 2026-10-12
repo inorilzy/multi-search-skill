@@ -9,7 +9,7 @@
 - **Pi:** use its existing subagent tool/extension and configured agent definition.
   Follow that implementation's schema for model, context, and tool access.
   A graph is not required. Prefer the multi-search CLI through the child's command
-  tool; use MCP when the child actually has access to the registered search tools.
+  tool.
 
 Use only a model exposed and permitted by the host; a model already known to be
 rejected for this account is not eligible. Keep model IDs, providers, credentials,
@@ -28,8 +28,7 @@ Give one search subagent:
   of consecutive unproductive targeted attempts (initially zero).
 - The local path to this Skill, its explicit role as **search executor**, and
   the instruction to follow [search.md](search.md) without delegating.
-- The usable MCP tools or CLI command and working directory. For CLI execution,
-  have the child read [cli.md](cli.md); pass paths/config references, not secrets.
+- The usable CLI command and working directory. Have the child read [cli.md](cli.md); pass paths/config references, not secrets.
 
 Use a fresh/isolated context containing this task packet rather than the full
 conversation when the host supports it. Keep unrelated history and the main

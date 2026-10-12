@@ -1,4 +1,4 @@
-"""MCP tool implementations for multi-search."""
+"""Legacy Python request adapters over shared Core; no server or MCP dependency."""
 from __future__ import annotations
 
 from typing import Any, Callable, Literal

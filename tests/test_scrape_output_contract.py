@@ -1,4 +1,3 @@
-import asyncio
 import copy
 import io
 import json
@@ -6,10 +5,7 @@ import unittest
 from contextlib import ExitStack
 from unittest import mock
 
-from pydantic_core import to_json
-
 from multi_search_mcp import cli
-from multi_search_mcp.server import mcp
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape import scrape
 
@@ -51,7 +47,7 @@ class SingleMarkdownResponseTests(unittest.TestCase):
         result = service.run_search_web(
             service.SearchWebRequest(query="probe", use_state=False), keys={}, config={},
         )
-        self.assertEqual(json.dumps(result).count(MARKER), 1)
+        self.assertEqual(json.dumps(result, default=list).count(MARKER), 1)
         self.assertNotIn("body", result["results"][0])
         self.assertEqual(result["scrapes"][0]["markdown"], BODY)
 
@@ -61,7 +57,7 @@ class SingleMarkdownResponseTests(unittest.TestCase):
                 result = service.run_multi_search(service.MultiSearchRequest(
                     query="probe", use_state=False, output=mode,
                 ))
-                self.assertEqual(to_json(result).decode().count(MARKER), 1)
+                self.assertEqual(json.dumps(result, default=list).count(MARKER), 1)
                 if mode == "json":
                     self.assertEqual(result["scrapes"][0]["markdown"], BODY)
                 else:
@@ -77,7 +73,7 @@ class SingleMarkdownResponseTests(unittest.TestCase):
                     scraper=lambda *_a, **_k: {"url": URL, "markdown": BODY, "via": "fixture"},
                     keys={}, config={},
                 )
-                self.assertEqual(json.dumps(result).count(MARKER), 1)
+                self.assertEqual(json.dumps(result, default=list).count(MARKER), 1)
 
     def test_cli_renders_the_single_markdown_body_and_source_reference(self):
         result = service.run_search_web(
@@ -110,15 +106,6 @@ class SingleMarkdownResponseTests(unittest.TestCase):
         self.assertIn("invalid scrape response", result["results"][0]["body_error"])
         self.assertEqual(result["diagnostics"]["body_success_count"], 0)
         self.assertEqual(len(result["diagnostics"]["body_failures"]), 1)
-
-    def test_registered_mcp_tools_emit_one_body_in_the_text_response(self):
-        for tool in ("search_web", "multi_search"):
-            with self.subTest(tool=tool):
-                result = asyncio.run(mcp.call_tool(tool, {"query": "probe", "use_state": False}))
-                texts = [item.text for item in result if getattr(item, "type", None) == "text"]
-                self.assertEqual(len(texts), 1)
-                self.assertEqual(texts[0].count(MARKER), 1)
-                self.assertIn("source_0", texts[0])
 
 
 class ScraperContractTests(unittest.TestCase):

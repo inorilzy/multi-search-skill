@@ -3,10 +3,10 @@
 ## Acquire the selected material
 
 For each selected source needed to confirm a match or support a content claim,
-call `fetch_source(source_id=..., full_content=True)` once and inspect the entire
+run `multi-search fetch <source_id> --full-content --format json` once and inspect the entire
 returned `body`. Independent calls may run in parallel. Preserve `body_error`
 and each fetch failure. For a user-supplied or observed URL, use
-`fetch_source(url=..., full_content=True)` directly.
+`multi-search fetch --url <observed-url> --full-content --format json` directly.
 
 With a valid `source_id`, missing or expired cached content is fetched again
 under that ID. Only when the reference itself is unknown/expired, or parent and
@@ -21,7 +21,7 @@ the 20,000-character default and explicit preview limits. CLI equivalent:
 Full content means the backend's acquired text, including Reddit's loaded
 comments. Acquisition limits, cache capacity, and retention still apply;
 unloaded comments stay unloaded. Do not claim original-page completeness.
-Use `read_source(source_id=..., keyword=..., offset=..., limit=...)` for targeted
+Use `multi-search read <source_id> --keyword <text> --offset <n> --limit <n>` for targeted
 checks of cached passages; it does not replace the initial full-body read.
 
 ## Check claims and attribution

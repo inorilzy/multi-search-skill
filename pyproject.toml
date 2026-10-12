@@ -1,10 +1,9 @@
 [project]
 name = "multi-search-mcp"
 version = "0.4.0"
-description = "Aggregated search MCP server for the multi-search skill."
+description = "On-demand aggregated search CLI and shared Core for the multi-search skill."
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=1.28.1,<2",
     "beautifulsoup4>=4.12",
     # PyPI 2.6.3 omits twikit/client; use the complete, pinned upstream source.
     "xkit-py @ git+https://github.com/inorilzy/xkit-py.git@c02ff46efd0264b4bc85968e3f5732561ffdbaf3",
@@ -13,7 +12,6 @@ dependencies = [
 
 [project.scripts]
 multi-search = "multi_search_mcp.cli:entrypoint"
-multi-search-mcp = "multi_search_mcp.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]

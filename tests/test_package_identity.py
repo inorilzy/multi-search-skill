@@ -8,7 +8,6 @@ class PackageIdentityTests(unittest.TestCase):
         script = """
 import sys
 import multi_search_mcp.cli
-import multi_search_mcp.server
 import multi_search_mcp.tools
 
 assert "multi_search_mcp.src.scrape.scrape_planner" not in sys.modules

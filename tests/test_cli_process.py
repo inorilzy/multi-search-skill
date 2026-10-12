@@ -1,0 +1,176 @@
+"""Real CLI processes against controlled HTTP responses, with no MCP or keys."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import unittest
+
+from scripts.test_isolation import isolated_test_environment
+
+
+ROOT = Path(__file__).resolve().parents[1]
+URL = "https://93.184.216.34/article"
+BODY = "# Fixture article\n\n" + "正文 evidence passage. " * 200
+
+# Inject only external HTTP/time boundaries. Core, adapters, RRF, URL validation,
+# source registration and SQLite persistence are the real installed implementation.
+BOOTSTRAP = r'''
+import datetime
+import email.message
+import importlib.abc
+import io
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+import urllib.response
+import test_isolation
+
+test_isolation.activate_from_environment()
+
+class NoMCP(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "mcp" or fullname.startswith("mcp."):
+            raise ImportError("MCP is unavailable in this acceptance process")
+sys.meta_path.insert(0, NoMCP())
+
+if os.environ.get("CLI_FIXTURE_FUTURE"):
+    OriginalDateTime = datetime.datetime
+    class FutureDateTime(OriginalDateTime):
+        @classmethod
+        def now(cls, tz=None):
+            return OriginalDateTime.now(tz) + datetime.timedelta(days=2)
+    datetime.datetime = FutureDateTime
+
+class ProviderHTTP(urllib.request.BaseHandler):
+    handler_order = 100
+    def https_open(self, request):
+        parsed = urllib.parse.urlsplit(request.full_url)
+        if parsed.hostname == "hn.algolia.com":
+            query = urllib.parse.parse_qs(parsed.query)["query"][0]
+            if query == "failure":
+                raise urllib.error.HTTPError(request.full_url, 503, "fixture provider unavailable", {}, io.BytesIO(b""))
+            hits = [] if query == "empty" else [{"objectID": "42", "title": "Fixture article", "url": "https://93.184.216.34/article", "points": 7}]
+            payload = {"hits": hits}
+        elif parsed.hostname == "r.jina.ai":
+            if os.environ.get("CLI_FIXTURE_NO_HTTP"):
+                raise AssertionError("cached fetch/read unexpectedly contacted a provider")
+            payload = {"data": {"title": "Fixture article", "content": "# Fixture article\n\n" + "正文 evidence passage. " * 200}}
+        else:
+            raise AssertionError("unexpected external HTTP endpoint: " + request.full_url)
+        response = urllib.response.addinfourl(io.BytesIO(json.dumps(payload).encode()), email.message.Message(), request.full_url, 200)
+        response.msg = "OK"
+        return response
+
+from multi_search_mcp.src.support import http
+if os.environ.get("MULTI_SEARCH_ACCEPTANCE_INSTALLED"):
+    assert "site-packages" in str(http.__file__), http.__file__
+http._shared_opener.add_handler(ProviderHTTP())
+'''
+
+
+class CliProcessTests(unittest.TestCase):
+    def setUp(self):
+        self.installed = os.environ.get("MULTI_SEARCH_ACCEPTANCE_INSTALLED") == "1"
+        self.context = isolated_test_environment(source_root=None if self.installed else ROOT,
+                                                 include_inherited_pythonpath=False)
+        self.isolation = self.context.__enter__()
+        self.addCleanup(self.context.__exit__, None, None, None)
+        self.addCleanup(self.isolation.assert_clean)
+        # Extend the disposable runner bootstrap, not any product installation.
+        (self.isolation.root / "bootstrap" / "sitecustomize.py").write_text(BOOTSTRAP, encoding="utf-8")
+        self.environment = dict(os.environ)
+
+    def run_cli(self, *args, future=False, no_http=False):
+        if self.installed:
+            import sysconfig
+            console = Path(sysconfig.get_path("scripts")) / ("multi-search.exe" if os.name == "nt" else "multi-search")
+            command = [str(console), *args]
+        else:
+            command = [sys.executable, "-B", "-m", "multi_search_mcp.cli", *args]
+        return subprocess.run(command, cwd=self.isolation.root,
+                              env=dict(self.environment, CLI_FIXTURE_FUTURE="1" if future else "",
+                                       CLI_FIXTURE_NO_HTTP="1" if no_http else ""),
+                              capture_output=True, text=True, encoding="utf-8", timeout=30)
+
+    def test_packaging_has_only_the_cli_entry_and_no_mcp_dependency(self):
+        # Python 3.10 has no tomllib; use the stable declared console/dependency
+        # lines here and inspect actual wheel metadata in smoke_install.py.
+        import configparser
+        import re
+        text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        scripts = configparser.ConfigParser()
+        scripts.read_string("[scripts]\n" + text.split("[project.scripts]\n")[1].split("\n[", 1)[0])
+        metadata = {"scripts": {name: value.strip('\"') for name, value in scripts["scripts"].items()},
+                    "dependencies": re.findall(r'\"([^\"]+)\"', text.split("dependencies = [", 1)[1].split("]", 1)[0])}
+        self.assertEqual(metadata["scripts"], {"multi-search": "multi_search_mcp.cli:entrypoint"})
+        self.assertFalse(any(dep.startswith("mcp") for dep in metadata["dependencies"]))
+
+    def test_search_fetch_read_preserve_reference_and_complete_body_across_processes(self):
+        searched = self.run_cli("search", "fixture", "--source", "hackernews")
+        self.assertEqual(searched.returncode, 0, searched.stderr)
+        payload = json.loads(searched.stdout)
+        hit = payload["results"][0]
+        self.assertEqual(hit["url"], URL)
+        self.assertEqual(hit["providers"], ["hackernews"])
+        self.assertTrue(hit["source_id"].startswith("src_"))
+        self.assertEqual(payload["scrapes"][0]["markdown"], BODY[:1200])
+        fetched = self.run_cli("fetch", hit["source_id"], "--full-content", no_http=True)
+        self.assertEqual(fetched.returncode, 0, fetched.stderr)
+        self.assertEqual(json.loads(fetched.stdout)["body"], BODY)
+        self.assertTrue(json.loads(fetched.stdout)["cache_hit"])
+        read = self.run_cli("read", hit["source_id"], "--offset", "1200", "--limit", "200", no_http=True)
+        self.assertEqual(read.returncode, 0, read.stderr)
+        self.assertEqual(json.loads(read.stdout)["content"], BODY[1200:1400])
+
+    def test_missing_and_expired_references_are_structured_errors(self):
+        missing = self.run_cli("fetch", "src_missing")
+        self.assertEqual(missing.returncode, 1)
+        self.assertEqual(json.loads(missing.stdout)["error_type"], "invalid_request")
+        self.assertIn("unknown or expired", json.loads(missing.stdout)["error"])
+        searched = self.run_cli("search", "fixture", "--source", "hackernews")
+        source_id = json.loads(searched.stdout)["results"][0]["source_id"]
+        read = self.run_cli("read", source_id, future=True, no_http=True)
+        self.assertEqual(read.returncode, 1)
+        self.assertIn("missing or expired", json.loads(read.stdout)["error"])
+        fetch = self.run_cli("fetch", source_id, future=True, no_http=True)
+        self.assertEqual(fetch.returncode, 1)
+        self.assertIn("unknown or expired", json.loads(fetch.stdout)["error"])
+
+    def test_production_url_validation_rejects_loopback_even_with_fixture(self):
+        result = self.run_cli("fetch", "--url", "http://127.0.0.1/private")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("loopback", json.loads(result.stdout)["error"])
+
+    def test_zero_partial_and_all_failed_searches_have_distinct_outcomes(self):
+        cases = (("empty", ["hackernews"], "empty", 0),
+                 ("fixture", ["hackernews", "brave"], "partial", 0),
+                 ("failure", ["hackernews", "brave"], "failed", 1))
+        for query, sources, outcome, exit_code in cases:
+            for output_format in ("json", "human", "markdown"):
+                with self.subTest(query=query, output_format=output_format):
+                    args = ["search", query, "--format", output_format]
+                    for source in sources:
+                        args.extend(["--source", source])
+                    result = self.run_cli(*args)
+                    self.assertEqual(result.returncode, exit_code, result.stderr)
+                    if output_format == "json":
+                        payload = json.loads(result.stdout)
+                        self.assertEqual(payload["outcome"], outcome)
+                        if "brave" in sources:
+                            self.assertTrue(any(row["source"] == "brave" and "missing" in row["error"] for row in payload["errors"]))
+                        if query == "failure":
+                            self.assertTrue(any(row["source"] == "hackernews" and "503" in row["error"] for row in payload["errors"]))
+                    else:
+                        self.assertIn("outcome: " + outcome, result.stdout)
+                        if "brave" in sources:
+                            self.assertIn("missing BRAVE", result.stdout)
+                        if query == "failure":
+                            self.assertIn("503", result.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

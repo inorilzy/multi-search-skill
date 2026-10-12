@@ -53,7 +53,7 @@ match confirmation or claims about contents need bodies.
 
 ## Response semantics
 
-MCP `search_web`, CLI `search`, and legacy `multi_search` share RRF order and
+CLI `search` and the shared Core's legacy Python `multi_search` share RRF order and
 fetch up to 15 final URLs. `count` controls each provider's recall, not the
 final result count. Expanded queries fuse in two stages: provider consensus
 within each query, then consensus across query angles. No intermediate 15-result

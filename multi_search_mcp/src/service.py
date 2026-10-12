@@ -1,4 +1,4 @@
-"""Reusable service layer shared by MCP tools and future CLI paths."""
+"""Reusable search, fetch and state Core called directly by the on-demand CLI."""
 from __future__ import annotations
 
 import concurrent.futures
@@ -903,7 +903,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
     except (ValueError, TypeError) as exc:
         config_error = scrub_secrets(exc, keys)
     data = {
-        "server": "multi-search-mcp",
+        "server": "multi-search",
         "state_path": str(store.path),
         "config_path": str(config_path),
         "config_loaded": config_error is None and config_path.exists(),

@@ -5,8 +5,8 @@ description: Search the web, social posts, developer projects, and community dis
 
 # Multi-Search
 
-Find the requested content through the shared Core's MCP tools or CLI.
-Tool schemas and CLI help define parameters. For CLI, read
+Find the requested content through the on-demand multi-search CLI.
+CLI help defines parameters. Before retrieval, read
 [cli.md](references/cli.md). Keep the user's target and constraints.
 
 ## Choose execution

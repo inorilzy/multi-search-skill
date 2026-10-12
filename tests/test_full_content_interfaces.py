@@ -1,4 +1,3 @@
-import asyncio
 import io
 import json
 import unittest
@@ -6,7 +5,6 @@ from contextlib import ExitStack
 from unittest import mock
 
 from multi_search_mcp import cli, tools
-from multi_search_mcp.server import mcp
 from multi_search_mcp.src import service
 
 
@@ -17,9 +15,6 @@ BODY = MARKER + " acquired source text" * 1500
 
 class FullContentInterfaceTests(unittest.TestCase):
     def setUp(self):
-        # Windows creates a local socket pair while initializing an event loop.
-        self.loop = asyncio.new_event_loop()
-        self.addCleanup(self.loop.close)
         stack = ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(mock.patch.object(
@@ -90,26 +85,7 @@ class FullContentInterfaceTests(unittest.TestCase):
                 self.assertIs(request.use_state, False)
                 self.assertIs(request.full_content, full_content)
 
-    def test_registered_mcp_schema_exposes_optional_full_content(self):
-        registered = {tool.name: tool for tool in self.loop.run_until_complete(mcp.list_tools())}
-        schema = registered["fetch_source"].inputSchema
-        self.assertEqual(schema["properties"]["full_content"]["type"], "boolean")
-        self.assertIs(schema["properties"]["full_content"]["default"], False)
-        self.assertNotIn("full_content", schema.get("required", []))
-        self.assertEqual(schema["properties"]["max_chars"]["default"], 20_000)
-
-    def test_search_tool_descriptions_do_not_impose_a_source_quota(self):
-        registered = {tool.name: tool for tool in self.loop.run_until_complete(mcp.list_tools())}
-        for name in ("search_web", "multi_search"):
-            with self.subTest(tool=name):
-                description = " ".join(registered[name].description.split())
-                self.assertNotIn("3-5", description)
-                self.assertIn("only clearly irrelevant candidates", description)
-                self.assertIn("relevant or uncertain candidate without a fixed quota", description)
-                self.assertIn("Find-only requests can return matching links", description)
-                self.assertIn("fetch selected full bodies", description)
-
-    def test_registered_mcp_call_preserves_limits_unless_full_content_is_true(self):
+    def test_adapter_preserves_limits_unless_full_content_is_true(self):
         def fetch_fixture(request):
             return service.run_fetch_source(
                 request, keys={}, config={}, prefetched_body=BODY,
@@ -124,13 +100,8 @@ class FullContentInterfaceTests(unittest.TestCase):
         for options, expected_length in cases:
             with self.subTest(options=options):
                 with mock.patch.object(tools, "run_fetch_source", side_effect=fetch_fixture):
-                    response = self.loop.run_until_complete(mcp.call_tool(
-                        "fetch_source", {"url": URL, "use_state": False, **options},
-                    ))
-                texts = [item.text for item in response if getattr(item, "type", None) == "text"]
-                self.assertEqual(len(texts), 1)
-                self.assertEqual(texts[0].count(MARKER), 1)
-                payload = json.loads(texts[0])
+                    payload = tools.fetch_source_tool(url=URL, use_state=False, **options)
+                self.assertEqual(json.dumps(payload).count(MARKER), 1)
                 self.assertEqual(payload["body"], BODY[:expected_length])
                 self.assertEqual(payload["content_length"], len(BODY))
                 self.assertIs(payload["truncated"], expected_length < len(BODY))

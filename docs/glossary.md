@@ -97,8 +97,8 @@
 
 | 术语 | 定义 | 代码出处 |
 |------|------|---------|
-| **MCP 工具** | `search_web` 和 `multi_search` 共用 RRF 搜索及正文获取；`fetch_source` / `scrape_url` 可直接抓 URL，`read_source` 局部读缓存，另有状态/诊断工具。 | `multi_search_mcp/server.py` |
-| **CLI** | `multi-search` console entry；`search/fetch/read/doctor/keys` 都直接调用同一 Core 和 StateStore，不反向调用 MCP。 | `multi_search_mcp/cli.py` |
+| **Core 请求** | `search_web` 和 `multi_search` 共用 RRF 搜索及正文获取；`fetch_source` / `scrape_url` 可直接抓 URL，`read_source` 局部读缓存，另有状态/诊断能力。无 MCP 服务入口。 | `multi_search_mcp/src/service.py` |
+| **CLI** | `multi-search` console entry；`search/fetch/read/doctor/keys` 都直接调用同一 Core 和 StateStore，按需启动并退出，不依赖 MCP 或常驻服务。 | `multi_search_mcp/cli.py` |
 | **SKILL** | 给 agent 的薄自然语言触发层，告诉它何时调工具、传什么 route/sources。 | `skills/multi-search/SKILL.md` |
 | **config（行为配置）** | 非敏感的默认值（route/count/timeout 等）。解析顺序：env `MULTI_SEARCH_CONFIG` → `~/.multi-search/multi-search-config.json` → 源码树 fallback。 | `support/config.py` → `resolve_config_path` |
 | **keys file（密钥文件）** | 明文 API key / cookie，只从环境变量和 `~/.search-keys.json` 读取，**不**放进 config。 | `state/keys.py` |

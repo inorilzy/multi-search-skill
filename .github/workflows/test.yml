@@ -22,7 +22,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install without the development lock or editable mode
         run: python -m pip install .
-      - name: Verify installed CLI and MCP stdio handshake outside the repository
+      - name: Verify installed MCP-free CLI outside the repository
         run: python scripts/smoke_install.py
       - name: Run regression tests with disposable state
         run: python scripts/run_tests.py

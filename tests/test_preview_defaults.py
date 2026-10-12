@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from pydantic_core import to_json
+import json
 
 from multi_search_mcp.src import service
 from multi_search_mcp.src.search.resolve import resolve_search_plan
@@ -112,7 +112,7 @@ class PreviewDefaultTests(unittest.TestCase):
                     self.assertEqual(response["errors"], [])
                     self.assertEqual(response["scrapes"][0]["length"], len(BODY))
                     self.assertTrue(response["scrapes"][0]["truncated"])
-                    self.assertEqual(to_json(response).decode().count(MARKER), 1)
+                    self.assertEqual(json.dumps(response, default=list).count(MARKER), 1)
                     if mode == "json":
                         self.assertEqual(response["scrapes"][0]["markdown"], expected)
                     else:
@@ -136,7 +136,7 @@ class PreviewDefaultTests(unittest.TestCase):
                     page = response["result"]
                     self.assertEqual(page["length"], len(BODY))
                     self.assertEqual(page["truncated"], size < len(BODY))
-                    self.assertEqual(to_json(response).decode().count(MARKER), 1)
+                    self.assertEqual(json.dumps(response, default=list).count(MARKER), 1)
                     if mode == "json":
                         self.assertEqual(len(page["markdown"]), size)
                         self.assertEqual(page["markdown"], BODY[:size])

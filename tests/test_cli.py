@@ -211,7 +211,7 @@ class CliTests(unittest.TestCase):
             code, stdout, stderr = self.run_cli(["search", "oops"])
 
         self.assertEqual(code, 1)
-        self.assertEqual(stdout, "")
+        self.assertEqual(json.loads(stdout), {"error": "bad query", "error_type": "invalid_request"})
         self.assertIn("bad query", stderr)
 
     def test_usage_error_returns_exit_code_2(self):
@@ -226,7 +226,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("provide exactly one of source_id or --url", stderr)
 
     def test_pyproject_registers_multi_search_console_script(self):
-        pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+        pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
 
         self.assertIn(
             'multi-search = "multi_search_mcp.cli:entrypoint"',

@@ -3,21 +3,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-并行聚合搜索 skill + 共享 Core：搜索结果统一按 RRF 排序，取前 15 条后自动获取正文并返回预览；子代理只排除明确无关项，其余结果连同原始预览交给主 Agent 判断，再按需读取全文。MCP 与 CLI 使用同一套搜索、key 状态和 SQLite 缓存；已有 URL 可直接抓取。
+并行聚合搜索 skill + 共享 Core：搜索结果统一按 RRF 排序，取前 15 条后自动获取正文并返回预览；子代理只排除明确无关项，其余结果连同原始预览交给主 Agent 判断，再按需读取全文。独立 CLI 直接使用共享 Core 的搜索、key 状态和 SQLite 缓存；已有 URL 可直接抓取。
 
-> 当前 canonical 形态是 **一个 skill + 一个 Core + MCP/CLI 两个薄入口**：`skills/multi-search/SKILL.md` 负责工具选择和使用策略；`multi_search_mcp/src/` 承载搜索、RRF、抓取、ContentStore、key 状态和站点记忆。
+> 当前 canonical 形态是 **一个 skill + 一个 Core + 按需执行的 CLI**：`skills/multi-search/SKILL.md` 负责工具选择和使用策略；`multi_search_mcp/src/` 承载搜索、RRF、抓取、ContentStore、key 状态和站点记忆。
 
 > 分阶段迁移、回滚和发布验证门槛见 [docs/candidate-first-release.md](docs/candidate-first-release.md)。
 
-## MCP / CLI / Skill 入口
+## CLI / Skill 入口
 
-MCP server 入口在仓库根目录：
-
-```powershell
-python -m multi_search_mcp.server
-```
-
-当前版本为 **0.4.0**（[发布说明](docs/candidate-first-release.md)）。在仓库根目录可直接运行 CLI，无需先启动 MCP server：
+当前开发版本保留 **0.4.0** 包版本标识；本地迁移尚未发布为新的远程版本。CLI 无需安装、配置或启动 MCP，也没有常驻服务。在仓库根目录运行：
 
 ```powershell
 uv run --locked multi-search --help
@@ -30,41 +24,23 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 `uv run --locked` 使用项目虚拟环境并按锁文件同步依赖。已在激活的虚拟环境中安装项目时，也可以直接执行 `multi-search` 或 `python -m multi_search_mcp.cli`，子命令参数相同。
 
-只使用独立 CLI 时，运行 `uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@v0.4.0"`，之后在任意目录执行 `multi-search --help`。GitHub 安装、更新、参数示例和完整工作流统一见 [CLI-only 指南](skills/multi-search/references/cli.md)。本地开发安装使用 `uv tool install --force .`。
+安装当前本地候选使用 `uv tool install --force .`，之后在任意目录执行 `multi-search --help`。旧远程 `v0.4.0` 不包含本次去 MCP 迁移；不要把旧标签当作当前候选。安装、参数示例和完整工作流见 [CLI-only 指南](skills/multi-search/references/cli.md)。
 
 搜索全部活动源失败时 CLI 退出 `1`，JSON 仍保留完整错误；正常零匹配和部分成功退出 `0`。human/Markdown 同样展示错误。`doctor` 真正解析配置；显式配置路径不存在会报错。`doctor --network` 对 Hacker News/GitHub 公共 API 做总预算 5 秒的连接检查，结果以 `network_ok` / `network_checks` 为准，不代表所有源的 key 或搜索质量正常。
 
-在支持 `uvx --from` 的 MCP 配置界面中使用固定版本 `v0.4.0`：
-
-```json
-{
-  "multi-search": {
-    "type": "stdio",
-    "command": "uvx",
-    "args": [
-      "--from",
-      "git+https://github.com/inorilzy/multi-search-skill.git@v0.4.0",
-      "multi-search-mcp"
-    ],
-    "timeoutMs": 60000
-  }
-}
-```
-
-新版仓库已经没有 `#subdirectory=plugins/multi-search`；旧配置升级时使用上面的仓库根目录入口。
+`search` JSON 增加稳定 `outcome`：`success`、`empty`、`partial`、`failed`。执行异常也输出结构化 `error/error_type` 并返回非零退出码；stderr 保留简短解释。每次命令独立启动并退出，SQLite 让真实 `source_id` 可跨进程继续获取或读取。
 
 仓库关键文件：
 
 - `skills/multi-search/SKILL.md`：薄 skill，自然语言触发和使用策略。
-- `multi_search_mcp/server.py`：MCP stdio 入口和 `multi-search-mcp` console script。
-- `multi_search_mcp/cli.py`：`multi-search` CLI，直接调用共享 Core。
-- `multi_search_mcp/tools.py`：MCP tool wrapper。
+- `multi_search_mcp/cli.py`：唯一产品入口 `multi-search` CLI，直接调用共享 Core。
+- `multi_search_mcp/tools.py`：兼容 Python 请求适配器，无 MCP 依赖或服务。
 - `multi_search_mcp/src/`：自包含搜索、抓取、状态、key 与 service 实现。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
 
-主要 MCP tools 是 `search_web`、`fetch_source`、`read_source`。`multi_search` 与 `search_web` 共用搜索和正文流程，保留兼容展示；`scrape_url` 可直接抓 URL。诊断和状态工具仍包括 `list_sources`、`doctor`、`get_key_status`、`reset_key_state` 等。
+CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `keys reset`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
 
-边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。MCP 客户端启动配置只负责启动 server，不保存 secret。
+边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置。
 
 当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
 
@@ -88,15 +64,15 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 ## 快速开始
 
-把本仓库作为 skill 和 MCP server 注册给 agent 后，调用 `search_web` 获取排序结果及预览，按 Skill 流程筛选后按需用 `fetch_source(source_id=..., full_content=True)` 读取已取得全文；已有 URL 直接用 `fetch_source(url=..., full_content=True)` 或 `scrape_url`：
+将本仓库的 Skill 说明提供给 agent，安装 CLI 后执行 `multi-search search` 获取排序结果及预览，再用 `multi-search fetch <source_id> --full-content` 读取已取得全文；已有 URL 直接用 `multi-search fetch --url <url> --full-content`：
 
 ```powershell
 git clone https://github.com/inorilzy/multi-search-skill.git
 cd multi-search-skill
-# MCP: python -m multi_search_mcp.server；CLI: multi-search --help
+multi-search --help
 ```
 
-Python 包依赖由 `pyproject.toml` 管理，包含 `mcp`、`beautifulsoup4`、`xkit-py`、`curl-cffi`。CLI 和 MCP 安装都会自动安装 [XKit-py](https://github.com/inorilzy/xkit-py)，代码使用 `from xkit import Client`。从源码初始化时，在仓库根目录执行：
+Python 包依赖由 `pyproject.toml` 管理，包含 `beautifulsoup4`、`xkit-py`、`curl-cffi`，不包含 MCP。CLI 安装都会自动安装 [XKit-py](https://github.com/inorilzy/xkit-py)，代码使用 `from xkit import Client`。从源码初始化时，在仓库根目录执行：
 
 ```powershell
 uv sync --locked
@@ -104,7 +80,7 @@ uv sync --locked
 .\multi_search_mcp\src\support\init.ps1
 ```
 
-初始化不需要单独安装 XKit-py。项目固定安装 GitHub 提交 `c02ff46efd0264b4bc85968e3f5732561ffdbaf3` 的源码：PyPI `xkit-py 2.6.3` 的 wheel 和 sdist 缺少 `twikit/client`，直接安装该发行版会导入失败。**该 GitHub 仓库是私有的，CLI、MCP、CI 的安装环境均需 Git 和该仓库的读取权限**；可先用有权限的账号执行 `gh auth login`、`gh auth setup-git`，已有可用 Git 凭据时无需重复配置。未配置权限时安装会明确失败。
+初始化不需要单独安装 XKit-py。项目固定安装 GitHub 提交 `c02ff46efd0264b4bc85968e3f5732561ffdbaf3` 的源码：PyPI `xkit-py 2.6.3` 的 wheel 和 sdist 缺少 `twikit/client`，直接安装该发行版会导入失败。**该 GitHub 仓库是私有的，CLI、CI 的安装环境均需 Git 和该仓库的读取权限**；可先用有权限的账号执行 `gh auth login`、`gh auth setup-git`，已有可用 Git 凭据时无需重复配置。未配置权限时安装会明确失败。
 
 `uv sync --locked` 会移除旧的 `twikit-ng`；这两个发行包共用 `twikit` 模块目录，不应混装。使用已有 pip 环境升级时，先执行 `python -m pip uninstall twikit-ng`，再执行 `python -m pip install .`。
 
@@ -126,9 +102,7 @@ skill 入口在 [skills/multi-search/SKILL.md](skills/multi-search/SKILL.md)，�
 用 multi-search 查一下最近大家怎么评价某个 LLM 框架，重点看 GitHub、Twitter/X 和技术博客。
 ```
 
-MCP 和 CLI 都是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；业务能力只落在 `multi_search_mcp/src/`。
-
-MCP 的四个耗时工具使用独立有界线程调度，支持及时处理其他请求和取消消息；容量与取消边界见 [MCP 入口调度](docs/mcp-dispatch.md)。
+CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；业务能力只落在 `multi_search_mcp/src/`。命令按需执行，无后台服务。历史架构审查文档仅记录过去的 MCP 形态，不是当前安装步骤。
 
 同步个人 Skill 时，将整个 `skills/multi-search/`（含 `references/`）复制到自己的 Skill 目录；先备份现有文件并保留个人定制，核对文件内容或 hash 后替换。只复制 `SKILL.md` 会缺少 CLI 指南。已加载的旧 Skill 需要在新任务中重新读取。
 
@@ -239,7 +213,7 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 
 ```mermaid
 flowchart LR
-    Q[MCP / CLI / skill] --> SW[search_web / multi_search]
+    Q[CLI / skill] --> SW[search_web / multi_search]
     SW --> SR[SearchRunner<br/>route · key state · timeout · fanout]
     SR --> S[Searcher 搜索器<br/>multi_search_mcp/src/search/searchers/*]
     S --> RRF[全部有效候选<br/>URL归一化 · 两级RRF · 无中间截断]
@@ -259,7 +233,7 @@ flowchart LR
 
 术语固定如下：
 
-- **Service 服务层**：`multi_search_mcp/src/service.py`，是 MCP 和 CLI 共用的 Core；入口只负责参数适配。
+- **Service 服务层**：`multi_search_mcp/src/service.py`，是 CLI 直接调用的共享 Core；入口只负责参数适配。
 - **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口，最后取前 15 条；分数相同按 canonical URL 排序。
 - **SourceRegistry / ContentStore**：短期 SQLite 状态。前者把本次响应的 `source_id` 映射到 URL；后者按 TTL、单条/总容量限制保存正文并以内容哈希去重。provider 的 retention policy 可禁止保存结果、摘要或正文。
 
@@ -305,7 +279,7 @@ flowchart LR
 
 ## 常用调用
 
-常用 MCP workflow（以 tool 入参示意）：
+Core Python 请求示意（CLI 对应命令见下方；无需 MCP）：
 
 ```jsonc
 // 搜索、RRF最终前15条、自动获取正文
@@ -338,7 +312,7 @@ CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <sou
 
 ## 配置和参数
 
-非敏感默认值放在 [multi-search-config.json](multi-search-config.json)，MCP tool 入参优先级更高。
+非敏感默认值放在 [multi-search-config.json](multi-search-config.json)，CLI 显式参数优先级更高。
 
 `search_web` 常用参数：
 
@@ -417,11 +391,11 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-se
 
 ## 开发验证
 
-回归测试统一放在 `tests/`。新增测试也放入该目录；运行单个模块时使用 `python -m unittest tests.test_mcp_dispatch_concurrency -v` 这样的包路径。
+回归测试统一放在 `tests/`。新增测试也放入该目录；运行单个模块时使用 `python -m unittest tests.test_cli_process -v` 这样的包路径。
 
-`uv run --locked python scripts/run_tests.py` 在测试发现前切换到临时 home、配置、密钥文件和 SQLite，并默认拒绝非 loopback 的 DNS、socket、urllib 代理与 `curl_cffi` 外联；受控 loopback HTTP、MCP stdio 和内存 handler 仍可运行。Python 子进程会继承隔离 bootstrap，违规即使被测试捕获也会使 runner 失败。
+`uv run --locked python scripts/run_tests.py` 在测试发现前切换到临时 home、配置、密钥文件和 SQLite，并默认拒绝非 loopback 的 DNS、socket、urllib 代理与 `curl_cffi` 外联；受控 loopback HTTP 和内存 handler 仍可运行。Python 子进程会继承隔离 bootstrap，违规即使被测试捕获也会使 runner 失败。
 
-干净环境先非 editable 安装 `python -m pip install .`，再运行 `python scripts/smoke_install.py`；该 smoke 会把同一组临时环境显式传给 CLI/MCP 子进程，并检查仓库外 CLI 入口、MCP stdio 握手与工具调用。上述检查不等于真实 provider、远程主机或所有平台/运行时矩阵验收；GitHub Actions 对 Windows/Linux、Python 3.10/3.14 执行这两类检查。
+干净环境先非 editable 安装 `python -m pip install .`，再运行 `python scripts/smoke_install.py`；该 smoke 会把同一组临时环境显式传给 CLI 子进程，并检查仓库外 console/module 入口、安装元数据、无 MCP 依赖以及 doctor。上述检查不等于真实 provider、远程主机或所有平台/运行时矩阵验收；GitHub Actions 对 Windows/Linux、Python 3.10/3.14 执行这两类检查。
 
 ### 为什么结果里没有 Twitter/X？
 

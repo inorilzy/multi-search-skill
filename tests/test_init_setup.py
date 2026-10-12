@@ -57,7 +57,8 @@ class InitSetupTests(unittest.TestCase):
             ["run", "--no-sync", "multi-search", "doctor"],
         ])
         self.assertIn("uv run --no-sync multi-search doctor", result.stdout)
-        self.assertIn("uv run --no-sync multi-search-mcp", result.stdout)
+        self.assertNotIn("multi-search-mcp", result.stdout)
+        self.assertIn("uv run --no-sync multi-search --help", result.stdout)
         self.assertNotIn("twikit-ng", result.stdout)
 
     def test_skip_twitter_is_compatible_but_does_not_skip_dependencies(self):

@@ -5,27 +5,20 @@ The CLI runs Core directly; no MCP server or MCP client configuration is needed.
 
 ## Install
 
-Install the pinned release:
-
-```sh
-uv tool install "git+https://github.com/inorilzy/multi-search-skill.git@v0.4.0"
-multi-search --help
-```
-
-From a local checkout, including uncommitted fixes, run at the repository root:
+This MCP-free migration is currently a local candidate, not a new published
+release. The historical `v0.4.0` tag does not include these changes. From the
+verified local checkout, run at the repository root:
 
 ```sh
 uv tool install --force .
 multi-search --help
 ```
 
-The GitHub command installs the pinned release. Replace `v0.4.0` with `main`
-only when following development changes; unpublished local changes require
-the local command. To update an existing installation to this release:
-
-```sh
-uv tool install --force --reinstall "git+https://github.com/inorilzy/multi-search-skill.git@v0.4.0"
-```
+To reinstall the same local candidate use `uv tool install --force --reinstall .`.
+Do not substitute guessed remote tags or URLs for the verified local artifact.
+The historical distribution/module name `multi-search-mcp` / `multi_search_mcp`
+is retained for compatibility; the only product command is `multi-search` and
+there is no MCP entrypoint, dependency, client configuration, or persistent service.
 
 If the command is absent from PATH, run `uv tool update-shell` and reopen the
 terminal. Without uv, use a virtual environment and `python -m pip install .`
@@ -36,7 +29,7 @@ locations. No credentials belong in these commands. Non-secret configuration
 resolves from `MULTI_SEARCH_CONFIG`, `~/.multi-search/multi-search-config.json`,
 then the checkout default. An explicitly configured missing file is an error.
 
-CLI and MCP installations include `xkit-py` for Twitter/X automatically, from
+CLI installations include `xkit-py` for Twitter/X automatically, from
 the GitHub commit pinned in the project dependencies. The PyPI 2.6.3 archives
 omit the client subpackage, so installing `xkit-py` separately is insufficient.
 The pinned repository is private: installation requires Git credentials with
@@ -91,7 +84,10 @@ itself expired, fetch its previously observed URL and use the new source ID.
 Exit codes: `0` for success (including zero matches or partial search coverage),
 `1` for all search providers failing or another execution/diagnostic failure,
 `2` for invalid CLI usage. JSON remains machine-readable on stdout, including
-search failures; human/Markdown also show provider errors. Failures have a
+search failures and execution errors (`error` / `error_type`); human/Markdown
+also show provider errors. Search JSON includes `outcome`: `success`, `empty`,
+`partial`, or `failed`. These distinguish zero matches from incomplete coverage
+and total provider failure without discarding per-provider errors. Failures have a
 short stderr explanation. Partial failures must still be reported by the Agent.
 On Windows, redirected CLI stdout/stderr use UTF-8, including non-ASCII bodies;
 console streams retain their existing encoding.

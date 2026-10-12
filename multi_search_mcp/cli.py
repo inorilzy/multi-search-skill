@@ -110,6 +110,7 @@ def main(
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
     parser = build_parser()
+    args = None
     try:
         args = parser.parse_args(list(argv) if argv is not None else None)
         payload = args.handler(args)
@@ -130,6 +131,11 @@ def main(
         stderr.write(f"usage error: {exc}\n")
         return 2
     except Exception as exc:  # noqa: BLE001 - CLI boundary should be explicit and terse
+        if args is not None:
+            _write_payload({
+                "error": str(exc),
+                "error_type": "invalid_request" if isinstance(exc, ValueError) else "runtime_error",
+            }, args.format, stdout)
         stderr.write(f"error: {exc}\n")
         return 1
 
@@ -143,7 +149,7 @@ def entrypoint() -> None:
 
 
 def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
-    return run_search_web(
+    payload = run_search_web(
         SearchWebRequest(
             query=args.query,
             route=args.route,
@@ -153,6 +159,13 @@ def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
             expand=None if args.expand is None else list(args.expand),
         )
     )
+    statuses = payload.get("provider_status") or []
+    payload["outcome"] = (
+        "failed" if statuses and all(row.get("status") == "error" for row in statuses)
+        else "partial" if payload.get("errors")
+        else "success" if payload.get("results") else "empty"
+    )
+    return payload
 
 
 def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
@@ -260,6 +273,8 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
     if markdown:
         lines = ["# Search", ""]
         lines.append(f"- query: {query}")
+        if payload.get("outcome"):
+            lines.append(f"- outcome: {payload['outcome']}")
         if route:
             lines.append(f"- route: {route}")
         lines.append("")
@@ -281,6 +296,8 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
         return "\n".join(lines) + bodies + failures
 
     lines = [f"query: {query}"]
+    if payload.get("outcome"):
+        lines.append(f"outcome: {payload['outcome']}")
     if route:
         lines.append(f"route: {route}")
     if not results:

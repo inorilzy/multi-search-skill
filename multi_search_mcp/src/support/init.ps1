@@ -60,7 +60,7 @@ Write-Step "Running multi-search doctor"
 Invoke-Native "uv" @("run", "--no-sync", "multi-search", "doctor")
 
 Write-Output ""
-Write-Output "Done. Run the CLI or MCP server from this project with:"
+Write-Output "Done. Run the on-demand CLI from this project with:"
 Write-Output '  uv run --no-sync multi-search doctor'
-Write-Output '  uv run --no-sync multi-search-mcp'
+Write-Output '  uv run --no-sync multi-search --help'
 Write-Output "Twitter/X still requires cookies with auth_token and ct0 in ~/.search-keys.json, or TWITTER_COOKIES_PATH."
