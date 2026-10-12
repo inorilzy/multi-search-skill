@@ -240,6 +240,84 @@ class CliProcessTests(unittest.TestCase):
             self.assertEqual(errors[0]["error_type"], expected, query)
             self.assertNotIn(key_value, outcome.stdout + outcome.stderr)
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows Credential Manager is Windows-only")
+    def test_migrated_legacy_key_is_used_by_independent_search_without_env_override(self):
+        """Migrate a synthetic legacy key with the real `migrate-legacy` CLI, then search in a
+        separate process. External HTTP is replaced only at the urllib opener inside the child
+        (ProviderHTTP in BOOTSTRAP); no real network is used and NetworkGuard is active in the
+        child via test_isolation.activate_from_environment. The expected key lives only in this
+        fixture and is supplied to the child as CLI_FIXTURE_TAVILY_KEY, never as a provider env
+        var, so the store is the only key source. Key values are never printed or asserted in output.
+        """
+        import tempfile
+        from multi_search_mcp.src.state.keys import key_sources
+        from multi_search_mcp.src.support.credential_store import default_store
+
+        migrated_value = "synthetic-migrate-key-0021"
+        namespace = f"ticket09-search-{os.getpid()}"
+        env = dict(self.environment, MULTI_SEARCH_CREDENTIAL_NAMESPACE=namespace)
+        env.pop("TAVILY_API_KEY", None)
+        store = default_store(env)
+        self.addCleanup(store.delete, "tavily")
+        store.delete("tavily")
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        keys_file = Path(tmp.name) / "search-keys.json"
+        keys_file.write_text(json.dumps({"tavily": migrated_value}), encoding="utf-8")
+        source_bytes = keys_file.read_bytes()
+        request_file = Path(tmp.name) / "request.json"
+
+        def migrate(*args):
+            return subprocess.run(
+                [sys.executable, "-B", "-m", "multi_search_mcp.cli", "migrate-legacy", *args,
+                 "--keys-file", str(keys_file), "--format", "json"],
+                cwd=self.isolation.root, env=env, capture_output=True, text=True,
+                encoding="utf-8", timeout=30,
+            )
+
+        def plan_and_apply():
+            plan_run = migrate("plan")
+            self.assertEqual(plan_run.returncode, 0, plan_run.stderr)
+            self.assertNotIn(migrated_value, plan_run.stdout + plan_run.stderr)
+            plan = json.loads(plan_run.stdout)
+            request_file.write_text(json.dumps({"plan_token": plan["plan_token"],
+                                                "approved": ["tavily"], "choices": {}}), encoding="utf-8")
+            apply_run = migrate("apply", "--request", str(request_file))
+            self.assertEqual(apply_run.returncode, 0, apply_run.stderr)
+            self.assertNotIn(migrated_value, apply_run.stdout + apply_run.stderr)
+            return json.loads(apply_run.stdout)
+
+        first = plan_and_apply()
+        self.assertEqual(first["written"], ["tavily"])
+        self.assertEqual(first["unchanged"], [])
+        self.assertTrue(first["complete"])
+        self.assertEqual(store.get("tavily"), migrated_value)
+
+        # No provider env var is set, so the store must be the effective source.
+        report = key_sources(keys_file=keys_file, environ=env, credential_store=store)
+        self.assertEqual(report["tavily"]["effective_source"], "credential_store")
+        self.assertFalse(report["tavily"]["env_overrides_store"])
+
+        searched = subprocess.run(
+            [sys.executable, "-B", "-m", "multi_search_mcp.cli", "search", "ok",
+             "--source", "tavily", "--format", "json"],
+            cwd=self.isolation.root, env=dict(env, CLI_FIXTURE_TAVILY_KEY=migrated_value),
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(searched.returncode, 0, searched.stderr)
+        self.assertEqual(json.loads(searched.stdout)["provider_status"][0]["status"], "ok")
+        self.assertNotIn(migrated_value, searched.stdout + searched.stderr)
+
+        # Repeat is idempotent: the same key is already current and nothing is written.
+        second = plan_and_apply()
+        self.assertEqual(second["written"], [])
+        self.assertEqual(second["unchanged"], ["tavily"])
+        self.assertTrue(second["complete"])
+
+        # The legacy source file is never modified by plan or apply.
+        self.assertEqual(keys_file.read_bytes(), source_bytes)
+
 
 if __name__ == "__main__":
     unittest.main()
