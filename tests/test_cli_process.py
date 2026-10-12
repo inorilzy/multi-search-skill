@@ -223,13 +223,11 @@ class CliProcessTests(unittest.TestCase):
         self.assertIn("missing TAVILY_API_KEY", missing.stdout + missing.stderr)
         self.assertNotIn("synthetic-search-key-0014", missing.stdout + missing.stderr)
 
-        # Outcome classes through the same store-backed process path. Known gap: when a single
-        # key's 432 quota error passes through the key-pool wrapper (search_runner.py), the
-        # provider error_type is dropped and the text classifies as rate_limit. Asserted as
-        # the current behavior so the gap stays visible until the wrapper preserves error_type.
+        # Outcome classes through the same store-backed process path, including the key-pool
+        # wrapper (search_runner.py), which must preserve the provider's error_type.
         # A fresh key per case: a 432 persists key cooldown in the isolated state DB, so reusing
         # one key would make later children report "missing API key" instead of the outcome.
-        for index, (query, expected) in enumerate((("quota", "rate_limit"), ("network", "network"))):
+        for index, (query, expected) in enumerate((("quota", "quota_exhausted"), ("network", "network"))):
             key_value = f"synthetic-search-key-001{5 + index}"
             store.set("tavily", key_value)
             outcome = subprocess.run(
