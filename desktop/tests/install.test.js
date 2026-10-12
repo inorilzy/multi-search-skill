@@ -72,3 +72,64 @@ test('a thrown install request is reported as unconfirmed, not as success', asyn
   assert.match(root.querySelector('[data-info="reason"]').textContent, /未确认安装结果/);
   window.close();
 });
+
+test('update is offered only for a newer verified bundle and reports the new version', async () => {
+  const { window, root } = setup();
+  let updated = 0;
+  const api = {
+    installPlan: async () => plan('update_available', { version: '0.5.0' }),
+    install: async () => { throw new Error('must not run'); },
+    update: async () => { updated += 1; return { status: 'installed', version: '0.5.0', path_hint: 'PATH', reason: '', steps: [] }; },
+  };
+  await mountInstall(root, api);
+  assert.equal(root.querySelector('[data-action="install"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, false);
+  root.querySelector('[data-action="update"]').click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(updated, 1);
+  assert.equal(root.querySelector('[data-status="result"]').textContent, '更新成功 v0.5.0');
+  window.close();
+});
+
+test('uninstall needs an explicit confirmation and states that config and Skills are kept', async () => {
+  const { window, root } = setup();
+  let uninstalled = 0;
+  const api = {
+    installPlan: async () => plan('installed', { version: '0.4.0' }),
+    install: async () => { throw new Error('must not run'); },
+    uninstall: async () => { uninstalled += 1; return { status: 'uninstalled', steps: [], reason: '' }; },
+  };
+  await mountInstall(root, api);
+  assert.equal(root.querySelector('[data-action="uninstall"]').disabled, false);
+  const confirm = root.querySelector('[data-confirm]');
+  assert.equal(confirm.hidden, true);
+  root.querySelector('[data-action="uninstall"]').click();
+  assert.equal(confirm.hidden, false);
+  assert.match(confirm.textContent, /配置、凭据和 Skill 会保留/);
+  root.querySelector('[data-action="uninstall-cancel"]').click();
+  assert.equal(confirm.hidden, true);
+  assert.equal(uninstalled, 0);
+  root.querySelector('[data-action="uninstall"]').click();
+  root.querySelector('[data-action="uninstall-confirm"]').click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(uninstalled, 1);
+  assert.match(root.querySelector('[data-status="result"]').textContent, /已卸载 CLI/);
+  window.close();
+});
+
+test('unverified managed record disables every mutating action and shows the reason', async () => {
+  const { window, root } = setup();
+  const api = {
+    installPlan: async () => plan('unverified', { reason: '已有安装记录无法验证，已阻止覆盖或更新，请先修复或卸载' }),
+    install: async () => { throw new Error('must not run'); },
+    update: async () => { throw new Error('must not run'); },
+    uninstall: async () => { throw new Error('must not run'); },
+  };
+  await mountInstall(root, api);
+  assert.equal(root.querySelector('[data-status="plan"]').textContent, '安装记录无法验证，已阻止修改');
+  for (const action of ['install', 'update', 'uninstall']) {
+    assert.equal(root.querySelector(`[data-action="${action}"]`).disabled, true, action);
+  }
+  assert.match(root.querySelector('[data-info="reason"]').textContent, /无法验证/);
+  window.close();
+});

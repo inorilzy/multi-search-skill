@@ -7,6 +7,10 @@ const statusLabels = {
   unavailable: '不可用',
   failed: '安装失败',
   already_installed: '已安装，未覆盖',
+  update_available: '有可用更新',
+  unverified: '安装记录无法验证，已阻止修改',
+  not_installed: '未安装',
+  uninstalled: '已卸载',
 };
 
 export async function mountInstall(root, api) {
@@ -15,9 +19,13 @@ export async function mountInstall(root, api) {
       <strong data-status="plan" aria-live="polite">检查中</strong>
       <dl class="install-plan"><dt>安装目录</dt><dd data-info="root"></dd><dt>可执行文件</dt><dd data-info="bin"></dd><dt>版本</dt><dd data-info="version"></dd></dl>
       <p data-info="path-hint" class="note"></p><p data-info="reason" role="alert"></p>
-      <div class="run-controls"><button type="button" data-action="install" class="primary" disabled>安装 CLI</button><strong data-status="result" aria-live="polite"></strong></div>
+      <div class="run-controls"><button type="button" data-action="install" class="primary" disabled>安装 CLI</button><button type="button" data-action="update" disabled>更新 CLI</button><button type="button" data-action="uninstall" disabled>卸载 CLI</button><strong data-status="result" aria-live="polite"></strong></div>
+      <div class="run-controls" data-confirm hidden><strong>卸载只删除本工具安装的 CLI 文件；配置、凭据和 Skill 会保留。</strong><button type="button" data-action="uninstall-confirm" class="danger">确认卸载</button><button type="button" data-action="uninstall-cancel">取消</button></div>
       <ol data-steps aria-label="安装步骤"></ol></section>`;
   const install = root.querySelector('[data-action="install"]');
+  const update = root.querySelector('[data-action="update"]');
+  const uninstall = root.querySelector('[data-action="uninstall"]');
+  const confirmBox = root.querySelector('[data-confirm]');
   const plan = root.querySelector('[data-action="plan"]');
   let busy = false;
 
@@ -31,6 +39,9 @@ export async function mountInstall(root, api) {
     // A ready plan must not erase the reason of the previous install result.
     if (status.status !== 'ready') root.querySelector('[data-info="reason"]').textContent = status.reason || '';
     install.disabled = busy || status.status !== 'ready';
+    update.disabled = busy || status.status !== 'update_available';
+    uninstall.disabled = busy || status.status !== 'installed';
+    if (status.status !== 'installed') confirmBox.hidden = true;
   }
 
   function renderSteps(steps) {
@@ -50,29 +61,41 @@ export async function mountInstall(root, api) {
     finally { plan.disabled = busy; }
   }
 
-  install.addEventListener('click', async () => {
+  // Runs one mutating action (install, update or uninstall) and always re-reads the plan afterwards.
+  async function run(label, failLabel, call, successWhen, successText, unconfirmed = '请求失败，未确认操作结果，请重新检查。') {
     if (busy) return;
-    busy = true; install.disabled = true; plan.disabled = true;
-    root.querySelector('[data-status="result"]').textContent = '正在安装';
+    busy = true; install.disabled = true; update.disabled = true; uninstall.disabled = true; plan.disabled = true;
+    root.querySelector('[data-status="result"]').textContent = label;
     root.querySelector('[data-info="reason"]').textContent = '';
     renderSteps([]);
     try {
-      const outcome = await api.install();
+      const outcome = await call();
       renderSteps(outcome.steps || []);
-      if (outcome.status === 'installed') {
-        root.querySelector('[data-status="result"]').textContent = `安装成功 v${outcome.version}`;
-        root.querySelector('[data-info="path-hint"]').textContent = outcome.path_hint;
+      if (successWhen(outcome)) {
+        root.querySelector('[data-status="result"]').textContent = successText(outcome);
+        root.querySelector('[data-info="path-hint"]').textContent = outcome.path_hint || '';
       } else {
-        root.querySelector('[data-status="result"]').textContent = statusLabels[outcome.status] || '安装失败';
-        root.querySelector('[data-info="reason"]').textContent = outcome.reason || '安装未完成，已保留原有状态。';
+        root.querySelector('[data-status="result"]').textContent = statusLabels[outcome.status] || failLabel;
+        root.querySelector('[data-info="reason"]').textContent = outcome.reason || '操作未完成，已保留原有状态。';
       }
     } catch {
-      root.querySelector('[data-status="result"]').textContent = '安装失败';
-      root.querySelector('[data-info="reason"]').textContent = '安装请求失败，未确认安装结果，请重新检查。';
+      root.querySelector('[data-status="result"]').textContent = failLabel;
+      root.querySelector('[data-info="reason"]').textContent = unconfirmed;
     } finally {
       busy = false; plan.disabled = false;
       await refresh();
     }
+  }
+
+  install.addEventListener('click', () => run('正在安装', '安装失败', () => api.install(),
+    o => o.status === 'installed', o => `安装成功 v${o.version}`, '安装请求失败，未确认安装结果，请重新检查。'));
+  update.addEventListener('click', () => run('正在更新', '更新失败', () => api.update(),
+    o => o.status === 'installed', o => `更新成功 v${o.version}`));
+  uninstall.addEventListener('click', () => { confirmBox.hidden = false; });
+  root.querySelector('[data-action="uninstall-cancel"]').addEventListener('click', () => { confirmBox.hidden = true; });
+  root.querySelector('[data-action="uninstall-confirm"]').addEventListener('click', () => {
+    confirmBox.hidden = true;
+    run('正在卸载', '卸载失败', () => api.uninstall(), o => o.status === 'uninstalled', () => '已卸载 CLI，配置与 Skill 已保留');
   });
   plan.addEventListener('click', refresh);
   await refresh();
