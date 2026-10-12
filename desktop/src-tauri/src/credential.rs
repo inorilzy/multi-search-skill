@@ -13,7 +13,10 @@ use serde_json::Value;
 pub(crate) const NAMESPACE_ENV: &str = "MULTI_SEARCH_CREDENTIAL_NAMESPACE";
 pub(crate) const DEFAULT_NAMESPACE: &str = "multi-search";
 pub(crate) const MAX_KEY_LENGTH: usize = 1024;
-pub(crate) const PROVIDER: &str = "tavily";
+/// Single-secret key providers stored in the credential store (mirrors Python CREDENTIAL_STORE_PROVIDERS).
+pub(crate) const STORE_PROVIDERS: &[&str] = &[
+    "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CredentialError {
@@ -29,7 +32,7 @@ impl std::fmt::Display for CredentialError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unavailable(message) => f.write_str(message),
-            Self::Unreadable => f.write_str("stored credential for tavily is unreadable"),
+            Self::Unreadable => f.write_str("stored credential is unreadable"),
             Self::Invalid(message) => f.write_str(message),
         }
     }
@@ -67,8 +70,8 @@ pub(crate) fn namespace(variables: &std::collections::BTreeMap<String, String>) 
         .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string())
 }
 
-pub(crate) fn target(namespace: &str) -> String {
-    format!("{namespace}/{PROVIDER}")
+pub(crate) fn target(namespace: &str, provider: &str) -> String {
+    format!("{namespace}/{provider}")
 }
 
 pub(crate) fn encode_blob(key: &str, saved_at: f64) -> Vec<u8> {
@@ -185,8 +188,9 @@ fn store_error(code: u32) -> CredentialError {
 pub(crate) fn load(
     backend: &dyn CredentialBackend,
     namespace: &str,
+    provider: &str,
 ) -> Result<Option<(String, f64)>, CredentialError> {
-    match backend.read(&target(namespace))? {
+    match backend.read(&target(namespace, provider))? {
         None => Ok(None),
         Some(blob) => decode_blob(&blob).map(Some),
     }
@@ -196,19 +200,21 @@ pub(crate) fn load(
 pub(crate) fn save(
     backend: &dyn CredentialBackend,
     namespace: &str,
+    provider: &str,
     key: &str,
     saved_at: f64,
 ) -> Result<f64, CredentialError> {
     let value = validate_key(key)?;
-    backend.write(&target(namespace), &encode_blob(&value, saved_at))?;
+    backend.write(&target(namespace, provider), &encode_blob(&value, saved_at))?;
     Ok(saved_at)
 }
 
 pub(crate) fn remove(
     backend: &dyn CredentialBackend,
     namespace: &str,
+    provider: &str,
 ) -> Result<bool, CredentialError> {
-    backend.delete(&target(namespace))
+    backend.delete(&target(namespace, provider))
 }
 
 /// Provenance and saved state only. Never carries the key value.
@@ -243,5 +249,24 @@ pub(crate) fn status_of(result: Result<Option<(String, f64)>, CredentialError>) 
             saved_at: None,
             error: error.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_is_namespaced_per_provider() {
+        assert_eq!(target("ns", "tavily"), "ns/tavily");
+        assert_eq!(target("ns", "brave"), "ns/brave");
+        assert_eq!(target("multi-search", "github"), "multi-search/github");
+    }
+
+    #[test]
+    fn every_store_provider_is_a_distinct_target() {
+        let targets: std::collections::BTreeSet<String> =
+            STORE_PROVIDERS.iter().map(|p| target("ns", p)).collect();
+        assert_eq!(targets.len(), STORE_PROVIDERS.len());
     }
 }

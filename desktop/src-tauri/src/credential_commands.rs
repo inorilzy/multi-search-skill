@@ -13,6 +13,8 @@ use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 
 /// Environment override that wins over the stored key (see `load_keys` priority).
 const ENV_OVERRIDE: &str = "TAVILY_API_KEY";
+/// The provider this page manages; the store entry is `<namespace>/tavily`.
+const PROVIDER: &str = "tavily";
 const CONFIG_ENV: &str = "MULTI_SEARCH_CONFIG";
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -42,7 +44,7 @@ pub(crate) fn overview(
     variables: &BTreeMap<String, String>,
 ) -> CredentialOverview {
     let namespace = credential::namespace(variables);
-    let store = credential::status_of(credential::load(backend, &namespace));
+    let store = credential::status_of(credential::load(backend, &namespace, PROVIDER));
     let env_set = variables.get(ENV_OVERRIDE).is_some_and(|v| !v.is_empty());
     CredentialOverview {
         effective_source: effective_source(env_set, &store),
@@ -59,7 +61,7 @@ pub(crate) fn save(
     now: f64,
 ) -> Result<CredentialOverview, String> {
     let namespace = credential::namespace(variables);
-    credential::save(backend, &namespace, key, now).map_err(|e| e.to_string())?;
+    credential::save(backend, &namespace, PROVIDER, key, now).map_err(|e| e.to_string())?;
     Ok(overview(backend, variables))
 }
 
@@ -68,7 +70,7 @@ pub(crate) fn delete(
     variables: &BTreeMap<String, String>,
 ) -> Result<CredentialOverview, String> {
     let namespace = credential::namespace(variables);
-    credential::remove(backend, &namespace).map_err(|e| e.to_string())?;
+    credential::remove(backend, &namespace, PROVIDER).map_err(|e| e.to_string())?;
     Ok(overview(backend, variables))
 }
 
@@ -246,7 +248,7 @@ mod native_store {
     }
     impl Drop for Cleanup<'_> {
         fn drop(&mut self) {
-            let _ = credential::remove(self.backend, &self.namespace);
+            let _ = credential::remove(self.backend, &self.namespace, PROVIDER);
         }
     }
 
@@ -265,11 +267,11 @@ mod native_store {
         let saved = save(&backend, &vars, "  synthetic-native-key-0007  ", 1700000002.0).unwrap();
         assert_eq!(saved.store.state, "present");
         assert_eq!(saved.effective_source, "credential_store");
-        assert_eq!(credential::load(&backend, &namespace).unwrap().unwrap().0, "synthetic-native-key-0007");
+        assert_eq!(credential::load(&backend, &namespace, PROVIDER).unwrap().unwrap().0, "synthetic-native-key-0007");
 
         let replaced = save(&backend, &vars, "synthetic-native-key-0008", 1700000003.0).unwrap();
         assert_eq!(replaced.store.saved_at, Some(1700000003.0));
-        assert_eq!(credential::load(&backend, &namespace).unwrap().unwrap().0, "synthetic-native-key-0008");
+        assert_eq!(credential::load(&backend, &namespace, PROVIDER).unwrap().unwrap().0, "synthetic-native-key-0008");
 
         let mut with_env = vars.clone();
         with_env.insert(ENV_OVERRIDE.into(), "synthetic-native-env-0009".into());
@@ -280,6 +282,6 @@ mod native_store {
         let cleared = delete(&backend, &vars).unwrap();
         assert_eq!(cleared.store.state, "absent");
         assert_eq!(cleared.effective_source, "none");
-        assert_eq!(credential::remove(&backend, &namespace), Ok(false));
+        assert_eq!(credential::remove(&backend, &namespace, PROVIDER), Ok(false));
     }
 }
