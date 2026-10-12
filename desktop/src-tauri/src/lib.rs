@@ -2,6 +2,7 @@
 mod diagnostics;
 mod environment;
 mod execution;
+mod install;
 mod process;
 mod redaction;
 #[cfg(feature = "native-window")]

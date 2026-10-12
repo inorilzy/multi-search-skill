@@ -4,5 +4,7 @@ export function managementApi(invoke) {
     start: (path, options) => invoke('start_test_search', { path, options }),
     poll: id => invoke('poll_execution', { id }),
     cancel: id => invoke('cancel_test_search', { id }),
+    installPlan: () => invoke('install_plan'),
+    install: () => invoke('install_cli'),
   };
 }
