@@ -1,7 +1,6 @@
 const statusLabels = {
   ready: '可安装',
   installed: '已由本工具安装',
-  unconfigured: '未配置受控发布来源',
   prerequisite_missing: '缺少安装前提',
   integrity_failed: '完整性校验失败',
   unknown_existing: '已有未知安装，未修改',

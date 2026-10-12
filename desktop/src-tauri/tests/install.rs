@@ -63,9 +63,9 @@ fn production_without_controlled_source_changes_nothing() {
         .insert("LOCALAPPDATA".into(), localappdata.to_string_lossy().into_owned());
     let manager = DesktopManager::new(environment);
     let plan = manager.install_plan();
-    assert_eq!(plan.status, "unconfigured");
+    assert_eq!(plan.status, "prerequisite_missing");
     let outcome = manager.install();
-    assert_eq!(outcome.status, "unconfigured");
+    assert_eq!(outcome.status, "prerequisite_missing");
     assert!(outcome.steps.is_empty());
     assert!(!localappdata.exists());
 }

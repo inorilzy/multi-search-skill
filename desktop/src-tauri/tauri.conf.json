@@ -12,5 +12,5 @@
       "capabilities": [{ "identifier": "management", "windows": ["main"], "permissions": [] }]
     }
   },
-  "bundle": { "active": false }
+  "bundle": { "active": false, "resources": { "resources/cli-bundle/": "cli-bundle/" } }
 }

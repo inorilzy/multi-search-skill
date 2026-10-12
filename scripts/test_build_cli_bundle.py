@@ -48,5 +48,16 @@ class Build(unittest.TestCase):
                 build(runtime, launcher, "0.4.0", root / "b", root / "a.txt")
 
 
+class Release(unittest.TestCase):
+    def test_missing_launcher_source_fails_explicitly_before_any_output(self):
+        from build_cli_release import compile_launcher
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(BundleError) as ctx:
+                compile_launcher(root / "absent.rs", root / "out" / "multi-search.exe")
+            self.assertIn("launcher source is missing", str(ctx.exception))
+            self.assertFalse((root / "out").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
