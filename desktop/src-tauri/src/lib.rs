@@ -3,6 +3,7 @@ pub(crate) mod credential;
 pub(crate) mod credential_commands;
 mod diagnostics;
 mod environment;
+pub(crate) mod settings;
 mod execution;
 mod install;
 mod process;
@@ -13,6 +14,12 @@ mod window;
 pub use diagnostics::{CliStatus, DesktopManager, Discovery, RuntimeEnvironment};
 pub use execution::{ExecutionStatus, SearchOptions};
 pub use skill::{SkillInstall, SkillPlan};
+
+/// Test seam for the settings writer. Not a supported public API.
+#[doc(hidden)]
+pub mod settings_fixture {
+    pub use crate::settings::{config_path, save, validate, view, SettingsInput, SettingsView, Validated};
+}
 
 /// Test seam for the Tavily credential store. Not a supported public API.
 #[doc(hidden)]

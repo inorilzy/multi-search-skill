@@ -9,3 +9,5 @@ pages.push({ id: 'skill', label: 'Claude Code Skill', number: '03', mount: mount
 pages.push({ id: 'credentials', label: 'Tavily 凭据', number: '04', mount: mountCredentials });
 import { mountSources } from './sources.js';
 pages.push({ id: 'sources', label: '搜索源', number: '05', mount: mountSources });
+import { mountSettings } from './settings.js';
+pages.push({ id: 'settings', label: '搜索设置', number: '05B', mount: mountSettings });

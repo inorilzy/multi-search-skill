@@ -12,5 +12,7 @@ export function managementApi(invoke) {
     credentialSave: (source, key) => invoke('credential_save', { source, key }),
     credentialDelete: source => invoke('credential_delete', { source }),
     credentialTest: (source, path) => invoke('credential_test', { source, path }),
+    settingsView: () => invoke('settings_view'),
+    settingsSave: input => invoke('settings_save', { input }),
   };
 }

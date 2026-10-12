@@ -163,6 +163,20 @@ async fn credential_test(
     .map_err(|_| "Credential test worker failed".to_string())?
 }
 
+#[tauri::command]
+fn settings_view(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::settings::SettingsView, String> {
+    Ok(crate::settings::view(&manager.inner().environment))
+}
+#[tauri::command]
+fn settings_save(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    input: crate::settings::SettingsInput,
+) -> Result<crate::settings::SettingsView, String> {
+    crate::settings::save(&manager.inner().environment, &input)
+}
+
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.
 pub fn run() {
     tauri::Builder::default()
@@ -179,7 +193,9 @@ pub fn run() {
             credential_status,
             credential_save,
             credential_delete,
-            credential_test
+            credential_test,
+            settings_view,
+            settings_save
         ])
         .on_window_event(|window, event| {
             if matches!(
