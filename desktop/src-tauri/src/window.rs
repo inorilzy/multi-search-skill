@@ -73,6 +73,24 @@ async fn skill_install(
         .await
         .map_err(|_| "Skill install worker failed".into())
 }
+#[tauri::command]
+async fn install_plan(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::install::InstallPlan, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.install_plan())
+        .await
+        .map_err(|_| "Install planning failed".into())
+}
+#[tauri::command]
+async fn install_cli(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::install::InstallOutcome, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.install())
+        .await
+        .map_err(|_| "Install worker failed".into())
+}
 
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.
 pub fn run() {
@@ -84,7 +102,9 @@ pub fn run() {
             poll_execution,
             cancel_test_search,
             skill_plan,
-            skill_install
+            skill_install,
+            install_plan,
+            install_cli
         ])
         .on_window_event(|window, event| {
             if matches!(

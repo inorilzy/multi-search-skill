@@ -18,6 +18,10 @@ name = "execution"
 path = "tests/execution.rs"
 
 [[test]]
+name = "install"
+path = "tests/install.rs"
+
+[[test]]
 name = "installed_cli"
 path = "tests/installed_cli.rs"
 
@@ -33,6 +37,7 @@ required-features = ["native-window"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_System_Diagnostics_ToolHelp"] }
