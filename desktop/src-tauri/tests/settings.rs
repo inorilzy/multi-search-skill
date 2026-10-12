@@ -188,7 +188,10 @@ fn handoff_file_for_the_independent_cli_check() {
     let Some(target) = std::env::var_os("MS_SETTINGS_HANDOFF") else { return };
     let sandbox = Sandbox::new("handoff");
     let env = sandbox.env(&[]);
-    fixture::save(&env, &input("default", 25, &["brave"])).unwrap();
+    let mut request = input("default", 25, &["brave"]);
+    // Synthetic path reference only; the CLI test checks it is passed through, never read.
+    request.twitter_cookies_path = Some("C:/synthetic/handoff-twitter-cookies.json".into());
+    fixture::save(&env, &request).unwrap();
     std::fs::copy(sandbox.user_config(), PathBuf::from(target)).unwrap();
 }
 

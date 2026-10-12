@@ -83,6 +83,29 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
         self.assertNotIn("brave", self.calls)
         self.assertIn("baidu", self.calls)
 
+    def test_desktop_saved_twitter_path_reaches_search_twitter_through_real_key_loading(self):
+        from multi_search_mcp.src.state.keys import load_keys
+
+        desktop = json.loads(self.config.read_text(encoding="utf-8"))
+        self.assertEqual(desktop["twitter_cookies_path"], "C:/synthetic/handoff-twitter-cookies.json")
+        seen = []
+
+        def fake_twitter(query, count=10, cookies="", timeout=None, *, publish_partial=None, deadline=None):
+            seen.append(cookies)
+            return []
+
+        keys_file = Path(self.tmp.name) / "keys.json"
+        keys_file.write_text("{}", encoding="utf-8")
+
+        def isolated_load_keys(*_a, twitter_cookies_path=None, **_k):
+            return load_keys(keys_file, environ={}, credential_store=None,
+                             twitter_cookies_path=twitter_cookies_path)
+
+        with mock.patch.object(registry, "search_twitter", fake_twitter), \
+                mock.patch("multi_search_mcp.src.service.load_keys", isolated_load_keys):
+            self.run_cli("--source", "twitter")
+        self.assertEqual(seen, ["C:/synthetic/handoff-twitter-cookies.json"])
+
     def test_explicit_disabled_source_is_not_run_and_enabled_one_still_runs(self):
         code, payload, _err = self.run_cli("--source", "brave", "--source", "baidu")
         self.assertNotIn("brave", self.calls)
