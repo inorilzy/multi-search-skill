@@ -90,8 +90,7 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
     Provider wrappers count actual attempts (including key retries). The Core
     observer supplies the post-timeout, post-retry rows and original provider ranks.
     """
-    from ..service import MultiSearchRequest, SearchWebRequest, _run_search_candidates
-    from ..state.keys import load_keys
+    from ..service import MultiSearchRequest, SearchWebRequest, _load_runtime_keys, _run_search_candidates
     from .registry import build_provider_registry
     from .resolve import resolve_search_plan
 
@@ -100,7 +99,7 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
     request = replace(request, expand=list(logical.variants), use_state=False)
     config = dict(load_config(request.config_path) if config is None else config)
     config.update(expand=[], expand_queries=[])
-    keys = load_keys() if keys is None else dict(keys)
+    keys = _load_runtime_keys(config) if keys is None else dict(keys)
     providers = build_provider_registry() if providers is None else providers
     plan = resolve_search_plan(MultiSearchRequest(
         query=request.query, route=request.route, count=request.count,

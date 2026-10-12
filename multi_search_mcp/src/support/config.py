@@ -72,6 +72,16 @@ def config_bool(config: dict, key: str, default: bool = False) -> bool:
     raise ConfigError(f"{key} requires a boolean value, got {value!r}")
 
 
+def config_str(config: dict, key: str) -> str:
+    """Return an optional string config value ("" when absent). Never echoes the value."""
+    if key not in config or config.get(key) is None:
+        return ""
+    value = config.get(key)
+    if not isinstance(value, str):
+        raise ConfigError(f"{key} requires a string value")
+    return value
+
+
 def config_list(config: dict, key: str) -> list[str]:
     if key not in config:
         return []

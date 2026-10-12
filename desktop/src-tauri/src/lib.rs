@@ -41,31 +41,47 @@ pub mod credential_fixture {
         }
     }
 
+    fn tavily() -> &'static credential_commands::SourceEntry {
+        credential_commands::resolve_source("tavily").expect("tavily is allowlisted")
+    }
     pub fn save<B: Backend + Sync + ?Sized>(
         backend: &B,
         variables: &BTreeMap<String, String>,
         key: &str,
         now: f64,
     ) -> Result<CredentialOverview, String> {
-        credential_commands::save(&Adapter(backend), variables, key, now)
+        credential_commands::save(&Adapter(backend), variables, tavily(), key, now)
     }
     pub fn delete<B: Backend + Sync + ?Sized>(
         backend: &B,
         variables: &BTreeMap<String, String>,
     ) -> Result<CredentialOverview, String> {
-        credential_commands::delete(&Adapter(backend), variables)
+        credential_commands::delete(&Adapter(backend), variables, tavily())
     }
     pub fn overview<B: Backend + Sync + ?Sized>(
         backend: &B,
         variables: &BTreeMap<String, String>,
     ) -> CredentialOverview {
-        credential_commands::overview(&Adapter(backend), variables)
+        credential_commands::overview(&Adapter(backend), variables, tavily())
+    }
+    /// Source-aware overview for any allowlisted UI name. Unknown names return an error.
+    pub fn overview_for<B: Backend + Sync + ?Sized>(
+        backend: &B,
+        variables: &BTreeMap<String, String>,
+        source: &str,
+    ) -> Result<CredentialOverview, String> {
+        let entry = credential_commands::resolve_source(source)?;
+        Ok(credential_commands::overview(&Adapter(backend), variables, entry))
+    }
+    pub fn resolve(source: &str) -> Result<(&'static str, &'static str), String> {
+        let entry = credential_commands::resolve_source(source)?;
+        Ok((entry.source, entry.provider))
     }
     pub fn interpret(payload: &Value) -> TestOutcome {
-        credential_commands::interpret_payload(payload)
+        credential_commands::interpret_source(payload, tavily())
     }
     pub fn test_args(query: &str) -> Vec<String> {
-        credential_commands::test_args(query)
+        credential_commands::test_args(query, tavily())
     }
 }
 #[cfg(feature = "native-window")]

@@ -33,6 +33,10 @@ path = "tests/skill.rs"
 name = "credentials"
 path = "tests/credentials.rs"
 
+[[test]]
+name = "credential_sources"
+path = "tests/credential_sources.rs"
+
 [[bin]]
 name = "multi-search-desktop"
 path = "src/main.rs"

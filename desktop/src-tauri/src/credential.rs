@@ -14,6 +14,8 @@ pub(crate) const NAMESPACE_ENV: &str = "MULTI_SEARCH_CREDENTIAL_NAMESPACE";
 pub(crate) const DEFAULT_NAMESPACE: &str = "multi-search";
 pub(crate) const MAX_KEY_LENGTH: usize = 1024;
 /// Single-secret key providers stored in the credential store (mirrors Python CREDENTIAL_STORE_PROVIDERS).
+/// Used by the contract test only; the runtime allowlist lives in credential_commands::SOURCES.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const STORE_PROVIDERS: &[&str] = &[
     "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github",
 ];
@@ -268,5 +270,15 @@ mod tests {
         let targets: std::collections::BTreeSet<String> =
             STORE_PROVIDERS.iter().map(|p| target("ns", p)).collect();
         assert_eq!(targets.len(), STORE_PROVIDERS.len());
+    }
+
+    /// Must equal `CREDENTIAL_STORE_PROVIDERS` in multi_search_mcp/src/state/keys.py.
+    #[test]
+    fn store_providers_match_python_contract_order_free() {
+        let mut rust: Vec<&str> = STORE_PROVIDERS.to_vec();
+        rust.sort_unstable();
+        let mut python = vec!["baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github"];
+        python.sort_unstable();
+        assert_eq!(rust, python);
     }
 }

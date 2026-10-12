@@ -149,11 +149,17 @@ def load_keys(
     keys_file: str | Path | None = None,
     environ: Mapping[str, str] | None = None,
     credential_store=None,
+    *,
+    twitter_cookies_path: str | None = None,
 ) -> dict:
     """Load API keys: environment > credential store > ~/.search-keys.json.
 
     ``credential_store`` may be injected (tests). When omitted, the Windows store
     is consulted only for the real process environment (see ``_credential_store_enabled``).
+
+    ``twitter_cookies_path`` is the non-secret cookie file reference from config. It
+    ranks below ``TWITTER_COOKIES_PATH`` and above the keys file's twitter entry.
+    Only the path string is stored here; the cookie file is never read by this function.
     """
     keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
     use_process_env = environ is None
@@ -195,6 +201,9 @@ def load_keys(
             keys[key_name] = val
             if env_name == "TWITTER_COOKIES_PATH":
                 keys["twitter"] = val
+    # Config reference: below the env path, above the keys file's twitter entry.
+    if not environ.get("TWITTER_COOKIES_PATH") and twitter_cookies_path:
+        keys["twitter"] = twitter_cookies_path
     return keys
 
 
