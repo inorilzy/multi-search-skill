@@ -44,6 +44,22 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `key
 
 当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
 
+## Windows 桌面管理（本地开发候选）
+
+`desktop/` 是 Tauri 2 管理窗口，仅检测已安装的 `multi-search.exe`、显示版本/实际路径，并运行或取消一次测试搜索；尚不提供 UI 安装、凭据编辑或 Skill 安装。CLI 新增 `--version`。检测区区分应用继承的 PATH 与 Windows 用户/机器持久化 PATH，新终端可发现不意味着已打开的终端或 Agent 已刷新环境。也可指定已安装 CLI 的绝对路径。
+
+已有 Node、Rust/MSVC 与 WebView2 的 Windows 开发环境中：
+
+```powershell
+npm --prefix desktop ci
+npm --prefix desktop run dev
+# 原生测试与 DOM 测试分开，均不能代替真实窗口验收
+cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --no-default-features
+npm --prefix desktop test
+```
+
+应用只启动固定 CLI 程序并传独立参数；取消/关闭只结束本次 Windows Job Object 归属的执行和子进程，独立终端 CLI 不受影响。输出当纯文本展示并脱敏。测试使用一次性 profile 与受控 HTTP，不能证明真实付费源可用。原生窗口验收使用 `scripts/desktop_acceptance.py`，需要先在隔离 `.wheel-venv` 安装本地 wheel；`scripts/desktop_native_acceptance.py` 只验 native API 链路，不是窗口替代。
+
 ## 适用场景
 
 - 让 agent 一次性查多个来源，而不是只依赖单一搜索 API。

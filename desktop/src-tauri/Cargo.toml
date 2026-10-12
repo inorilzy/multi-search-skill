@@ -1,0 +1,46 @@
+[package]
+name = "multi-search-desktop"
+version = "0.1.0"
+edition = "2021"
+
+autotests = false
+
+[lib]
+name = "multi_search_desktop"
+path = "src/lib.rs"
+
+[[test]]
+name = "diagnostics"
+path = "tests/diagnostics.rs"
+
+[[test]]
+name = "execution"
+path = "tests/execution.rs"
+
+[[test]]
+name = "installed_cli"
+path = "tests/installed_cli.rs"
+
+[[bin]]
+name = "multi-search-desktop"
+path = "src/main.rs"
+required-features = ["native-window"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_System_Diagnostics_ToolHelp"] }
+
+[features]
+default = ["native-window"]
+native-window = ["dep:tauri", "dep:tauri-build"]
+
+[dependencies.tauri]
+version = "2"
+optional = true
+
+[build-dependencies.tauri-build]
+version = "2"
+optional = true

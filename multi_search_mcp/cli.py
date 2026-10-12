@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import importlib.metadata
 import json
 import sys
 from collections.abc import Sequence
@@ -45,6 +46,11 @@ def _add_format_argument(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = _ArgumentParser(prog="multi-search", description="Thin CLI for the shared multi-search core.")
+    try:
+        installed_version = importlib.metadata.version("multi-search-mcp")
+    except importlib.metadata.PackageNotFoundError:
+        installed_version = "uninstalled"
+    parser.add_argument("--version", action="version", version=f"multi-search {installed_version}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     search_parser = subparsers.add_parser("search", help="RRF search followed by body fetches for the final 15 URLs")

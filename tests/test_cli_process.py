@@ -126,6 +126,12 @@ class CliProcessTests(unittest.TestCase):
         self.assertEqual(read.returncode, 0, read.stderr)
         self.assertEqual(json.loads(read.stdout)["content"], BODY[1200:1400])
 
+    def test_version_probe_reports_installed_distribution_without_configuration(self):
+        import importlib.metadata
+        result = self.run_cli("--version", no_http=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "multi-search " + importlib.metadata.version("multi-search-mcp"))
+
     def test_missing_and_expired_references_are_structured_errors(self):
         missing = self.run_cli("fetch", "src_missing")
         self.assertEqual(missing.returncode, 1)

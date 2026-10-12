@@ -8,6 +8,11 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 build/
+.wheel-venv/
+dist/
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
 .scratch/
 .vscode/
 .idea/
