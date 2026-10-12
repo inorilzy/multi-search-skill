@@ -92,6 +92,55 @@ async fn install_cli(
         .map_err(|_| "Install worker failed".into())
 }
 
+#[tauri::command]
+async fn skill_status(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    scope: String,
+    project: Option<String>,
+) -> Result<crate::SkillStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.skill_status(&scope, project.map(PathBuf::from)))
+        .await
+        .map_err(|_| "Skill status worker failed".to_string())?
+}
+#[tauri::command]
+async fn skill_update(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    scope: String,
+    project: Option<String>,
+    confirm_overwrite: bool,
+) -> Result<crate::UpdateOutcome, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.skill_update(&scope, project.map(PathBuf::from), confirm_overwrite)
+    })
+    .await
+    .map_err(|_| "Skill update worker failed".into())
+}
+#[tauri::command]
+async fn skill_remove_plan(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    scope: String,
+    project: Option<String>,
+) -> Result<crate::RemovePlan, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.skill_remove_plan(&scope, project.map(PathBuf::from)))
+        .await
+        .map_err(|_| "Skill removal planning worker failed".to_string())?
+}
+#[tauri::command]
+async fn skill_remove(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    scope: String,
+    project: Option<String>,
+    confirmed: bool,
+) -> Result<crate::RemoveOutcome, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.skill_remove(&scope, project.map(PathBuf::from), confirmed))
+        .await
+        .map_err(|_| "Skill removal worker failed".into())
+}
+
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.
 pub fn run() {
     tauri::Builder::default()
@@ -104,7 +153,11 @@ pub fn run() {
             skill_plan,
             skill_install,
             install_plan,
-            install_cli
+            install_cli,
+            skill_status,
+            skill_update,
+            skill_remove_plan,
+            skill_remove
         ])
         .on_window_event(|window, event| {
             if matches!(

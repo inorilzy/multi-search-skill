@@ -21,7 +21,8 @@ fn fresh_global_install_writes_only_the_isolated_profile_and_verifies() {
     let result = manager.skill_install("global", None);
     assert_eq!(result.status, "installed", "{}", result.reason);
     assert!(result.verified);
-    let installed = fs::read_to_string(skill_dir(&profile.root).join("SKILL.md")).unwrap();
+    // Checkouts may store the release files as CRLF; compare the normalized header.
+    let installed = fs::read_to_string(skill_dir(&profile.root).join("SKILL.md")).unwrap().replace("\r\n", "\n");
     assert!(installed.starts_with("---\nname: multi-search\n"));
     assert!(!installed.contains("MCP"));
     assert!(skill_dir(&profile.root).join("references/cli.md").is_file());

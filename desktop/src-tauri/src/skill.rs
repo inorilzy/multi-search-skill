@@ -8,13 +8,13 @@ use std::{
     time::Duration,
 };
 
-const SKILL_NAME: &str = "multi-search";
-const SKILL_VERSION: &str = "1";
-const MARKER: &str = ".multi-search-install.json";
-static STAGING_ID: AtomicU64 = AtomicU64::new(0);
+pub(crate) const SKILL_NAME: &str = "multi-search";
+pub(crate) const SKILL_VERSION: &str = "1";
+pub(crate) const MARKER: &str = ".multi-search-install.json";
+pub(crate) static STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Files shipped with this product release, embedded so the desktop app never reads a loose copy.
-const FILES: [(&str, &str); 3] = [
+pub(crate) const FILES: [(&str, &str); 3] = [
     (
         "SKILL.md",
         include_str!("../../skill/multi-search/SKILL.md"),
@@ -58,7 +58,7 @@ pub struct SkillInstall {
     pub files: Vec<String>,
 }
 
-fn file_names() -> Vec<String> {
+pub(crate) fn file_names() -> Vec<String> {
     FILES.iter().map(|(name, _)| (*name).to_string()).collect()
 }
 
@@ -72,7 +72,7 @@ fn home_directory(environment: &RuntimeEnvironment) -> Option<PathBuf> {
 }
 
 /// Resolves the skill directory; the parent `.claude` directory is the only one this module creates.
-fn target_directory(
+pub(crate) fn target_directory(
     environment: &RuntimeEnvironment,
     scope: &str,
     project: Option<&Path>,
@@ -104,7 +104,7 @@ fn blocked_plan(scope: &str, status: &str, reason: String, target: Option<String
     }
 }
 
-fn verify_directory(directory: &Path) -> Result<(), String> {
+pub(crate) fn verify_directory(directory: &Path) -> Result<(), String> {
     for (name, expected) in FILES {
         let actual = fs::read_to_string(directory.join(name))
             .map_err(|_| format!("{name} is missing after writing"))?;
@@ -122,7 +122,15 @@ fn verify_directory(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn write_directory(directory: &Path) -> Result<(), String> {
+pub(crate) fn sha256_hex(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(content.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+pub(crate) fn write_directory(directory: &Path) -> Result<(), String> {
     for (name, content) in FILES {
         let path = directory.join(name);
         if let Some(parent) = path.parent() {
@@ -130,11 +138,17 @@ fn write_directory(directory: &Path) -> Result<(), String> {
         }
         fs::write(&path, content).map_err(|e| format!("Cannot write {name}: {e}"))?;
     }
+    // Hashes let later status and update checks tell an unmodified file from a user edit.
+    let hashes: serde_json::Map<String, serde_json::Value> = FILES
+        .iter()
+        .map(|(name, content)| ((*name).to_string(), serde_json::Value::String(sha256_hex(content))))
+        .collect();
     let marker = serde_json::json!({
         "managed_by": "multi-search-desktop",
         "skill": SKILL_NAME,
         "skill_version": SKILL_VERSION,
         "files": file_names(),
+        "hashes": hashes,
     });
     fs::write(directory.join(MARKER), format!("{marker}\n"))
         .map_err(|e| format!("Cannot write {MARKER}: {e}"))?;
@@ -247,7 +261,7 @@ impl DesktopManager {
         }
     }
 
-    fn check_compatibility(&self, cli_path: &str) -> Result<(), String> {
+    pub(crate) fn check_compatibility(&self, cli_path: &str) -> Result<(), String> {
         let cli = PathBuf::from(cli_path);
         for (subcommand, flags) in REQUIRED_FLAGS {
             let output = process::bounded(
