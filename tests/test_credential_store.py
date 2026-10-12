@@ -167,5 +167,26 @@ class KeySourcesTests(unittest.TestCase):
         self.assertEqual(report["tavily"]["effective_source"], "none")
 
 
+class RustBlobContractTests(unittest.TestCase):
+    """Same literal bytes as desktop/src-tauri/tests/credentials.rs (rust_written_blob_has_contract_bytes)."""
+
+    RUST_BLOB = b'{"key":"synthetic-roundtrip-key-0009","saved_at":1700000001.5,"v":1}'
+
+    def test_python_decodes_blob_written_by_rust(self):
+        backend = MemoryBackend()
+        backend.entries["ns-roundtrip/tavily"] = self.RUST_BLOB
+        store = CredentialStore(backend, namespace="ns-roundtrip")
+        record = store.get_record("tavily")
+        self.assertEqual(record.key, "synthetic-roundtrip-key-0009")
+        self.assertEqual(record.saved_at, 1700000001.5)
+
+    def test_python_store_writes_blob_rust_decodes(self):
+        backend = MemoryBackend()
+        CredentialStore(backend, namespace="ns-roundtrip").set(
+            "tavily", "  synthetic-roundtrip-key-0009  ", saved_at=1700000001.5
+        )
+        self.assertEqual(backend.entries["ns-roundtrip/tavily"], b'{"v":1,"key":"synthetic-roundtrip-key-0009","saved_at":1700000001.5}')
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,10 @@ path = "tests/installed_cli.rs"
 name = "skill"
 path = "tests/skill.rs"
 
+[[test]]
+name = "credentials"
+path = "tests/credentials.rs"
+
 [[bin]]
 name = "multi-search-desktop"
 path = "src/main.rs"

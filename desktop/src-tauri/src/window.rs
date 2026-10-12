@@ -91,6 +91,67 @@ async fn install_cli(
         .await
         .map_err(|_| "Install worker failed".into())
 }
+#[tauri::command]
+async fn credential_status(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::credential_commands::CredentialOverview, String> {
+    let variables = manager.inner().environment.variables.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::credential_commands::with_native(|backend| {
+            crate::credential_commands::overview(backend, &variables)
+        })
+    })
+    .await
+    .map_err(|_| "Credential status worker failed".into())
+}
+#[tauri::command]
+async fn credential_save(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    key: String,
+) -> Result<crate::credential_commands::CredentialOverview, String> {
+    let variables = manager.inner().environment.variables.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        crate::credential_commands::with_native(|backend| {
+            crate::credential_commands::save(backend, &variables, &key, now)
+        })
+    })
+    .await
+    .map_err(|_| "Credential save worker failed".to_string())?
+}
+#[tauri::command]
+async fn credential_delete(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::credential_commands::CredentialOverview, String> {
+    let variables = manager.inner().environment.variables.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::credential_commands::with_native(|backend| {
+            crate::credential_commands::delete(backend, &variables)
+        })
+    })
+    .await
+    .map_err(|_| "Credential delete worker failed".to_string())?
+}
+#[tauri::command]
+async fn credential_test(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    path: Option<String>,
+) -> Result<crate::credential_commands::TestOutcome, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let detection = manager.detect_cli(path.map(PathBuf::from));
+        if detection.app.status != "ready" {
+            return Err(detection.app.reason);
+        }
+        let cli = PathBuf::from(detection.app.path.unwrap_or_default());
+        manager.test_tavily(cli, "tavily connectivity check")
+    })
+    .await
+    .map_err(|_| "Credential test worker failed".to_string())?
+}
 
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.
 pub fn run() {
@@ -104,7 +165,11 @@ pub fn run() {
             skill_plan,
             skill_install,
             install_plan,
-            install_cli
+            install_cli,
+            credential_status,
+            credential_save,
+            credential_delete,
+            credential_test
         ])
         .on_window_event(|window, event| {
             if matches!(

@@ -8,5 +8,9 @@ export function managementApi(invoke) {
     skillInstall: (scope, project) => invoke('skill_install', { scope, project }),
     installPlan: () => invoke('install_plan'),
     install: () => invoke('install_cli'),
+    credentialStatus: () => invoke('credential_status'),
+    credentialSave: key => invoke('credential_save', { key }),
+    credentialDelete: () => invoke('credential_delete'),
+    credentialTest: path => invoke('credential_test', { path }),
   };
 }
