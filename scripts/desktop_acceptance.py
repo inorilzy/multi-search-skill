@@ -37,6 +37,10 @@ def main():
         assert terminal.returncode == 0 and payload["outcome"] == "success", terminal.stderr
         assert payload["results"][0]["source_id"].startswith("src_")
         (evidence / "after-close-terminal.json").write_text(json.dumps({"desktop_exit": result.returncode, "command": [str(console), "search", "fixture", "--source", "hackernews"], "exit_code": terminal.returncode, "payload": payload}, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Preserve the only guard record before the disposable temp directory is removed.
+        report_text = isolation.report.read_text(encoding="utf-8") if isolation.report.exists() else ""
+        (evidence / "network-guard-report.txt").write_text(report_text, encoding="utf-8")
+        (evidence / "network-guard-summary.json").write_text(json.dumps({"violation_lines": len([line for line in report_text.splitlines() if line]), "boundaries": [line for line in report_text.splitlines() if line]}, indent=2), encoding="utf-8")
         isolation.assert_clean()
 
 
