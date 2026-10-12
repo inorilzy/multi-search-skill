@@ -23,6 +23,11 @@ path = "tests/install.rs"
 required-features = ["install-test-boundary"]
 
 [[test]]
+name = "install_lifecycle"
+path = "tests/install_lifecycle.rs"
+required-features = ["install-test-boundary"]
+
+[[test]]
 name = "install_release_boundary"
 path = "tests/install_release_boundary.rs"
 

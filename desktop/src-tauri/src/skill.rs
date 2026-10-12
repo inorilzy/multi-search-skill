@@ -247,7 +247,7 @@ impl DesktopManager {
         }
     }
 
-    fn check_compatibility(&self, cli_path: &str) -> Result<(), String> {
+    pub(crate) fn check_compatibility(&self, cli_path: &str) -> Result<(), String> {
         let cli = PathBuf::from(cli_path);
         for (subcommand, flags) in REQUIRED_FLAGS {
             let output = process::bounded(
