@@ -70,6 +70,36 @@ test('apply requires confirmation and an explicit conflict choice before calling
   window.close();
 });
 
+test('old CLI missing migrate-legacy reports failure, never migration success', async () => {
+  for (const phase of ['preview', 'apply']) {
+    const { window, root } = setup();
+    const unsupported = async () => { throw new Error("invalid choice: 'migrate-legacy'"); };
+    const api = {
+      migrationPlan: phase === 'preview' ? unsupported : async () => plan(),
+      migrationApply: unsupported,
+    };
+    const mounted = await mountMigration(root, api);
+    try {
+      root.querySelector('[data-action="preview"]').click();
+      await flush();
+      if (phase === 'preview') {
+        assert.match(root.querySelector('[data-info="error"]').textContent, /无法预览.*CLI/);
+        assert.equal(root.querySelector('[data-action="apply"]'), null);
+      } else {
+        // A previously obtained preview does not make a rejected apply successful.
+        root.querySelector('[data-approve="tavily"]').checked = true;
+        root.querySelector('[data-action="apply"]').click();
+        await flush();
+        assert.match(root.querySelector('[data-info="result"]').textContent, /迁移未完成/);
+      }
+      assert.doesNotMatch(root.textContent, /迁移完成。|已写入：/);
+    } finally {
+      mounted.dispose();
+      window.close();
+    }
+  }
+});
+
 test('partial failure is reported as incomplete with done and not-done parts', async () => {
   const { window, root } = setup();
   const api = {
