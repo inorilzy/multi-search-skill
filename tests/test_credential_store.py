@@ -167,6 +167,69 @@ class KeySourcesTests(unittest.TestCase):
         self.assertEqual(report["tavily"]["effective_source"], "none")
 
 
+class AllKeyProvidersStoreTests(unittest.TestCase):
+    """Every key-based provider uses the same store; env still wins and file reads stay compatible."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.keys_file = Path(self.tmp.name) / "keys.json"
+
+    def test_store_key_is_used_for_non_tavily_provider(self):
+        store = CredentialStore(MemoryBackend(), namespace="ns-test")
+        store.set("brave", SYNTHETIC_KEY)
+        keys = load_keys(self.keys_file, environ={}, credential_store=store)
+        self.assertEqual(keys["brave"], SYNTHETIC_KEY)
+
+    def test_env_beats_store_for_non_tavily_provider(self):
+        store = CredentialStore(MemoryBackend(), namespace="ns-test")
+        store.set("exa", SYNTHETIC_KEY)
+        keys = load_keys(self.keys_file, environ={"EXA_API_KEY": "env-exa-key-0021"}, credential_store=store)
+        self.assertEqual(keys["exa"], "env-exa-key-0021")
+
+    def test_key_sources_reports_every_key_provider_without_values(self):
+        store = CredentialStore(MemoryBackend(), namespace="ns-test")
+        store.set("firecrawl", SYNTHETIC_KEY)
+        report = key_sources(self.keys_file, environ={}, credential_store=store)
+        for provider in ("baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github"):
+            self.assertIn(provider, report)
+        self.assertEqual(report["firecrawl"]["effective_source"], "credential_store")
+        self.assertNotIn(SYNTHETIC_KEY, json.dumps(report))
+
+    def test_store_overrides_file_list_explicitly_and_file_is_untouched(self):
+        file_list = ["file-brave-key-0031", "file-brave-key-0032"]
+        original = json.dumps({"brave": file_list})
+        self.keys_file.write_text(original, encoding="utf-8")
+        store = CredentialStore(MemoryBackend(), namespace="ns-test")
+        store.set("brave", SYNTHETIC_KEY)
+        keys = load_keys(self.keys_file, environ={}, credential_store=store)
+        self.assertEqual(keys["brave"], SYNTHETIC_KEY)
+        self.assertNotIn("file-brave-key-0031", keys["brave"])
+        self.assertEqual(self.keys_file.read_text(encoding="utf-8"), original)
+
+    def test_file_list_rotation_kept_when_store_empty(self):
+        file_list = ["file-brave-key-0031", "file-brave-key-0032"]
+        self.keys_file.write_text(json.dumps({"brave": file_list}), encoding="utf-8")
+        store = CredentialStore(MemoryBackend(), namespace="ns-test")
+        keys = load_keys(self.keys_file, environ={}, credential_store=store)
+        self.assertEqual(keys["brave"], file_list)
+
+    def test_key_sources_reports_file_list_count_without_values(self):
+        self.keys_file.write_text(json.dumps({"brave": ["file-brave-key-0031", "file-brave-key-0032"]}), encoding="utf-8")
+        store = CredentialStore(MemoryBackend(), namespace="ns-test")
+        store.set("brave", SYNTHETIC_KEY)
+        row = key_sources(self.keys_file, environ={}, credential_store=store)["brave"]
+        self.assertEqual(row["effective_source"], "credential_store")
+        self.assertEqual(row["file_key_count"], 2)
+        self.assertNotIn("file-brave-key-0031", json.dumps(row))
+
+    def test_store_failure_for_any_provider_is_explicit(self):
+        backend = MemoryBackend()
+        backend.fail = CredentialStoreError("credential store access denied")
+        with self.assertRaises(KeysError):
+            load_keys(self.keys_file, environ={}, credential_store=CredentialStore(backend))
+
+
 class RustBlobContractTests(unittest.TestCase):
     """Same literal bytes as desktop/src-tauri/tests/credentials.rs (rust_written_blob_has_contract_bytes)."""
 

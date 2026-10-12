@@ -1,53 +1,136 @@
-//! Tavily credential management: UI-facing status, save, delete, and an explicit test.
+//! Search-source credential management: UI-facing status, save, delete, and an explicit test.
 //!
-//! The key is accepted once from the UI for `save`, written only to the Windows
-//! credential store, and never returned, logged, put in argv, or placed in the
-//! child environment. The CLI reads the store itself during `test`.
+//! The UI names a source; only allowlisted names are accepted, and the backend maps each one
+//! to its key provider before any credential target is built. The UI never supplies a target.
+//! The key is accepted once from the UI for `save`, written only to the Windows credential
+//! store, and never returned, logged, put in argv, or placed in the child environment.
+//! The CLI reads the store itself during `test`.
 
 use crate::credential::{self, CredentialBackend, CredentialStatus};
 #[cfg(not(windows))]
 use crate::credential::CredentialError;
 use crate::{DesktopManager, RuntimeEnvironment};
 use serde::Serialize;
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use serde_json::Value;
+use std::{collections::BTreeMap, path::{Path, PathBuf}, time::Duration};
 
-/// Environment override that wins over the stored key (see `load_keys` priority).
-const ENV_OVERRIDE: &str = "TAVILY_API_KEY";
 const CONFIG_ENV: &str = "MULTI_SEARCH_CONFIG";
+const KEYS_FILE_NAME: &str = ".search-keys.json";
+
+/// One key-based search source the desktop may manage. Mirrors `KEY_ENV_PAIRS` and
+/// `CREDENTIAL_STORE_PROVIDERS` in keys.py; change both together.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SourceEntry {
+    /// Public source name: the UI value and the CLI `--source` value.
+    pub source: &'static str,
+    /// Key provider: store entry `<namespace>/<provider>` and the keys-file key.
+    pub provider: &'static str,
+    /// Environment variables that override the store (names only, never values).
+    pub env: &'static [&'static str],
+    /// Other accepted UI names for the same source. Nothing else is accepted.
+    pub aliases: &'static [&'static str],
+    pub label: &'static str,
+}
+
+pub(crate) const SOURCES: &[SourceEntry] = &[
+    SourceEntry { source: "baidu", provider: "baidu", env: &["BAIDU_QIANFAN_API_KEY", "QIANFAN_API_KEY", "APPBUILDER_API_KEY"], aliases: &[], label: "Baidu AI 搜索" },
+    SourceEntry { source: "brave", provider: "brave", env: &["BRAVE_SEARCH_API_KEY", "BRAVE_API_KEY"], aliases: &[], label: "Brave 搜索" },
+    SourceEntry { source: "parallel", provider: "parallel", env: &["PARALLEL_API_KEY"], aliases: &[], label: "Parallel" },
+    SourceEntry { source: "tavily", provider: "tavily", env: &["TAVILY_API_KEY"], aliases: &[], label: "Tavily" },
+    SourceEntry { source: "exa", provider: "exa", env: &["EXA_API_KEY"], aliases: &[], label: "Exa" },
+    SourceEntry { source: "firecrawl", provider: "firecrawl", env: &["FIRECRAWL_API_KEY"], aliases: &[], label: "Firecrawl" },
+    SourceEntry { source: "serpapi", provider: "serpapi", env: &["SERPAPI_API_KEY", "SERPAPI_KEY"], aliases: &[], label: "SerpAPI" },
+    SourceEntry { source: "github-repos", provider: "github", env: &["GITHUB_TOKEN", "GH_TOKEN"], aliases: &["github_repos"], label: "GitHub 仓库" },
+];
+
+/// Map a UI source name to its allowlisted entry. Unknown names are rejected before any
+/// store access; the error never echoes the input. A missing name is an error, not a default.
+pub(crate) fn resolve_source(name: &str) -> Result<&'static SourceEntry, String> {
+    let name = name.trim();
+    SOURCES
+        .iter()
+        .find(|entry| entry.source == name || entry.aliases.contains(&name))
+        .ok_or_else(|| "不支持的搜索源".to_string())
+}
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct CredentialOverview {
+    /// Public source name this overview describes.
+    pub source: String,
     pub store: CredentialStatus,
-    /// Effective source for the Tavily key: "env" | "credential_store" | "none" | "unavailable".
+    /// Effective source: "env" | "credential_store" | "file" | "none" | "unavailable".
     pub effective_source: String,
-    /// True when a TAVILY_API_KEY env var overrides the saved UI key.
+    /// True when an environment variable overrides the saved key.
     pub env_overrides_store: bool,
+    /// Name (never value) of the environment variable that is set, or "".
+    pub env_var: String,
+    /// Count of keys in the existing keys file for this provider. Values are never returned.
+    pub file_key_count: usize,
 }
 
 /// Pure resolution of the effective source, matching `key_sources` in keys.py.
-pub(crate) fn effective_source(env_set: bool, store: &CredentialStatus) -> String {
+pub(crate) fn effective_source(env_set: bool, store: &CredentialStatus, file_keys: usize) -> String {
     if env_set {
         "env".into()
     } else if store.state == "present" {
         "credential_store".into()
     } else if store.state == "unavailable" || store.state == "unreadable" {
         "unavailable".into()
+    } else if file_keys > 0 {
+        "file".into()
     } else {
         "none".into()
+    }
+}
+
+/// Keys file location derived from the given variables only (never the process environment).
+pub(crate) fn keys_file_path(variables: &BTreeMap<String, String>) -> Option<PathBuf> {
+    variables
+        .get("USERPROFILE")
+        .or_else(|| variables.get("HOME"))
+        .filter(|home| !home.is_empty())
+        .map(|home| PathBuf::from(home).join(KEYS_FILE_NAME))
+}
+
+/// Read-only count of the file keys for one provider. Mirrors keys.py `_file_key_count`.
+/// Returns 0 for a missing or unparsable file; never returns or logs a value.
+pub(crate) fn file_key_count(path: Option<&Path>, provider: &str) -> usize {
+    let Some(path) = path else { return 0 };
+    let Ok(text) = std::fs::read_to_string(path) else { return 0 };
+    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) else {
+        return 0;
+    };
+    match map.get(provider) {
+        Some(Value::String(value)) => usize::from(!value.is_empty()),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter(|item| item.as_str().is_some_and(|value| !value.is_empty()))
+            .count(),
+        _ => 0,
     }
 }
 
 pub(crate) fn overview(
     backend: &dyn CredentialBackend,
     variables: &BTreeMap<String, String>,
+    entry: &SourceEntry,
 ) -> CredentialOverview {
     let namespace = credential::namespace(variables);
-    let store = credential::status_of(credential::load(backend, &namespace));
-    let env_set = variables.get(ENV_OVERRIDE).is_some_and(|v| !v.is_empty());
+    let store = credential::status_of(credential::load(backend, &namespace, entry.provider));
+    let env_var = entry
+        .env
+        .iter()
+        .find(|name| variables.get(**name).is_some_and(|value| !value.is_empty()))
+        .map(|name| name.to_string())
+        .unwrap_or_default();
+    let file_keys = file_key_count(keys_file_path(variables).as_deref(), entry.provider);
     CredentialOverview {
-        effective_source: effective_source(env_set, &store),
-        env_overrides_store: env_set && store.state == "present",
+        source: entry.source.into(),
+        effective_source: effective_source(!env_var.is_empty(), &store, file_keys),
+        env_overrides_store: !env_var.is_empty() && store.state == "present",
+        env_var,
         store,
+        file_key_count: file_keys,
     }
 }
 
@@ -55,24 +138,26 @@ pub(crate) fn overview(
 pub(crate) fn save(
     backend: &dyn CredentialBackend,
     variables: &BTreeMap<String, String>,
+    entry: &SourceEntry,
     key: &str,
     now: f64,
 ) -> Result<CredentialOverview, String> {
     let namespace = credential::namespace(variables);
-    credential::save(backend, &namespace, key, now).map_err(|e| e.to_string())?;
-    Ok(overview(backend, variables))
+    credential::save(backend, &namespace, entry.provider, key, now).map_err(|e| e.to_string())?;
+    Ok(overview(backend, variables, entry))
 }
 
 pub(crate) fn delete(
     backend: &dyn CredentialBackend,
     variables: &BTreeMap<String, String>,
+    entry: &SourceEntry,
 ) -> Result<CredentialOverview, String> {
     let namespace = credential::namespace(variables);
-    credential::remove(backend, &namespace).map_err(|e| e.to_string())?;
-    Ok(overview(backend, variables))
+    credential::remove(backend, &namespace, entry.provider).map_err(|e| e.to_string())?;
+    Ok(overview(backend, variables, entry))
 }
 
-/// Classification of a Tavily test run, derived from the CLI's `provider_status`.
+/// Classification of a source test run, derived from the CLI's `provider_status`.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct TestOutcome {
     /// "success" | "auth_failed" | "quota" | "rate_limited" | "network" | "timeout" | "error" | "missing_key" | "cli_failed"
@@ -81,40 +166,43 @@ pub struct TestOutcome {
 }
 
 /// Map one provider error_type to a user-facing test result. Messages never echo secrets.
-pub(crate) fn classify_tavily(error_type: &str) -> TestOutcome {
+pub(crate) fn classify(error_type: &str, label: &str) -> TestOutcome {
     let (result, message) = match error_type {
-        "invalid" => ("auth_failed", "Tavily 拒绝了这个 key（认证失败）。请替换为有效的 key。"),
-        "quota_exhausted" => ("quota", "Tavily 额度已用尽。请检查账户额度。"),
-        "rate_limit" => ("rate_limited", "Tavily 触发了频率限制，请稍后再试。"),
-        "network" => ("network", "无法连接 Tavily，请检查网络连接。"),
-        "timeout" => ("timeout", "Tavily 请求超时，请稍后重试。"),
-        "missing_key" => ("missing_key", "未找到可用的 Tavily key，请先保存。"),
-        _ => ("error", "Tavily 测试失败，请查看 CLI 输出。"),
+        "invalid" => ("auth_failed", format!("{label} 拒绝了这个 key（认证失败）。请替换为有效的 key。")),
+        "quota_exhausted" => ("quota", format!("{label} 额度已用尽。请检查账户额度。")),
+        "rate_limit" => ("rate_limited", format!("{label} 触发了频率限制，请稍后再试。")),
+        "network" => ("network", format!("无法连接 {label}，请检查网络连接。")),
+        "timeout" => ("timeout", format!("{label} 请求超时，请稍后重试。")),
+        "missing_key" => ("missing_key", format!("未找到可用的 {label} key，请先保存。")),
+        _ => ("error", format!("{label} 测试失败，请查看 CLI 输出。")),
     };
     TestOutcome {
         result: result.into(),
-        message: message.into(),
+        message,
     }
 }
 
-/// Interpret the CLI JSON payload from `search --source tavily`.
-pub(crate) fn interpret_payload(payload: &serde_json::Value) -> TestOutcome {
+/// Interpret the CLI JSON payload from `search --source <name>` for one allowlisted source.
+pub(crate) fn interpret_source(payload: &Value, entry: &SourceEntry) -> TestOutcome {
     let rows = payload
         .get("provider_status")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let tavily = rows
-        .iter()
-        .find(|row| row.get("source").and_then(|s| s.as_str()) == Some("tavily"));
-    let Some(row) = tavily else {
-        return classify_tavily("error");
+    let wanted = entry.source.replace('-', "_");
+    let row = rows.iter().find(|row| {
+        row.get("source")
+            .and_then(|s| s.as_str())
+            .is_some_and(|s| s.replace('-', "_") == wanted)
+    });
+    let Some(row) = row else {
+        return classify("error", entry.label);
     };
     let status = row.get("status").and_then(|s| s.as_str()).unwrap_or("");
     if status == "ok" || status == "partial" {
         return TestOutcome {
             result: "success".into(),
-            message: "Tavily 测试成功。".into(),
+            message: format!("{} 测试成功。", entry.label),
         };
     }
     let error_type = row
@@ -124,23 +212,23 @@ pub(crate) fn interpret_payload(payload: &serde_json::Value) -> TestOutcome {
         .and_then(|e| e.get("error_type"))
         .and_then(|t| t.as_str())
         .unwrap_or("error");
-    classify_tavily(error_type)
+    classify(error_type, entry.label)
 }
 
-/// Config file content for a test run: no body scraping, so only one Tavily search is made.
+/// Config file content for a test run: no body scraping, so only one search is made.
 pub(crate) fn test_config_json() -> String {
     serde_json::json!({ "no_scrape": true }).to_string()
 }
 
 /// Arguments for the isolated CLI test run. Key material is never included.
-pub(crate) fn test_args(query: &str) -> Vec<String> {
+pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
     vec![
         "search".into(),
         query.into(),
         "--route".into(),
         "default".into(),
         "--source".into(),
-        "tavily".into(),
+        entry.source.into(),
         "--timeout".into(),
         "15".into(),
         "--format".into(),
@@ -151,8 +239,8 @@ pub(crate) fn test_args(query: &str) -> Vec<String> {
 /// Keep a temp config path for one test run; removed on drop.
 pub(crate) struct TestConfig(pub PathBuf);
 impl TestConfig {
-    pub fn create(dir: &std::path::Path) -> std::io::Result<Self> {
-        let path = dir.join(format!("tavily-test-{}.json", std::process::id()));
+    pub fn create(dir: &Path, entry: &SourceEntry) -> std::io::Result<Self> {
+        let path = dir.join(format!("{}-test-{}.json", entry.provider, std::process::id()));
         std::fs::write(&path, test_config_json())?;
         Ok(Self(path))
     }
@@ -174,12 +262,12 @@ pub(crate) fn test_environment(base: &RuntimeEnvironment, config: &TestConfig) -
 pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl DesktopManager {
-    /// Run one explicit Tavily test through the CLI process, which reads the store itself.
-    pub fn test_tavily(&self, cli: PathBuf, query: &str) -> Result<TestOutcome, String> {
+    /// Run one explicit test of an allowlisted source through the CLI, which reads the store itself.
+    pub(crate) fn test_source(&self, cli: PathBuf, entry: &SourceEntry, query: &str) -> Result<TestOutcome, String> {
         let dir = std::env::temp_dir();
-        let config = TestConfig::create(&dir).map_err(|_| "无法准备测试配置".to_string())?;
+        let config = TestConfig::create(&dir, entry).map_err(|_| "无法准备测试配置".to_string())?;
         let environment = test_environment(&self.environment, &config);
-        let output = crate::process::bounded(&cli, &test_args(query), &environment, TEST_TIMEOUT)
+        let output = crate::process::bounded(&cli, &test_args(query, entry), &environment, TEST_TIMEOUT)
             .map_err(|_| "无法启动 CLI".to_string())?;
         if output.timed_out {
             return Ok(TestOutcome {
@@ -187,8 +275,8 @@ impl DesktopManager {
                 message: "测试超时，请稍后重试。".into(),
             });
         }
-        match serde_json::from_str::<serde_json::Value>(&output.stdout) {
-            Ok(payload) if payload.is_object() => Ok(interpret_payload(&payload)),
+        match serde_json::from_str::<Value>(&output.stdout) {
+            Ok(payload) if payload.is_object() => Ok(interpret_source(&payload, entry)),
             _ => Ok(TestOutcome {
                 result: "cli_failed".into(),
                 message: "CLI 未返回有效结果。".into(),
@@ -246,7 +334,7 @@ mod native_store {
     }
     impl Drop for Cleanup<'_> {
         fn drop(&mut self) {
-            let _ = credential::remove(self.backend, &self.namespace);
+            let _ = credential::remove(self.backend, &self.namespace, "tavily");
         }
     }
 
@@ -259,27 +347,28 @@ mod native_store {
         let backend = credential::WindowsCredentialBackend;
         let _cleanup = Cleanup { backend: &backend, namespace: namespace.clone() };
         let vars = BTreeMap::from([(credential::NAMESPACE_ENV.to_string(), namespace.clone())]);
+        let entry = resolve_source("tavily").unwrap();
 
-        assert_eq!(overview(&backend, &vars).store.state, "absent");
+        assert_eq!(overview(&backend, &vars, entry).store.state, "absent");
 
-        let saved = save(&backend, &vars, "  synthetic-native-key-0007  ", 1700000002.0).unwrap();
+        let saved = save(&backend, &vars, entry, "  synthetic-native-key-0007  ", 1700000002.0).unwrap();
         assert_eq!(saved.store.state, "present");
         assert_eq!(saved.effective_source, "credential_store");
-        assert_eq!(credential::load(&backend, &namespace).unwrap().unwrap().0, "synthetic-native-key-0007");
+        assert_eq!(credential::load(&backend, &namespace, entry.provider).unwrap().unwrap().0, "synthetic-native-key-0007");
 
-        let replaced = save(&backend, &vars, "synthetic-native-key-0008", 1700000003.0).unwrap();
+        let replaced = save(&backend, &vars, entry, "synthetic-native-key-0008", 1700000003.0).unwrap();
         assert_eq!(replaced.store.saved_at, Some(1700000003.0));
-        assert_eq!(credential::load(&backend, &namespace).unwrap().unwrap().0, "synthetic-native-key-0008");
+        assert_eq!(credential::load(&backend, &namespace, entry.provider).unwrap().unwrap().0, "synthetic-native-key-0008");
 
         let mut with_env = vars.clone();
-        with_env.insert(ENV_OVERRIDE.into(), "synthetic-native-env-0009".into());
-        let overridden = overview(&backend, &with_env);
+        with_env.insert("TAVILY_API_KEY".into(), "synthetic-native-env-0009".into());
+        let overridden = overview(&backend, &with_env, entry);
         assert_eq!(overridden.effective_source, "env");
         assert!(overridden.env_overrides_store);
 
-        let cleared = delete(&backend, &vars).unwrap();
+        let cleared = delete(&backend, &vars, entry).unwrap();
         assert_eq!(cleared.store.state, "absent");
         assert_eq!(cleared.effective_source, "none");
-        assert_eq!(credential::remove(&backend, &namespace), Ok(false));
+        assert_eq!(credential::remove(&backend, &namespace, entry.provider), Ok(false));
     }
 }

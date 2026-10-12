@@ -175,3 +175,35 @@ test('uninstall with a kept Skill shows the missing CLI dependency and refreshes
   assert.equal(root.querySelector('[data-action="uninstall"]').disabled, true);
   window.close();
 });
+
+test('plan shows Skill compatibility as compatible, incompatible, or unknown and never as silently absent', async () => {
+  for (const [compatibility, reason, expected] of [
+    ['compatible', '现有 Skill 所需的 CLI 参数均可用', '兼容：现有 Skill 所需的 CLI 参数均可用'],
+    ['incompatible', 'The installed CLI does not support `search --expand`', '不兼容：The installed CLI does not support `search --expand`'],
+    ['unknown', '无法确认 Skill 兼容性', '未知：无法确认 Skill 兼容性'],
+  ]) {
+    const { window, root } = setup();
+    const api = {
+      installPlan: async () => plan('update_available', { version: '0.5.0', current_version: '0.4.0', source: 'C:\bundle', compatibility, compatibility_reason: reason }),
+      install: async () => { throw new Error('must not run'); },
+      update: async () => { throw new Error('must not run'); },
+      uninstall: async () => { throw new Error('must not run'); },
+    };
+    await mountInstall(root, api);
+    assert.equal(root.querySelector('[data-info="compatibility"]').textContent, expected);
+    window.close();
+  }
+});
+
+test('unverified record shows no compatibility claim', async () => {
+  const { window, root } = setup();
+  const api = {
+    installPlan: async () => plan('unverified', { reason: '已有安装记录无法验证，已阻止覆盖或更新，请先修复或卸载', compatibility: 'unknown', compatibility_reason: '尚未检查 Skill 兼容性' }),
+    install: async () => { throw new Error('must not run'); },
+    update: async () => { throw new Error('must not run'); },
+    uninstall: async () => { throw new Error('must not run'); },
+  };
+  await mountInstall(root, api);
+  assert.match(root.querySelector('[data-info="compatibility"]').textContent, /^未知：/);
+  window.close();
+});

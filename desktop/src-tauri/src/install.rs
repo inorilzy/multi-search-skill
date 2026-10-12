@@ -65,6 +65,9 @@ pub struct InstallPlan {
     pub current_version: Option<String>,
     /// Bundle directory the target version comes from (the install source).
     pub source: Option<String>,
+    /// Skill compatibility of the target CLI: "compatible", "incompatible" or "unknown".
+    pub compatibility: String,
+    pub compatibility_reason: String,
     pub reason: String,
     pub path_hint: String,
 }
@@ -364,6 +367,8 @@ fn row(status: &str, root: &Path, version: Option<String>, reason: &str) -> Inst
         version,
         current_version: None,
         source: None,
+        compatibility: "unknown".into(),
+        compatibility_reason: "尚未检查 Skill 兼容性".into(),
         reason: reason.into(),
         path_hint: format!(
             "安装后请将 {} 加入用户 PATH，并重启终端或 Agent 宿主",
@@ -721,6 +726,7 @@ impl DesktopManager {
                         );
                         plan.current_version = Some(active.version);
                         plan.source = Some(source.to_string_lossy().into_owned());
+                        self.preview_compatibility(&mut plan, &source.join("bin").join(ARTIFACT));
                         return plan;
                     }
                 }
@@ -742,8 +748,33 @@ impl DesktopManager {
             return row(status, &lay.root, None, &reason);
         }
         match read_source(&source, &expected) {
-            Ok((manifest, _)) => row("ready", &lay.root, Some(manifest.version), "将安装到以下目录"),
+            Ok((manifest, _)) => {
+                let mut plan = row("ready", &lay.root, Some(manifest.version), "将安装到以下目录");
+                self.preview_compatibility(&mut plan, &source.join("bin").join(ARTIFACT));
+                plan
+            }
             Err((status, reason)) => row(status, &lay.root, None, &reason),
+        }
+    }
+
+    /// Runs the same Skill compatibility check the update applies, against the verified source artifact,
+    /// so the plan can show it before anything is changed. Read-only: nothing under the root is written.
+    fn preview_compatibility(&self, plan: &mut InstallPlan, artifact: &Path) {
+        // A candidate that cannot even report its version has no meaningful compatibility answer.
+        if probe(artifact, &self.environment).is_err() {
+            plan.compatibility = "unknown".into();
+            plan.compatibility_reason = "无法运行待安装的 CLI，无法确认 Skill 兼容性".into();
+            return;
+        }
+        match self.check_compatibility(&artifact.to_string_lossy()) {
+            Ok(()) => {
+                plan.compatibility = "compatible".into();
+                plan.compatibility_reason = "现有 Skill 所需的 CLI 参数均可用".into();
+            }
+            Err(reason) => {
+                plan.compatibility = "incompatible".into();
+                plan.compatibility_reason = reason;
+            }
         }
     }
 

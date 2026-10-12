@@ -168,6 +168,50 @@ class RouteTests(unittest.TestCase):
         self.assertNotIn("web", routes)
 
 
+class RouteSourceTableTests(unittest.TestCase):
+    """Literal expected source sets per route. Not generated from ROUTE_PROFILES, so drift fails here."""
+
+    EXPECTED = {
+        "default": {"brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"},
+        "fast": {"baidu", "tavily", "firecrawl", "exa"},
+        "social": {"twitter"},
+        "dev": {"stackoverflow", "github_repos", "hackernews"},
+        "all": {
+            "brave", "parallel", "tavily", "exa", "serpapi", "baidu",
+            "firecrawl", "twitter", "stackoverflow", "github_repos",
+            "hackernews", "sov2ex",
+        },
+    }
+
+    def test_every_route_resolves_to_its_literal_source_set(self):
+        from multi_search_mcp.src.search.search_runner import ROUTE_PROFILES as profiles
+        self.assertEqual(set(profiles), set(self.EXPECTED))
+        for route, expected in self.EXPECTED.items():
+            with self.subTest(route=route):
+                self.assertEqual(resolve_route(route), expected)
+
+    def test_web_alias_resolves_to_default_set(self):
+        self.assertEqual(resolve_route("web"), self.EXPECTED["default"])
+
+    def test_explicit_sources_take_precedence_over_the_route(self):
+        from multi_search_mcp.src.search.resolve import resolve_active_sources
+        selected, active = resolve_active_sources("social", {"exa", "brave"}, set())
+        self.assertEqual(selected, {"exa", "brave"})
+        self.assertEqual(active, {"exa", "brave"})
+
+    def test_disabled_filter_drops_sources_from_the_route_set(self):
+        from multi_search_mcp.src.search.resolve import resolve_active_sources
+        selected, active = resolve_active_sources("fast", None, {"exa", "tavily"})
+        self.assertEqual(selected, self.EXPECTED["fast"])
+        self.assertEqual(active, {"baidu", "firecrawl"})
+
+    def test_disabling_every_route_source_leaves_an_empty_active_set(self):
+        from multi_search_mcp.src.search.resolve import resolve_active_sources
+        selected, active = resolve_active_sources("social", None, {"twitter"})
+        self.assertEqual(selected, {"twitter"})
+        self.assertEqual(active, set(), "empty active set must be reported, never silently re-enabled")
+
+
 class CapabilityTests(unittest.TestCase):
     def test_capabilities_cover_all_route_sources(self):
         route_sources = set().union(*ROUTE_PROFILES.values())

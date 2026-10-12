@@ -3,6 +3,7 @@ pub(crate) mod credential;
 pub(crate) mod credential_commands;
 mod diagnostics;
 mod environment;
+pub(crate) mod settings;
 mod execution;
 mod install;
 mod process;
@@ -13,6 +14,22 @@ mod window;
 pub use diagnostics::{CliStatus, DesktopManager, Discovery, RuntimeEnvironment};
 pub use execution::{ExecutionStatus, SearchOptions};
 pub use skill::{SkillInstall, SkillPlan};
+
+/// Test seam for the settings writer. Not a supported public API.
+#[doc(hidden)]
+pub mod settings_fixture {
+    pub use crate::settings::{
+        config_path, save, save_with_dev, validate, view, view_with_dev, SettingsInput, SettingsView, Validated,
+    };
+    /// Dev fallback location for the real app: the repo-root file the CLI reads when no user file exists.
+    pub fn default_dev_config() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("multi-search-config.json")
+    }
+    /// Whether the execution allowlist accepts a `--source` name.
+    pub fn is_allowed_source(name: &str) -> bool {
+        crate::execution::is_allowed_source(name)
+    }
+}
 
 /// Test seam for the Tavily credential store. Not a supported public API.
 #[doc(hidden)]
@@ -41,31 +58,47 @@ pub mod credential_fixture {
         }
     }
 
+    fn tavily() -> &'static credential_commands::SourceEntry {
+        credential_commands::resolve_source("tavily").expect("tavily is allowlisted")
+    }
     pub fn save<B: Backend + Sync + ?Sized>(
         backend: &B,
         variables: &BTreeMap<String, String>,
         key: &str,
         now: f64,
     ) -> Result<CredentialOverview, String> {
-        credential_commands::save(&Adapter(backend), variables, key, now)
+        credential_commands::save(&Adapter(backend), variables, tavily(), key, now)
     }
     pub fn delete<B: Backend + Sync + ?Sized>(
         backend: &B,
         variables: &BTreeMap<String, String>,
     ) -> Result<CredentialOverview, String> {
-        credential_commands::delete(&Adapter(backend), variables)
+        credential_commands::delete(&Adapter(backend), variables, tavily())
     }
     pub fn overview<B: Backend + Sync + ?Sized>(
         backend: &B,
         variables: &BTreeMap<String, String>,
     ) -> CredentialOverview {
-        credential_commands::overview(&Adapter(backend), variables)
+        credential_commands::overview(&Adapter(backend), variables, tavily())
+    }
+    /// Source-aware overview for any allowlisted UI name. Unknown names return an error.
+    pub fn overview_for<B: Backend + Sync + ?Sized>(
+        backend: &B,
+        variables: &BTreeMap<String, String>,
+        source: &str,
+    ) -> Result<CredentialOverview, String> {
+        let entry = credential_commands::resolve_source(source)?;
+        Ok(credential_commands::overview(&Adapter(backend), variables, entry))
+    }
+    pub fn resolve(source: &str) -> Result<(&'static str, &'static str), String> {
+        let entry = credential_commands::resolve_source(source)?;
+        Ok((entry.source, entry.provider))
     }
     pub fn interpret(payload: &Value) -> TestOutcome {
-        credential_commands::interpret_payload(payload)
+        credential_commands::interpret_source(payload, tavily())
     }
     pub fn test_args(query: &str) -> Vec<String> {
-        credential_commands::test_args(query)
+        credential_commands::test_args(query, tavily())
     }
 }
 #[cfg(feature = "native-window")]

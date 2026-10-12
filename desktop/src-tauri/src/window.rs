@@ -98,6 +98,8 @@ async fn install_cli(
         .await
         .map_err(|_| "Install worker failed".into())
 }
+// Every credential command takes a UI source name. `resolve_source` is the only way a
+// provider reaches the store target, so an unknown or crafted name fails before any access.
 #[tauri::command]
 async fn update_cli(
     manager: tauri::State<'_, Arc<DesktopManager>>,
@@ -121,11 +123,13 @@ async fn uninstall_cli(
 #[tauri::command]
 async fn credential_status(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    source: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
+    let entry = crate::credential_commands::resolve_source(&source)?;
     let variables = manager.inner().environment.variables.clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::credential_commands::with_native(|backend| {
-            crate::credential_commands::overview(backend, &variables)
+            crate::credential_commands::overview(backend, &variables, entry)
         })
     })
     .await
@@ -134,8 +138,10 @@ async fn credential_status(
 #[tauri::command]
 async fn credential_save(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    source: String,
     key: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
+    let entry = crate::credential_commands::resolve_source(&source)?;
     let variables = manager.inner().environment.variables.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let now = std::time::SystemTime::now()
@@ -143,7 +149,7 @@ async fn credential_save(
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         crate::credential_commands::with_native(|backend| {
-            crate::credential_commands::save(backend, &variables, &key, now)
+            crate::credential_commands::save(backend, &variables, entry, &key, now)
         })
     })
     .await
@@ -152,11 +158,13 @@ async fn credential_save(
 #[tauri::command]
 async fn credential_delete(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    source: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
+    let entry = crate::credential_commands::resolve_source(&source)?;
     let variables = manager.inner().environment.variables.clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::credential_commands::with_native(|backend| {
-            crate::credential_commands::delete(backend, &variables)
+            crate::credential_commands::delete(backend, &variables, entry)
         })
     })
     .await
@@ -165,8 +173,10 @@ async fn credential_delete(
 #[tauri::command]
 async fn credential_test(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    source: String,
     path: Option<String>,
 ) -> Result<crate::credential_commands::TestOutcome, String> {
+    let entry = crate::credential_commands::resolve_source(&source)?;
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let detection = manager.detect_cli(path.map(PathBuf::from));
@@ -174,10 +184,24 @@ async fn credential_test(
             return Err(detection.app.reason);
         }
         let cli = PathBuf::from(detection.app.path.unwrap_or_default());
-        manager.test_tavily(cli, "tavily connectivity check")
+        manager.test_source(cli, entry, &format!("{} connectivity check", entry.source))
     })
     .await
     .map_err(|_| "Credential test worker failed".to_string())?
+}
+
+#[tauri::command]
+fn settings_view(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::settings::SettingsView, String> {
+    Ok(crate::settings::view(&manager.inner().environment))
+}
+#[tauri::command]
+fn settings_save(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    input: crate::settings::SettingsInput,
+) -> Result<crate::settings::SettingsView, String> {
+    crate::settings::save(&manager.inner().environment, &input)
 }
 
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.
@@ -203,7 +227,9 @@ pub fn run() {
             credential_status,
             credential_save,
             credential_delete,
-            credential_test
+            credential_test,
+            settings_view,
+            settings_save
         ])
         .on_window_event(|window, event| {
             if matches!(

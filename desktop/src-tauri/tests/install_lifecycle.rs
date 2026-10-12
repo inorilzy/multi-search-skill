@@ -216,3 +216,53 @@ fn uninstall_of_an_in_use_file_reports_a_clear_lock_error_and_keeps_the_install_
     // Still recognised and still able to verify: the lock refusal changed nothing durable.
     assert_eq!(DesktopManager::new(env(&profile, &root, &v1)).install_plan().status, "installed");
 }
+
+#[test]
+fn update_plan_previews_skill_compatibility_before_any_change() {
+    let mut profile = common::Profile::new();
+    let root = profile.root.join("plan-compat");
+    let v1 = source(&profile, "src-pc-v1", "0.4.0");
+    assert_eq!(DesktopManager::new(env(&profile, &root, &v1)).install().status, "installed");
+    let before = fs::read(root.join("bin").join("multi-search.exe")).unwrap();
+    let v2 = source(&profile, "src-pc-v2", "0.5.0");
+    profile.environment.variables.insert("FIXTURE_VERSION".into(), "0.5.0".into());
+
+    let ok = DesktopManager::new(env(&profile, &root, &v2)).install_plan();
+    assert_eq!(ok.status, "update_available", "{}", ok.reason);
+    assert_eq!(ok.compatibility, "compatible", "{}", ok.compatibility_reason);
+
+    profile.environment.variables.insert("FIXTURE_HELP".into(), "stale".into());
+    let stale = DesktopManager::new(env(&profile, &root, &v2)).install_plan();
+    assert_eq!(stale.status, "update_available", "{}", stale.reason);
+    assert_eq!(stale.compatibility, "incompatible");
+    assert!(stale.compatibility_reason.contains("--expand"), "{}", stale.compatibility_reason);
+
+    // Previewing never activates or changes the installed CLI.
+    assert_eq!(fs::read(root.join("bin").join("multi-search.exe")).unwrap(), before);
+    let active: serde_json::Value = serde_json::from_str(&fs::read_to_string(root.join("active.json")).unwrap()).unwrap();
+    assert_eq!(active["version"], "0.4.0");
+}
+
+#[test]
+fn fresh_install_plan_previews_compatibility_and_an_unrunnable_candidate_is_unknown() {
+    let mut profile = common::Profile::new();
+    let root = profile.root.join("plan-fresh-compat");
+    let v1 = source(&profile, "src-fc", "0.4.0");
+    profile.environment.variables.insert("FIXTURE_HELP".into(), "stale".into());
+    let plan = DesktopManager::new(env(&profile, &root, &v1)).install_plan();
+    assert_eq!(plan.status, "ready", "{}", plan.reason);
+    assert_eq!(plan.compatibility, "incompatible", "{}", plan.compatibility_reason);
+    assert!(!root.exists() || !root.join("active.json").exists());
+}
+
+#[test]
+fn unverified_record_shows_no_compatibility_claim() {
+    let profile = common::Profile::new();
+    let root = profile.root.join("plan-unverified-compat");
+    let v1 = source(&profile, "src-puc", "0.4.0");
+    assert_eq!(DesktopManager::new(env(&profile, &root, &v1)).install().status, "installed");
+    fs::write(root.join("active.json"), "{not json").unwrap();
+    let plan = DesktopManager::new(env(&profile, &root, &v1)).install_plan();
+    assert_eq!(plan.status, "unverified");
+    assert_eq!(plan.compatibility, "unknown");
+}

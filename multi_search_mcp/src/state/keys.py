@@ -110,11 +110,16 @@ def count_jina_keys(value) -> tuple[int, int]:
     return active, total
 
 
-# Providers whose single secret may be stored in the Windows credential store.
-# Resolution order for these providers: environment variable > credential store
-# > ~/.search-keys.json. Environment variables always win so automation can
-# override a UI-saved secret without editing it.
-CREDENTIAL_STORE_PROVIDERS = ("tavily",)
+# Single-secret key providers that may be stored in the Windows credential store
+# (one entry per provider, named <namespace>/<provider>). Jina is scrape-only and
+# twitter uses a cookie file reference, so neither is listed here.
+# Resolution order: environment variable > credential store > ~/.search-keys.json.
+# Environment variables always win so automation can override a UI-saved secret.
+# A store entry overrides a file entry (including a file key list) as an explicit
+# source; the file list is never merged into the store entry's rotation.
+CREDENTIAL_STORE_PROVIDERS = (
+    "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github",
+)
 TEST_ISOLATION_ENV = "MULTI_SEARCH_TEST_ISOLATION"
 CREDENTIAL_NAMESPACE_ENV = "MULTI_SEARCH_CREDENTIAL_NAMESPACE"
 
@@ -144,11 +149,17 @@ def load_keys(
     keys_file: str | Path | None = None,
     environ: Mapping[str, str] | None = None,
     credential_store=None,
+    *,
+    twitter_cookies_path: str | None = None,
 ) -> dict:
     """Load API keys: environment > credential store > ~/.search-keys.json.
 
     ``credential_store`` may be injected (tests). When omitted, the Windows store
     is consulted only for the real process environment (see ``_credential_store_enabled``).
+
+    ``twitter_cookies_path`` is the non-secret cookie file reference from config. It
+    ranks below ``TWITTER_COOKIES_PATH`` and above the keys file's twitter entry.
+    Only the path string is stored here; the cookie file is never read by this function.
     """
     keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
     use_process_env = environ is None
@@ -190,7 +201,16 @@ def load_keys(
             keys[key_name] = val
             if env_name == "TWITTER_COOKIES_PATH":
                 keys["twitter"] = val
+    # Config reference: below the env path, above the keys file's twitter entry.
+    if not environ.get("TWITTER_COOKIES_PATH") and twitter_cookies_path:
+        keys["twitter"] = twitter_cookies_path
     return keys
+
+
+def _file_key_count(value) -> int:
+    if isinstance(value, list):
+        return sum(1 for item in value if item)
+    return 1 if value else 0
 
 
 def key_sources(
@@ -238,6 +258,8 @@ def key_sources(
             "env_overrides_store": bool(env_names and in_store),
             "credential_store": store_state,
             "file_present": bool(file_keys.get(provider)),
+            # Count only: the file list is kept on disk and does not rotate with a store key.
+            "file_key_count": _file_key_count(file_keys.get(provider)),
             **({"credential_store_error": store_error} if store_error else {}),
         }
     return report

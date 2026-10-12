@@ -257,7 +257,7 @@ def run_fetch_source(
         if resolved_config is None:
             resolved_config = _load_config_safe(request.config_path)
         if not prefetched_body:
-            runtime_keys = load_keys() if keys is None else dict(keys)
+            runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
             if content_store and retention.persist_body:
                 # Hash the permission context; never persist credentials. Provider
                 # prefetches and older unscoped entries remain source-ID-only.
@@ -383,7 +383,7 @@ def _run_search_candidates(
         use_state=request.use_state,
     )
     plan = resolve_search_plan(planning_request, resolved_config)
-    runtime_keys = load_keys() if keys is None else dict(keys)
+    runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
     store = (state_store or StateStore()) if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
 
@@ -647,7 +647,7 @@ def run_search_web(
             ("scrape_concurrency", scrape_concurrency),
         ) if value is not None
     })
-    runtime_keys = load_keys() if keys is None else dict(keys)
+    runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
     store = (state_store or StateStore()) if request.use_state else None
     prefetched = {}
     response = _run_search_candidates(
@@ -829,7 +829,7 @@ def _run_scrape_raw(
 ) -> tuple[dict, list[dict], int]:
     """Execute shared state-aware scraping before applying a public projection."""
     resolved_config = _load_config_safe(None) if config is None else dict(config)
-    runtime_keys = load_keys() if keys is None else dict(keys)
+    runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
     # Public timeout/config values stay integer seconds; the fetch stage passes
     # its already-resolved floating remainder through this private path.
     if runtime_timeout is None:
@@ -890,7 +890,12 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
     keys: dict = {}
     keys_error: str | None = None
     try:
-        keys = load_keys()
+        # Same config-scoped Twitter path reference as runtime, so diagnostics agree with search.
+        try:
+            doctor_config = load_config()
+        except (ValueError, TypeError):
+            doctor_config = {}
+        keys = _load_runtime_keys(doctor_config)
     except KeysError as exc:
         # doctor exists to diagnose key problems, so a corrupt keys file must be
         # reported, not raised — otherwise the one tool that could explain the
@@ -1128,6 +1133,16 @@ def _compat_source_summaries(source_briefs: list[dict]) -> list[dict]:
         compat.setdefault("summary_type", compat.get("brief_type", "result_brief"))
         rows.append(compat)
     return rows
+
+
+def _load_runtime_keys(config: dict | None = None) -> dict:
+    """Load keys, adding the config's non-secret Twitter cookie path reference."""
+    from .support.config import config_str
+    reference = config_str(config or {}, "twitter_cookies_path") or None
+    if reference is None:
+        # Keep the original call shape when config carries no Twitter reference.
+        return load_keys()
+    return load_keys(twitter_cookies_path=reference)
 
 
 def _load_config_safe(path: str | None) -> dict:
