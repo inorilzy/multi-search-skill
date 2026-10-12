@@ -17,7 +17,7 @@ export async function mountInstall(root, api) {
   root.innerHTML = `<section class="heading"><p class="eyebrow">02 / INSTALL CLI</p><h1>安装命令行工具。</h1><p>从受控来源安装并校验。未知安装不会被覆盖，失败不会改动已有可用版本。</p></section>
     <section class="panel install"><div class="section-title"><h2>安装计划</h2><button type="button" data-action="plan">重新检查</button></div>
       <strong data-status="plan" aria-live="polite">检查中</strong>
-      <dl class="install-plan"><dt>安装目录</dt><dd data-info="root"></dd><dt>可执行文件</dt><dd data-info="bin"></dd><dt>版本</dt><dd data-info="version"></dd></dl>
+      <dl class="install-plan"><dt>安装目录</dt><dd data-info="root"></dd><dt>可执行文件</dt><dd data-info="bin"></dd><dt>版本</dt><dd data-info="version"></dd><dt>当前版本</dt><dd data-info="current-version"></dd><dt>安装来源</dt><dd data-info="source"></dd></dl>
       <p data-info="path-hint" class="note"></p><p data-info="reason" role="alert"></p>
       <div class="run-controls"><button type="button" data-action="install" class="primary" disabled>安装 CLI</button><button type="button" data-action="update" disabled>更新 CLI</button><button type="button" data-action="uninstall" disabled>卸载 CLI</button><strong data-status="result" aria-live="polite"></strong></div>
       <div class="run-controls" data-confirm hidden><strong>卸载只删除本工具安装的 CLI 文件；配置、凭据和 Skill 会保留。</strong><button type="button" data-action="uninstall-confirm" class="danger">确认卸载</button><button type="button" data-action="uninstall-cancel">取消</button></div>
@@ -35,6 +35,8 @@ export async function mountInstall(root, api) {
     root.querySelector('[data-info="root"]').textContent = status.root || '';
     root.querySelector('[data-info="bin"]').textContent = status.bin || '';
     root.querySelector('[data-info="version"]').textContent = status.version ? `v${status.version}` : '';
+    root.querySelector('[data-info="current-version"]').textContent = status.current_version ? `v${status.current_version}` : '';
+    root.querySelector('[data-info="source"]').textContent = status.source || '';
     root.querySelector('[data-info="path-hint"]').textContent = ['ready', 'installed'].includes(status.status) ? status.path_hint : '';
     // A ready plan must not erase the reason of the previous install result.
     if (status.status !== 'ready') root.querySelector('[data-info="reason"]').textContent = status.reason || '';

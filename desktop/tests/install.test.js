@@ -133,3 +133,45 @@ test('unverified managed record disables every mutating action and shows the rea
   assert.match(root.querySelector('[data-info="reason"]').textContent, /无法验证/);
   window.close();
 });
+
+test('update plan shows current version, target version and the install source', async () => {
+  const { window, root } = setup();
+  const api = {
+    installPlan: async () => plan('update_available', { version: '0.5.0', current_version: '0.4.0', source: 'C:\bundle\src-v2' }),
+    install: async () => { throw new Error('must not run'); },
+    update: async () => { throw new Error('must not run'); },
+    uninstall: async () => { throw new Error('must not run'); },
+  };
+  await mountInstall(root, api);
+  assert.equal(root.querySelector('[data-info="current-version"]').textContent, 'v0.4.0');
+  assert.equal(root.querySelector('[data-info="version"]').textContent, 'v0.5.0');
+  assert.equal(root.querySelector('[data-info="source"]').textContent, 'C:\bundle\src-v2');
+  window.close();
+});
+
+test('uninstall with a kept Skill shows the missing CLI dependency and refreshes status to not installed', async () => {
+  const { window, root } = setup();
+  let plans = 0;
+  const api = {
+    installPlan: async () => { plans += 1; return plans === 1 ? plan('installed', { version: '0.4.0' }) : plan('not_installed'); },
+    install: async () => { throw new Error('must not run'); },
+    uninstall: async () => ({
+      status: 'uninstalled',
+      reason: '',
+      steps: [
+        { name: '卸载 CLI', ok: true, detail: '0.4.0' },
+        { name: '保留的 Skill', ok: false, detail: 'Skill 已保留，但其 CLI 依赖已缺失，请重新安装 CLI 或移除该 Skill' },
+      ],
+    }),
+  };
+  await mountInstall(root, api);
+  root.querySelector('[data-action="uninstall"]').click();
+  root.querySelector('[data-action="uninstall-confirm"]').click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  const steps = [...root.querySelectorAll('[data-steps] li')].map(li => li.textContent);
+  assert.ok(steps.some(text => text.startsWith('✗ 保留的 Skill') && text.includes('CLI 依赖已缺失')), steps.join('\n'));
+  assert.equal(root.querySelector('[data-status="plan"]').textContent, '未安装');
+  assert.equal(plans, 2, 'plan must be re-read after uninstall');
+  assert.equal(root.querySelector('[data-action="uninstall"]').disabled, true);
+  window.close();
+});

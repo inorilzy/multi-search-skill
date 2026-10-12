@@ -185,3 +185,34 @@ fn uninstall_reports_a_kept_skill_whose_cli_dependency_is_now_missing() {
     );
     assert!(skills.join(".multi-search-install.json").is_file());
 }
+
+#[cfg(windows)]
+#[test]
+fn uninstall_of_an_in_use_file_reports_a_clear_lock_error_and_keeps_the_install_unchanged() {
+    use std::{fs::OpenOptions, os::windows::fs::OpenOptionsExt};
+    let profile = common::Profile::new();
+    let root = profile.root.join("uninstall-locked");
+    let v1 = source(&profile, "src-lock", "0.4.0");
+    assert_eq!(DesktopManager::new(env(&profile, &root, &v1)).install().status, "installed");
+    let before = fs::read(root.join("bin").join("multi-search.exe")).unwrap();
+    // An extra, unmanaged file inside an owned directory: verification ignores it, removal cannot delete it while open.
+    let in_use = root.join("bin").join("in-use.tmp");
+    fs::write(&in_use, b"busy").unwrap();
+    // Share READ only (no FILE_SHARE_DELETE), like a running program holding its executable: deletion is refused.
+    const FILE_SHARE_READ: u32 = 0x1;
+    let _holder = OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(&in_use).unwrap();
+
+    let outcome = DesktopManager::new(env(&profile, &root, &v1)).uninstall();
+    assert_eq!(outcome.status, "failed", "{}", outcome.reason);
+    assert!(outcome.reason.contains("未强制终止进程"), "{}", outcome.reason);
+    assert_eq!(fs::read(root.join("bin").join("multi-search.exe")).unwrap(), before);
+    assert!(root.join("active.json").is_file());
+    assert!(in_use.is_file());
+    assert!(root.join("manifest.json").is_file());
+    let entries: Vec<String> = fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert!(!entries.iter().any(|n| n.starts_with("removing-")), "{entries:?}");
+    let active: serde_json::Value = serde_json::from_str(&fs::read_to_string(root.join("active.json")).unwrap()).unwrap();
+    assert_eq!(active["version"], "0.4.0");
+    // Still recognised and still able to verify: the lock refusal changed nothing durable.
+    assert_eq!(DesktopManager::new(env(&profile, &root, &v1)).install_plan().status, "installed");
+}

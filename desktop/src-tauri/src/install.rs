@@ -374,10 +374,13 @@ fn row(status: &str, root: &Path, version: Option<String>, reason: &str) -> Inst
 
 /// Lock and permission errors are reported as-is; no process is ever terminated to make progress.
 fn replace_error(error: &std::io::Error) -> String {
-    match error.kind() {
-        std::io::ErrorKind::PermissionDenied => "文件被占用或权限不足，未强制终止进程，请关闭使用该 CLI 的程序后重试".into(),
-        _ => format!("无法替换残留文件：{error}"),
+    // Windows reports a file held by another program as sharing violation (32) or access denied (5),
+    // which Rust does not always map to PermissionDenied.
+    let locked = matches!(error.raw_os_error(), Some(5) | Some(32));
+    if locked || error.kind() == std::io::ErrorKind::PermissionDenied {
+        return "文件被占用或权限不足，未强制终止进程，请关闭使用该 CLI 的程序后重试".into();
     }
+    format!("无法替换残留文件：{error}")
 }
 
 /// Skill directory for the current user, the one `skill.rs` installs into; `None` without a profile.
@@ -459,6 +462,43 @@ fn remove_entry(path: &Path) -> Result<(), Failure> {
         Ok(_) => fs::remove_file(path),
     };
     result.map_err(|e| ("failed", replace_error(&e)))
+}
+
+/// Removes the manifest-owned entries all-or-nothing: each is first renamed into a holding
+/// directory, and if any rename is refused (for example a file in use) the moved entries are
+/// restored, so a locked file never leaves a half-removed install behind.
+fn remove_owned_entries(root: &Path, names: &[String]) -> Result<(), Failure> {
+    let holding = root.join(format!("removing-{}", std::process::id()));
+    if fs::create_dir(&holding).is_err() {
+        return Err(("failed", "无法创建卸载暂存目录，未做任何修改".into()));
+    }
+    let mut moved: Vec<&String> = Vec::new();
+    let mut failure = None;
+    for name in names {
+        let from = root.join(name);
+        if fs::symlink_metadata(&from).is_err() {
+            continue;
+        }
+        match fs::rename(&from, holding.join(name)) {
+            Ok(()) => moved.push(name),
+            Err(error) => {
+                failure = Some(("failed", replace_error(&error)));
+                break;
+            }
+        }
+    }
+    if let Some(failure) = failure {
+        for name in moved.iter().rev() {
+            let _ = fs::rename(holding.join(name), root.join(name));
+        }
+        let _ = fs::remove_dir(&holding);
+        return Err(failure);
+    }
+    // Past this point the names are detached. If the final delete fails, the pointer stays and the
+    // install reads as unverified (its files are gone), so later actions are blocked, not silently wrong.
+    remove_entry(&holding)?;
+    let _ = fs::remove_dir(&holding);
+    Ok(())
 }
 
 /// Swaps the verified staging tree into the root and commits the pointer last.
@@ -757,11 +797,9 @@ impl DesktopManager {
         };
         let names = read_manifest_names(&lay.root, &active.manifest_sha256);
         let mut steps = Vec::new();
-        for name in &names {
-            if let Err((status, reason)) = remove_entry(&lay.root.join(name)) {
-                step(&mut steps, status, false, &reason);
-                return outcome(status, steps, None, reason);
-            }
+        if let Err((status, reason)) = remove_owned_entries(&lay.root, &names) {
+            step(&mut steps, status, false, &reason);
+            return outcome(status, steps, None, reason);
         }
         let _ = fs::remove_file(lay.root.join(ACTIVE));
         step(&mut steps, "卸载 CLI", true, &active.version);
