@@ -12,8 +12,8 @@ from typing import Any
 
 from .support.config import ConfigError, config_list, load_config, resolve_config_path
 from .support.format import body_preview_start, format_results, format_scrapes
-from .state.key_state import BasicKeyManager, SQLiteKeyManager
-from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, load_keys
+from .state.key_state import BasicKeyManager, SQLiteKeyManager, classify_error
+from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, key_sources, load_keys
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content
 from .scrape.scrape import scrape_url_smart
 from .scrape.scrapers.twitter import is_twitter_url, validate_twitter_url
@@ -572,7 +572,12 @@ def _query_provider_status(
                 if str(row.get("source") or "?") != source:
                     continue
                 if row.get("error"):
-                    errors.append({"query": query, "error": str(row["error"])})
+                    # error_type lets callers tell auth, quota, and network failures apart.
+                    errors.append({
+                        "query": query,
+                        "error": str(row["error"]),
+                        "error_type": classify_error(str(row["error"]), error_type=row.get("error_type", "")),
+                    })
                 else:
                     succeeded = True
                     if not is_empty_result(row) and row.get("url"):
@@ -943,6 +948,10 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
     if keys_error:
         data["keys_error"] = keys_error
     if include_keys:
+        try:
+            data["key_sources"] = key_sources()
+        except Exception as exc:  # diagnostic boundary: provenance is advisory
+            data["key_sources_error"] = scrub_secrets(exc, keys)
         data["configured_keys"] = {name: bool(value) for name, value in keys.items()}
         data["key_status"] = SQLiteKeyManager(store).status_rows()
         data["jina_keys_active_total"] = count_jina_keys(keys.get("jina"))

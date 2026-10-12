@@ -2,6 +2,7 @@
 import json
 import os
 import random
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -109,12 +110,48 @@ def count_jina_keys(value) -> tuple[int, int]:
     return active, total
 
 
+# Providers whose single secret may be stored in the Windows credential store.
+# Resolution order for these providers: environment variable > credential store
+# > ~/.search-keys.json. Environment variables always win so automation can
+# override a UI-saved secret without editing it.
+CREDENTIAL_STORE_PROVIDERS = ("tavily",)
+TEST_ISOLATION_ENV = "MULTI_SEARCH_TEST_ISOLATION"
+CREDENTIAL_NAMESPACE_ENV = "MULTI_SEARCH_CREDENTIAL_NAMESPACE"
+
+
+def _credential_store_enabled(environ: Mapping[str, str]) -> bool:
+    """Use the Windows store only on Windows, and never inside the test runner.
+
+    Under test isolation the store stays off unless a disposable namespace is set
+    explicitly, so the regression suite cannot read or write real user entries.
+    """
+    if sys.platform != "win32":
+        return False
+    if environ.get(TEST_ISOLATION_ENV) == "1" and not environ.get(CREDENTIAL_NAMESPACE_ENV):
+        return False
+    return True
+
+
+def _default_credential_store(use_process_env: bool, environ: Mapping[str, str], injected):
+    if injected is not None or not use_process_env or not _credential_store_enabled(environ):
+        return injected
+    from ..support.credential_store import default_store
+
+    return default_store(environ)
+
+
 def load_keys(
     keys_file: str | Path | None = None,
     environ: Mapping[str, str] | None = None,
+    credential_store=None,
 ) -> dict:
-    """Load API keys from ~/.search-keys.json or environment variables."""
+    """Load API keys: environment > credential store > ~/.search-keys.json.
+
+    ``credential_store`` may be injected (tests). When omitted, the Windows store
+    is consulted only for the real process environment (see ``_credential_store_enabled``).
+    """
     keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
+    use_process_env = environ is None
     environ = os.environ if environ is None else environ
     keys: dict = {}
     if keys_file.exists():
@@ -129,6 +166,24 @@ def load_keys(
             raise KeysError(f"keys file is not valid JSON: {keys_file}") from None
         if not isinstance(keys, dict):
             keys = {}
+    store = _default_credential_store(use_process_env, environ, credential_store)
+    if store is not None:
+        from ..support.credential_store import CredentialStoreError
+
+        env_providers = {key_name for env_name, key_name in KEY_ENV_PAIRS if environ.get(env_name)}
+        for provider in CREDENTIAL_STORE_PROVIDERS:
+            if provider in env_providers:
+                # An environment variable overrides the store, so the store is not read.
+                # A broken store therefore never blocks an env-driven run.
+                continue
+            try:
+                value = store.get(provider)
+            except CredentialStoreError as exc:
+                # Explicit failure: a present-but-unreadable store must never be
+                # silently bypassed in favor of the plaintext file.
+                raise KeysError(f"credential store unavailable for {provider}: {exc}") from None
+            if value:
+                keys[provider] = value
     for env_name, key_name in KEY_ENV_PAIRS:
         val = environ.get(env_name)
         if val:
@@ -136,3 +191,53 @@ def load_keys(
             if env_name == "TWITTER_COOKIES_PATH":
                 keys["twitter"] = val
     return keys
+
+
+def key_sources(
+    keys_file: str | Path | None = None,
+    environ: Mapping[str, str] | None = None,
+    credential_store=None,
+) -> dict[str, dict]:
+    """Report provenance (never values) of each credential-store provider's key."""
+    from ..support.credential_store import CredentialStoreError
+
+    keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
+    use_process_env = environ is None
+    environ = os.environ if environ is None else environ
+    file_keys: dict = {}
+    if keys_file.exists():
+        try:
+            loaded = json.loads(keys_file.read_text(encoding="utf-8-sig"))
+            file_keys = loaded if isinstance(loaded, dict) else {}
+        except Exception:
+            file_keys = {}
+    store = _default_credential_store(use_process_env, environ, credential_store)
+    report: dict[str, dict] = {}
+    for provider in CREDENTIAL_STORE_PROVIDERS:
+        env_names = [name for name, key_name in KEY_ENV_PAIRS if key_name == provider and environ.get(name)]
+        store_state = "disabled"
+        store_error = None
+        if store is not None:
+            try:
+                store_state = "present" if store.get(provider) else "absent"
+            except CredentialStoreError as exc:
+                store_state = "unavailable"
+                store_error = str(exc)
+        in_store = store_state == "present"
+        if env_names:
+            effective = "env"
+        elif in_store:
+            effective = "credential_store"
+        elif file_keys.get(provider):
+            effective = "file"
+        else:
+            effective = "none"
+        report[provider] = {
+            "effective_source": effective,
+            "env_vars_set": env_names,
+            "env_overrides_store": bool(env_names and in_store),
+            "credential_store": store_state,
+            "file_present": bool(file_keys.get(provider)),
+            **({"credential_store_error": store_error} if store_error else {}),
+        }
+    return report

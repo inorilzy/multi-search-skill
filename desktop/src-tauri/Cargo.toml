@@ -29,6 +29,10 @@ path = "tests/installed_cli.rs"
 name = "skill"
 path = "tests/skill.rs"
 
+[[test]]
+name = "credentials"
+path = "tests/credentials.rs"
+
 [[bin]]
 name = "multi-search-desktop"
 path = "src/main.rs"
@@ -40,7 +44,7 @@ serde_json = "1"
 sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_Security_Credentials", "Win32_System_Diagnostics_ToolHelp"] }
 
 [features]
 default = ["native-window"]

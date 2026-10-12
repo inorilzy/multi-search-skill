@@ -279,9 +279,19 @@ def run_keyed_source(
         if idx == len(candidates) - 1:
             break
     error_rows = [row for row in last_results if "error" in row]
-    err = error_rows[0].get("error", "key pool exhausted") if error_rows else "key pool exhausted"
+    # Prefer a provider-origin row: target failures are not evidence about the key.
+    chosen = next(
+        (row for row in error_rows if row.get("error_origin") != "target"),
+        error_rows[0] if error_rows else {},
+    )
+    err = chosen.get("error", "key pool exhausted") if chosen else "key pool exhausted"
     err = scrub_secrets(err, key_value)
     error = {"source": source, "error": f"key pool exhausted after {len(candidates)} key(s): {err}"}
+    # Carry only the controlled classification of the chosen row, never its other fields.
+    for field_name in ("error_origin", "error_type"):
+        value = chosen.get(field_name) if chosen else None
+        if isinstance(value, str) and value:
+            error[field_name] = value
     return _merge_partial_rows(source, partial_rows, [error]) if partial_rows else [error]
 
 
