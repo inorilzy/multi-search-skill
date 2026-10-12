@@ -18,6 +18,18 @@ fn main() {
         }
         return;
     }
+    if args.get(1).map(String::as_str) == Some("--help") {
+        // Real help text lists each flag; FIXTURE_HELP=stale omits --expand to simulate an incompatible CLI.
+        let stale = env::var("FIXTURE_HELP").as_deref() == Ok("stale");
+        match args.first().map(String::as_str) {
+            Some("search") if stale => println!("usage: multi-search search [--route ROUTE] [--format FORMAT] query"),
+            Some("search") => println!("usage: multi-search search [--route ROUTE] [--expand EXPAND] [--format FORMAT] query"),
+            Some("fetch") => println!("usage: multi-search fetch [--full-content] [--format FORMAT] [source_id]"),
+            Some("read") => println!("usage: multi-search read [--keyword KEYWORD] [--offset OFFSET] [--format FORMAT] source_id"),
+            _ => {}
+        }
+        return;
+    }
     if args.first().map(String::as_str) == Some("descendant") {
         if let Ok(path) = env::var("FIXTURE_CHILD_PID") {
             std::fs::write(path, std::process::id().to_string()).unwrap();

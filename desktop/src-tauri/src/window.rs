@@ -1,4 +1,4 @@
-use crate::{CliStatus, DesktopManager, ExecutionStatus, RuntimeEnvironment, SearchOptions};
+use crate::{CliStatus, DesktopManager, ExecutionStatus, RuntimeEnvironment, SearchOptions, SkillInstall, SkillPlan};
 use std::{path::PathBuf, sync::Arc};
 use tauri::Manager;
 
@@ -51,6 +51,47 @@ fn cancel_test_search(
     manager.cancel_search(id)
 }
 
+#[tauri::command]
+async fn skill_plan(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    scope: String,
+    project: Option<String>,
+) -> Result<SkillPlan, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.skill_plan(&scope, project.map(PathBuf::from)))
+        .await
+        .map_err(|_| "Skill planning worker failed".into())
+}
+#[tauri::command]
+async fn skill_install(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    scope: String,
+    project: Option<String>,
+) -> Result<SkillInstall, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.skill_install(&scope, project.map(PathBuf::from)))
+        .await
+        .map_err(|_| "Skill install worker failed".into())
+}
+#[tauri::command]
+async fn install_plan(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::install::InstallPlan, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.install_plan())
+        .await
+        .map_err(|_| "Install planning failed".into())
+}
+#[tauri::command]
+async fn install_cli(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::install::InstallOutcome, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.install())
+        .await
+        .map_err(|_| "Install worker failed".into())
+}
+
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.
 pub fn run() {
     tauri::Builder::default()
@@ -59,7 +100,11 @@ pub fn run() {
             detect_cli,
             start_test_search,
             poll_execution,
-            cancel_test_search
+            cancel_test_search,
+            skill_plan,
+            skill_install,
+            install_plan,
+            install_cli
         ])
         .on_window_event(|window, event| {
             if matches!(
