@@ -9,11 +9,15 @@
 use crate::credential::{self, CredentialBackend, CredentialStatus};
 #[cfg(not(windows))]
 use crate::credential::CredentialError;
+#[cfg(feature = "native-window")]
 use crate::{DesktopManager, RuntimeEnvironment};
 use serde::Serialize;
 use serde_json::Value;
-use std::{collections::BTreeMap, path::{Path, PathBuf}, time::Duration};
+#[cfg(feature = "native-window")]
+use std::time::Duration;
+use std::{collections::BTreeMap, path::{Path, PathBuf}};
 
+#[cfg(feature = "native-window")]
 const CONFIG_ENV: &str = "MULTI_SEARCH_CONFIG";
 const KEYS_FILE_NAME: &str = ".search-keys.json";
 
@@ -216,6 +220,7 @@ pub(crate) fn interpret_source(payload: &Value, entry: &SourceEntry) -> TestOutc
 }
 
 /// Config file content for a test run: no body scraping, so only one search is made.
+#[cfg(feature = "native-window")]
 pub(crate) fn test_config_json() -> String {
     serde_json::json!({ "no_scrape": true }).to_string()
 }
@@ -237,7 +242,9 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
 }
 
 /// Keep a temp config path for one test run; removed on drop.
+#[cfg(feature = "native-window")]
 pub(crate) struct TestConfig(pub PathBuf);
+#[cfg(feature = "native-window")]
 impl TestConfig {
     pub fn create(dir: &Path, entry: &SourceEntry) -> std::io::Result<Self> {
         let path = dir.join(format!("{}-test-{}.json", entry.provider, std::process::id()));
@@ -245,12 +252,14 @@ impl TestConfig {
         Ok(Self(path))
     }
 }
+#[cfg(feature = "native-window")]
 impl Drop for TestConfig {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
     }
 }
 
+#[cfg(feature = "native-window")]
 pub(crate) fn test_environment(base: &RuntimeEnvironment, config: &TestConfig) -> RuntimeEnvironment {
     let mut environment = base.clone();
     environment
@@ -259,8 +268,11 @@ pub(crate) fn test_environment(base: &RuntimeEnvironment, config: &TestConfig) -
     environment
 }
 
+#[cfg(feature = "native-window")]
 pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Only the native window's explicit source test uses the isolated config path above.
+#[cfg(feature = "native-window")]
 impl DesktopManager {
     /// Run one explicit test of an allowlisted source through the CLI, which reads the store itself.
     pub(crate) fn test_source(&self, cli: PathBuf, entry: &SourceEntry, query: &str) -> Result<TestOutcome, String> {
