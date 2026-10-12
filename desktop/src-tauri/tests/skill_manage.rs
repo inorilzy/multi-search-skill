@@ -165,6 +165,29 @@ fn removal_requires_confirmation_and_deletes_only_tool_owned_files() {
     assert!(profile.root.join(".claude/skills").is_dir(), "skills folder never deleted");
 }
 
+/// The UI reads these exact JSON keys; a rename on either side would silently break the panel.
+#[test]
+fn outcomes_serialize_the_field_names_the_ui_reads() {
+    let profile = common::Profile::new();
+    let manager = manager(&profile);
+    let status = serde_json::to_value(manager.skill_status("global", None).unwrap()).unwrap();
+    for key in ["state", "installed_version", "release_version", "modified_files", "unknown_entries", "reason", "target"] {
+        assert!(status.get(key).is_some(), "status is missing {key}: {status}");
+    }
+    let update = serde_json::to_value(manager.skill_update("global", None, false)).unwrap();
+    for key in ["status", "reason", "backup", "verified"] {
+        assert!(update.get(key).is_some(), "update outcome is missing {key}: {update}");
+    }
+    let plan = serde_json::to_value(manager.skill_remove_plan("global", None).unwrap()).unwrap();
+    for key in ["will_delete", "will_keep", "can_remove", "reason"] {
+        assert!(plan.get(key).is_some(), "remove plan is missing {key}: {plan}");
+    }
+    let removed = serde_json::to_value(manager.skill_remove("global", None, false)).unwrap();
+    for key in ["status", "deleted", "kept", "reason"] {
+        assert!(removed.get(key).is_some(), "remove outcome is missing {key}: {removed}");
+    }
+}
+
 #[test]
 fn removal_reports_absent_state_without_deleting_anything() {
     let profile = common::Profile::new();
