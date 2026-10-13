@@ -121,6 +121,16 @@ async fn uninstall_cli(
         .map_err(|_| "Uninstall worker failed".into())
 }
 #[tauri::command]
+async fn user_path_plan(manager: tauri::State<'_, Arc<DesktopManager>>) -> Result<crate::user_path::PathPlan, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.user_path_plan()).await.map_err(|_| "PATH 检查失败")?
+}
+#[tauri::command]
+async fn user_path_change(manager: tauri::State<'_, Arc<DesktopManager>>, remove: bool, confirmed: bool) -> Result<crate::user_path::PathPlan, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.user_path_change(remove, confirmed)).await.map_err(|_| "PATH 修改失败")?
+}
+#[tauri::command]
 async fn credential_status(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
@@ -179,11 +189,7 @@ async fn credential_test(
     let entry = crate::credential_commands::resolve_source(&source)?;
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let detection = manager.detect_cli(path.map(PathBuf::from));
-        if detection.app.status != "ready" {
-            return Err(detection.app.reason);
-        }
-        let cli = PathBuf::from(detection.app.path.unwrap_or_default());
+        let cli = manager.execution_cli(path.map(PathBuf::from))?;
         manager.test_source(cli, entry, &format!("{} connectivity check", entry.source))
     })
     .await
@@ -199,11 +205,7 @@ async fn migration_plan(
     tauri::async_runtime::spawn_blocking(move || {
         let keys_file = crate::credential_commands::keys_file_path(&manager.environment.variables)
             .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
-        let detection = manager.detect_cli(path.map(PathBuf::from));
-        if detection.app.status != "ready" {
-            return Err(detection.app.reason);
-        }
-        let cli = PathBuf::from(detection.app.path.unwrap_or_default());
+        let cli = manager.execution_cli(path.map(PathBuf::from))?;
         manager.migration_plan(cli, &keys_file)
     })
     .await
@@ -222,11 +224,7 @@ async fn migration_apply(
     tauri::async_runtime::spawn_blocking(move || {
         let keys_file = crate::credential_commands::keys_file_path(&manager.environment.variables)
             .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
-        let detection = manager.detect_cli(path.map(PathBuf::from));
-        if detection.app.status != "ready" {
-            return Err(detection.app.reason);
-        }
-        let cli = PathBuf::from(detection.app.path.unwrap_or_default());
+        let cli = manager.execution_cli(path.map(PathBuf::from))?;
         manager.migration_apply(cli, &keys_file, &request)
     })
     .await
@@ -298,8 +296,19 @@ async fn skill_remove(
 
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.
 pub fn run() {
+    let mut environment = RuntimeEnvironment::system();
+    environment.user_path = environment.machine_paths();
+    let path_store: Arc<dyn crate::user_path::PathStore> = Arc::new(crate::user_path::NativePathStore::current_user());
+    #[cfg(feature = "install-test-boundary")]
+    let path_store = if environment.variables.get("MULTI_SEARCH_TEST_ISOLATION").map(String::as_str) == Some("1") {
+        // Compile-time-only acceptance boundary. Never present in the distributed build.
+        let key = environment.variables.get("MULTI_SEARCH_ACCEPTANCE_PATH_KEY").expect("isolated PATH key required");
+        environment.user_path.clear();
+        Arc::new(crate::user_path::NativePathStore::isolated_key(key).expect("invalid isolated PATH key")) as Arc<dyn crate::user_path::PathStore>
+    } else { path_store };
+    let manager = DesktopManager::with_user_path_store(environment, path_store);
     tauri::Builder::default()
-        .manage(Arc::new(DesktopManager::new(RuntimeEnvironment::system())))
+        .manage(Arc::new(manager))
         .setup(|app| {
             let bundled = app.path().resource_dir().ok().map(|dir| dir.join("cli-bundle"));
             app.manage(BundledCli(bundled));
@@ -320,6 +329,8 @@ pub fn run() {
             skill_remove,
             update_cli,
             uninstall_cli,
+            user_path_plan,
+            user_path_change,
             credential_status,
             credential_save,
             credential_delete,

@@ -35,6 +35,7 @@ fn find_cli(paths: &[PathBuf]) -> Option<PathBuf> {
 
 pub struct DesktopManager {
     pub(crate) environment: RuntimeEnvironment,
+    pub(crate) user_path_store: Option<std::sync::Arc<dyn crate::user_path::PathStore>>,
     pub(crate) execution_slot:
         std::sync::Mutex<Option<std::sync::Arc<std::sync::Mutex<crate::execution::Execution>>>>,
     pub(crate) next_id: std::sync::atomic::AtomicU64,
@@ -45,6 +46,7 @@ impl DesktopManager {
     pub fn new(environment: RuntimeEnvironment) -> Self {
         Self {
             environment,
+            user_path_store: None,
             execution_slot: std::sync::Mutex::new(None),
             next_id: std::sync::atomic::AtomicU64::new(1),
             closed: std::sync::atomic::AtomicBool::new(false),
@@ -53,20 +55,31 @@ impl DesktopManager {
 
     pub fn detect_cli(&self, explicit_path: Option<PathBuf>) -> CliStatus {
         let app = self.probe(explicit_path.or_else(|| find_cli(&self.environment.app_path)));
+        let paths = self.current_user_paths();
         let mut user_environment = self.environment.clone();
-        if let Ok(path) = std::env::join_paths(&user_environment.user_path) {
+        if let Ok(path) = std::env::join_paths(&paths) {
             user_environment
                 .variables
                 .insert("PATH".into(), path.to_string_lossy().into_owned());
         }
         let user_manager = Self::new(user_environment);
-        let user = user_manager.probe(find_cli(&self.environment.user_path));
+        let user = user_manager.probe(find_cli(&paths));
         let restart_required = app.status != "ready" && user.status == "ready";
         CliStatus {
             app,
             user,
             restart_required,
         }
+    }
+
+    /// Keep diagnostics truthful about the old app PATH, while UI commands can use the
+    /// newly verified user PATH immediately. An explicitly selected bad executable never falls back.
+    pub fn execution_cli(&self, explicit_path: Option<PathBuf>) -> Result<PathBuf, String> {
+        let explicit = explicit_path.is_some();
+        let detected = self.detect_cli(explicit_path);
+        let selected = if detected.app.status == "ready" || explicit { detected.app } else { detected.user };
+        if selected.status != "ready" { return Err(selected.reason); }
+        selected.path.map(PathBuf::from).ok_or_else(|| "CLI 路径不可用".into())
     }
 
     fn probe(&self, path: Option<PathBuf>) -> Discovery {

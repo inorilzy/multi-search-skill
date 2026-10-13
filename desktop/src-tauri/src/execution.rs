@@ -105,10 +105,7 @@ impl DesktopManager {
         {
             return Err("Unsupported search options".into());
         }
-        let detection = self.detect_cli(path);
-        if detection.app.status != "ready" {
-            return Err(detection.app.reason);
-        }
+        let cli = self.execution_cli(path)?;
         let mut slot = self
             .execution_slot
             .lock()
@@ -140,7 +137,7 @@ impl DesktopManager {
             args.push(source);
         }
         let process = OwnedProcess::spawn(
-            &PathBuf::from(detection.app.path.unwrap()),
+            &cli,
             &args,
             &self.environment,
         )

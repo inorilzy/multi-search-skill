@@ -10,6 +10,7 @@ mod process;
 mod redaction;
 mod skill;
 mod skill_manage;
+pub mod user_path;
 #[cfg(feature = "native-window")]
 mod window;
 pub use diagnostics::{CliStatus, DesktopManager, Discovery, RuntimeEnvironment};

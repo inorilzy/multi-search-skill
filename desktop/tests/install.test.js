@@ -12,6 +12,27 @@ function setup() {
 
 const plan = (status, extra = {}) => ({ status, root: 'C:\\fixture\\cli', bin: 'C:\\fixture\\cli\\bin\\multi-search.exe', version: null, reason: '', path_hint: 'PATH 提示', ...extra });
 
+test('PATH registration is a separate explicit consent action after CLI installation', async () => {
+  const { window, root } = setup();
+  let calls = 0;
+  await mountInstall(root, {
+    installPlan: async () => plan('installed', { version: '0.4.0' }),
+    userPathPlan: async () => ({ status: 'absent', directory: 'C:\\fixture\\cli\\bin', can_add: true, can_remove: false, reason: '仅当前用户 PATH；重启宿主' }),
+    userPathChange: async (remove, confirmed) => { assert.equal(remove, false); assert.equal(confirmed, true); calls++; return { status: 'added' }; },
+    detect: async () => ({ app: { status: 'missing' }, user: { status: 'ready' }, restart_required: true }),
+  });
+  assert.equal(calls, 0);
+  assert.match(root.querySelector('[data-path-directory]').textContent, /fixture/);
+  root.querySelector('[data-action="path-add"]').click();
+  assert.equal(calls, 0);
+  assert.equal(root.querySelector('[data-path-confirm]').hidden, false);
+  root.querySelector('[data-action="path-confirm"]').click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(calls, 1);
+  assert.match(root.querySelector('[data-path-result]').textContent, /ready.*missing|missing.*ready/);
+  window.close();
+});
+
 test('missing bundled CLI resource shows the prerequisite and keeps install disabled', async () => {
   const { window, root } = setup();
   await mountInstall(root, { installPlan: async () => plan('prerequisite_missing', { reason: '安装包缺少内置 CLI 资源，无法安装' }), install: async () => { throw new Error('must not run'); } });

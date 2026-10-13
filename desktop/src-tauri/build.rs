@@ -7,6 +7,9 @@ use std::{env, fs, path::PathBuf};
 /// `resources/cli-bundle.anchor` next to this crate. When neither exists the anchor is empty and the
 /// installer reports `prerequisite_missing` at runtime instead of trusting a stale or guessed value.
 fn main() {
+    if env::var("PROFILE").as_deref() == Ok("release") && env::var_os("CARGO_FEATURE_INSTALL_TEST_BOUNDARY").is_some() {
+        panic!("install-test-boundary is acceptance-only and cannot be packaged in a release build");
+    }
     println!("cargo:rerun-if-env-changed=MULTI_SEARCH_CLI_BUNDLE_ANCHOR");
     println!("cargo:rerun-if-changed=resources/cli-bundle.anchor");
     let anchor = match env::var("MULTI_SEARCH_CLI_BUNDLE_ANCHOR") {

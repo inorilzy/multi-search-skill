@@ -95,6 +95,83 @@ fn isolated_first_install_verifies_activates_and_is_idempotent() {
 }
 
 #[test]
+fn explicit_user_path_consent_enables_discovery_and_skill_without_restarting_app() {
+    use multi_search_desktop::user_path::{MemoryPathStore, PathValue};
+    use std::sync::Arc;
+    let profile = common::Profile::new();
+    let root = profile.root.join("onboarding");
+    let src = source(&profile, "onboarding-source", "0.4.0", None);
+    let mut environment = env(&profile, &root, Some(&src));
+    environment.app_path.clear();
+    environment.user_path.clear();
+    let store = Arc::new(MemoryPathStore::new(PathValue::expandable("%SystemRoot%\\System32")));
+    let manager = DesktopManager::with_user_path_store(environment, store.clone());
+    assert_eq!(manager.install().status, "installed");
+    assert_eq!(manager.skill_plan("global", None).status, "cli_missing");
+    assert_eq!(manager.user_path_change(false, false).unwrap().status, "confirmation_required");
+    assert_eq!(store.value().text, "%SystemRoot%\\System32");
+    assert_eq!(manager.user_path_change(false, true).unwrap().status, "added");
+    assert_eq!(manager.detect_cli(None).user.status, "ready");
+    assert_eq!(manager.detect_cli(None).app.status, "missing");
+    assert_eq!(manager.execution_cli(None).unwrap(), root.join("bin/multi-search.exe"));
+    assert!(manager.detect_cli(None).restart_required);
+    assert_eq!(manager.skill_plan("global", None).status, "ready");
+    assert_eq!(manager.skill_install("global", None).status, "installed");
+    assert_eq!(manager.user_path_change(true, true).unwrap().status, "removed");
+    assert_eq!(store.value().text, "%SystemRoot%\\System32");
+    assert_eq!(manager.detect_cli(None).user.status, "missing");
+}
+
+#[test]
+fn path_registration_preserves_existing_spelling_type_and_user_changes() {
+    use multi_search_desktop::user_path::{MemoryPathStore, PathStore, PathValue};
+    use std::sync::Arc;
+    let profile = common::Profile::new();
+    let root = profile.root.join("path-owned");
+    let src = source(&profile, "path-source", "0.4.0", None);
+    let mut environment = env(&profile, &root, Some(&src));
+    environment.variables.insert("OUR_CLI".into(), root.join("bin").to_string_lossy().into_owned());
+    let original = PathValue { text: "%SystemRoot%\\System32;%our_cli%\\;C:\\Keep".into(), kind: 1, exists: true };
+    let store = Arc::new(MemoryPathStore::new(original.clone()));
+    let manager = DesktopManager::with_user_path_store(environment, store.clone());
+    assert_eq!(manager.install().status, "installed");
+    assert_eq!(manager.user_path_change(false, true).unwrap().status, "existing");
+    assert_eq!(store.value(), original);
+    assert!(manager.user_path_change(true, true).is_err());
+    let before = PathValue { text: "C:\\Keep;;%SystemRoot%\\System32;".into(), kind: 1, exists: true };
+    store.compare_write(&original, &before, None).unwrap();
+    assert_eq!(manager.user_path_change(false, true).unwrap().status, "added");
+    assert_eq!(store.value().kind, 1);
+    assert_eq!(store.value().text, format!("{};{}", before.text, root.join("bin").display()));
+    let owned = store.value();
+    let mut changed = owned.clone(); changed.text.push_str(";C:\\UserAdded");
+    store.compare_write(&owned, &changed, store.receipt().unwrap().as_ref()).unwrap();
+    assert!(!manager.user_path_plan().unwrap().can_remove);
+    assert!(manager.user_path_change(true, true).is_err());
+    assert_eq!(store.value(), changed);
+    assert!(store.compare_write(&owned, &before, None).is_err());
+    assert_eq!(store.value(), changed);
+}
+
+#[test]
+fn native_registry_path_roundtrip_uses_only_a_dedicated_acceptance_key() {
+    use multi_search_desktop::user_path::{NativePathStore, PathStore, PathValue};
+    use windows_sys::Win32::System::Registry::*;
+    let key = format!("Software\\MultiSearchAcceptance\\path-{}", std::process::id());
+    let store = NativePathStore::isolated_key(&key).unwrap();
+    let before = store.read().unwrap();
+    assert!(!before.exists);
+    let desired = PathValue { text: "%SystemRoot%\\System32;;C:\\Keep;".into(), kind: 1, exists: true };
+    store.compare_write(&before, &desired, None).unwrap();
+    assert_eq!(store.read().unwrap(), desired);
+    assert!(store.compare_write(&before, &before, None).is_err());
+    store.compare_write(&desired, &before, None).unwrap();
+    assert_eq!(store.read().unwrap(), before);
+    let key: Vec<u16> = key.encode_utf16().chain(Some(0)).collect();
+    assert_eq!(unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, key.as_ptr()) }, 0);
+}
+
+#[test]
 fn checksum_mismatch_refuses_before_touching_the_install_root() {
     let profile = common::Profile::new();
     let root = profile.root.join("install-bad");

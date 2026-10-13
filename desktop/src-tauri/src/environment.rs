@@ -42,15 +42,26 @@ fn registry_string(
         Some(String::from_utf16_lossy(&value))
     }
 }
-fn expand(value: &str, variables: &BTreeMap<String, String>) -> String {
+pub(crate) fn expand(value: &str, variables: &BTreeMap<String, String>) -> String {
     let mut output = value.to_string();
     for _ in 0..4 {
         let prior = output.clone();
-        for (key, value) in variables {
-            output = output
-                .replace(&format!("%{key}%"), value)
-                .replace(&format!("%{}%", key.to_uppercase()), value);
+        let mut expanded = String::new();
+        let mut rest = output.as_str();
+        while let Some(start) = rest.find('%') {
+            expanded.push_str(&rest[..start]);
+            let after = &rest[start + 1..];
+            let Some(end) = after.find('%') else { expanded.push_str(&rest[start..]); rest = ""; break; };
+            let name = &after[..end];
+            if let Some((_, replacement)) = variables.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)) {
+                expanded.push_str(replacement);
+            } else {
+                expanded.push_str(&rest[start..start + end + 2]);
+            }
+            rest = &after[end + 1..];
         }
+        expanded.push_str(rest);
+        output = expanded;
         if output == prior {
             break;
         }
@@ -58,6 +69,13 @@ fn expand(value: &str, variables: &BTreeMap<String, String>) -> String {
     output
 }
 impl RuntimeEnvironment {
+    /// Base search path for a manager with a live user registry store.
+    #[cfg(all(windows, feature = "native-window"))]
+    pub(crate) fn machine_paths(&self) -> Vec<PathBuf> {
+        use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+        let value = registry_string(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", "Path").unwrap_or_default();
+        std::env::split_paths(&expand(&value, &self.variables)).collect()
+    }
     pub fn system() -> Self {
         let mut variables: BTreeMap<String, String> = std::env::vars().collect();
         let app_path =

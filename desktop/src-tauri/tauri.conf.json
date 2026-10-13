@@ -12,5 +12,15 @@
       "capabilities": [{ "identifier": "management", "windows": ["main"], "permissions": [] }]
     }
   },
-  "bundle": { "active": false, "resources": { "resources/cli-bundle/": "cli-bundle/" } }
+  "bundle": {
+    "active": true,
+    "useLocalToolsDir": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": { "resources/cli-bundle/": "cli-bundle/" },
+    "windows": {
+      "webviewInstallMode": { "type": "skip" },
+      "nsis": { "installMode": "currentUser", "languages": ["English", "SimpChinese"], "displayLanguageSelector": true }
+    }
+  }
 }

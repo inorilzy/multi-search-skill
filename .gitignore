@@ -12,6 +12,7 @@ build/
 dist/
 desktop/node_modules/
 desktop/src-tauri/target/
+desktop/src-tauri/target-acceptance/
 desktop/src-tauri/gen/
 .scratch/
 .vscode/

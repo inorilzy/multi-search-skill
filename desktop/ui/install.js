@@ -21,7 +21,12 @@ export async function mountInstall(root, api) {
       <p data-info="path-hint" class="note"></p><p data-info="reason" role="alert"></p>
       <div class="run-controls"><button type="button" data-action="install" class="primary" disabled>安装 CLI</button><button type="button" data-action="update" disabled>更新 CLI</button><button type="button" data-action="uninstall" disabled>卸载 CLI</button><strong data-status="result" aria-live="polite"></strong></div>
       <div class="run-controls" data-confirm hidden><strong>卸载只删除本工具安装的 CLI 文件；配置、凭据和 Skill 会保留。</strong><button type="button" data-action="uninstall-confirm" class="danger">确认卸载</button><button type="button" data-action="uninstall-cancel">取消</button></div>
-      <ol data-steps aria-label="安装步骤"></ol></section>`;
+      <ol data-steps aria-label="安装步骤"></ol></section>
+    <section class="panel"><h2>用户 PATH 与宿主发现</h2><p data-path-directory></p><p data-path-reason></p>
+      <button type="button" data-action="path-add" disabled>将 CLI 加入当前用户 PATH</button>
+      <button type="button" data-action="path-remove" disabled>移除本工具添加的 PATH 项</button>
+      <div data-path-confirm hidden><p>确认仅修改上方目录对应的当前用户 PATH 项？系统 PATH 不变。完成后请重启终端或 Agent 宿主。</p><button type="button" data-action="path-confirm">确认修改用户 PATH</button><button type="button" data-action="path-cancel">取消</button></div>
+      <p data-path-result role="status"></p></section>`;
   const install = root.querySelector('[data-action="install"]');
   const update = root.querySelector('[data-action="update"]');
   const uninstall = root.querySelector('[data-action="uninstall"]');
@@ -59,9 +64,39 @@ export async function mountInstall(root, api) {
     }));
   }
 
+  const pathAdd = root.querySelector('[data-action="path-add"]');
+  const pathRemove = root.querySelector('[data-action="path-remove"]');
+  const pathConfirm = root.querySelector('[data-path-confirm]');
+  let removePath = false;
+  async function refreshPath() {
+    if (!api.userPathPlan) return;
+    pathAdd.disabled = true; pathRemove.disabled = true;
+    try {
+      const state = await api.userPathPlan();
+      root.querySelector('[data-path-directory]').textContent = state.directory;
+      root.querySelector('[data-path-reason]').textContent = state.reason;
+      pathAdd.disabled = busy || !state.can_add;
+      pathRemove.disabled = busy || !state.can_remove;
+    } catch { root.querySelector('[data-path-reason]').textContent = '无法检查用户 PATH，未修改。请重新检查。'; }
+  }
+  pathAdd.addEventListener('click', () => { removePath = false; pathConfirm.hidden = false; });
+  pathRemove.addEventListener('click', () => { removePath = true; pathConfirm.hidden = false; });
+  root.querySelector('[data-action="path-cancel"]').addEventListener('click', () => { pathConfirm.hidden = true; });
+  root.querySelector('[data-action="path-confirm"]').addEventListener('click', async () => {
+    if (busy) return;
+    busy = true; pathConfirm.hidden = true; pathAdd.disabled = true; pathRemove.disabled = true;
+    const result = root.querySelector('[data-path-result]');
+    try {
+      const outcome = await api.userPathChange(removePath, true);
+      const status = await api.detect(null);
+      result.textContent = `${outcome.status}；当前应用：${status.app.status}；新用户环境：${status.user.status}。请重启终端或 Agent 宿主。`;
+    } catch (error) { result.textContent = typeof error === 'string' ? error : '用户 PATH 修改未确认，请重新检查；原有或被修改项目会保留。'; }
+    finally { busy = false; await refreshPath(); }
+  });
+
   async function refresh() {
     plan.disabled = true;
-    try { renderPlan(await api.installPlan()); }
+    try { renderPlan(await api.installPlan()); await refreshPath(); }
     catch { renderPlan({ status: 'unavailable', reason: '无法检查安装计划，请重新检查。' }); }
     finally { plan.disabled = busy; }
   }

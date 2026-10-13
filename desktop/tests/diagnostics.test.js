@@ -18,6 +18,14 @@ test('overview distinguishes app invocation from user command discovery', async 
   window.close();
 });
 
+test('new user PATH enables immediate search while old app environment stays visibly missing', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  await mountDiagnostics(root, { detect: async () => ({ app: { status: 'missing' }, user: { status: 'ready' }, restart_required: true }) });
+  assert.equal(root.querySelector('[data-status="app"]').textContent, '未发现');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  window.close();
+});
+
 test('test search reflects partial execution and renders provider text without HTML', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
   const api = {

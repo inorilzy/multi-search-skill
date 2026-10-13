@@ -41,14 +41,14 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
     const button = root.querySelector('[data-action="refresh"]'); button.disabled = true;
     try {
       const status = await api.detect(path.value.trim() || null);
-      appReady = status.app.status === 'ready'; controls(activeId !== null);
+      appReady = status.app.status === 'ready' || (!path.value.trim() && status.user.status === 'ready'); controls(activeId !== null);
       for (const scope of ['app', 'user']) {
         const row = status[scope];
         root.querySelector(`[data-status="${scope}"]`).textContent = statusLabels[row.status] || row.status;
         root.querySelector(`[data-status="${scope}"]`).dataset.kind = row.status;
         root.querySelector(`[data-info="${scope}"]`).textContent = [row.version && `v${row.version}`, row.path, row.reason].filter(Boolean).join('\n');
       }
-      root.querySelector('[data-info="restart"]').textContent = status.restart_required ? '用户环境已可发现 CLI，但应用仍使用旧环境。请重启应用、终端或 Agent 宿主。' : status.user.status !== 'ready' ? '应用可调用不代表用户终端可发现命令。请检查用户 PATH；更新后重启终端或 Agent 宿主。' : '新终端可以发现 CLI。已打开的终端或 Agent 宿主如仍不可用，请重启后重试。';
+      root.querySelector('[data-info="restart"]').textContent = status.restart_required ? '用户环境已可发现 CLI；本次测试可直接使用新路径。应用继承的旧 PATH 未改变，请重启终端或 Agent 宿主。' : status.user.status !== 'ready' ? '应用可调用不代表用户终端可发现命令。请检查用户 PATH；更新后重启终端或 Agent 宿主。' : '新终端可以发现 CLI。已打开的终端或 Agent 宿主如仍不可用，请重启后重试。';
       root.querySelector('[data-info="error"]').textContent = '';
     } catch { appReady = false; controls(false); root.querySelector('[data-info="error"]').textContent = '检测失败，请重新检测。'; }
     finally { button.disabled = false; }

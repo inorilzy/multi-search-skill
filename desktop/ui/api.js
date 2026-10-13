@@ -14,6 +14,8 @@ export function managementApi(invoke) {
     install: () => invoke('install_cli'),
     update: () => invoke('update_cli'),
     uninstall: () => invoke('uninstall_cli'),
+    userPathPlan: () => invoke('user_path_plan'),
+    userPathChange: (remove, confirmed) => invoke('user_path_change', { remove, confirmed }),
     credentialStatus: source => invoke('credential_status', { source }),
     credentialSave: (source, key) => invoke('credential_save', { source, key }),
     credentialDelete: source => invoke('credential_delete', { source }),
