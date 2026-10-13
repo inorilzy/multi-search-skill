@@ -31,6 +31,15 @@ import test_isolation
 
 test_isolation.activate_from_environment()
 
+if os.environ.get("CLI_FIXTURE_KEYLESS"):
+    import socket
+    guarded_getaddrinfo = socket.getaddrinfo
+    def fixture_getaddrinfo(host, port, *args, **kwargs):
+        if host == "www.v2ex.com":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port or 443))]
+        return guarded_getaddrinfo(host, port, *args, **kwargs)
+    socket.getaddrinfo = fixture_getaddrinfo
+
 class NoMCP(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if fullname == "mcp" or fullname.startswith("mcp."):
@@ -55,6 +64,10 @@ class ProviderHTTP(urllib.request.BaseHandler):
                 raise urllib.error.HTTPError(request.full_url, 503, "fixture provider unavailable", {}, io.BytesIO(b""))
             hits = [] if query == "empty" else [{"objectID": "42", "title": "Fixture article", "url": "https://93.184.216.34/article", "points": 7}]
             payload = {"hits": hits}
+        elif parsed.hostname == "api.stackexchange.com":
+            payload = {"items": [{"title": "Fixture Stack Overflow", "link": "https://93.184.216.34/question", "tags": []}]}
+        elif parsed.hostname == "www.sov2ex.com":
+            payload = {"hits": [{"_source": {"id": 42, "title": "Fixture V2EX"}}]}
         elif parsed.hostname == "api.tavily.com":
             # The Bearer must equal the expected synthetic key; the query selects the outcome.
             if (request.get_header("Authorization") or "") != "Bearer " + os.environ.get("CLI_FIXTURE_TAVILY_KEY", ""):
@@ -105,6 +118,19 @@ class CliProcessTests(unittest.TestCase):
                               env=dict(self.environment, CLI_FIXTURE_FUTURE="1" if future else "",
                                        CLI_FIXTURE_NO_HTTP="1" if no_http else ""),
                               capture_output=True, text=True, encoding="utf-8", timeout=30)
+
+    def test_keyless_source_controls_reach_real_cli_and_controlled_http_independently(self):
+        config = self.isolation.root / "source-test.json"
+        config.write_text(json.dumps({"no_scrape": True}), encoding="utf-8")
+        self.environment["MULTI_SEARCH_CONFIG"] = str(config)
+        self.environment["CLI_FIXTURE_KEYLESS"] = "1"
+        for source in ("hackernews", "stackoverflow", "sov2ex"):
+            with self.subTest(source=source):
+                result = self.run_cli("search", "fixture", "--source", source, "--format", "json")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rows = json.loads(result.stdout)["provider_status"]
+                self.assertEqual([row["source"] for row in rows], [source])
+                self.assertEqual(rows[0]["status"], "ok")
 
     def test_packaging_has_only_the_cli_entry_and_no_mcp_dependency(self):
         # Python 3.10 has no tomllib; use the stable declared console/dependency
