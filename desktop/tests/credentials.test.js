@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
-import { mountCredentials, MANAGED_SOURCES } from '../ui/credentials.js';
+import { mountCredentials, SOURCES } from '../ui/credentials.js';
 
 const SYNTHETIC_KEY = 'synthetic-ui-key-0001';
 
@@ -25,6 +25,29 @@ function status(overrides = {}) {
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 
+test('reveal only shows newly typed input and saved keys are never fetched', async () => {
+  const { window, root } = setup();
+  await mountCredentials(root, {
+    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1 }, effective_source: 'credential_store' }),
+    credentialSave: async () => status({ store: { state: 'present', saved_at: 2 }, effective_source: 'credential_store' }),
+  });
+  const input = root.querySelector('[data-field="key"]');
+  const reveal = root.querySelector('[data-action="reveal"]');
+  assert.equal(input.value, '');
+  assert.equal(input.type, 'password');
+  input.value = SYNTHETIC_KEY;
+  reveal.click();
+  assert.equal(input.type, 'text');
+  assert.equal(reveal.getAttribute('aria-pressed'), 'true');
+  reveal.click();
+  assert.equal(input.type, 'password');
+  root.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(input.value, '');
+  assert.ok(!root.innerHTML.includes(SYNTHETIC_KEY));
+  window.close();
+});
+
 test('page shows saved state, effective source, and env override notice without values', async () => {
   const { window, root } = setup();
   const api = { credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'env', env_overrides_store: true, env_var: 'TAVILY_API_KEY' }) };
@@ -36,12 +59,12 @@ test('page shows saved state, effective source, and env override notice without 
   window.close();
 });
 
-test('each managed source mounts its own panel and queries the backend by public name', async () => {
+test('a keyed source mounts its own panel and queries the backend by public name', async () => {
   assert.deepEqual(
-    MANAGED_SOURCES.map(item => item.source),
-    ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github-repos'],
+    SOURCES.filter(item => item.keyed).map(item => item.source),
+    ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github_repos'],
   );
-  for (const entry of MANAGED_SOURCES) {
+  for (const entry of SOURCES.filter(item => item.keyed)) {
     const { window, root } = setup();
     const seen = [];
     const api = { credentialStatus: async source => { seen.push(source); return status(); } };
@@ -152,7 +175,7 @@ test('save with a file key list asks for confirmation; cancel writes nothing', a
     credentialStatus: async () => status({ file_key_count: 2, effective_source: 'file' }),
     credentialSave: async () => { saveCalls += 1; return status(); },
   };
-  await mountCredentials(root, api, { source: 'github-repos' });
+  await mountCredentials(root, api, { source: 'github_repos' });
   const field = root.querySelector('[data-field="key"]');
   field.value = SYNTHETIC_KEY;
   root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
@@ -176,14 +199,14 @@ test('confirmed save with a file key list writes exactly once with the source na
     credentialStatus: async () => status({ file_key_count: 2, effective_source: 'file' }),
     credentialSave: async (source, key) => { calls.push({ source, key }); return status({ file_key_count: 2, store: { state: 'present', saved_at: 3, error: null }, effective_source: 'credential_store' }); },
   };
-  await mountCredentials(root, api, { source: 'github-repos' });
+  await mountCredentials(root, api, { source: 'github_repos' });
   const field = root.querySelector('[data-field="key"]');
   field.value = SYNTHETIC_KEY;
   root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await flush();
   root.querySelector('[data-action="confirm-save"]').click();
   await flush();
-  assert.deepEqual(calls, [{ source: 'github-repos', key: SYNTHETIC_KEY }]);
+  assert.deepEqual(calls, [{ source: 'github_repos', key: SYNTHETIC_KEY }]);
   assert.equal(root.querySelector('[data-confirm="save"]'), null);
   assert.equal(root.querySelector('[data-status="source"]').textContent, 'Windows 凭据库');
   assert.match(root.querySelector('[data-info="override"]').textContent, /文件中的 2 个 key 已保留/);
@@ -215,7 +238,7 @@ test('delete warning with a file list says the file keys will be restored', asyn
     credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store', file_key_count: 2 }),
     credentialDelete: async () => status({ file_key_count: 2, effective_source: 'file' }),
   };
-  await mountCredentials(root, api, { source: 'github-repos' });
+  await mountCredentials(root, api, { source: 'github_repos' });
   root.querySelector('[data-action="delete"]').click();
   await flush();
   const text = root.querySelector('[data-confirm="delete"]').textContent;

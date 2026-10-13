@@ -29,17 +29,17 @@ function view(overrides = {}) {
   };
 }
 
-test('settings page lists all 12 CLI sources, each with an enable toggle', async () => {
+test('the CLI source list uses underscore names, so settings and the sources page agree', async () => {
   const { window, root } = setup();
   await mountSettings(root, { settingsView: async () => view() });
-  const names = [...root.querySelectorAll('[data-source-toggle]')].map(node => node.dataset.sourceToggle);
+  const names = SETTINGS_SOURCES.map(s => s.source);
   assert.equal(names.length, 12);
-  assert.deepEqual(names, SETTINGS_SOURCES.map(s => s.source));
   assert.ok(names.every(name => !name.includes('-')), 'CLI source names use underscores');
+  assert.ok(names.includes('github_repos'), 'github uses the underscore name shared with the sources page');
   window.close();
 });
 
-test('saving writes disabled_sources from unchecked toggles, plus route and timeout', async () => {
+test('saving route and timeout preserves disabled_sources owned by the sources page', async () => {
   const { window, root } = setup();
   let sent = null;
   const api = {
@@ -47,9 +47,7 @@ test('saving writes disabled_sources from unchecked toggles, plus route and time
     settingsSave: async input => { sent = input; return view({ route: input.route, timeout: input.timeout, disabled_sources: input.disabled_sources }); },
   };
   await mountSettings(root, api);
-  assert.equal(root.querySelector('[data-source-toggle="exa"]').checked, false);
-  root.querySelector('[data-source-toggle="exa"]').checked = true;
-  root.querySelector('[data-source-toggle="brave"]').checked = false;
+  assert.equal(root.querySelector('[data-source-toggle]'), null, 'source toggles live on the sources page now');
   root.querySelector('[data-field="route"]').value = 'fast';
   root.querySelector('[data-field="timeout"]').value = '30';
   root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
@@ -57,24 +55,28 @@ test('saving writes disabled_sources from unchecked toggles, plus route and time
   assert.deepEqual(sent, {
     route: 'fast',
     timeout: 30,
-    disabled_sources: ['brave'],
+    disabled_sources: ['exa'],
     twitter_cookies_path: '',
-  });
+  }, 'settings must not clear sources disabled elsewhere');
   assert.equal(root.querySelector('[data-status="save"]').textContent, '已保存。');
   window.close();
 });
 
-test('no-active-source status is shown explicitly and never re-enables a source', async () => {
+test('no-active-source status is shown explicitly and a save never re-enables a source', async () => {
   const { window, root } = setup();
+  let sent = null;
   await mountSettings(root, {
     settingsView: async () => view({
       active_sources: [],
       status: 'no_active_source',
       disabled_sources: ['twitter'],
     }),
+    settingsSave: async input => { sent = input; return view({ ...input, active_sources: [] }); },
   });
   assert.match(root.querySelector('[data-info="active-warning"]').textContent, /没有可用的搜索源/);
-  assert.equal(root.querySelector('[data-source-toggle="twitter"]').checked, false, 'disabled stays disabled');
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(sent.disabled_sources, ['twitter'], 'a disabled source stays disabled through a settings save');
   window.close();
 });
 

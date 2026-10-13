@@ -1,22 +1,12 @@
-// Search defaults: route, timeout, per-source enable/disable (disabled_sources), and the Twitter
-// cookie file path reference. Everything here is non-secret and is written by the Rust settings
-// command. The page never sends or displays a key, and never reads a cookie file.
+// Search defaults: route, timeout and the Twitter cookie file path reference. Everything here is
+// non-secret and is written by the Rust settings command. Per-source enable/disable lives on the
+// sources page now, beside each source's key and test controls; this page only reports which
+// sources the current route would run. It never sends or displays a key, and never reads a cookie.
+
+import { SOURCES } from './credentials.js';
 
 // Mirrors ALL_SOURCE_NAMES in search_runner.py and SOURCES in desktop/src-tauri/src/settings.rs.
-export const SETTINGS_SOURCES = [
-  { source: 'baidu', label: 'Baidu AI 搜索' },
-  { source: 'brave', label: 'Brave 搜索' },
-  { source: 'exa', label: 'Exa' },
-  { source: 'firecrawl', label: 'Firecrawl' },
-  { source: 'github_repos', label: 'GitHub 仓库' },
-  { source: 'hackernews', label: 'Hacker News' },
-  { source: 'parallel', label: 'Parallel' },
-  { source: 'serpapi', label: 'SerpAPI' },
-  { source: 'sov2ex', label: 'V2EX' },
-  { source: 'stackoverflow', label: 'Stack Overflow' },
-  { source: 'tavily', label: 'Tavily' },
-  { source: 'twitter', label: 'Twitter / X' },
-];
+export const SETTINGS_SOURCES = SOURCES.map(({ source, label }) => ({ source, label }));
 
 export const ROUTES = [
   { value: 'default', label: '默认（网页综合）' },
@@ -34,7 +24,7 @@ const statusText = {
 
 export async function mountSettings(root, api) {
   root.innerHTML = '<section class="heading"><p class="eyebrow">SETTINGS</p><h1>搜索默认设置。</h1>'
-    + '<p>路由、超时、启用的搜索源和 Twitter cookie 文件路径保存在 CLI 的配置文件中。key 不写入该文件。</p></section>'
+    + '<p>路由、超时和 Twitter cookie 文件路径保存在 CLI 的配置文件中。key 不写入该文件。</p></section>'
     + '<section class="panel"><div class="section-title"><h2>配置文件</h2><button type="button" data-action="refresh">刷新</button></div>'
     + '<dl class="cred-status"><dt>配置文件</dt><dd data-status="path"></dd><dt>路径来源</dt><dd data-status="path-source"></dd>'
     + '<dt>当前路由会运行</dt><dd data-status="active"></dd></dl>'
@@ -43,16 +33,13 @@ export async function mountSettings(root, api) {
     + '<form data-settings-form><label>默认路由<select data-field="route">'
     + ROUTES.map(r => `<option value="${r.value}">${r.label}</option>`).join('')
     + '</select></label><label>超时（秒，1 到 60）<input data-field="timeout" type="number" min="1" max="60" step="1"></label>'
-    + '<fieldset><legend>搜索源（取消勾选即禁用）</legend>'
-    + SETTINGS_SOURCES.map(s => `<label class="source-toggle"><input type="checkbox" data-source-toggle="${s.source}"> ${s.label} <code>${s.source}</code></label>`).join('')
-    + '</fieldset>'
     + '<label>Twitter cookie 文件路径（可选，仅保存路径）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json"></label>'
     + '<div class="run-controls"><button type="submit" class="primary" data-action="save">保存设置</button><strong data-status="save" aria-live="polite"></strong></div>'
     + '</form></section>';
 
   const q = selector => root.querySelector(selector);
   const text = (selector, value) => { q(selector).textContent = value; };
-  const toggles = () => [...root.querySelectorAll('[data-source-toggle]')];
+  let disabled = new Set();
   let saved = null;
 
   function fill(view) {
@@ -68,8 +55,8 @@ export async function mountSettings(root, api) {
     text('[data-info="active-warning"]', statusText[view.status] ?? view.message ?? '');
     q('[data-field="route"]').value = view.route;
     q('[data-field="timeout"]').value = String(view.timeout);
-    const disabled = new Set(view.disabled_sources);
-    for (const box of toggles()) box.checked = !disabled.has(box.dataset.sourceToggle);
+    // Enable/disable moved to the sources page; keep the value here so a save never clears it.
+    disabled = new Set(view.disabled_sources);
     q('[data-field="twitter"]').value = view.twitter_cookies_path || '';
     text('[data-info="error"]', '');
     if (view.twitter_env_overrides) {
@@ -89,7 +76,7 @@ export async function mountSettings(root, api) {
     const input = {
       route: q('[data-field="route"]').value,
       timeout: Number(q('[data-field="timeout"]').value),
-      disabled_sources: toggles().filter(box => !box.checked).map(box => box.dataset.sourceToggle),
+      disabled_sources: [...disabled],
       twitter_cookies_path: q('[data-field="twitter"]').value,
     };
     text('[data-status="save"]', '保存中…');
