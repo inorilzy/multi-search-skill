@@ -12,8 +12,8 @@ from typing import Any
 
 from .support.config import ConfigError, config_list, load_config, resolve_config_path
 from .support.format import body_preview_start, format_results, format_scrapes
-from .state.key_state import BasicKeyManager, SQLiteKeyManager
-from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, load_keys
+from .state.key_state import BasicKeyManager, SQLiteKeyManager, classify_error
+from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, key_sources, load_keys
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content
 from .scrape.scrape import scrape_url_smart
 from .scrape.scrapers.twitter import is_twitter_url, validate_twitter_url
@@ -257,7 +257,7 @@ def run_fetch_source(
         if resolved_config is None:
             resolved_config = _load_config_safe(request.config_path)
         if not prefetched_body:
-            runtime_keys = load_keys() if keys is None else dict(keys)
+            runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
             if content_store and retention.persist_body:
                 # Hash the permission context; never persist credentials. Provider
                 # prefetches and older unscoped entries remain source-ID-only.
@@ -383,7 +383,7 @@ def _run_search_candidates(
         use_state=request.use_state,
     )
     plan = resolve_search_plan(planning_request, resolved_config)
-    runtime_keys = load_keys() if keys is None else dict(keys)
+    runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
     store = (state_store or StateStore()) if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
 
@@ -572,7 +572,12 @@ def _query_provider_status(
                 if str(row.get("source") or "?") != source:
                     continue
                 if row.get("error"):
-                    errors.append({"query": query, "error": str(row["error"])})
+                    # error_type lets callers tell auth, quota, and network failures apart.
+                    errors.append({
+                        "query": query,
+                        "error": str(row["error"]),
+                        "error_type": classify_error(str(row["error"]), error_type=row.get("error_type", "")),
+                    })
                 else:
                     succeeded = True
                     if not is_empty_result(row) and row.get("url"):
@@ -642,7 +647,7 @@ def run_search_web(
             ("scrape_concurrency", scrape_concurrency),
         ) if value is not None
     })
-    runtime_keys = load_keys() if keys is None else dict(keys)
+    runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
     store = (state_store or StateStore()) if request.use_state else None
     prefetched = {}
     response = _run_search_candidates(
@@ -824,7 +829,7 @@ def _run_scrape_raw(
 ) -> tuple[dict, list[dict], int]:
     """Execute shared state-aware scraping before applying a public projection."""
     resolved_config = _load_config_safe(None) if config is None else dict(config)
-    runtime_keys = load_keys() if keys is None else dict(keys)
+    runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
     # Public timeout/config values stay integer seconds; the fetch stage passes
     # its already-resolved floating remainder through this private path.
     if runtime_timeout is None:
@@ -885,7 +890,12 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
     keys: dict = {}
     keys_error: str | None = None
     try:
-        keys = load_keys()
+        # Same config-scoped Twitter path reference as runtime, so diagnostics agree with search.
+        try:
+            doctor_config = load_config()
+        except (ValueError, TypeError):
+            doctor_config = {}
+        keys = _load_runtime_keys(doctor_config)
     except KeysError as exc:
         # doctor exists to diagnose key problems, so a corrupt keys file must be
         # reported, not raised — otherwise the one tool that could explain the
@@ -943,6 +953,10 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
     if keys_error:
         data["keys_error"] = keys_error
     if include_keys:
+        try:
+            data["key_sources"] = key_sources()
+        except Exception as exc:  # diagnostic boundary: provenance is advisory
+            data["key_sources_error"] = scrub_secrets(exc, keys)
         data["configured_keys"] = {name: bool(value) for name, value in keys.items()}
         data["key_status"] = SQLiteKeyManager(store).status_rows()
         data["jina_keys_active_total"] = count_jina_keys(keys.get("jina"))
@@ -1119,6 +1133,16 @@ def _compat_source_summaries(source_briefs: list[dict]) -> list[dict]:
         compat.setdefault("summary_type", compat.get("brief_type", "result_brief"))
         rows.append(compat)
     return rows
+
+
+def _load_runtime_keys(config: dict | None = None) -> dict:
+    """Load keys, adding the config's non-secret Twitter cookie path reference."""
+    from .support.config import config_str
+    reference = config_str(config or {}, "twitter_cookies_path") or None
+    if reference is None:
+        # Keep the original call shape when config carries no Twitter reference.
+        return load_keys()
+    return load_keys(twitter_cookies_path=reference)
 
 
 def _load_config_safe(path: str | None) -> dict:

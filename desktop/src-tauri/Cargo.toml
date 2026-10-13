@@ -20,6 +20,16 @@ path = "tests/execution.rs"
 [[test]]
 name = "install"
 path = "tests/install.rs"
+required-features = ["install-test-boundary"]
+
+[[test]]
+name = "install_lifecycle"
+path = "tests/install_lifecycle.rs"
+required-features = ["install-test-boundary"]
+
+[[test]]
+name = "install_release_boundary"
+path = "tests/install_release_boundary.rs"
 
 [[test]]
 name = "installed_cli"
@@ -33,6 +43,18 @@ path = "tests/skill.rs"
 name = "skill_manage"
 path = "tests/skill_manage.rs"
 
+[[test]]
+name = "credentials"
+path = "tests/credentials.rs"
+
+[[test]]
+name = "credential_sources"
+path = "tests/credential_sources.rs"
+
+[[test]]
+name = "settings"
+path = "tests/settings.rs"
+
 [[bin]]
 name = "multi-search-desktop"
 path = "src/main.rs"
@@ -44,11 +66,14 @@ serde_json = "1"
 sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_Security_Credentials", "Win32_System_Diagnostics_ToolHelp"] }
 
 [features]
 default = ["native-window"]
 native-window = ["dep:tauri", "dep:tauri-build"]
+# Test-only boundary: enables env-driven install source/anchor overrides and the disposable user PATH.
+# Never packageable for release; the default and release builds ignore these environment keys.
+install-test-boundary = []
 
 [dependencies.tauri]
 version = "2"

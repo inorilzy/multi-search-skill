@@ -55,6 +55,16 @@ class ProviderHTTP(urllib.request.BaseHandler):
                 raise urllib.error.HTTPError(request.full_url, 503, "fixture provider unavailable", {}, io.BytesIO(b""))
             hits = [] if query == "empty" else [{"objectID": "42", "title": "Fixture article", "url": "https://93.184.216.34/article", "points": 7}]
             payload = {"hits": hits}
+        elif parsed.hostname == "api.tavily.com":
+            # The Bearer must equal the expected synthetic key; the query selects the outcome.
+            if (request.get_header("Authorization") or "") != "Bearer " + os.environ.get("CLI_FIXTURE_TAVILY_KEY", ""):
+                raise urllib.error.HTTPError(request.full_url, 401, "fixture rejects key", {}, io.BytesIO(b'{"detail":{"error":"bad key"}}'))
+            query = json.loads(request.data.decode())["query"]
+            if query == "quota":
+                raise urllib.error.HTTPError(request.full_url, 432, "fixture quota", {}, io.BytesIO(b'{"detail":{"error":"Plan usage limit exceeded"}}'))
+            if query == "network":
+                raise urllib.error.URLError("fixture network down")
+            payload = {"results": [{"title": "Fixture tavily", "url": "https://93.184.216.34/article", "content": "snippet", "score": 0.9}]}
         elif parsed.hostname == "r.jina.ai":
             if os.environ.get("CLI_FIXTURE_NO_HTTP"):
                 raise AssertionError("cached fetch/read unexpectedly contacted a provider")
@@ -176,6 +186,137 @@ class CliProcessTests(unittest.TestCase):
                             self.assertIn("missing BRAVE", result.stdout)
                         if query == "failure":
                             self.assertIn("503", result.stdout)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Credential Manager is Windows-only")
+    def test_store_backed_tavily_search_follows_save_replace_and_delete(self):
+        from multi_search_mcp.src.support.credential_store import default_store
+        namespace = f"ticket04-search-{os.getpid()}"
+        env = dict(self.environment, MULTI_SEARCH_CREDENTIAL_NAMESPACE=namespace)
+        env.pop("TAVILY_API_KEY", None)
+        store = default_store(env)
+        self.addCleanup(store.delete, "tavily")
+
+        def search(expected_key_value):
+            child_env = dict(env, CLI_FIXTURE_TAVILY_KEY=expected_key_value)
+            return subprocess.run(
+                [sys.executable, "-B", "-m", "multi_search_mcp.cli", "search", "ok",
+                 "--source", "tavily", "--format", "json"],
+                cwd=self.isolation.root, env=child_env,
+                capture_output=True, text=True, encoding="utf-8", timeout=30,
+            )
+
+        store.set("tavily", "synthetic-search-key-0013")
+        first = search("synthetic-search-key-0013")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(json.loads(first.stdout)["provider_status"][0]["status"], "ok")
+        self.assertNotIn("synthetic-search-key-0013", first.stdout + first.stderr)
+
+        store.set("tavily", "synthetic-search-key-0014")
+        replaced = search("synthetic-search-key-0014")
+        self.assertEqual(replaced.returncode, 0, replaced.stderr)
+        stale = search("synthetic-search-key-0013")
+        self.assertEqual(json.loads(stale.stdout)["provider_status"][0]["errors"][0]["error_type"], "invalid")
+
+        store.delete("tavily")
+        missing = search("synthetic-search-key-0014")
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("missing TAVILY_API_KEY", missing.stdout + missing.stderr)
+        self.assertNotIn("synthetic-search-key-0014", missing.stdout + missing.stderr)
+
+        # Outcome classes through the same store-backed process path, including the key-pool
+        # wrapper (search_runner.py), which must preserve the provider's error_type.
+        # A fresh key per case: a 432 persists key cooldown in the isolated state DB, so reusing
+        # one key would make later children report "missing API key" instead of the outcome.
+        for index, (query, expected) in enumerate((("quota", "quota_exhausted"), ("network", "network"))):
+            key_value = f"synthetic-search-key-001{5 + index}"
+            store.set("tavily", key_value)
+            outcome = subprocess.run(
+                [sys.executable, "-B", "-m", "multi_search_mcp.cli", "search", query,
+                 "--source", "tavily", "--format", "json"],
+                cwd=self.isolation.root, env=dict(env, CLI_FIXTURE_TAVILY_KEY=key_value),
+                capture_output=True, text=True, encoding="utf-8", timeout=30,
+            )
+            errors = json.loads(outcome.stdout)["provider_status"][0]["errors"]
+            self.assertEqual(errors[0]["error_type"], expected, query)
+            self.assertNotIn(key_value, outcome.stdout + outcome.stderr)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Credential Manager is Windows-only")
+    def test_migrated_legacy_key_is_used_by_independent_search_without_env_override(self):
+        """Migrate a synthetic legacy key with the real `migrate-legacy` CLI, then search in a
+        separate process. External HTTP is replaced only at the urllib opener inside the child
+        (ProviderHTTP in BOOTSTRAP); no real network is used and NetworkGuard is active in the
+        child via test_isolation.activate_from_environment. The expected key lives only in this
+        fixture and is supplied to the child as CLI_FIXTURE_TAVILY_KEY, never as a provider env
+        var, so the store is the only key source. Key values are never printed or asserted in output.
+        """
+        import tempfile
+        from multi_search_mcp.src.state.keys import key_sources
+        from multi_search_mcp.src.support.credential_store import default_store
+
+        migrated_value = "synthetic-migrate-key-0021"
+        namespace = f"ticket09-search-{os.getpid()}"
+        env = dict(self.environment, MULTI_SEARCH_CREDENTIAL_NAMESPACE=namespace)
+        env.pop("TAVILY_API_KEY", None)
+        store = default_store(env)
+        self.addCleanup(store.delete, "tavily")
+        store.delete("tavily")
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        keys_file = Path(tmp.name) / "search-keys.json"
+        keys_file.write_text(json.dumps({"tavily": migrated_value}), encoding="utf-8")
+        source_bytes = keys_file.read_bytes()
+        request_file = Path(tmp.name) / "request.json"
+
+        def migrate(*args):
+            return subprocess.run(
+                [sys.executable, "-B", "-m", "multi_search_mcp.cli", "migrate-legacy", *args,
+                 "--keys-file", str(keys_file), "--format", "json"],
+                cwd=self.isolation.root, env=env, capture_output=True, text=True,
+                encoding="utf-8", timeout=30,
+            )
+
+        def plan_and_apply():
+            plan_run = migrate("plan")
+            self.assertEqual(plan_run.returncode, 0, plan_run.stderr)
+            self.assertNotIn(migrated_value, plan_run.stdout + plan_run.stderr)
+            plan = json.loads(plan_run.stdout)
+            request_file.write_text(json.dumps({"plan_token": plan["plan_token"],
+                                                "approved": ["tavily"], "choices": {}}), encoding="utf-8")
+            apply_run = migrate("apply", "--request", str(request_file))
+            self.assertEqual(apply_run.returncode, 0, apply_run.stderr)
+            self.assertNotIn(migrated_value, apply_run.stdout + apply_run.stderr)
+            return json.loads(apply_run.stdout)
+
+        first = plan_and_apply()
+        self.assertEqual(first["written"], ["tavily"])
+        self.assertEqual(first["unchanged"], [])
+        self.assertTrue(first["complete"])
+        self.assertEqual(store.get("tavily"), migrated_value)
+
+        # No provider env var is set, so the store must be the effective source.
+        report = key_sources(keys_file=keys_file, environ=env, credential_store=store)
+        self.assertEqual(report["tavily"]["effective_source"], "credential_store")
+        self.assertFalse(report["tavily"]["env_overrides_store"])
+
+        searched = subprocess.run(
+            [sys.executable, "-B", "-m", "multi_search_mcp.cli", "search", "ok",
+             "--source", "tavily", "--format", "json"],
+            cwd=self.isolation.root, env=dict(env, CLI_FIXTURE_TAVILY_KEY=migrated_value),
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(searched.returncode, 0, searched.stderr)
+        self.assertEqual(json.loads(searched.stdout)["provider_status"][0]["status"], "ok")
+        self.assertNotIn(migrated_value, searched.stdout + searched.stderr)
+
+        # Repeat is idempotent: the same key is already current and nothing is written.
+        second = plan_and_apply()
+        self.assertEqual(second["written"], [])
+        self.assertEqual(second["unchanged"], ["tavily"])
+        self.assertTrue(second["complete"])
+
+        # The legacy source file is never modified by plan or apply.
+        self.assertEqual(keys_file.read_bytes(), source_bytes)
 
 
 if __name__ == "__main__":

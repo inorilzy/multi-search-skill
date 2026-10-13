@@ -12,5 +12,15 @@ export function managementApi(invoke) {
     skillRemove: (scope, project, confirmed) => invoke('skill_remove', { scope, project, confirmed }),
     installPlan: () => invoke('install_plan'),
     install: () => invoke('install_cli'),
+    update: () => invoke('update_cli'),
+    uninstall: () => invoke('uninstall_cli'),
+    credentialStatus: source => invoke('credential_status', { source }),
+    credentialSave: (source, key) => invoke('credential_save', { source, key }),
+    credentialDelete: source => invoke('credential_delete', { source }),
+    credentialTest: (source, path) => invoke('credential_test', { source, path }),
+    settingsView: () => invoke('settings_view'),
+    settingsSave: input => invoke('settings_save', { input }),
+    migrationPlan: path => invoke('migration_plan', { path }),
+    migrationApply: (planToken, approved, choices, path) => invoke('migration_apply', { planToken, approved, choices, path }),
   };
 }

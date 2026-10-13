@@ -29,3 +29,4 @@ mcp.local.json
 # Local provider research/debug dumps
 qianfan_*.json
 qianfan_*.md
+desktop/src-tauri/resources/

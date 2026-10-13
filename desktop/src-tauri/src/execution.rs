@@ -15,6 +15,30 @@ pub struct SearchOptions {
     pub sources: Vec<String>,
     pub timeout: u32,
 }
+/// Source names the CLI accepts for `--source`. Includes the settings page's canonical names
+/// (`sov2ex`, `github_repos`) and the CLI aliases (`v2ex`, `github-repos`, `github`), which the
+/// CLI maps to the same source. Mirrors `ALL_SOURCE_NAMES` and `SOURCE_ALIASES` in search_runner.py.
+pub(crate) fn is_allowed_source(name: &str) -> bool {
+    [
+        "brave",
+        "parallel",
+        "tavily",
+        "exa",
+        "serpapi",
+        "firecrawl",
+        "baidu",
+        "twitter",
+        "stackoverflow",
+        "github_repos",
+        "github-repos",
+        "github",
+        "hackernews",
+        "sov2ex",
+        "v2ex",
+    ]
+    .contains(&name)
+}
+
 #[derive(Clone, Serialize)]
 pub struct ExecutionStatus {
     pub id: u64,
@@ -77,23 +101,7 @@ impl DesktopManager {
         if !["default", "fast", "all", "social", "dev"].contains(&options.route.as_str())
             || !(1..=60).contains(&options.timeout)
             || options.sources.len() > 16
-            || options.sources.iter().any(|s| {
-                ![
-                    "brave",
-                    "parallel",
-                    "tavily",
-                    "exa",
-                    "serpapi",
-                    "firecrawl",
-                    "baidu",
-                    "twitter",
-                    "stackoverflow",
-                    "github_repos",
-                    "hackernews",
-                    "v2ex",
-                ]
-                .contains(&s.as_str())
-            })
+            || options.sources.iter().any(|s| !is_allowed_source(s))
         {
             return Err("Unsupported search options".into());
         }
