@@ -16,8 +16,14 @@ test('sources page mounts one scoped credential panel per allowlisted source', a
   };
   const mounted = await mountSources(root, api);
   const panels = [...root.querySelectorAll('[data-source-panel]')].map(node => node.getAttribute('data-source-panel'));
-  assert.deepEqual(panels, ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github-repos']);
-  assert.deepEqual(seen, panels);
+  assert.deepEqual(panels, ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github-repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter']);
+  assert.deepEqual(seen, panels.slice(0, 8));
+  for (const name of panels.slice(8)) {
+    const row = root.querySelector(`[data-source-panel="${name}"]`);
+    assert.ok(row.querySelector('[data-action="test"]'));
+    assert.equal(row.querySelector('[data-field="key"]'), null);
+    assert.match(row.textContent, name === 'twitter' ? /Cookie.*路径/ : /无需凭据/);
+  }
   assert.equal(root.querySelectorAll('[data-status="store"]').length, 8);
   assert.ok(!root.textContent.includes('Jina'), 'Jina is out of scope for 05');
   mounted.dispose();
@@ -44,10 +50,29 @@ test('per-source test results stay on their own row when outcomes interleave', a
   resolvers.tavily();
   resolvers.brave();
   await flush();
-  assert.equal(panel('tavily').querySelector('[data-status="test"]').textContent, '测试成功：Tavily 可以使用已保存的 key。');
+  assert.equal(panel('tavily').querySelector('[data-status="test"]').textContent, '测试成功：Tavily 本次使用Windows 凭据库。');
   assert.equal(panel('brave').querySelector('[data-status="test"]').textContent, '认证失败：Brave 搜索 拒绝了该 key。');
   assert.equal(panel('exa').querySelector('[data-status="test"]').textContent, '额度不足：Exa 额度已用尽。');
   assert.equal(panel('parallel').querySelector('[data-status="test"]').textContent, '尚未测试', 'untested row is not touched');
+  mounted.dispose();
+  window.close();
+});
+
+test('all twelve sources expose independent explicit test controls', async () => {
+  const window = new Window();
+  const root = window.document.createElement('main');
+  const called = [];
+  const mounted = await mountSources(root, {
+    credentialStatus: async () => ({ store: { state: 'absent' }, effective_source: 'none' }),
+    credentialTest: async source => { called.push(source); return { result: 'success', message: source }; },
+  });
+  for (const row of root.querySelectorAll('[data-source-panel]')) {
+    row.querySelector('[data-action="test"]').click();
+    await flush();
+    assert.match(row.querySelector('[data-status="test"]').textContent, /测试成功/);
+    assert.equal(row.querySelector('[data-info="test"]').textContent, row.getAttribute('data-source-panel'));
+  }
+  assert.equal(new Set(called).size, 12);
   mounted.dispose();
   window.close();
 });

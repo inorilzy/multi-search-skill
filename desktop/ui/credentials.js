@@ -20,9 +20,9 @@ function sourceText(overview) {
   return '未配置';
 }
 
-function testText(result, label) {
+function testText(result, label, provenance) {
   const labels = {
-    success: `测试成功：${label} 可以使用已保存的 key。`,
+    success: `测试成功：${label} 本次使用${provenance}。`,
     auth_failed: `认证失败：${label} 拒绝了该 key。`,
     quota: `额度不足：${label} 额度已用尽。`,
     rate_limited: '触发频率限制：请稍后再试。',
@@ -57,7 +57,15 @@ export async function mountCredentials(root, api, { source = 'tavily' } = {}) {
   const buttons = () => root.querySelectorAll('button');
   let current = { store: { state: 'absent', error: null }, effective_source: 'none', env_overrides_store: false, env_var: '', file_key_count: 0 };
 
+  let generation = 0;
+  const provenance = value => JSON.stringify([value.effective_source, value.env_var, value.file_key_count, value.store?.state, value.store?.saved_at]);
+  function invalidateTest() {
+    generation += 1;
+    text('[data-status="test"]', '尚未测试');
+    text('[data-info="test"]', '');
+  }
   function render(overview) {
+    if (provenance(current) !== provenance({ ...current, ...overview })) invalidateTest();
     current = { ...current, ...overview };
     const files = overview.file_key_count ?? 0;
     text('[data-status="store"]', storeLabels[overview.store.state] || overview.store.state);
@@ -97,6 +105,7 @@ export async function mountCredentials(root, api, { source = 'tavily' } = {}) {
     panel.querySelector('[data-action="cancel-save"]').addEventListener('click', closeSaveConfirm);
   }
   async function doSave(key) {
+    invalidateTest();
     setBusy(true);
     try { render(await api.credentialSave(source, key)); text('[data-info="test"]', '已保存。尚未测试。'); }
     catch (error) { text('[data-info="error"]', typeof error === 'string' ? error : '保存失败，请检查凭据库访问后重试。'); }
@@ -141,6 +150,7 @@ export async function mountCredentials(root, api, { source = 'tavily' } = {}) {
   }
 
   async function confirmDelete() {
+    invalidateTest();
     setBusy(true);
     try {
       render(await api.credentialDelete(source));
@@ -163,18 +173,22 @@ export async function mountCredentials(root, api, { source = 'tavily' } = {}) {
 
   root.querySelector('[data-action="test"]').addEventListener('click', async () => {
     setBusy(true);
+    const testedGeneration = ++generation;
+    const testedSource = sourceText(current);
     text('[data-status="test"]', '正在测试');
     try {
       const outcome = await api.credentialTest(source, null);
-      text('[data-status="test"]', testText(outcome.result, label));
+      if (testedGeneration !== generation) return;
+      text('[data-status="test"]', testText(outcome.result, label, testedSource));
       text('[data-info="test"]', outcome.message || '');
     } catch (error) {
+      if (testedGeneration !== generation) return;
       text('[data-status="test"]', '测试失败');
       text('[data-info="test"]', typeof error === 'string' ? error : '测试启动失败，请检查 CLI 后重试。');
-    } finally { setBusy(false); }
+    } finally { if (testedGeneration === generation) setBusy(false); }
   });
 
   root.querySelector('[data-action="refresh"]').addEventListener('click', refresh);
   await refresh();
-  return { dispose() {} };
+  return { dispose() { generation += 1; } };
 }

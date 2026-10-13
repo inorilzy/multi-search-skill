@@ -74,6 +74,60 @@ test('saving clears the input, never renders the key, and does not run a test', 
   window.close();
 });
 
+test('successful test expires on replacement, deletion and provenance refresh', async () => {
+  const { window, root } = setup();
+  let overview = status({ store: { state: 'present', saved_at: 1 }, effective_source: 'credential_store' });
+  const api = {
+    credentialStatus: async () => overview,
+    credentialTest: async () => ({ result: 'success' }),
+    credentialSave: async () => overview,
+    credentialDelete: async () => status(),
+  };
+  await mountCredentials(root, api);
+  for (const operation of ['save', 'delete', 'refresh']) {
+    root.querySelector('[data-action="test"]').click();
+    await flush();
+    assert.match(root.querySelector('[data-status="test"]').textContent, /测试成功/);
+    if (operation === 'save') {
+      root.querySelector('[data-field="key"]').value = SYNTHETIC_KEY;
+      root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+    } else if (operation === 'delete') {
+      root.querySelector('[data-action="delete"]').click();
+      root.querySelector('[data-action="confirm-delete"]').click();
+    } else {
+      overview = status({ effective_source: 'env', env_var: 'TAVILY_API_KEY' });
+      root.querySelector('[data-action="refresh"]').click();
+    }
+    await flush();
+    assert.equal(root.querySelector('[data-status="test"]').textContent, '尚未测试', operation);
+  }
+  root.querySelector('[data-action="test"]').click();
+  await flush();
+  assert.match(root.querySelector('[data-status="test"]').textContent, /环境变量 TAVILY_API_KEY/);
+  assert.doesNotMatch(root.querySelector('[data-status="test"]').textContent, /已保存的 key/);
+  window.close();
+});
+
+test('late credential test cannot validate a replacement key', async () => {
+  const { window, root } = setup();
+  let resolveTest;
+  const overview = status({ store: { state: 'present', saved_at: 1 }, effective_source: 'credential_store' });
+  await mountCredentials(root, {
+    credentialStatus: async () => overview,
+    credentialTest: () => new Promise(resolve => { resolveTest = resolve; }),
+    credentialSave: async () => overview,
+  });
+  root.querySelector('[data-action="test"]').click();
+  root.querySelector('[data-field="key"]').value = SYNTHETIC_KEY;
+  root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  resolveTest({ result: 'success', message: 'old credential response' });
+  await flush();
+  assert.equal(root.querySelector('[data-status="test"]').textContent, '尚未测试');
+  assert.doesNotMatch(root.textContent, /old credential response/);
+  window.close();
+});
+
 test('save errors are shown as-is and the key value is not echoed back', async () => {
   const { window, root } = setup();
   const api = {
@@ -207,7 +261,7 @@ test('delete warning with no fallback says the key must be pasted again', async 
 
 test('test results distinguish success, auth, quota, and network outcomes', async () => {
   const cases = [
-    ['success', '测试成功：Tavily 可以使用已保存的 key。'],
+    ['success', '测试成功：Tavily 本次使用Windows 凭据库。'],
     ['auth_failed', '认证失败：Tavily 拒绝了该 key。'],
     ['quota', '额度不足：Tavily 额度已用尽。'],
     ['network', '网络错误：无法连接 Tavily。'],
