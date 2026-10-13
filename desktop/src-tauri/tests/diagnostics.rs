@@ -57,6 +57,29 @@ fn invalid_executable_and_failed_version_have_distinct_reasons() {
 }
 
 #[test]
+fn legacy_cli_reports_version_failure_with_exit_code_and_update_guidance() {
+    let mut profile = common::Profile::new();
+    profile.environment.variables.insert("FIXTURE_VERSION".into(), "legacy".into());
+    let status = DesktopManager::new(profile.environment.clone()).detect_cli(None);
+    for row in [&status.app, &status.user] {
+        assert_eq!(row.status, "version_failed");
+        assert!(row.reason.contains("退出码 2"), "{}", row.reason);
+        assert!(row.reason.contains("command"), "{}", row.reason);
+        assert!(row.reason.contains("更新"), "{}", row.reason);
+    }
+}
+
+#[test]
+fn failed_version_output_is_redacted_before_returning_to_callers() {
+    let mut profile = common::Profile::new();
+    profile.environment.variables.insert("FIXTURE_VERSION".into(), "secret".into());
+    profile.environment.variables.insert("EXA_API_KEY".into(), "synthetic-detection-secret".into());
+    let status = DesktopManager::new(profile.environment.clone()).detect_cli(None);
+    assert!(!status.app.reason.contains("synthetic-detection-secret"));
+    assert!(status.app.reason.contains("REDACTED"), "{}", status.app.reason);
+}
+
+#[test]
 fn version_timeout_is_bounded() {
     let mut profile = common::Profile::new();
     profile.environment.user_path.clear();

@@ -6,7 +6,7 @@ fn registry_string(
     subkey: &str,
     name: &str,
 ) -> Option<String> {
-    use windows_sys::Win32::System::Registry::{RegGetValueW, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ};
+    use windows_sys::Win32::System::Registry::{RegGetValueW, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ};
     let sub: Vec<u16> = subkey.encode_utf16().chain(Some(0)).collect();
     let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
     let mut bytes = 0;
@@ -15,7 +15,7 @@ fn registry_string(
             root,
             sub.as_ptr(),
             name.as_ptr(),
-            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             &mut bytes,
@@ -28,7 +28,7 @@ fn registry_string(
             root,
             sub.as_ptr(),
             name.as_ptr(),
-            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ,
+            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
             std::ptr::null_mut(),
             value.as_mut_ptr() as _,
             &mut bytes,
@@ -36,12 +36,27 @@ fn registry_string(
         {
             return None;
         }
+        // 读取原始值后统一用 expand 展开，避免 API 自动展开留下缓冲区内嵌 NUL。
+        value.truncate(bytes as usize / 2);
         while value.last() == Some(&0) {
             value.pop();
         }
         Some(String::from_utf16_lossy(&value))
     }
 }
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn machine_registry_path_has_no_embedded_nul_before_building_child_environment() {
+        let path = super::registry_string(
+            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
+            "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+            "Path",
+        ).expect("机器 PATH 应可只读查询");
+        assert!(!path.contains('\0'), "注册表读取生成了含 NUL 的子进程 PATH");
+    }
+}
+
 pub(crate) fn expand(value: &str, variables: &BTreeMap<String, String>) -> String {
     let mut output = value.to_string();
     for _ in 0..4 {

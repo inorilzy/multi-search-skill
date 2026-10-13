@@ -48,7 +48,16 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
         root.querySelector(`[data-status="${scope}"]`).dataset.kind = row.status;
         root.querySelector(`[data-info="${scope}"]`).textContent = [row.version && `v${row.version}`, row.path, row.reason].filter(Boolean).join('\n');
       }
-      root.querySelector('[data-info="restart"]').textContent = status.restart_required ? '用户环境已可发现 CLI；本次测试可直接使用新路径。应用继承的旧 PATH 未改变，请重启终端或 Agent 宿主。' : status.user.status !== 'ready' ? '应用可调用不代表用户终端可发现命令。请检查用户 PATH；更新后重启终端或 Agent 宿主。' : '新终端可以发现 CLI。已打开的终端或 Agent 宿主如仍不可用，请重启后重试。';
+      const reasons = [status.app.status, status.user.status];
+      root.querySelector('[data-info="restart"]').textContent = status.restart_required
+        ? '用户环境已可发现 CLI；本次测试可直接使用新路径。应用继承的旧 PATH 未改变，请重启终端或 Agent 宿主。'
+        : reasons.includes('version_failed')
+          ? '已找到 CLI，但版本检测未通过。请更新 CLI 后点击“重新检测”；已有 uv 安装需通过 uv 更新，桌面安装不会覆盖它。'
+          : reasons.includes('not_executable') || reasons.includes('unavailable')
+            ? 'CLI 未通过执行检测。请先按上方原因检查文件权限、运行时或指定路径，再重新检测。'
+            : status.user.status === 'missing'
+              ? '用户环境未发现 CLI。请检查用户 PATH；更新后重启终端或 Agent 宿主。'
+              : '新终端可以发现 CLI。已打开的终端或 Agent 宿主如仍不可用，请重启后重试。';
       root.querySelector('[data-info="error"]').textContent = '';
     } catch { appReady = false; controls(false); root.querySelector('[data-info="error"]').textContent = '检测失败，请重新检测。'; }
     finally { button.disabled = false; }

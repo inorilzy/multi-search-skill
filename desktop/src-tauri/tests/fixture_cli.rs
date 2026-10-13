@@ -24,6 +24,14 @@ fn main() {
                 eprintln!("fixture version failure");
                 std::process::exit(7);
             }
+            Ok("legacy") => {
+                eprintln!("usage error: the following arguments are required: command");
+                std::process::exit(2);
+            }
+            Ok("secret") => {
+                eprintln!("{}", env::var("EXA_API_KEY").unwrap());
+                std::process::exit(2);
+            }
             Ok("hang") => thread::sleep(Duration::from_secs(30)),
             Ok(version) => println!("multi-search {version}"),
             Err(_) => println!("multi-search 0.4.0"),

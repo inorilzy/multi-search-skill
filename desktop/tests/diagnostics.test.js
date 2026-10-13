@@ -26,6 +26,24 @@ test('new user PATH enables immediate search while old app environment stays vis
   window.close();
 });
 
+test('a discovered outdated CLI suggests an update, not PATH changes, and refresh restores search', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let ready = false;
+  const api = { detect: async () => {
+    const row = { status: ready ? 'ready' : 'version_failed', path: 'C:\\fixture\\multi-search.exe', reason: ready ? '' : '退出码 2；请更新 CLI' };
+    return { app: row, user: row, restart_required: false };
+  } };
+  const page = await mountDiagnostics(root, api);
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true);
+  assert.match(root.querySelector('[data-info="restart"]').textContent, /更新 CLI/);
+  assert.doesNotMatch(root.querySelector('[data-info="restart"]').textContent, /检查用户 PATH/);
+  ready = true;
+  root.querySelector('[data-action="refresh"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  page.dispose(); window.close();
+});
+
 test('test search reflects partial execution and renders provider text without HTML', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
   const api = {

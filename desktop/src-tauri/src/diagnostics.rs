@@ -113,9 +113,9 @@ impl DesktopManager {
             &self.environment,
             std::time::Duration::from_secs(3),
         ) {
-            Err(_) => {
+            Err(error) => {
                 result.status = "not_executable".into();
-                result.reason = "CLI cannot be executed at this path".into();
+                result.reason = format!("已找到 CLI，但无法启动：{error}。请检查文件权限与运行时是否完整。");
             }
             Ok(output) => {
                 let version = output
@@ -138,7 +138,20 @@ impl DesktopManager {
                     });
                 } else {
                     result.status = "version_failed".into();
-                    result.reason = "CLI version probe failed or timed out; update the CLI if --version is unsupported".into();
+                    result.reason = if output.timed_out {
+                        "已找到 CLI，但版本检查超过 3 秒。请检查 CLI 运行时，或更新 CLI 后重新检测。".into()
+                    } else {
+                        let detail = crate::redaction::scrub(
+                            output.stderr.trim(),
+                            &crate::redaction::secrets(&self.environment),
+                        );
+                        let detail: String = detail.chars().take(400).collect();
+                        format!(
+                            "已找到 CLI，但 --version 未返回有效版本（退出码 {}）。请更新 CLI 后重新检测。{}",
+                            output.code.map(|code| code.to_string()).unwrap_or_else(|| "未知".into()),
+                            if detail.is_empty() { String::new() } else { format!("\n{detail}") },
+                        )
+                    };
                 }
             }
         }
