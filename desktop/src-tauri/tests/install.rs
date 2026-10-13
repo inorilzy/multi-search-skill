@@ -384,7 +384,7 @@ fn duplicate_and_case_conflicting_paths_in_a_bound_manifest_are_refused() {
 }
 
 #[test]
-fn interrupted_staging_and_partial_bin_residue_are_cleared_by_the_next_run() {
+fn unrecorded_residue_is_preserved_and_requires_explicit_recovery() {
     let profile = common::Profile::new();
     let root = profile.root.join("install-interrupted");
     fs::create_dir_all(root.join("staging-111").join("bin")).unwrap();
@@ -398,9 +398,10 @@ fn interrupted_staging_and_partial_bin_residue_are_cleared_by_the_next_run() {
     .unwrap();
     let src = source(&profile, "src-interrupted", "0.4.0", None);
     let outcome = DesktopManager::new(env(&profile, &root, Some(&src))).install();
-    assert_eq!(outcome.status, "installed", "{}", outcome.reason);
-    assert!(!fs::read_dir(&root).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().starts_with("staging-")));
-    assert_eq!(fs::read(root.join("bin").join("multi-search.exe")).unwrap(), fs::read(profile.root.join("multi-search.exe")).unwrap());
+    assert_eq!(outcome.status, "unknown_existing", "{}", outcome.reason);
+    assert_eq!(fs::read(root.join("staging-111/bin/multi-search.exe")).unwrap(), b"partial");
+    assert_eq!(fs::read(root.join("bin/multi-search.exe")).unwrap(), b"half written");
+    assert!(!root.join("active.json").exists());
 }
 
 /// Real-bundle acceptance: run with `MULTI_SEARCH_REAL_BUNDLE=<dir> cargo test -- --ignored`.

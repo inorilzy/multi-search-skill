@@ -433,30 +433,76 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), Failure> {
     fs::rename(&tmp, path).map_err(|e| ("failed", format!("无法提交安装状态：{e}")))
 }
 
-/// Removes only staging directories created by this installer inside an owned root.
-fn clear_staging(root: &Path) {
-    if ownership(root) != Ownership::Owned {
-        return;
-    }
-    if let Ok(entries) = fs::read_dir(root) {
-        for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().starts_with("staging-") {
-                let _ = fs::remove_dir_all(entry.path());
+/// Cleanup is tied to a directory exclusively created by this call, never a filename-prefix scan.
+struct StagingCleanup(PathBuf);
+impl Drop for StagingCleanup {
+    fn drop(&mut self) { let _ = remove_entry(&self.0); }
+}
+
+/// Only exact manifest files are owned; their parent directories may contain user data.
+fn owned_names(manifest: &Manifest) -> Vec<String> {
+    std::iter::once(MANIFEST.to_string()).chain(manifest.files.iter().map(|f| f.path.clone())).collect()
+}
+
+fn destination(root: &Path, name: &str) -> Result<PathBuf, Failure> {
+    for ancestor in root.ancestors() {
+        if let Ok(meta) = fs::symlink_metadata(ancestor) {
+            if is_link(&meta) || !meta.is_dir() {
+                return Err(("unknown_existing", "安装路径含链接或非目录，未修改".into()));
             }
+        }
+    }
+    let mut path = root.to_path_buf();
+    let parts: Vec<_> = name.split('/').collect();
+    for (index, part) in parts.iter().enumerate() {
+        path.push(part);
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if is_link(&meta) || (index + 1 < parts.len() && !meta.is_dir()) =>
+                return Err(("unknown_existing", format!("目标路径含链接或非目录，未修改：{name}"))),
+            Ok(_) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) => return Err(("failed", replace_error(&error))),
+        }
+    }
+    Ok(path)
+}
+
+fn move_file(from: &Path, to: &Path, name: &str) -> Result<(), Failure> {
+    let source = resolve(from, name)?;
+    let target = destination(to, name)?;
+    if fs::symlink_metadata(&target).is_ok() {
+        return Err(("unknown_existing", format!("目标已有内容，未覆盖：{name}")));
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| ("failed", replace_error(&e)))?;
+    }
+    if let Err(error) = fs::rename(source, target) {
+        prune_empty_parents(to, &[name.to_string()]);
+        return Err(("failed", replace_error(&error)));
+    }
+    Ok(())
+}
+
+fn prune_empty_parents(root: &Path, names: &[String]) {
+    for name in names {
+        let mut parent = root.join(name).parent().map(Path::to_path_buf);
+        while let Some(path) = parent {
+            if path == root { break; }
+            if destination(root, &path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/")).is_err() { break; }
+            if fs::remove_dir(&path).is_err() { break; }
+            parent = path.parent().map(Path::to_path_buf);
         }
     }
 }
 
-/// Top-level entries of the bundle (`bin`, `runtime`, `manifest.json`, ...), compared case-insensitively.
-fn top_level_names(manifest: &Manifest) -> Vec<String> {
-    let mut names = vec![MANIFEST.to_string()];
-    for file in &manifest.files {
-        let first = file.path.split('/').next().unwrap_or("").to_string();
-        if !names.iter().any(|n| n.eq_ignore_ascii_case(&first)) {
-            names.push(first);
+fn check_destinations(root: &Path, names: &[String], previous: &[String]) -> Result<(), Failure> {
+    for name in names {
+        let target = destination(root, name)?;
+        if fs::symlink_metadata(&target).is_ok() && !previous.iter().any(|p| p.eq_ignore_ascii_case(name)) {
+            return Err(("unknown_existing", format!("新版本路径与未知内容冲突，未修改：{name}")));
         }
     }
-    names
+    Ok(())
 }
 
 /// Removes a residue inside an owned root. Links are removed as files, never followed.
@@ -477,52 +523,46 @@ fn remove_owned_entries(root: &Path, names: &[String]) -> Result<(), Failure> {
     if fs::create_dir(&holding).is_err() {
         return Err(("failed", "无法创建卸载暂存目录，未做任何修改".into()));
     }
-    let mut moved: Vec<&String> = Vec::new();
-    let mut failure = None;
+    let mut moved = Vec::new();
     for name in names {
-        let from = root.join(name);
-        if fs::symlink_metadata(&from).is_err() {
-            continue;
+        if let Err(failure) = move_file(root, &holding, name) {
+            return Err(restore_backup(root, &holding, &moved, &[], failure));
         }
-        match fs::rename(&from, holding.join(name)) {
-            Ok(()) => moved.push(name),
-            Err(error) => {
-                failure = Some(("failed", replace_error(&error)));
-                break;
-            }
-        }
-    }
-    if let Some(failure) = failure {
-        for name in moved.iter().rev() {
-            let _ = fs::rename(holding.join(name), root.join(name));
-        }
-        let _ = fs::remove_dir(&holding);
-        return Err(failure);
+        moved.push(name.clone());
     }
     // Past this point the names are detached. If the final delete fails, the pointer stays and the
     // install reads as unverified (its files are gone), so later actions are blocked, not silently wrong.
     remove_entry(&holding)?;
-    let _ = fs::remove_dir(&holding);
+    prune_empty_parents(root, names);
     Ok(())
 }
 
 /// Swaps the verified staging tree into the root and commits the pointer last.
-fn activate(root: &Path, staging: &Path, names: &[String], active: &Active) -> Result<(), Failure> {
+fn activate(root: &Path, staging: &Path, names: &[String], active: &Active, moved: &mut Vec<String>) -> Result<(), Failure> {
     for name in names {
-        remove_entry(&root.join(name))?;
+        move_file(staging, root, name)?;
+        moved.push(name.clone());
     }
-    for name in names {
-        fs::rename(staging.join(name), root.join(name)).map_err(|e| ("failed", format!("无法激活 CLI：{e}")))?;
+    write_json(&root.join(ACTIVE), active)?;
+    moved.push(ACTIVE.into());
+    Ok(())
+}
+
+fn remove_owned_file(root: &Path, name: &str) -> Result<(), Failure> {
+    let path = destination(root, name)?;
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(("failed", replace_error(&error))),
     }
-    write_json(&root.join(ACTIVE), active)
 }
 
 /// Leaves no active pointer and no bundle files behind after a failed activation.
 fn rollback(root: &Path, names: &[String]) {
-    let _ = fs::remove_file(root.join(ACTIVE));
-    for name in names {
-        let _ = remove_entry(&root.join(name));
+    for name in names.iter().rev() {
+        let _ = remove_owned_file(root, name);
     }
+    prune_empty_parents(root, names);
 }
 
 /// Names of the top-level entries the recorded manifest owns; empty when the manifest is unreadable.
@@ -531,8 +571,28 @@ fn read_manifest_names(root: &Path, recorded_anchor: &str) -> Vec<String> {
         return Vec::new();
     };
     match parse_manifest(&raw, recorded_anchor) {
-        Ok(manifest) => top_level_names(&manifest),
+        Ok(manifest) => owned_names(&manifest),
         Err(_) => Vec::new(),
+    }
+}
+
+/// Restore only journaled moves; a failed restore leaves all remaining recovery data in place.
+fn restore_backup(root: &Path, backup: &Path, moved: &[String], activated: &[String], failure: Failure) -> Failure {
+    let mut errors = Vec::new();
+    for name in activated.iter().rev() {
+        if let Err((_, reason)) = remove_owned_file(root, name) { errors.push(reason); }
+    }
+    for name in moved.iter().rev() {
+        if let Err((_, reason)) = move_file(backup, root, name) {
+            errors.push(reason);
+        }
+    }
+    if errors.is_empty() {
+        prune_empty_parents(backup, moved);
+        let _ = fs::remove_dir(backup);
+        (failure.0, format!("{}；已恢复旧版本", failure.1))
+    } else {
+        ("failed", format!("{}；回滚未完成：{}；恢复文件保留于 {}", failure.1, errors.join("；"), backup.display()))
     }
 }
 
@@ -562,6 +622,7 @@ fn perform_update(
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let staging = root.join(format!("staging-{nonce}"));
     fs::create_dir(&staging).map_err(|e| ("failed", format!("无法创建暂存目录：{e}")))?;
+    let _staging_cleanup = StagingCleanup(staging.clone());
     for file in &manifest.files {
         let from = resolve(source, &file.path)?;
         let to = staging.join(&file.path);
@@ -577,35 +638,31 @@ fn perform_update(
         return Err(("failed", "CLI 版本与安装清单不一致，已拒绝更新".into()));
     }
     if let Err(reason) = DesktopManager::new(env.clone())
-        .check_compatibility(&staging.join("bin").join(ARTIFACT).to_string_lossy())
+        .check_managed_compatibility(&staging.join("bin").join(ARTIFACT).to_string_lossy())
     {
-        return Err(("failed", format!("新 CLI 与已安装 Skill 不兼容，未更新：{reason}")));
+        return Err((if reason.starts_with("unverified:") { "unverified" } else { "failed" }, format!("新 CLI 与已安装 Skill 不兼容，未更新：{reason}")));
     }
     step(steps, "暂存、校验并探测新 CLI", true, &format!("multi-search {version}"));
 
-    // Keep the previous CLI reachable until the new one is active and probed.
-    let names = top_level_names(&manifest);
-    let backup = root.join(format!("backup-{}", active.version));
-    let _ = fs::remove_dir_all(&backup);
+    // Journal completed moves, including the exact old active record. Never reuse a recovery directory.
+    let names = owned_names(&manifest);
+    let mut old_names = read_manifest_names(root, &active.manifest_sha256);
+    check_destinations(root, &names, &old_names)?;
+    old_names.push(ACTIVE.into());
+    let backup = root.join(format!("backup-{nonce}"));
     fs::create_dir(&backup).map_err(|e| ("failed", format!("无法创建回滚目录：{e}")))?;
-    for name in &names {
-        let current = root.join(name);
-        if fs::symlink_metadata(&current).is_ok() {
-            fs::rename(&current, backup.join(name)).map_err(|e| ("failed", format!("无法备份旧 CLI：{e}")))?;
+    let mut moved = Vec::new();
+    for name in &old_names {
+        if let Err((_, reason)) = move_file(root, &backup, name) {
+            let failure = ("failed", format!("无法备份旧 CLI：{reason}"));
+            return Err(restore_backup(root, &backup, &moved, &[], failure));
         }
+        moved.push(name.clone());
     }
-    let restore = |names: &[String]| {
-        for name in names {
-            let _ = remove_entry(&root.join(name));
-            let _ = fs::rename(backup.join(name), root.join(name));
-        }
-        let _ = fs::remove_file(root.join(ACTIVE));
-        let _ = fs::remove_dir_all(&backup);
-    };
     let next = Active { version: version.clone(), manifest_sha256: expected };
-    if let Err(error) = activate(root, &staging, &names, &next) {
-        restore(&names);
-        return Err(error);
+    let mut new_names = Vec::new();
+    if let Err(error) = activate(root, &staging, &names, &next, &mut new_names) {
+        return Err(restore_backup(root, &backup, &moved, &new_names, error));
     }
     let bin = root.join("bin").join(ARTIFACT);
     match probe(&bin, env) {
@@ -615,9 +672,10 @@ fn perform_update(
             Ok((version, bin))
         }
         _ => {
-            restore(&names);
-            step(steps, "激活新版本", false, "已回滚");
-            Err(("failed", "新 CLI 激活后检测失败，已恢复旧版本".into()))
+            let failure = restore_backup(root, &backup, &moved, &new_names,
+                ("failed", "新 CLI 激活后检测失败".into()));
+            step(steps, "激活新版本", false, &failure.1);
+            Err(failure)
         }
     }
 }
@@ -656,13 +714,13 @@ fn perform(
     }
     step(steps, "创建安装目录", true, &root.to_string_lossy());
 
-    clear_staging(root);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let staging = root.join(format!("staging-{nonce}"));
     fs::create_dir(&staging).map_err(|e| ("failed", format!("无法创建暂存目录：{e}")))?;
+    let _staging_cleanup = StagingCleanup(staging.clone());
     for file in &manifest.files {
         let from = resolve(source, &file.path)?;
         let to = staging.join(&file.path);
@@ -681,14 +739,16 @@ fn perform(
     }
     step(steps, "验证可执行性", true, &format!("multi-search {version}"));
 
-    let names = top_level_names(&manifest);
+    let names = owned_names(&manifest);
+    check_destinations(root, &names, &[])?;
     let active = Active {
         version: version.clone(),
         manifest_sha256: expected,
     };
     let bin = root.join("bin").join(ARTIFACT);
-    if let Err(error) = activate(root, &staging, &names, &active) {
-        rollback(root, &names);
+    let mut activated = Vec::new();
+    if let Err(error) = activate(root, &staging, &names, &active, &mut activated) {
+        rollback(root, &activated);
         return Err(error);
     }
     step(steps, "激活安装", true, &bin.to_string_lossy());
@@ -699,7 +759,7 @@ fn perform(
             Ok((version, bin))
         }
         _ => {
-            rollback(root, &names);
+            rollback(root, &activated);
             step(steps, "重新检测安装结果", false, "已回滚");
             Err(("failed", "安装后重新检测失败，已回滚".into()))
         }
@@ -766,13 +826,13 @@ impl DesktopManager {
             plan.compatibility_reason = "无法运行待安装的 CLI，无法确认 Skill 兼容性".into();
             return;
         }
-        match self.check_compatibility(&artifact.to_string_lossy()) {
+        match self.check_managed_compatibility(&artifact.to_string_lossy()) {
             Ok(()) => {
                 plan.compatibility = "compatible".into();
                 plan.compatibility_reason = "现有 Skill 所需的 CLI 参数均可用".into();
             }
             Err(reason) => {
-                plan.compatibility = "incompatible".into();
+                plan.compatibility = if reason.starts_with("unverified:") { "unverified" } else { "incompatible" }.into();
                 plan.compatibility_reason = reason;
             }
         }
@@ -802,7 +862,6 @@ impl DesktopManager {
         };
         let mut steps = Vec::new();
         let result = perform_update(&self.environment, &lay.root, &source, &mut steps);
-        clear_staging(&lay.root);
         match result {
             Ok(installed) => outcome("installed", steps, Some(installed), String::new()),
             Err((status, reason)) => {
@@ -826,13 +885,13 @@ impl DesktopManager {
             }
             return outcome("not_installed", Vec::new(), None, "未发现由本工具安装的 CLI，未做任何修改".into());
         };
-        let names = read_manifest_names(&lay.root, &active.manifest_sha256);
+        let mut names = read_manifest_names(&lay.root, &active.manifest_sha256);
+        names.push(ACTIVE.into());
         let mut steps = Vec::new();
         if let Err((status, reason)) = remove_owned_entries(&lay.root, &names) {
             step(&mut steps, status, false, &reason);
             return outcome(status, steps, None, reason);
         }
-        let _ = fs::remove_file(lay.root.join(ACTIVE));
         step(&mut steps, "卸载 CLI", true, &active.version);
         if let Some(skill) = kept_skill_directory(&self.environment) {
             if fs::symlink_metadata(&skill).is_ok() {
@@ -857,7 +916,6 @@ impl DesktopManager {
         };
         let mut steps = Vec::new();
         let result = perform(&self.environment, &lay.root, &source, &mut steps);
-        clear_staging(&lay.root);
         match result {
             Ok(installed) => outcome("installed", steps, Some(installed), String::new()),
             Err((status, reason)) => {

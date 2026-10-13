@@ -57,6 +57,17 @@ pub(crate) fn resolve_source(name: &str) -> Result<&'static SourceEntry, String>
         .ok_or_else(|| "不支持的搜索源".to_string())
 }
 
+const NON_KEY_SOURCES: &[SourceEntry] = &[
+    SourceEntry { source: "hackernews", provider: "hackernews", env: &[], aliases: &[], label: "Hacker News" },
+    SourceEntry { source: "stackoverflow", provider: "stackoverflow", env: &[], aliases: &[], label: "Stack Overflow" },
+    SourceEntry { source: "sov2ex", provider: "sov2ex", env: &[], aliases: &[], label: "V2EX" },
+    SourceEntry { source: "twitter", provider: "twitter", env: &[], aliases: &[], label: "Twitter" },
+];
+
+pub(crate) fn resolve_test_source(name: &str) -> Result<&'static SourceEntry, String> {
+    resolve_source(name).or_else(|_| NON_KEY_SOURCES.iter().find(|entry| entry.source == name).ok_or_else(|| "不支持的搜索源".into()))
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct CredentialOverview {
     /// Public source name this overview describes.
@@ -121,9 +132,11 @@ pub(crate) fn overview(
 ) -> CredentialOverview {
     let namespace = credential::namespace(variables);
     let store = credential::status_of(credential::load(backend, &namespace, entry.provider));
+    // Python load_keys applies aliases in declaration order, so the last nonempty value wins.
     let env_var = entry
         .env
         .iter()
+        .rev()
         .find(|name| variables.get(**name).is_some_and(|value| !value.is_empty()))
         .map(|name| name.to_string())
         .unwrap_or_default();
@@ -246,9 +259,18 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
 pub(crate) struct TestConfig(pub PathBuf);
 #[cfg(feature = "native-window")]
 impl TestConfig {
-    pub fn create(dir: &Path, entry: &SourceEntry) -> std::io::Result<Self> {
-        let path = dir.join(format!("{}-test-{}.json", entry.provider, std::process::id()));
-        std::fs::write(&path, test_config_json())?;
+    pub fn create(dir: &Path, entry: &SourceEntry, environment: &RuntimeEnvironment) -> std::io::Result<Self> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = dir.join(format!("{}-test-{}-{id}.json", entry.provider, std::process::id()));
+        let view = crate::settings::view(environment);
+        if view.status == "config_unreadable" {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "无法读取搜索设置"));
+        }
+        let mut config: Value = serde_json::from_str(&test_config_json()).unwrap();
+        config["disabled_sources"] = serde_json::json!(view.disabled_sources);
+        if let Some(cookies) = view.twitter_cookies_path { config["twitter_cookies_path"] = Value::String(cookies); }
+        std::fs::write(&path, serde_json::to_vec(&config)?)?;
         Ok(Self(path))
     }
 }
@@ -277,7 +299,7 @@ impl DesktopManager {
     /// Run one explicit test of an allowlisted source through the CLI, which reads the store itself.
     pub(crate) fn test_source(&self, cli: PathBuf, entry: &SourceEntry, query: &str) -> Result<TestOutcome, String> {
         let dir = std::env::temp_dir();
-        let config = TestConfig::create(&dir, entry).map_err(|_| "无法准备测试配置".to_string())?;
+        let config = TestConfig::create(&dir, entry, &self.environment).map_err(|_| "无法准备测试配置".to_string())?;
         let environment = test_environment(&self.environment, &config);
         let output = crate::process::bounded(&cli, &test_args(query, entry), &environment, TEST_TIMEOUT)
             .map_err(|_| "无法启动 CLI".to_string())?;
@@ -492,6 +514,32 @@ mod migration_tests {
     use super::*;
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[cfg(feature = "native-window")]
+    #[test]
+    fn source_test_config_keeps_twitter_path_and_disabled_sources_without_cookie_contents() {
+        let root = std::env::temp_dir().join(format!("ms-test-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let cookies = root.join("cookies.json");
+        std::fs::write(&cookies, "synthetic-cookie-secret").unwrap();
+        let settings = root.join("settings.json");
+        std::fs::write(&settings, serde_json::to_vec(&serde_json::json!({"twitter_cookies_path": cookies, "disabled_sources": ["brave"]})).unwrap()).unwrap();
+        let environment = RuntimeEnvironment { variables: BTreeMap::from([
+            ("HOME".into(), root.to_string_lossy().into_owned()),
+            ("USERPROFILE".into(), root.to_string_lossy().into_owned()),
+            (CONFIG_ENV.into(), settings.to_string_lossy().into_owned()),
+        ]), app_path: vec![], user_path: vec![], cwd: root.clone() };
+        let entry = resolve_test_source("twitter").unwrap();
+        let config = TestConfig::create(&root, entry, &environment).unwrap();
+        let raw = std::fs::read_to_string(&config.0).unwrap();
+        let value: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["twitter_cookies_path"], serde_json::json!(cookies));
+        assert_eq!(value["disabled_sources"], serde_json::json!(["brave"]));
+        assert_eq!(value["no_scrape"], true);
+        assert!(!raw.contains("synthetic-cookie-secret"));
+        drop(config);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn github_repos_maps_to_github_provider_and_duplicates_collapse() {

@@ -158,6 +158,58 @@ fn env_override_is_named_by_variable_and_never_valued() {
 }
 
 #[test]
+fn all_twelve_source_tests_use_typed_cli_arguments_and_independent_status() {
+    for source in ALLOWED.iter().copied().chain(["hackernews", "stackoverflow", "sov2ex", "twitter"]) {
+        let payload = serde_json::json!({"provider_status": [{"source": source.replace('-', "_"), "status": "ok"}]});
+        let (args, outcome) = fixture::source_test(source, &payload).unwrap();
+        assert_eq!(args[args.iter().position(|arg| arg == "--source").unwrap() + 1], source);
+        assert_eq!(outcome.result, "success");
+        let failed = serde_json::json!({"provider_status": [{"source": source, "status": "failed", "errors": [{"error_type": "network"}]}]});
+        assert_eq!(fixture::source_test(source, &failed).unwrap().1.result, "network");
+        if !ALLOWED.contains(&source) { assert!(fixture::resolve(source).is_err(), "non-key source cannot access key CRUD"); }
+    }
+    assert!(fixture::source_test("jina", &serde_json::json!({})).is_err());
+}
+
+#[test]
+fn environment_alias_precedence_matches_real_python_load_keys_contract() {
+    let home = Home::new("cross-language-alias");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let script = r#"
+import json, sys
+from pathlib import Path
+from multi_search_mcp.src.state.keys import KEY_ENV_PAIRS, CREDENTIAL_STORE_PROVIDERS, load_keys
+cases = []
+for provider in CREDENTIAL_STORE_PROVIDERS:
+    aliases = [name for name, key in KEY_ENV_PAIRS if key == provider]
+    for length in range(1, len(aliases) + 1):
+        present = aliases[:length]
+        env = {name: 'synthetic-alias-' + str(i) for i, name in enumerate(present)}
+        env.update({name: '' for name in aliases[length:]})
+        loaded = load_keys(keys_file=Path(sys.argv[1]) / 'absent.json', environ=env)
+        expected = next(name for name in present if env[name] == loaded[provider])
+        cases.append({'provider': provider, 'present': present, 'empty': aliases[length:], 'expected': expected})
+print(json.dumps(cases))
+"#;
+    let output = std::process::Command::new("python").args(["-B", "-c", script])
+        .arg(&home.0).env("PYTHONPATH", &root).env("HOME", &home.0).env("USERPROFILE", &home.0)
+        .env("MULTI_SEARCH_TEST_ISOLATION", "1").output().unwrap();
+    assert!(output.status.success(), "Python contract process failed");
+    let cases: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let backend = Memory::default();
+    for case in cases.as_array().unwrap() {
+        let provider = case["provider"].as_str().unwrap();
+        let source = if provider == "github" { "github-repos" } else { provider };
+        let mut vars = home.vars();
+        for name in case["present"].as_array().unwrap() { vars.insert(name.as_str().unwrap().into(), "synthetic-alias".into()); }
+        for name in case["empty"].as_array().unwrap() { vars.insert(name.as_str().unwrap().into(), String::new()); }
+        let row = fixture::overview_for(&backend, &vars, source).unwrap();
+        assert_eq!(row.env_var, case["expected"].as_str().unwrap(), "{source}");
+        assert_eq!(row.effective_source, "env");
+    }
+}
+
+#[test]
 fn corrupt_keys_file_counts_as_zero_and_is_not_echoed() {
     let backend = Memory::default();
     let home = Home::new("corrupt");

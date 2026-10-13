@@ -2,6 +2,7 @@
 use crate::{process, DesktopManager, RuntimeEnvironment};
 use serde::Serialize;
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -30,11 +31,79 @@ pub(crate) const FILES: [(&str, &str); 3] = [
 ];
 
 /// Flags the Skill relies on, per subcommand, as printed by the CLI's own `--help`.
-pub(crate) const REQUIRED_FLAGS: [(&str, &[&str]); 3] = [
-    ("search", &["--route", "--expand", "--format"]),
-    ("fetch", &["--full-content", "--format"]),
-    ("read", &["--keyword", "--offset", "--format"]),
+pub(crate) const REQUIRED_FLAGS: [(&str, &[&str]); 4] = [
+    ("search", &["--route", "--expand", "--format", "--source", "--count", "--timeout"]),
+    ("fetch", &["--full-content", "--format", "--url"]),
+    ("read", &["--keyword", "--offset", "--format", "--limit"]),
+    ("doctor", &["--no-keys", "--format"]),
 ];
+
+type Requirements = BTreeMap<String, Vec<String>>;
+fn requirements() -> Requirements {
+    REQUIRED_FLAGS.iter().map(|(command, flags)| (command.to_string(), flags.iter().map(|f| f.to_string()).collect())).collect()
+}
+
+fn registry_path(environment: &RuntimeEnvironment) -> Result<PathBuf, String> {
+    Ok(home_directory(environment).ok_or("Missing user profile")?.join(".multi-search/managed-skills.json"))
+}
+
+fn managed_targets(environment: &RuntimeEnvironment) -> Result<Vec<PathBuf>, String> {
+    let path = registry_path(environment)?;
+    let targets: Vec<PathBuf> = match fs::read(&path) {
+        Ok(raw) => serde_json::from_slice(&raw).map_err(|_| "unverified: invalid managed Skill registry")?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => return Err("unverified: unreadable managed Skill registry".into()),
+    };
+    if targets.iter().any(|p| !p.is_absolute() || !p.ends_with(".claude/skills/multi-search")) {
+        return Err("unverified: invalid managed Skill target".into());
+    }
+    Ok(targets)
+}
+
+pub(crate) fn record_target(environment: &RuntimeEnvironment, target: &Path, present: bool) -> Result<(), String> {
+    let mut targets = managed_targets(environment)?;
+    targets.retain(|p| p != target);
+    if present { targets.push(target.to_path_buf()); }
+    let path = registry_path(environment)?;
+    fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("Cannot record managed Skill: {e}"))?;
+    let temp = path.with_extension("tmp");
+    fs::write(&temp, serde_json::to_vec(&targets).unwrap()).map_err(|e| format!("Cannot record managed Skill: {e}"))?;
+    fs::rename(temp, path).map_err(|e| format!("Cannot commit managed Skill registry: {e}"))
+}
+
+fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requirements, String> {
+    let mut targets = managed_targets(environment)?;
+    // Legacy global installs predate the registry; inspect this one known location, never scan projects.
+    let global = target_directory(environment, "global", None)?;
+    if fs::symlink_metadata(global.join(MARKER)).is_ok() && !targets.contains(&global) { targets.push(global); }
+    let mut required = requirements();
+    for target in targets {
+        if !crate::skill_manage::safe_managed_paths(&target) {
+            return Err(format!("unverified: unsafe managed Skill path {}", target.display()));
+        }
+        let raw = fs::read(target.join(MARKER)).map_err(|_| format!("unverified: missing managed Skill record {}", target.display()))?;
+        let value: serde_json::Value = serde_json::from_slice(&raw).map_err(|_| "unverified: corrupt managed Skill record")?;
+        if value["managed_by"] != "multi-search-desktop" || value["skill"] != SKILL_NAME || value["skill_version"] != SKILL_VERSION {
+            return Err("unverified: unknown managed Skill record or version".into());
+        }
+        let files = value["files"].as_array().ok_or("unverified: missing Skill file inventory")?;
+        if files.len() != FILES.len() || !FILES.iter().all(|(name, _)| files.iter().any(|v| v.as_str() == Some(name))) {
+            return Err("unverified: unknown Skill file inventory".into());
+        }
+        let parsed = match value.get("requirements") {
+            None => requirements(), // Legacy v1 maps to the full documented capability set.
+            Some(value) => serde_json::from_value::<Requirements>(value.clone()).map_err(|_| "unverified: invalid Skill requirements")?,
+        };
+        if parsed.is_empty() || parsed.iter().any(|(c, flags)| c.is_empty() || c.starts_with('-') || c.contains(char::is_whitespace) || flags.is_empty() || flags.iter().any(|f| !f.starts_with("--") || f.contains(char::is_whitespace))) {
+            return Err("unverified: invalid Skill capability contract".into());
+        }
+        for (command, flags) in parsed {
+            let entry = required.entry(command).or_default();
+            for flag in flags { if !entry.contains(&flag) { entry.push(flag); } }
+        }
+    }
+    Ok(required)
+}
 
 #[derive(Clone, Serialize)]
 pub struct SkillPlan {
@@ -149,6 +218,7 @@ pub(crate) fn write_directory(directory: &Path) -> Result<(), String> {
         "skill_version": SKILL_VERSION,
         "files": file_names(),
         "hashes": hashes,
+        "requirements": requirements(),
     });
     fs::write(directory.join(MARKER), format!("{marker}\n"))
         .map_err(|e| format!("Cannot write {MARKER}: {e}"))?;
@@ -245,7 +315,7 @@ impl DesktopManager {
             let _ = fs::remove_dir_all(&staging);
             return failed(format!("Cannot place the skill at the target: {error}"));
         }
-        match verify_directory(&target) {
+        match verify_directory(&target).and_then(|()| record_target(&self.environment, &target, true)) {
             Ok(()) => SkillInstall {
                 status: "installed".into(),
                 target: plan.target.clone(),
@@ -262,11 +332,19 @@ impl DesktopManager {
     }
 
     pub(crate) fn check_compatibility(&self, cli_path: &str) -> Result<(), String> {
+        self.check_requirements(cli_path, requirements())
+    }
+
+    pub(crate) fn check_managed_compatibility(&self, cli_path: &str) -> Result<(), String> {
+        self.check_requirements(cli_path, installed_requirements(&self.environment)?)
+    }
+
+    fn check_requirements(&self, cli_path: &str, required: Requirements) -> Result<(), String> {
         let cli = PathBuf::from(cli_path);
-        for (subcommand, flags) in REQUIRED_FLAGS {
+        for (subcommand, flags) in required {
             let output = process::bounded(
                 &cli,
-                &[subcommand.into(), "--help".into()],
+                &[subcommand.clone(), "--help".into()],
                 &self.environment,
                 Duration::from_secs(5),
             )
@@ -274,7 +352,8 @@ impl DesktopManager {
             if output.timed_out || output.code != Some(0) {
                 return Err(format!("The CLI `{subcommand} --help` failed; update the CLI."));
             }
-            if let Some(flag) = flags.iter().find(|flag| !output.stdout.contains(*flag)) {
+            let help_tokens: Vec<_> = output.stdout.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')).collect();
+            if let Some(flag) = flags.iter().find(|flag| !help_tokens.contains(&flag.as_str())) {
                 return Err(format!(
                     "The installed CLI does not support `{subcommand} {flag}`; update the CLI to match this Skill."
                 ));

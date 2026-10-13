@@ -186,7 +186,7 @@ async fn credential_test(
     source: String,
     path: Option<String>,
 ) -> Result<crate::credential_commands::TestOutcome, String> {
-    let entry = crate::credential_commands::resolve_source(&source)?;
+    let entry = crate::credential_commands::resolve_test_source(&source)?;
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let cli = manager.execution_cli(path.map(PathBuf::from))?;

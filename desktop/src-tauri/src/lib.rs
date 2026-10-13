@@ -103,6 +103,10 @@ pub mod credential_fixture {
     pub fn test_args(query: &str) -> Vec<String> {
         credential_commands::test_args(query, tavily())
     }
+    pub fn source_test(source: &str, payload: &Value) -> Result<(Vec<String>, TestOutcome), String> {
+        let entry = credential_commands::resolve_test_source(source)?;
+        Ok((credential_commands::test_args("synthetic connectivity", entry), credential_commands::interpret_source(payload, entry)))
+    }
 }
 #[cfg(feature = "native-window")]
 pub use window::run;

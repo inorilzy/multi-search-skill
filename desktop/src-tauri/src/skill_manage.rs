@@ -105,7 +105,7 @@ fn is_link(metadata: &fs::Metadata) -> bool {
     }
 }
 
-fn safe_managed_paths(directory: &Path) -> bool {
+pub(crate) fn safe_managed_paths(directory: &Path) -> bool {
     // Every ancestor matters: references/ or the target itself may be a junction.
     for ancestor in directory.ancestors() {
         if let Ok(metadata) = fs::symlink_metadata(ancestor) {
@@ -496,7 +496,7 @@ impl DesktopManager {
                 reason: format!("Update failed. {recovery} {error}"),
             };
         }
-        match skill::verify_directory(&target) {
+        match skill::verify_directory(&target).and_then(|()| skill::record_target(&self.environment, &target, true)) {
             Ok(()) => {
                 let _ = fs::remove_dir_all(&old);
                 UpdateOutcome {
@@ -602,6 +602,9 @@ impl DesktopManager {
             .iter()
             .any(|name| target.join(name).exists());
         if !managed_left {
+            if let Err(reason) = skill::record_target(&self.environment, &target, false) {
+                return RemoveOutcome { status: "failed".into(), deleted, kept, reason };
+            }
             RemoveOutcome {
                 status: "removed".into(),
                 deleted,

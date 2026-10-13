@@ -8,6 +8,17 @@ use std::{
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("--version") {
+        if let Ok(root) = env::var("FIXTURE_FAIL_ACTIVE_ROOT") {
+            if env::current_exe().unwrap().starts_with(std::path::Path::new(&root).join("bin")) {
+                if env::var("FIXTURE_BLOCK_RESTORE").as_deref() == Ok("1") {
+                    let active = std::path::Path::new(&root).join("active.json");
+                    std::fs::remove_file(&active).unwrap();
+                    std::fs::create_dir(&active).unwrap();
+                    std::fs::write(active.join("concurrent-user-file"), "preserve").unwrap();
+                }
+                std::process::exit(7);
+            }
+        }
         match env::var("FIXTURE_VERSION").as_deref() {
             Ok("fail") => {
                 eprintln!("fixture version failure");
@@ -24,9 +35,10 @@ fn main() {
         let stale = env::var("FIXTURE_HELP").as_deref() == Ok("stale");
         match args.first().map(String::as_str) {
             Some("search") if stale => println!("usage: multi-search search [--route ROUTE] [--format FORMAT] query"),
-            Some("search") => println!("usage: multi-search search [--route ROUTE] [--expand EXPAND] [--format FORMAT] query"),
-            Some("fetch") => println!("usage: multi-search fetch [--full-content] [--format FORMAT] [source_id]"),
-            Some("read") => println!("usage: multi-search read [--keyword KEYWORD] [--offset OFFSET] [--format FORMAT] source_id"),
+            Some("search") => println!("usage: multi-search search [--route ROUTE] [--expand EXPAND] [--format FORMAT] [--source NAME] [--count N] [--timeout S] query"),
+            Some("fetch") => println!("usage: multi-search fetch [--full-content] [--format FORMAT] [--url URL] [source_id]"),
+            Some("read") => println!("usage: multi-search read [--keyword KEYWORD] [--offset OFFSET] [--limit N] [--format FORMAT] source_id"),
+            Some("doctor") => println!("usage: multi-search doctor [--no-keys] [--format FORMAT]"),
             _ => {}
         }
         return;
