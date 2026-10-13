@@ -30,7 +30,7 @@ pub(crate) const FILES: [(&str, &str); 3] = [
 ];
 
 /// Flags the Skill relies on, per subcommand, as printed by the CLI's own `--help`.
-const REQUIRED_FLAGS: [(&str, &[&str]); 3] = [
+pub(crate) const REQUIRED_FLAGS: [(&str, &[&str]); 3] = [
     ("search", &["--route", "--expand", "--format"]),
     ("fetch", &["--full-content", "--format"]),
     ("read", &["--keyword", "--offset", "--format"]),

@@ -33,6 +33,10 @@ pub struct SkillStatus {
     pub state: InstallState,
     pub installed_version: Option<String>,
     pub release_version: String,
+    pub cli_requirements: String,
+    pub cli_compatible: bool,
+    pub compatibility_reason: String,
+    pub can_update: bool,
     /// Shipped files this tool manages (paths relative to the target).
     pub managed_files: Vec<String>,
     /// Managed files whose content differs from the shipped release or the recorded hash.
@@ -89,44 +93,110 @@ struct Marker {
     hashes: BTreeMap<String, String>,
 }
 
+fn is_link(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+fn safe_managed_paths(directory: &Path) -> bool {
+    // Every ancestor matters: references/ or the target itself may be a junction.
+    for ancestor in directory.ancestors() {
+        if let Ok(metadata) = fs::symlink_metadata(ancestor) {
+            if is_link(&metadata) || !metadata.is_dir() {
+                return false;
+            }
+        }
+    }
+    for (name, _) in FILES.iter().copied().chain(std::iter::once((MARKER, ""))) {
+        let path = directory.join(name);
+        if let Some(parent) = path.parent() {
+            if let Ok(metadata) = fs::symlink_metadata(parent) {
+                if is_link(&metadata) || !metadata.is_dir() {
+                    return false;
+                }
+            }
+        }
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if is_link(&metadata) || !metadata.is_file() => return false,
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 fn read_marker(directory: &Path) -> Option<Marker> {
+    if !safe_managed_paths(directory) {
+        return None;
+    }
     let text = fs::read_to_string(directory.join(MARKER)).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
     if value["managed_by"] != "multi-search-desktop" || value["skill"] != SKILL_NAME {
         return None;
     }
+    let files = value["files"].as_array()?;
+    if files.len() != FILES.len()
+        || !FILES
+            .iter()
+            .all(|(name, _)| files.iter().any(|v| v.as_str() == Some(name)))
+    {
+        return None; // Ownership must match the known release manifest, never caller paths.
+    }
     let version = value["skill_version"].as_str()?.to_string();
-    let hashes = value["hashes"]
-        .as_object()?
-        .iter()
-        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
-        .collect();
+    let hashes = match value.get("hashes") {
+        None => BTreeMap::new(), // The verified 06 release did not record hashes.
+        Some(hashes) => hashes
+            .as_object()?
+            .iter()
+            .map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+            .collect::<Option<BTreeMap<_, _>>>()?,
+    };
     Some(Marker { version, hashes })
 }
 
 /// Entries directly inside the target that we did not place there.
-fn unknown_entries(directory: &Path) -> Vec<String> {
+fn unknown_entries(directory: &Path) -> Result<Vec<String>, String> {
     let managed: Vec<String> = FILES.iter().map(|(name, _)| top_level(name)).collect();
-    let mut found: Vec<String> = fs::read_dir(directory)
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .filter(|name| name != MARKER && !managed.contains(name))
-                .collect()
-        })
-        .unwrap_or_default();
-    // Unknown files under references/ are reported too, since that folder is ours but may hold extras.
-    if let Ok(entries) = fs::read_dir(directory.join("references")) {
-        for entry in entries.flatten() {
-            let name = format!("references/{}", entry.file_name().to_string_lossy());
+    let list = |path: &Path| -> Result<Vec<fs::DirEntry>, String> {
+        fs::read_dir(path)
+            .and_then(|entries| entries.collect())
+            .map_err(|e| format!("Cannot inventory user content: {e}"))
+    };
+    let mut found = Vec::new();
+    for entry in list(directory)? {
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| "Cannot safely represent user filename")?;
+        if name != MARKER && !managed.contains(&name) {
+            found.push(name);
+        }
+    }
+    // A missing managed folder can be repaired; any other inventory failure blocks mutation.
+    let references = directory.join("references");
+    if references.exists() {
+        for entry in list(&references)? {
+            let name = format!(
+                "references/{}",
+                entry
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| "Cannot safely represent user filename")?
+            );
             if !FILES.iter().any(|(managed_name, _)| *managed_name == name) {
                 found.push(name);
             }
         }
     }
     found.sort();
-    found
+    Ok(found)
 }
 
 fn top_level(relative: &str) -> String {
@@ -134,11 +204,37 @@ fn top_level(relative: &str) -> String {
 }
 
 /// Classifies the folder. A file is `modified` when its bytes differ from the hash recorded at install time.
-pub(crate) fn classify(directory: &Path) -> (InstallState, Option<String>, Vec<String>, Vec<String>, String) {
-    let unknown = unknown_entries(directory);
-    if fs::symlink_metadata(directory).is_err() {
-        return (InstallState::Absent, None, vec![], vec![], "Nothing is installed here.".into());
+pub(crate) fn classify(
+    directory: &Path,
+) -> (
+    InstallState,
+    Option<String>,
+    Vec<String>,
+    Vec<String>,
+    String,
+) {
+    if fs::symlink_metadata(directory).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        return (
+            InstallState::Absent,
+            None,
+            vec![],
+            vec![],
+            "Nothing is installed here.".into(),
+        );
     }
+    if !safe_managed_paths(directory) {
+        return (
+            InstallState::Unknown,
+            None,
+            vec![],
+            vec![],
+            "Unsafe linked or non-file managed path; left unchanged.".into(),
+        );
+    }
+    let unknown = match unknown_entries(directory) {
+        Ok(entries) => entries,
+        Err(reason) => return (InstallState::Unknown, None, vec![], vec![], reason),
+    };
     let Some(marker) = read_marker(directory) else {
         return (
             InstallState::Unknown,
@@ -173,14 +269,24 @@ pub(crate) fn classify(directory: &Path) -> (InstallState, Option<String>, Vec<S
     };
     let reason = match state {
         InstallState::Current => "Installed and matches this release.".into(),
-        InstallState::Outdated => format!("Installed version {} differs from release {SKILL_VERSION}.", marker.version),
-        InstallState::Modified => format!("Managed files were edited locally: {}.", modified.join(", ")),
+        InstallState::Outdated => format!(
+            "Installed version {} differs from release {SKILL_VERSION}.",
+            marker.version
+        ),
+        InstallState::Modified => format!(
+            "Managed files were edited locally: {}.",
+            modified.join(", ")
+        ),
         _ => String::new(),
     };
     (state, Some(marker.version), modified, unknown, reason)
 }
 
-fn join_target(manager: &DesktopManager, scope: &str, project: Option<PathBuf>) -> Result<PathBuf, String> {
+fn join_target(
+    manager: &DesktopManager,
+    scope: &str,
+    project: Option<PathBuf>,
+) -> Result<PathBuf, String> {
     skill::target_directory(&manager.environment, scope, project.as_deref())
 }
 
@@ -189,14 +295,25 @@ fn backup_modified(directory: &Path, modified: &[String]) -> Result<Option<PathB
     if modified.is_empty() {
         return Ok(None);
     }
-    let base = directory.parent().ok_or("Invalid target directory")?;
+    let base = directory
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("Invalid target directory")?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or_default();
-    let backup = base.join(format!(".multi-search-backup-{stamp}-{}", std::process::id()));
+    let backup = base.join(format!(
+        ".multi-search-backup-{stamp}-{}-{}",
+        std::process::id(),
+        skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    fs::create_dir(&backup).map_err(|e| format!("Cannot reserve backup folder: {e}"))?;
     for name in modified {
         let source = directory.join(name);
+        if fs::symlink_metadata(&source).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+            continue; // A locally deleted file has no bytes to back up.
+        }
         let destination = backup.join(name);
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("Cannot create backup folder: {e}"))?;
@@ -206,25 +323,67 @@ fn backup_modified(directory: &Path, modified: &[String]) -> Result<Option<PathB
     Ok(Some(backup))
 }
 
+fn copy_user_entry(source: &Path, destination: &Path) -> Result<(), String> {
+    let metadata =
+        fs::symlink_metadata(source).map_err(|e| format!("Cannot inspect user content: {e}"))?;
+    if is_link(&metadata) {
+        return Err(
+            "Linked user content cannot be copied safely; the original is unchanged.".into(),
+        );
+    }
+    if metadata.is_dir() {
+        fs::create_dir_all(destination).map_err(|e| format!("Cannot preserve user folder: {e}"))?;
+        for entry in fs::read_dir(source).map_err(|e| format!("Cannot read user folder: {e}"))? {
+            let entry = entry.map_err(|e| format!("Cannot read user entry: {e}"))?;
+            copy_user_entry(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+    } else if metadata.is_file() {
+        fs::copy(source, destination).map_err(|e| format!("Cannot preserve user file: {e}"))?;
+    } else {
+        return Err("Unsupported user entry; the original is unchanged.".into());
+    }
+    Ok(())
+}
+
 impl DesktopManager {
     /// Updates an installed skill that this tool manages. Modified files need `confirm_overwrite`
     /// and are backed up first. The old skill stays in place until the new one is verified.
-    pub fn skill_update(&self, scope: &str, project: Option<PathBuf>, confirm_overwrite: bool) -> UpdateOutcome {
+    pub fn skill_update(
+        &self,
+        scope: &str,
+        project: Option<PathBuf>,
+        confirm_overwrite: bool,
+    ) -> UpdateOutcome {
         let target = match join_target(self, scope, project.clone()) {
             Ok(target) => target,
-            Err(reason) => return UpdateOutcome { status: "blocked".into(), verified: false, backup: None, reason },
+            Err(reason) => {
+                return UpdateOutcome {
+                    status: "blocked".into(),
+                    verified: false,
+                    backup: None,
+                    reason,
+                }
+            }
         };
         let (state, _, modified, unknown, _) = classify(&target);
         let plan = plan_update(&state, &modified, &unknown);
         if !plan.can_update {
-            return UpdateOutcome { status: "blocked".into(), verified: false, backup: None, reason: plan.reason };
+            return UpdateOutcome {
+                status: "blocked".into(),
+                verified: false,
+                backup: None,
+                reason: plan.reason,
+            };
         }
         if plan.backup_required && !confirm_overwrite {
             return UpdateOutcome {
                 status: "blocked".into(),
                 verified: false,
                 backup: None,
-                reason: format!("Confirmation required: local edits in {}.", modified.join(", ")),
+                reason: format!(
+                    "Confirmation required: local edits in {}.",
+                    modified.join(", ")
+                ),
             };
         }
         // Compatibility is checked by the same path as install; an incompatible CLI blocks the update.
@@ -234,73 +393,178 @@ impl DesktopManager {
                 status: "blocked".into(),
                 verified: false,
                 backup: None,
-                reason: format!("The CLI is not discoverable ({}). Install the CLI first.", cli.status),
+                reason: format!(
+                    "The CLI is not discoverable ({}). Install the CLI first.",
+                    cli.status
+                ),
             };
         }
         if let Err(reason) = self.check_compatibility(cli.path.as_deref().unwrap_or_default()) {
-            return UpdateOutcome { status: "blocked".into(), verified: false, backup: None, reason };
+            return UpdateOutcome {
+                status: "blocked".into(),
+                verified: false,
+                backup: None,
+                reason,
+            };
         }
         let backup = match backup_modified(&target, &modified) {
             Ok(backup) => backup,
-            Err(reason) => return UpdateOutcome { status: "failed".into(), verified: false, backup: None, reason },
+            Err(reason) => {
+                return UpdateOutcome {
+                    status: "failed".into(),
+                    verified: false,
+                    backup: None,
+                    reason,
+                }
+            }
         };
         let backup_text = backup.as_ref().map(|p| p.to_string_lossy().into_owned());
         // Stage the new release beside the target so a failed write never leaves a half-updated skill.
-        let Some(base) = target.parent() else {
-            return UpdateOutcome { status: "failed".into(), verified: false, backup: backup_text, reason: "Invalid target".into() };
+        let Some(base) = target.parent().and_then(Path::parent) else {
+            return UpdateOutcome {
+                status: "failed".into(),
+                verified: false,
+                backup: backup_text,
+                reason: "Invalid target".into(),
+            };
         };
         let staging = base.join(format!(
             ".multi-search-update-{}-{}",
             std::process::id(),
             skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        if let Err(error) = fs::create_dir(&staging) {
+            return UpdateOutcome {
+                status: "failed".into(),
+                verified: false,
+                backup: backup_text,
+                reason: format!(
+                    "Cannot reserve staging folder; installed skill unchanged: {error}"
+                ),
+            };
+        }
         if let Err(reason) = skill::write_directory(&staging) {
             let _ = fs::remove_dir_all(&staging);
-            return UpdateOutcome { status: "failed".into(), verified: false, backup: backup_text, reason: format!("Update failed; the installed skill was kept. {reason}") };
+            return UpdateOutcome {
+                status: "failed".into(),
+                verified: false,
+                backup: backup_text,
+                reason: format!("Update failed; the installed skill was kept. {reason}"),
+            };
+        }
+        for name in &unknown {
+            if let Err(reason) = copy_user_entry(&target.join(name), &staging.join(name)) {
+                let _ = fs::remove_dir_all(&staging);
+                return UpdateOutcome {
+                    status: "failed".into(),
+                    verified: false,
+                    backup: backup_text,
+                    reason,
+                };
+            }
         }
         // Swap: move the old folder aside, put the verified new folder in place, then drop the old one.
-        let old = base.join(format!(".multi-search-old-{}-{}", std::process::id(), skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let old = base.join(format!(
+            ".multi-search-old-{}-{}",
+            std::process::id(),
+            skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         if let Err(error) = fs::rename(&target, &old) {
             let _ = fs::remove_dir_all(&staging);
-            return UpdateOutcome { status: "failed".into(), verified: false, backup: backup_text, reason: format!("Update failed; the installed skill was kept. {error}") };
+            return UpdateOutcome {
+                status: "failed".into(),
+                verified: false,
+                backup: backup_text,
+                reason: format!("Update failed; the installed skill was kept. {error}"),
+            };
         }
         if let Err(error) = fs::rename(&staging, &target) {
             // Restore the old folder so the user keeps a usable skill.
-            let _ = fs::rename(&old, &target);
+            let restored = fs::rename(&old, &target);
             let _ = fs::remove_dir_all(&staging);
-            return UpdateOutcome { status: "failed".into(), verified: false, backup: backup_text, reason: format!("Update failed; the installed skill was kept. {error}") };
+            let recovery = match restored {
+                Ok(()) => "The installed skill was restored.".into(),
+                Err(restore_error) => format!(
+                    "Automatic restore failed ({restore_error}); original files remain at {}.",
+                    old.display()
+                ),
+            };
+            return UpdateOutcome {
+                status: "failed".into(),
+                verified: false,
+                backup: backup_text,
+                reason: format!("Update failed. {recovery} {error}"),
+            };
         }
         match skill::verify_directory(&target) {
             Ok(()) => {
                 let _ = fs::remove_dir_all(&old);
-                UpdateOutcome { status: "updated".into(), verified: true, backup: backup_text, reason: "Updated and verified. Start a new Claude Code session to load it.".into() }
+                UpdateOutcome {
+                    status: "updated".into(),
+                    verified: true,
+                    backup: backup_text,
+                    reason: "Updated and verified. Start a new Claude Code session to load it."
+                        .into(),
+                }
             }
             Err(reason) => {
                 // Verification failed: remove the new folder and restore the old one.
-                let _ = fs::remove_dir_all(&target);
-                let _ = fs::rename(&old, &target);
-                UpdateOutcome { status: "failed".into(), verified: false, backup: backup_text, reason: format!("Update failed verification; the installed skill was kept. {reason}") }
+                let restored = fs::remove_dir_all(&target).and_then(|()| fs::rename(&old, &target));
+                let recovery = match restored {
+                    Ok(()) => "The installed skill was restored.".into(),
+                    Err(error) => format!(
+                        "Automatic restore failed ({error}); original files remain at {}.",
+                        old.display()
+                    ),
+                };
+                UpdateOutcome {
+                    status: "failed".into(),
+                    verified: false,
+                    backup: backup_text,
+                    reason: format!("Update failed verification. {recovery} {reason}"),
+                }
             }
         }
     }
 
     /// Plans removal: shows exactly which files would be deleted and which are kept.
-    pub fn skill_remove_plan(&self, scope: &str, project: Option<PathBuf>) -> Result<RemovePlan, String> {
+    pub fn skill_remove_plan(
+        &self,
+        scope: &str,
+        project: Option<PathBuf>,
+    ) -> Result<RemovePlan, String> {
         let target = join_target(self, scope, project)?;
         let (state, _, _, unknown, _) = classify(&target);
         Ok(plan_remove(&state, &unknown))
     }
 
     /// Removes only the files this tool installed, after confirmation. Never deletes the skills folder.
-    pub fn skill_remove(&self, scope: &str, project: Option<PathBuf>, confirmed: bool) -> RemoveOutcome {
+    pub fn skill_remove(
+        &self,
+        scope: &str,
+        project: Option<PathBuf>,
+        confirmed: bool,
+    ) -> RemoveOutcome {
         let target = match join_target(self, scope, project) {
             Ok(target) => target,
-            Err(reason) => return RemoveOutcome { status: "blocked".into(), deleted: vec![], kept: vec![], reason },
+            Err(reason) => {
+                return RemoveOutcome {
+                    status: "blocked".into(),
+                    deleted: vec![],
+                    kept: vec![],
+                    reason,
+                }
+            }
         };
         let (state, _, _, unknown, _) = classify(&target);
         let plan = plan_remove(&state, &unknown);
         if !plan.can_remove {
-            return RemoveOutcome { status: "blocked".into(), deleted: vec![], kept: plan.will_keep, reason: plan.reason };
+            return RemoveOutcome {
+                status: "blocked".into(),
+                deleted: vec![],
+                kept: plan.will_keep,
+                reason: plan.reason,
+            };
         }
         if !confirmed {
             return RemoveOutcome {
@@ -311,29 +575,72 @@ impl DesktopManager {
             };
         }
         let mut deleted = Vec::new();
-        for name in &plan.will_delete {
+        for name in plan
+            .will_delete
+            .iter()
+            .filter(|name| name.as_str() != MARKER)
+        {
             let path = target.join(name);
             if path.is_file() && fs::remove_file(&path).is_ok() {
                 deleted.push(name.clone());
             }
+        }
+        // Keep proof of ownership when a managed file could not be removed, so retry stays safe.
+        let content_left = FILES
+            .iter()
+            .any(|(name, _)| fs::symlink_metadata(target.join(name)).is_ok());
+        if !content_left && fs::remove_file(target.join(MARKER)).is_ok() {
+            deleted.push(MARKER.into());
         }
         // Remove the now-empty references folder and the skill folder only if nothing else is left.
         let _ = fs::remove_dir(target.join("references"));
         let _ = fs::remove_dir(&target);
         let kept = plan.will_keep.clone();
         // Success means every managed file is gone; kept user content never counts against it.
-        let managed_left = plan.will_delete.iter().any(|name| target.join(name).exists());
+        let managed_left = plan
+            .will_delete
+            .iter()
+            .any(|name| target.join(name).exists());
         if !managed_left {
-            RemoveOutcome { status: "removed".into(), deleted, kept, reason: "Removed. Other files and skills were kept.".into() }
+            RemoveOutcome {
+                status: "removed".into(),
+                deleted,
+                kept,
+                reason: "Removed. Other files and skills were kept.".into(),
+            }
         } else {
-            RemoveOutcome { status: "failed".into(), deleted, kept, reason: "Removal could not be confirmed; re-check the folder.".into() }
+            RemoveOutcome {
+                status: "failed".into(),
+                deleted,
+                kept,
+                reason: "Removal could not be confirmed; re-check the folder.".into(),
+            }
         }
     }
 
     /// Read-only: reports what is installed without writing anything.
-    pub fn skill_status(&self, scope: &str, project: Option<PathBuf>) -> Result<SkillStatus, String> {
+    pub fn skill_status(
+        &self,
+        scope: &str,
+        project: Option<PathBuf>,
+    ) -> Result<SkillStatus, String> {
         let target = join_target(self, scope, project)?;
         let (state, installed_version, modified_files, unknown_entries, reason) = classify(&target);
+        let cli = self.detect_cli(None).user;
+        let compatibility = if cli.status == "ready" {
+            self.check_compatibility(cli.path.as_deref().unwrap_or_default())
+        } else {
+            Err(format!(
+                "CLI is not discoverable ({}). Install a compatible CLI first.",
+                cli.status
+            ))
+        };
+        let cli_compatible = compatibility.is_ok();
+        let compatibility_reason = compatibility
+            .err()
+            .unwrap_or_else(|| "CLI satisfies this release's required commands and flags.".into());
+        let can_update =
+            cli_compatible && matches!(state, InstallState::Outdated | InstallState::Modified);
         Ok(SkillStatus {
             host: "claude-code".into(),
             scope: scope.into(),
@@ -341,6 +648,14 @@ impl DesktopManager {
             state,
             installed_version,
             release_version: SKILL_VERSION.into(),
+            cli_requirements: skill::REQUIRED_FLAGS
+                .iter()
+                .map(|(command, flags)| format!("{command}: {}", flags.join(" ")))
+                .collect::<Vec<_>>()
+                .join("; "),
+            cli_compatible,
+            compatibility_reason,
+            can_update,
             managed_files: skill::file_names(),
             modified_files,
             unknown_entries,
@@ -350,12 +665,31 @@ impl DesktopManager {
 }
 
 /// Pure planning: decides update eligibility from the classified state.
-pub(crate) fn plan_update(state: &InstallState, modified: &[String], unknown: &[String]) -> UpdatePlan {
+pub(crate) fn plan_update(
+    state: &InstallState,
+    modified: &[String],
+    unknown: &[String],
+) -> UpdatePlan {
     let (status, can_update, backup_required, reason) = match state {
-        InstallState::Absent => ("absent", false, false, "Nothing to update. Install the Skill first."),
+        InstallState::Absent => (
+            "absent",
+            false,
+            false,
+            "Nothing to update. Install the Skill first.",
+        ),
         InstallState::Current => ("current", false, false, "Already up to date."),
-        InstallState::Unknown => ("unknown", false, false, "Not managed by this tool; update is refused."),
-        InstallState::Outdated => ("ready", true, false, "Update to this release. Unmodified files only."),
+        InstallState::Unknown => (
+            "unknown",
+            false,
+            false,
+            "Not managed by this tool; update is refused.",
+        ),
+        InstallState::Outdated => (
+            "ready",
+            true,
+            false,
+            "Update to this release. Unmodified files only.",
+        ),
         InstallState::Modified => (
             "needs_confirmation",
             true,
@@ -385,11 +719,14 @@ pub(crate) fn plan_remove(state: &InstallState, unknown: &[String]) -> RemovePla
             can_remove: false,
         },
         _ => {
-            let mut will_delete: Vec<String> = FILES.iter().map(|(n, _)| (*n).to_string()).collect();
+            let mut will_delete: Vec<String> =
+                FILES.iter().map(|(n, _)| (*n).to_string()).collect();
             will_delete.push(MARKER.into());
             RemovePlan {
                 status: "ready".into(),
-                reason: "Removes only the files this tool installed. Your other files and skills stay.".into(),
+                reason:
+                    "Removes only the files this tool installed. Your other files and skills stay."
+                        .into(),
                 will_delete,
                 will_keep: unknown.to_vec(),
                 can_remove: true,
