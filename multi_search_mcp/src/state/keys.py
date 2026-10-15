@@ -1,4 +1,4 @@
-"""Load API keys from ~/.search-keys.json + environment variables."""
+"""Load API keys from authoritative SQLite, or an explicitly supplied keys file."""
 import json
 import os
 import random
@@ -110,41 +110,11 @@ def count_jina_keys(value) -> tuple[int, int]:
     return active, total
 
 
-# Single-secret key providers that may be stored in the Windows credential store
-# (one entry per provider, named <namespace>/<provider>). Jina is scrape-only and
-# twitter uses a cookie file reference, so neither is listed here.
-# Resolution order: environment variable > credential store > ~/.search-keys.json.
-# Environment variables always win so automation can override a UI-saved secret.
-# A store entry overrides a file entry (including a file key list) as an explicit
-# source; the file list is never merged into the store entry's rotation.
+# JSON-valued key providers stored in shared SQLite; Twitter is a settings path.
+# Legacy sources participate only when explicitly supplied/imported.
 CREDENTIAL_STORE_PROVIDERS = (
-    "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github",
+    "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github", "jina",
 )
-TEST_ISOLATION_ENV = "MULTI_SEARCH_TEST_ISOLATION"
-CREDENTIAL_NAMESPACE_ENV = "MULTI_SEARCH_CREDENTIAL_NAMESPACE"
-
-
-def _credential_store_enabled(environ: Mapping[str, str]) -> bool:
-    """Use the Windows store only on Windows, and never inside the test runner.
-
-    Under test isolation the store stays off unless a disposable namespace is set
-    explicitly, so the regression suite cannot read or write real user entries.
-    """
-    if sys.platform != "win32":
-        return False
-    if environ.get(TEST_ISOLATION_ENV) == "1" and not environ.get(CREDENTIAL_NAMESPACE_ENV):
-        return False
-    return True
-
-
-def _default_credential_store(use_process_env: bool, environ: Mapping[str, str], injected):
-    if injected is not None or not use_process_env or not _credential_store_enabled(environ):
-        return injected
-    from ..support.credential_store import default_store
-
-    return default_store(environ)
-
-
 def load_keys(
     keys_file: str | Path | None = None,
     environ: Mapping[str, str] | None = None,
@@ -152,20 +122,16 @@ def load_keys(
     *,
     twitter_cookies_path: str | None = None,
 ) -> dict:
-    """Load API keys: environment > credential store > ~/.search-keys.json.
+    """Load only SQLite by default; ``environ`` never supplies provider overrides.
 
-    ``credential_store`` may be injected (tests). When omitted, the Windows store
-    is consulted only for the real process environment (see ``_credential_store_enabled``).
-
-    ``twitter_cookies_path`` is the non-secret cookie file reference from config. It
-    ranks below ``TWITTER_COOKIES_PATH`` and above the keys file's twitter entry.
-    Only the path string is stored here; the cookie file is never read by this function.
+    An explicitly supplied keys file is a separate opt-in compatibility input.
+    Tests may inject a store. Twitter's non-secret settings path is never opened here.
     """
-    keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
-    use_process_env = environ is None
-    environ = os.environ if environ is None else environ
+    # Only an explicitly supplied file is read; process keys/env/legacy manager
+    # are never implicit overrides of desktop-saved configuration.
+    keys_file = Path(keys_file).expanduser() if keys_file else None
     keys: dict = {}
-    if keys_file.exists():
+    if keys_file is not None and keys_file.exists():
         try:
             # utf-8-sig tolerates BOM (PowerShell 5.1 writes BOM by default)
             keys = json.loads(keys_file.read_text(encoding="utf-8-sig"))
@@ -177,32 +143,17 @@ def load_keys(
             raise KeysError(f"keys file is not valid JSON: {keys_file}") from None
         if not isinstance(keys, dict):
             keys = {}
-    store = _default_credential_store(use_process_env, environ, credential_store)
+    from ..support.credential_store import CredentialStoreError, default_store
+    store = credential_store if credential_store is not None else (None if keys_file is not None else default_store())
     if store is not None:
-        from ..support.credential_store import CredentialStoreError
-
-        env_providers = {key_name for env_name, key_name in KEY_ENV_PAIRS if environ.get(env_name)}
         for provider in CREDENTIAL_STORE_PROVIDERS:
-            if provider in env_providers:
-                # An environment variable overrides the store, so the store is not read.
-                # A broken store therefore never blocks an env-driven run.
-                continue
             try:
                 value = store.get(provider)
             except CredentialStoreError as exc:
-                # Explicit failure: a present-but-unreadable store must never be
-                # silently bypassed in favor of the plaintext file.
-                raise KeysError(f"credential store unavailable for {provider}: {exc}") from None
+                raise KeysError(f"configuration credential unavailable for {provider}: {exc}") from None
             if value:
                 keys[provider] = value
-    for env_name, key_name in KEY_ENV_PAIRS:
-        val = environ.get(env_name)
-        if val:
-            keys[key_name] = val
-            if env_name == "TWITTER_COOKIES_PATH":
-                keys["twitter"] = val
-    # Config reference: below the env path, above the keys file's twitter entry.
-    if not environ.get("TWITTER_COOKIES_PATH") and twitter_cookies_path:
+    if twitter_cookies_path:
         keys["twitter"] = twitter_cookies_path
     return keys
 
@@ -221,17 +172,17 @@ def key_sources(
     """Report provenance (never values) of each credential-store provider's key."""
     from ..support.credential_store import CredentialStoreError
 
-    keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
-    use_process_env = environ is None
+    keys_file = Path(keys_file).expanduser() if keys_file else None
     environ = os.environ if environ is None else environ
     file_keys: dict = {}
-    if keys_file.exists():
+    if keys_file is not None and keys_file.exists():
         try:
             loaded = json.loads(keys_file.read_text(encoding="utf-8-sig"))
             file_keys = loaded if isinstance(loaded, dict) else {}
         except Exception:
             file_keys = {}
-    store = _default_credential_store(use_process_env, environ, credential_store)
+    from ..support.credential_store import default_store
+    store = credential_store if credential_store is not None else default_store()
     report: dict[str, dict] = {}
     for provider in CREDENTIAL_STORE_PROVIDERS:
         env_names = [name for name, key_name in KEY_ENV_PAIRS if key_name == provider and environ.get(name)]
@@ -244,18 +195,12 @@ def key_sources(
                 store_state = "unavailable"
                 store_error = str(exc)
         in_store = store_state == "present"
-        if env_names:
-            effective = "env"
-        elif in_store:
-            effective = "credential_store"
-        elif file_keys.get(provider):
-            effective = "file"
-        else:
-            effective = "none"
+        effective = "sqlite" if in_store else "none"
         report[provider] = {
             "effective_source": effective,
             "env_vars_set": env_names,
-            "env_overrides_store": bool(env_names and in_store),
+            "env_overrides_store": False,
+            "legacy_not_imported": bool((env_names or file_keys.get(provider)) and not in_store),
             "credential_store": store_state,
             "file_present": bool(file_keys.get(provider)),
             # Count only: the file list is kept on disk and does not rotate with a store key.

@@ -117,6 +117,7 @@ impl DesktopManager {
             return Err("Unsupported search options".into());
         }
         let cli = self.execution_cli(path)?;
+        self.require_storage_cli(&cli)?;
         let mut slot = self
             .execution_slot
             .lock()

@@ -50,8 +50,6 @@ def key_id_for(provider: str, key: str) -> str:
 def key_fingerprint(key: str) -> str:
     text = str(key)
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
-    if len(text) >= 8:
-        return f"{text[:4]}...{text[-4:]} ({digest})"
     return f"sha256:{digest}"
 
 
@@ -121,6 +119,12 @@ class SQLiteKeyManager(BasicKeyManager):
 
     def __init__(self, store: StateStore | None = None):
         self.store = store or StateStore()
+        # Old releases persisted a prefix/suffix display mask. The already-hashed
+        # key_id supplies its replacement without reading any credential source.
+        self.store.execute(
+            "UPDATE key_state SET key_fingerprint = 'sha256:' || substr(key_id, instr(key_id, ':') + 1, 8) "
+            "WHERE key_fingerprint NOT LIKE 'sha256:%'",
+        )
 
     def candidates(self, provider: str, key_value: Any) -> list[KeyCandidate]:
         raw = [

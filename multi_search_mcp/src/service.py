@@ -95,6 +95,7 @@ class SearchWebRequest:
     config_path: str | None = None
     expand: list[str] | None = None
     use_state: bool = True
+    no_scrape: bool = False
 
 
 @dataclass
@@ -655,6 +656,12 @@ def run_search_web(
         state_store=store, query_runs_observer=query_runs_observer,
         prefetched_bodies=prefetched,
     )
+    if request.no_scrape:
+        response["scrapes"] = []
+        response["site_scraper_updates"] = []
+        response["diagnostics"].update(result_limit=SEARCH_RESULT_LIMIT, body_fetch_count=0,
+                                       body_success_count=0, body_failures=[])
+        return response
     max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 1200), 20_000))
     body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
     concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))
@@ -916,13 +923,15 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         config_error = scrub_secrets(exc, keys)
     data = {
         "server": "multi-search",
+        "config_storage": {"backend": "sqlite-dpapi", "schema_version": 1},
         "state_path": str(store.path),
         "config_path": str(config_path),
         "config_loaded": config_error is None and config_path.exists(),
         "config_status": "error" if config_error else "ok" if config_path.exists() else "defaults",
         "key_sources": {
-            "env": KEY_ENV_NAMES,
-            "file": "~/.search-keys.json",
+            "storage": "sqlite-dpapi",
+            "database": str(config_path),
+            "legacy_sources": "explicit import only",
             "state": str(store.path),
         },
         "routes": route_names,

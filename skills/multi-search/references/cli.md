@@ -24,10 +24,13 @@ If the command is absent from PATH, run `uv tool update-shell` and reopen the
 terminal. Without uv, use a virtual environment and `python -m pip install .`
 from the checkout, then `python -m multi_search_mcp.cli --help`.
 
-API keys and cookies retain their existing environment / `~/.search-keys.json`
-locations. No credentials belong in these commands. Non-secret configuration
-resolves from `MULTI_SEARCH_CONFIG`, `~/.multi-search/multi-search-config.json`,
-then the checkout default. An explicitly configured missing file is an error.
+The CLI reads settings and provider credentials from the shared SQLite database
+at `~/.multi-search/config.sqlite`; credential values are protected with DPAPI.
+`MULTI_SEARCH_CONFIG_DB` selects an alternate database for an explicitly isolated
+runtime. Legacy provider environment variables, `~/.search-keys.json`, and JSON
+settings files are not implicit runtime inputs. The saved Twitter cookie path is
+a non-secret settings reference; cookie contents and provider keys do not belong
+in these commands.
 
 CLI installations include `xkit-py` for Twitter/X automatically, from
 the GitHub commit pinned in the project dependencies. The PyPI 2.6.3 archives
@@ -58,7 +61,8 @@ multi-search search "Python TaskGroup cancellation" --route dev --expand "TaskGr
 `--route` selects a configured route-group id. `--source` and `--expand` can
 repeat; explicit sources replace the selected group's source list for that
 request, while globally disabled sources are still filtered. Route groups live
-in the non-secret JSON config as a complete `routes` map:
+in the SQLite settings record as a complete `routes` map (shown below in its
+JSON value shape):
 
 ```json
 {

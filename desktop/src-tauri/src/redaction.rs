@@ -49,6 +49,14 @@ pub(crate) fn secrets(environment: &RuntimeEnvironment) -> Vec<String> {
             }
         }
     }
+    if let Some(path) = crate::config_db::path(&environment.variables).filter(|p| p.exists()) {
+        let backend = crate::credential::SqliteCredentialBackend { path };
+        for provider in crate::credential::STORE_PROVIDERS {
+            if let Ok(Some((value, _))) = crate::credential::load(&backend, "", provider) {
+                strings(&value, &mut values);
+            }
+        }
+    }
     values.sort_by_key(|s| std::cmp::Reverse(s.len()));
     values.dedup();
     values

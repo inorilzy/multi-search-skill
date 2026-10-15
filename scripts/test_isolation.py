@@ -353,6 +353,18 @@ class NetworkGuard:
         ):
             if name in self._child_environment:
                 child_env[name] = self._child_environment[name]
+        # Never inherit an external configuration database into a child. A test
+        # may select another database only within this runner's disposable root.
+        safe_db = self._child_environment.get("MULTI_SEARCH_CONFIG_DB")
+        if safe_db:
+            selected = child_env.get("MULTI_SEARCH_CONFIG_DB")
+            root = Path(self._child_environment["HOME"]).parent.resolve()
+            try:
+                safe = bool(selected) and Path(selected).resolve().is_relative_to(root)
+            except (OSError, ValueError):
+                safe = False
+            if not safe:
+                child_env["MULTI_SEARCH_CONFIG_DB"] = safe_db
         for name, value in self._child_environment.items():
             child_env.setdefault(name, value)
         inherited = child_env.get("PYTHONPATH", "")
@@ -428,6 +440,7 @@ def _isolated_environment_changes(paths: IsolationPaths, *, pythonpath: str) -> 
         # is exercised against the disposable home rather than as an explicit
         # path.  Tests that inject MULTI_SEARCH_CONFIG remain free to do so.
         "MULTI_SEARCH_CONFIG": "",
+        "MULTI_SEARCH_CONFIG_DB": str(paths.home / ".multi-search" / "config.sqlite"),
         ISOLATION_ENV: "1",
         REPORT_ENV: str(paths.report),
         "PYTHONPATH": pythonpath,

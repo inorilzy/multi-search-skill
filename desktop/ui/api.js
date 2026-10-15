@@ -17,12 +17,12 @@ export function managementApi(invoke) {
     userPathPlan: () => invoke('user_path_plan'),
     userPathChange: (remove, confirmed) => invoke('user_path_change', { remove, confirmed }),
     credentialStatus: source => invoke('credential_status', { source }),
+    credentialRead: source => invoke('credential_read', { source }),
+    credentialApplicationOpen: source => invoke('credential_application_open', { source }),
     credentialSave: (source, key) => invoke('credential_save', { source, key }),
     credentialDelete: source => invoke('credential_delete', { source }),
     credentialTest: (source, path) => invoke('credential_test', { source, path }),
     settingsView: () => invoke('settings_view'),
     settingsSave: input => invoke('settings_save', { input }),
-    migrationPlan: path => invoke('migration_plan', { path }),
-    migrationApply: (planToken, approved, choices, path) => invoke('migration_apply', { planToken, approved, choices, path }),
   };
 }

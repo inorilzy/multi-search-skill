@@ -13,6 +13,7 @@ from multi_search_mcp.src.search.resolve import COUNT_CAPS, build_counts, resolv
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support import config
+from multi_search_mcp.src.support.credential_store import ConfigDatabase, CONFIG_DB_ENV
 
 
 BAD_CONFIGS = (
@@ -34,7 +35,7 @@ class ExplicitConfigValidationTests(unittest.TestCase):
             name="hackernews", public_name="hackernews", call=self.provider,
         )}
         for patcher in (
-            mock.patch.dict(os.environ, {config.CONFIG_ENV_VAR: str(self.path)}),
+            mock.patch.dict(os.environ, {CONFIG_DB_ENV: str(self.path)}),
             mock.patch.object(service, "load_keys", return_value={}),
             mock.patch.object(service, "StateStore", return_value=self.store),
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
@@ -45,7 +46,7 @@ class ExplicitConfigValidationTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def write_config(self, value):
-        self.path.write_text(json.dumps(value), encoding="utf-8")
+        ConfigDatabase(self.path).write_settings(value)
         self.provider.reset_mock()
 
     def test_search_rejects_bad_config_before_provider(self):

@@ -72,7 +72,10 @@ class SearchSourceMatrixTests(unittest.TestCase):
                         {"query": "fixture", "sources": [name], "count": 1, "use_state": False},
                         keys=keys,
                         config={},
+                        url_resolver=lambda _host: ["93.184.216.34"],
+                        scraper=lambda url, **_kwargs: {"url": url, "markdown": "fixture body", "via": "fixture"},
                     )
+                self.assertEqual(response["diagnostics"]["body_failures"], [])
                 self.assertEqual(calls, [name], "the source must call its own searcher exactly once")
                 titles = [hit.get("title") for hit in response.get("results", [])]
                 self.assertIn(f"{name}-hit", titles)

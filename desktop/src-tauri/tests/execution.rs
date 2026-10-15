@@ -1,9 +1,81 @@
 mod common;
 use multi_search_desktop::{DesktopManager, SearchOptions};
 use std::{
+    path::PathBuf,
     thread,
     time::{Duration, Instant},
 };
+
+fn write_settings_db(
+    profile: &mut common::Profile,
+    name: &str,
+    value: serde_json::Value,
+) -> PathBuf {
+    let path = profile.root.join(name);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE credentials(provider TEXT PRIMARY KEY, encrypted_value BLOB NOT NULL, saved_at REAL NOT NULL); \
+             CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL); \
+             PRAGMA user_version=1;",
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO settings(id,data) VALUES(1,?1)",
+            [value.to_string()],
+        )
+        .unwrap();
+    profile.environment.variables.insert(
+        "MULTI_SEARCH_CONFIG_DB".into(),
+        path.to_string_lossy().into_owned(),
+    );
+    path
+}
+
+#[test]
+fn legacy_cli_cannot_search_using_old_credentials() {
+    let mut profile = common::Profile::new();
+    profile
+        .environment
+        .variables
+        .insert("FIXTURE_STORAGE".into(), "legacy".into());
+    let manager = DesktopManager::new(profile.environment.clone());
+    let error = manager
+        .start_search(
+            None,
+            SearchOptions {
+                query: "controlled".into(),
+                route: "dev".into(),
+                sources: vec!["hackernews".into()],
+                timeout: 5,
+            },
+        )
+        .unwrap_err();
+    assert!(error.contains("不支持 SQLite/DPAPI") && error.contains("不会读取旧 Key"));
+}
+
+#[test]
+fn database_error_is_not_reported_as_old_cli_capability() {
+    let mut profile = common::Profile::new();
+    profile
+        .environment
+        .variables
+        .insert("FIXTURE_STORAGE".into(), "corrupt".into());
+    let manager = DesktopManager::new(profile.environment.clone());
+    let error = manager
+        .start_search(
+            None,
+            SearchOptions {
+                query: "controlled".into(),
+                route: "dev".into(),
+                sources: vec![],
+                timeout: 5,
+            },
+        )
+        .unwrap_err();
+    assert!(error.contains("当前配置数据库") && !error.contains("更新 CLI"));
+}
 
 #[test]
 fn search_preserves_literal_arguments_and_reports_real_success() {
@@ -36,16 +108,15 @@ fn search_preserves_literal_arguments_and_reports_real_success() {
 #[test]
 fn custom_route_is_validated_from_current_config_and_explicit_timeout_still_wins() {
     let mut profile = common::Profile::new();
-    let config = profile.root.join("route-config.json");
     let args_path = profile.root.join("args.json");
-    std::fs::write(
-        &config,
-        r#"{"type":"-focus","timeout":40,"routes":{"-focus":{"label":"Focus","sources":["hackernews"],"timeout":2}}}"#,
-    )
-    .unwrap();
-    profile.environment.variables.insert(
-        "MULTI_SEARCH_CONFIG".into(),
-        config.to_string_lossy().into_owned(),
+    write_settings_db(
+        &mut profile,
+        "route-config.sqlite",
+        serde_json::json!({
+            "type": "-focus",
+            "timeout": 40,
+            "routes": {"-focus":{"label":"Focus","sources":["hackernews"],"timeout":2}}
+        }),
     );
     profile.environment.variables.insert(
         "FIXTURE_ARGS_PATH".into(),
@@ -99,11 +170,10 @@ fn custom_route_is_validated_from_current_config_and_explicit_timeout_still_wins
 #[test]
 fn non_default_legacy_route_timeout_can_be_tested_but_arbitrary_values_above_sixty_are_rejected() {
     let mut profile = common::Profile::new();
-    let config = profile.root.join("legacy-all-config.json");
-    std::fs::write(&config, r#"{"type":"fast"}"#).unwrap();
-    profile.environment.variables.insert(
-        "MULTI_SEARCH_CONFIG".into(),
-        config.to_string_lossy().into_owned(),
+    write_settings_db(
+        &mut profile,
+        "legacy-all-config.sqlite",
+        serde_json::json!({"type":"fast"}),
     );
     let manager = DesktopManager::new(profile.environment.clone());
     let id = manager
@@ -138,11 +208,10 @@ fn non_default_legacy_route_timeout_can_be_tested_but_arbitrary_values_above_six
 #[test]
 fn unreadable_route_config_blocks_execution_instead_of_falling_back_to_builtins() {
     let mut profile = common::Profile::new();
-    let config = profile.root.join("bad-route-config.json");
-    std::fs::write(&config, r#"{"type":"missing","routes":{}}"#).unwrap();
-    profile.environment.variables.insert(
-        "MULTI_SEARCH_CONFIG".into(),
-        config.to_string_lossy().into_owned(),
+    write_settings_db(
+        &mut profile,
+        "bad-route-config.sqlite",
+        serde_json::json!({"type":"missing","routes":{}}),
     );
     let manager = DesktopManager::new(profile.environment.clone());
     assert!(manager

@@ -28,10 +28,16 @@ fn ns(name: &str) -> BTreeMap<String, String> {
 fn save_writes_namespaced_versioned_blob_and_trims_key() {
     let backend = Memory::default();
     let vars = ns("ns-test");
-    fixture::save(&backend, &vars, &format!("  {SYNTHETIC_KEY}  "), 1700000000.0).unwrap();
+    fixture::save(
+        &backend,
+        &vars,
+        &format!("  {SYNTHETIC_KEY}  "),
+        1700000000.0,
+    )
+    .unwrap();
     let stored = backend.0.lock().unwrap();
-    assert_eq!(stored.keys().collect::<Vec<_>>(), vec!["ns-test/tavily"]);
-    let blob: serde_json::Value = serde_json::from_slice(&stored["ns-test/tavily"]).unwrap();
+    assert_eq!(stored.keys().collect::<Vec<_>>(), vec!["tavily"]);
+    let blob: serde_json::Value = serde_json::from_slice(&stored["tavily"]).unwrap();
     assert_eq!(blob["v"], 1);
     assert_eq!(blob["key"], SYNTHETIC_KEY);
     assert_eq!(blob["saved_at"], 1700000000.0);
@@ -44,14 +50,14 @@ fn overview_reports_source_without_value_and_env_overrides_store() {
     let mut vars = ns("ns-test");
     fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
     let store_only = fixture::overview(&backend, &vars);
-    assert_eq!(store_only.effective_source, "credential_store");
-    assert!(!store_only.env_overrides_store);
+    assert_eq!(store_only.effective_source, "sqlite");
+    assert!(!serde_json::to_value(&store_only).unwrap().as_object().unwrap().contains_key("env_var"));
     assert!(!format!("{store_only:?}").contains(SYNTHETIC_KEY));
 
     vars.insert("TAVILY_API_KEY".into(), "synthetic-env-key-0003".into());
     let overridden = fixture::overview(&backend, &vars);
-    assert_eq!(overridden.effective_source, "env");
-    assert!(overridden.env_overrides_store);
+    assert_eq!(overridden.effective_source, "sqlite");
+    assert_eq!(overridden, store_only);
     assert!(!format!("{overridden:?}").contains("synthetic-env-key-0003"));
 }
 
@@ -60,13 +66,15 @@ fn delete_then_absent_and_unreadable_entry_is_reported_not_echoed() {
     let backend = Memory::default();
     let vars = ns("ns-test");
     fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
-    assert_eq!(fixture::delete(&backend, &vars).unwrap().store.state, "absent");
+    assert_eq!(
+        fixture::delete(&backend, &vars).unwrap().store.state,
+        "absent"
+    );
 
-    backend
-        .0
-        .lock()
-        .unwrap()
-        .insert("ns-test/tavily".into(), format!("{{not json {SYNTHETIC_KEY}").into_bytes());
+    backend.0.lock().unwrap().insert(
+        "tavily".into(),
+        format!("{{not json {SYNTHETIC_KEY}").into_bytes(),
+    );
     let row = fixture::overview(&backend, &vars);
     assert_eq!(row.store.state, "unreadable");
     assert!(!format!("{row:?}").contains(SYNTHETIC_KEY));
@@ -76,7 +84,7 @@ fn delete_then_absent_and_unreadable_entry_is_reported_not_echoed() {
 fn invalid_keys_rejected_without_echoing_value() {
     let backend = Memory::default();
     let vars = ns("ns-test");
-    for bad in ["", "   ", "line\nbreak", &"x".repeat(1025)] {
+    for bad in ["", "   ", "line\u{7}break", &"x".repeat(1025)] {
         let error = fixture::save(&backend, &vars, bad, 1.0).unwrap_err();
         assert!(!error.contains(SYNTHETIC_KEY));
         assert!(!error.contains(&"x".repeat(20)));
@@ -117,11 +125,26 @@ fn test_outcome_classifies_provider_errors_and_success() {
         })
     };
     assert_eq!(fixture::interpret(&payload("ok", "")).result, "success");
-    assert_eq!(fixture::interpret(&payload("error", "invalid")).result, "auth_failed");
-    assert_eq!(fixture::interpret(&payload("error", "quota_exhausted")).result, "quota");
-    assert_eq!(fixture::interpret(&payload("error", "rate_limit")).result, "rate_limited");
-    assert_eq!(fixture::interpret(&payload("error", "network")).result, "network");
-    assert_eq!(fixture::interpret(&payload("error", "timeout")).result, "timeout");
+    assert_eq!(
+        fixture::interpret(&payload("error", "invalid")).result,
+        "auth_failed"
+    );
+    assert_eq!(
+        fixture::interpret(&payload("error", "quota_exhausted")).result,
+        "quota"
+    );
+    assert_eq!(
+        fixture::interpret(&payload("error", "rate_limit")).result,
+        "rate_limited"
+    );
+    assert_eq!(
+        fixture::interpret(&payload("error", "network")).result,
+        "network"
+    );
+    assert_eq!(
+        fixture::interpret(&payload("error", "timeout")).result,
+        "timeout"
+    );
     assert_eq!(fixture::interpret(&serde_json::json!({})).result, "error");
 }
 
@@ -134,11 +157,34 @@ fn test_args_never_contain_key_material() {
 }
 
 #[test]
+fn multi_key_readback_is_one_per_line_and_overview_stays_non_secret() {
+    let backend = Memory::default();
+    let vars = ns("ignored");
+    fixture::save(&backend, &vars, "first-key\nsecond-key", 1.0).unwrap();
+    assert_eq!(
+        fixture::read_for(&backend, &vars, "tavily").unwrap(),
+        "first-key\nsecond-key"
+    );
+    assert!(fixture::read_for(&backend, &vars, "../tavily").is_err());
+    let stored: serde_json::Value =
+        serde_json::from_slice(&backend.0.lock().unwrap()["tavily"]).unwrap();
+    assert_eq!(
+        stored["key"],
+        serde_json::json!(["first-key", "second-key"])
+    );
+    assert!(!format!("{:?}", fixture::overview(&backend, &vars)).contains("first-key"));
+}
+
+#[test]
 fn rust_reads_blob_written_by_python_store() {
     // Byte-for-byte output of multi_search_mcp CredentialStore.set("tavily", ..., saved_at=1700000001.5).
     let python_blob = br#"{"v":1,"key":"synthetic-roundtrip-key-0009","saved_at":1700000001.5}"#;
     let backend = Memory::default();
-    backend.0.lock().unwrap().insert("ns-roundtrip/tavily".into(), python_blob.to_vec());
+    backend
+        .0
+        .lock()
+        .unwrap()
+        .insert("tavily".into(), python_blob.to_vec());
     let row = fixture::overview(&backend, &ns("ns-roundtrip"));
     assert_eq!(row.store.state, "present");
     assert_eq!(row.store.saved_at, Some(1700000001.5));
@@ -149,8 +195,14 @@ fn rust_reads_blob_written_by_python_store() {
 fn rust_written_blob_has_contract_bytes() {
     // Exact bytes Rust writes; tests/test_credential_store.py decodes this same literal.
     let backend = Memory::default();
-    fixture::save(&backend, &ns("ns-roundtrip"), "  synthetic-roundtrip-key-0009  ", 1700000001.5).unwrap();
-    let stored = backend.0.lock().unwrap()["ns-roundtrip/tavily"].clone();
+    fixture::save(
+        &backend,
+        &ns("ns-roundtrip"),
+        "  synthetic-roundtrip-key-0009  ",
+        1700000001.5,
+    )
+    .unwrap();
+    let stored = backend.0.lock().unwrap()["tavily"].clone();
     assert_eq!(
         String::from_utf8(stored).unwrap(),
         r#"{"key":"synthetic-roundtrip-key-0009","saved_at":1700000001.5,"v":1}"#

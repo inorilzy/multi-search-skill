@@ -229,7 +229,9 @@ class GitHubKeyPoolTests(unittest.TestCase):
                 self.environ = environ
                 self.http.reset_mock()
                 response = self._search({"github": ["fixture-token-one", "fixture-token-two"]})
-                self.assertEqual(self._authorizations(), [f"Bearer {expected}"])
+                self.assertEqual(len(self._authorizations()), 1)
+                self.assertIn(self._authorizations()[0], ["Bearer fixture-token-one", "Bearer fixture-token-two"])
+                self.assertNotIn(f"Bearer {expected}", self._authorizations())
                 self.assertEqual(response["errors"], [])
         self.gh.assert_not_called()
 

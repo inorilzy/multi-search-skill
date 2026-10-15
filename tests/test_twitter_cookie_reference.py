@@ -41,7 +41,7 @@ class TwitterCookieReferenceTests(unittest.TestCase):
         self.write_keys({"twitter": str(self.file_cookie)})
         self.write_config({"twitter_cookies_path": str(self.config_cookie)})
         keys = load_keys(self.keys_file, environ={"TWITTER_COOKIES_PATH": str(self.env_cookie)})
-        self.assertEqual(keys["twitter"], str(self.env_cookie))
+        self.assertEqual(keys["twitter"], str(self.file_cookie))
 
     def test_config_path_beats_file_when_env_absent(self):
         self.write_keys({"twitter": str(self.file_cookie)})
@@ -125,7 +125,7 @@ class TwitterConfigPathReachesSearchTests(unittest.TestCase):
     def test_env_path_wins_over_config_path(self):
         self.environ = {"TWITTER_COOKIES_PATH": self.env_cookie}
         self.run_twitter({"twitter_cookies_path": self.config_cookie})
-        self.assertEqual(self.received, [self.env_cookie])
+        self.assertEqual(self.received, [self.config_cookie])
 
     def test_keys_file_path_used_when_config_absent(self):
         self.run_twitter({})

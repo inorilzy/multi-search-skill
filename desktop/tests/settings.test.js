@@ -27,11 +27,10 @@ function view(overrides = {}) {
   const selected = routes[route];
   const disabled = overrides.disabled_sources || [];
   return {
-    config_path: 'C:/Users/test/.multi-search/multi-search-config.json',
+    config_path: 'C:/Users/test/.multi-search/config.sqlite',
     path_source: 'user',
     file_present: true,
-    read_source: 'user',
-    save_creates_override: false,
+    read_source: 'sqlite',
     route,
     timeout,
     timeout_configured: true,
@@ -41,7 +40,6 @@ function view(overrides = {}) {
     builtin_routes: clone(BUILTINS),
     disabled_sources: disabled,
     twitter_cookies_path: null,
-    twitter_env_overrides: false,
     active_sources: selected?.sources.filter(source => !disabled.includes(source)) || [],
     status: 'ok',
     message: '',
@@ -391,13 +389,14 @@ test('summary shows backend effective timeout when no global timeout exists yet'
   window.close();
 });
 
-test('env and development fallback notices remain visible in secondary config details', async () => {
+test('SQLite is the only displayed configuration source and old sources are not promised an import path', async () => {
   const { window, root } = setup();
-  await mountSettings(root, { settingsView: async () => view({ config_path: 'D:/env/cfg.json', path_source: 'env', read_source: 'dev_fallback', save_creates_override: true, twitter_env_overrides: true, twitter_cookies_path: 'C:/cookies.json' }) });
+  await mountSettings(root, { settingsView: async () => view({ config_path: 'D:/env/config.sqlite', path_source: 'env', read_source: 'sqlite', twitter_cookies_path: 'C:/cookies.json' }) });
   const info = root.querySelector('[data-info="env"]').textContent;
-  assert.match(info, /MULTI_SEARCH_CONFIG/);
-  assert.match(info, /开发目录/);
-  assert.match(info, /TWITTER_COOKIES_PATH/);
+  assert.match(root.querySelector('[data-status="path-source"]').textContent, /MULTI_SEARCH_CONFIG_DB/);
+  assert.match(info, /SQLite 是唯一生效配置来源/);
+  assert.match(info, /不会自动生效/);
+  assert.doesNotMatch(info, /导入|迁移/);
   assert.equal(root.querySelector('[data-field="twitter"]').value, 'C:/cookies.json');
   window.close();
 });

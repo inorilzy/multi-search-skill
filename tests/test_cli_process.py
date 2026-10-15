@@ -7,6 +7,7 @@ import sys
 import unittest
 
 from scripts.test_isolation import isolated_test_environment
+from multi_search_mcp.src.support.credential_store import ConfigDatabase
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +111,10 @@ class CliProcessTests(unittest.TestCase):
         # Extend the disposable runner bootstrap, not any product installation.
         (self.isolation.root / "bootstrap" / "sitecustomize.py").write_text(BOOTSTRAP, encoding="utf-8")
         self.environment = dict(os.environ)
+        self.config_db = ConfigDatabase(self.environment["MULTI_SEARCH_CONFIG_DB"])
+
+    def write_settings(self, settings):
+        self.config_db.write_settings(settings)
 
     def run_cli(self, *args, future=False, no_http=False, fixture_env=None):
         if self.installed:
@@ -128,21 +133,18 @@ class CliProcessTests(unittest.TestCase):
                               capture_output=True, text=True, encoding="utf-8", timeout=30)
 
     def test_keyless_source_controls_reach_real_cli_and_controlled_http_independently(self):
-        config = self.isolation.root / "source-test.json"
-        config.write_text(json.dumps({"no_scrape": True}), encoding="utf-8")
-        self.environment["MULTI_SEARCH_CONFIG"] = str(config)
+        self.write_settings({"timeout": 7})
         self.environment["CLI_FIXTURE_KEYLESS"] = "1"
         for source in ("hackernews", "stackoverflow", "sov2ex"):
             with self.subTest(source=source):
-                result = self.run_cli("search", "fixture", "--source", source, "--format", "json")
+                result = self.run_cli("search", "fixture", "--source", source, "--no-scrape", "--format", "json")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 rows = json.loads(result.stdout)["provider_status"]
                 self.assertEqual([row["source"] for row in rows], [source])
                 self.assertEqual(rows[0]["status"], "ok")
 
     def test_custom_route_sources_disabled_filter_and_explicit_source_override_reach_real_cli(self):
-        config = self.isolation.root / "custom-routes.json"
-        config.write_text(json.dumps({
+        self.write_settings({
             "type": "community",
             "routes": {
                 "community": {
@@ -152,11 +154,9 @@ class CliProcessTests(unittest.TestCase):
                 }
             },
             "disabled_sources": ["stackoverflow"],
-            "scrape_timeout": 3,
-        }), encoding="utf-8")
-        self.environment["MULTI_SEARCH_CONFIG"] = str(config)
+        })
 
-        grouped = self.run_cli("search", "fixture", "--format", "json")
+        grouped = self.run_cli("search", "fixture", "--no-scrape", "--format", "json")
         self.assertEqual(grouped.returncode, 0, grouped.stderr)
         payload = json.loads(grouped.stdout)
         self.assertEqual(payload["route"], "community")
@@ -165,7 +165,7 @@ class CliProcessTests(unittest.TestCase):
         self.assertEqual([row["source"] for row in payload["provider_status"]], ["hackernews"])
 
         overridden = self.run_cli(
-            "search", "fixture", "--source", "sov2ex", "--format", "json",
+            "search", "fixture", "--source", "sov2ex", "--no-scrape", "--format", "json",
             fixture_env={"CLI_FIXTURE_KEYLESS": "1"},
         )
         self.assertEqual(overridden.returncode, 0, overridden.stderr)
@@ -174,8 +174,7 @@ class CliProcessTests(unittest.TestCase):
         self.assertEqual([row["source"] for row in override_payload["provider_status"]], ["sov2ex"])
 
     def test_leading_hyphen_route_works_from_config_and_explicit_equals_argument(self):
-        config = self.isolation.root / "hyphen-route.json"
-        config.write_text(json.dumps({
+        self.write_settings({
             "type": "-focus",
             "routes": {
                 "-focus": {
@@ -184,14 +183,12 @@ class CliProcessTests(unittest.TestCase):
                     "timeout": 5,
                 }
             },
-            "scrape_timeout": 3,
-        }), encoding="utf-8")
-        self.environment["MULTI_SEARCH_CONFIG"] = str(config)
+        })
 
         for route_arguments in ((), ("--route=-focus",)):
             with self.subTest(route_arguments=route_arguments):
                 result = self.run_cli(
-                    "search", "fixture", *route_arguments, "--format", "json"
+                    "search", "fixture", *route_arguments, "--no-scrape", "--format", "json"
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 payload = json.loads(result.stdout)
@@ -203,64 +200,63 @@ class CliProcessTests(unittest.TestCase):
                 )
 
     def test_route_timeout_precedence_reaches_real_cli_deadline(self):
-        config = self.isolation.root / "route-timeout.json"
-        self.environment["MULTI_SEARCH_CONFIG"] = str(config)
         route = {"label": "Slow", "sources": ["hackernews"], "timeout": 1}
-        config.write_text(json.dumps({
+        self.write_settings({
             "type": "slow",
             "routes": {"slow": route},
             "timeout": 3,
-            "scrape_timeout": 3,
-        }), encoding="utf-8")
+        })
         delayed = {"CLI_FIXTURE_HN_DELAY": "1.25"}
 
-        group_wins = self.run_cli("search", "fixture", "--format", "json", fixture_env=delayed)
+        group_wins = self.run_cli(
+            "search", "fixture", "--no-scrape", "--format", "json",
+            fixture_env=delayed,
+        )
         self.assertEqual(group_wins.returncode, 1, group_wins.stderr)
         self.assertIn("timeout after 1s", group_wins.stdout)
 
         explicit_wins = self.run_cli(
-            "search", "fixture", "--timeout", "3", "--format", "json", fixture_env=delayed,
+            "search", "fixture", "--timeout", "3", "--no-scrape",
+            "--format", "json", fixture_env=delayed,
         )
         self.assertEqual(explicit_wins.returncode, 0, explicit_wins.stderr)
         self.assertEqual(json.loads(explicit_wins.stdout)["outcome"], "success")
 
         route["timeout"] = None
-        config.write_text(json.dumps({
+        self.write_settings({
             "type": "slow",
             "routes": {"slow": route},
             "timeout": 1,
-            "scrape_timeout": 3,
-        }), encoding="utf-8")
-        config_wins = self.run_cli("search", "fixture", "--format", "json", fixture_env=delayed)
+        })
+        config_wins = self.run_cli(
+            "search", "fixture", "--no-scrape", "--format", "json",
+            fixture_env=delayed,
+        )
         self.assertEqual(config_wins.returncode, 1, config_wins.stderr)
         self.assertIn("timeout after 1s", config_wins.stdout)
 
     def test_real_cli_accepts_edited_builtin_deleted_builtin_and_legacy_config(self):
-        config = self.isolation.root / "route-compat.json"
-        self.environment["MULTI_SEARCH_CONFIG"] = str(config)
-        config.write_text(json.dumps({
+        self.write_settings({
             "type": "fast",
             "routes": {
                 "fast": {"label": "Edited", "sources": ["hackernews"], "timeout": None}
             },
             "timeout": 5,
-            "scrape_timeout": 3,
-        }), encoding="utf-8")
-        edited = self.run_cli("search", "fixture", "--format", "json")
+        })
+        edited = self.run_cli("search", "fixture", "--no-scrape", "--format", "json")
         self.assertEqual(edited.returncode, 0, edited.stderr)
         self.assertEqual(json.loads(edited.stdout)["diagnostics"]["active_sources"], ["hackernews"])
 
-        deleted = self.run_cli("search", "fixture", "--route", "default", "--format", "json")
+        deleted = self.run_cli("search", "fixture", "--route", "default", "--no-scrape", "--format", "json")
         self.assertEqual(deleted.returncode, 1)
         self.assertIn("unknown route: default; valid routes: fast", deleted.stderr)
 
-        config.write_text(json.dumps({
+        self.write_settings({
             "type": "dev",
             "disabled_sources": ["github"],
             "timeout": 5,
-            "scrape_timeout": 3,
-        }), encoding="utf-8")
-        legacy = self.run_cli("search", "fixture", "--format", "json")
+        })
+        legacy = self.run_cli("search", "fixture", "--no-scrape", "--format", "json")
         self.assertEqual(legacy.returncode, 0, legacy.stderr)
         self.assertEqual(
             json.loads(legacy.stdout)["diagnostics"]["active_sources"],
@@ -268,15 +264,13 @@ class CliProcessTests(unittest.TestCase):
         )
 
     def test_bad_routes_are_an_explicit_real_cli_configuration_error(self):
-        config = self.isolation.root / "bad-routes.json"
-        config.write_text(json.dumps({
+        self.write_settings({
             "type": "bad",
             "routes": {
                 "bad": {"label": "Bad", "sources": ["hackernews"], "timeout": True}
             },
-        }), encoding="utf-8")
-        self.environment["MULTI_SEARCH_CONFIG"] = str(config)
-        result = self.run_cli("search", "fixture", "--format", "json")
+        })
+        result = self.run_cli("search", "fixture", "--no-scrape", "--format", "json")
         self.assertEqual(result.returncode, 1)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["error_type"], "invalid_request")
@@ -415,84 +409,6 @@ class CliProcessTests(unittest.TestCase):
             errors = json.loads(outcome.stdout)["provider_status"][0]["errors"]
             self.assertEqual(errors[0]["error_type"], expected, query)
             self.assertNotIn(key_value, outcome.stdout + outcome.stderr)
-
-    @unittest.skipUnless(sys.platform == "win32", "Windows Credential Manager is Windows-only")
-    def test_migrated_legacy_key_is_used_by_independent_search_without_env_override(self):
-        """Migrate a synthetic legacy key with the real `migrate-legacy` CLI, then search in a
-        separate process. External HTTP is replaced only at the urllib opener inside the child
-        (ProviderHTTP in BOOTSTRAP); no real network is used and NetworkGuard is active in the
-        child via test_isolation.activate_from_environment. The expected key lives only in this
-        fixture and is supplied to the child as CLI_FIXTURE_TAVILY_KEY, never as a provider env
-        var, so the store is the only key source. Key values are never printed or asserted in output.
-        """
-        import tempfile
-        from multi_search_mcp.src.state.keys import key_sources
-        from multi_search_mcp.src.support.credential_store import default_store
-
-        migrated_value = "synthetic-migrate-key-0021"
-        namespace = f"ticket09-search-{os.getpid()}"
-        env = dict(self.environment, MULTI_SEARCH_CREDENTIAL_NAMESPACE=namespace)
-        env.pop("TAVILY_API_KEY", None)
-        store = default_store(env)
-        self.addCleanup(store.delete, "tavily")
-        store.delete("tavily")
-
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        keys_file = Path(tmp.name) / "search-keys.json"
-        keys_file.write_text(json.dumps({"tavily": migrated_value}), encoding="utf-8")
-        source_bytes = keys_file.read_bytes()
-        request_file = Path(tmp.name) / "request.json"
-
-        def migrate(*args):
-            return subprocess.run(
-                [sys.executable, "-B", "-m", "multi_search_mcp.cli", "migrate-legacy", *args,
-                 "--keys-file", str(keys_file), "--format", "json"],
-                cwd=self.isolation.root, env=env, capture_output=True, text=True,
-                encoding="utf-8", timeout=30,
-            )
-
-        def plan_and_apply():
-            plan_run = migrate("plan")
-            self.assertEqual(plan_run.returncode, 0, plan_run.stderr)
-            self.assertNotIn(migrated_value, plan_run.stdout + plan_run.stderr)
-            plan = json.loads(plan_run.stdout)
-            request_file.write_text(json.dumps({"plan_token": plan["plan_token"],
-                                                "approved": ["tavily"], "choices": {}}), encoding="utf-8")
-            apply_run = migrate("apply", "--request", str(request_file))
-            self.assertEqual(apply_run.returncode, 0, apply_run.stderr)
-            self.assertNotIn(migrated_value, apply_run.stdout + apply_run.stderr)
-            return json.loads(apply_run.stdout)
-
-        first = plan_and_apply()
-        self.assertEqual(first["written"], ["tavily"])
-        self.assertEqual(first["unchanged"], [])
-        self.assertTrue(first["complete"])
-        self.assertEqual(store.get("tavily"), migrated_value)
-
-        # No provider env var is set, so the store must be the effective source.
-        report = key_sources(keys_file=keys_file, environ=env, credential_store=store)
-        self.assertEqual(report["tavily"]["effective_source"], "credential_store")
-        self.assertFalse(report["tavily"]["env_overrides_store"])
-
-        searched = subprocess.run(
-            [sys.executable, "-B", "-m", "multi_search_mcp.cli", "search", "ok",
-             "--source", "tavily", "--format", "json"],
-            cwd=self.isolation.root, env=dict(env, CLI_FIXTURE_TAVILY_KEY=migrated_value),
-            capture_output=True, text=True, encoding="utf-8", timeout=30,
-        )
-        self.assertEqual(searched.returncode, 0, searched.stderr)
-        self.assertEqual(json.loads(searched.stdout)["provider_status"][0]["status"], "ok")
-        self.assertNotIn(migrated_value, searched.stdout + searched.stderr)
-
-        # Repeat is idempotent: the same key is already current and nothing is written.
-        second = plan_and_apply()
-        self.assertEqual(second["written"], [])
-        self.assertEqual(second["unchanged"], ["tavily"])
-        self.assertTrue(second["complete"])
-
-        # The legacy source file is never modified by plan or apply.
-        self.assertEqual(keys_file.read_bytes(), source_bytes)
 
 
 if __name__ == "__main__":

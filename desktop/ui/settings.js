@@ -31,7 +31,7 @@ function validateRoute(id, route, routes, originalId = null) {
 export async function mountSettings(root, api) {
   const doc = root.ownerDocument;
   root.classList.add('settings-page');
-  root.innerHTML = `<section class="heading settings-head"><div><p class="eyebrow">SETTINGS / ROUTES</p><h1>搜索设置</h1><p>配置默认分组、全局超时和每组搜索源。搜索仍由独立 CLI 按需执行。</p></div><button type="button" data-action="refresh">刷新</button></section>
+  root.innerHTML = `<section class="heading settings-head"><div><p class="eyebrow">SETTINGS / ROUTES</p><h1>搜索设置</h1><p>配置默认分组、全局超时和每组搜索源。设置保存在 SQLite；搜索仍由独立 CLI 按需执行。</p></div><button type="button" data-action="refresh">刷新</button></section>
     <form data-settings-form>
       <section class="settings-summary" aria-label="当前搜索设置摘要">
         <article><span>当前默认路由</span><strong data-summary="route">—</strong><small data-summary="route-id">—</small></article>
@@ -52,7 +52,7 @@ export async function mountSettings(root, api) {
 
       <section class="panel settings-other"><div class="section-title"><div><p class="eyebrow">OTHER</p><h2>其他设置</h2></div></div>
         <label>Twitter cookie 文件路径（可选，仅保存路径）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json" disabled></label>
-        <details class="config-details"><summary>配置文件信息</summary><dl class="cred-status"><dt>配置文件</dt><dd data-status="path"></dd><dt>路径来源</dt><dd data-status="path-source"></dd></dl><p class="note" data-info="env" role="status"></p></details>
+        <details class="config-details"><summary>配置数据库信息</summary><dl class="cred-status"><dt>配置数据库</dt><dd data-status="path"></dd><dt>路径来源</dt><dd data-status="path-source"></dd></dl><p class="note" data-info="env" role="status"></p></details>
       </section>
 
       <div class="settings-savebar"><div><strong data-status="save" aria-live="polite"></strong><small data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存全部设置</button></div>
@@ -341,13 +341,8 @@ export async function mountSettings(root, api) {
     q('[data-field="timeout"]').value = String(globalTimeout);
     q('[data-field="twitter"]').value = twitterPath;
     text('[data-status="path"]', view.config_path || '无法确定配置文件位置');
-    text('[data-status="path-source"]', view.path_source === 'env' ? `环境变量 MULTI_SEARCH_CONFIG（${view.file_present ? '文件已存在' : '文件尚未创建'}）` : `用户配置（${view.file_present ? '文件已存在' : '文件尚未创建'}）`);
-    const notes = [];
-    if (view.path_source === 'env') notes.push('检测到 MULTI_SEARCH_CONFIG，保存会写入该路径。');
-    if (view.read_source === 'dev_fallback') notes.push('当前显示开发目录配置。');
-    if (view.save_creates_override) notes.push('保存会创建用户配置文件，并覆盖开发目录回退。');
-    if (view.twitter_env_overrides) notes.push('TWITTER_COOKIES_PATH 会覆盖这里保存的路径。');
-    text('[data-info="env"]', notes.join(' '));
+    text('[data-status="path-source"]', view.path_source === 'env' ? `隔离数据库 MULTI_SEARCH_CONFIG_DB（${view.file_present ? '已存在' : '尚未创建'}）` : `用户 SQLite 配置（${view.file_present ? '已存在' : '尚未创建'}）`);
+    text('[data-info="env"]', 'SQLite 是唯一生效配置来源；旧 JSON、环境变量和旧凭据文件不会自动生效。');
     dirty = false;
     editorDirty = false;
     revision += 1;

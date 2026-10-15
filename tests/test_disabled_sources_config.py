@@ -59,7 +59,13 @@ class DisabledSourcesConfigTests(unittest.TestCase):
         request = {"query": "fixture", "use_state": False, "count": 1}
         if sources:
             request["sources"] = sources
-        return run_search_web(request, keys=dict(SYNTHETIC_KEYS), config=config)
+        response = run_search_web(
+            request, keys=dict(SYNTHETIC_KEYS), config=config,
+            url_resolver=lambda _host: ["93.184.216.34"],
+            scraper=lambda url, **_kwargs: {"url": url, "markdown": "fixture body", "via": "fixture"},
+        )
+        self.assertEqual(response["diagnostics"]["body_failures"], [])
+        return response
 
     def test_disabled_sources_are_not_called_and_partial_results_survive(self):
         disabled = sorted(DEFAULT_ROUTE_SOURCES - {"baidu", "brave"})

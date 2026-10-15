@@ -22,8 +22,8 @@ class RuntimeSeamTests(unittest.TestCase):
                 environ={"BRAVE_API_KEY": "env-brave", "EXA_API_KEY": "env-exa"},
             )
 
-        self.assertEqual(keys["brave"], "env-brave")
-        self.assertEqual(keys["exa"], "env-exa")
+        self.assertEqual(keys["brave"], "file-brave")
+        self.assertEqual(keys["exa"], "file-exa")
 
     def test_list_sources_skips_state_store_when_status_flags_are_disabled(self):
         with mock.patch("multi_search_mcp.src.service.StateStore", side_effect=AssertionError("StateStore should not be constructed")):
