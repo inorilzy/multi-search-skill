@@ -10,6 +10,7 @@ from multi_search_mcp import cli
 from multi_search_mcp.src import service
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support import config
+from multi_search_mcp.src.support.credential_store import ConfigDatabase, CONFIG_DB_ENV
 
 
 class ConfigurationDiagnosticsTests(unittest.TestCase):
@@ -19,16 +20,16 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
         self.path = Path(self.temp.name) / "config.json"
         self.store = StateStore(Path(self.temp.name) / "state.sqlite")
         for patcher in (
-            mock.patch.dict(os.environ, {config.CONFIG_ENV_VAR: str(self.path)}),
+            mock.patch.dict(os.environ, {CONFIG_DB_ENV: str(self.path)}),
             mock.patch.object(service, "StateStore", return_value=self.store),
             mock.patch.object(service, "load_keys", return_value={}),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_missing_env_path_is_an_error(self):
-        with self.assertRaisesRegex(config.ConfigError, "config file not found"):
-            config.load_config()
+    def test_missing_database_uses_defaults_without_creating_it(self):
+        self.assertEqual(config.load_config(), {})
+        self.assertFalse(self.path.exists())
 
     def test_explicit_path_missing_or_malformed_is_an_error(self):
         with self.assertRaises(config.ConfigError):
@@ -45,7 +46,12 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
         for text in ("{broken", '{"disabled_sources":["missing-provider"]}', '{"expand":false}',
                      '{"expand":["variant"],"query_fusion":{"mode":"weighted","primary_weight":1,"variant_budget":2}}'):
             with self.subTest(text=text):
-                self.path.write_text(text, encoding="utf-8")
+                if self.path.exists():
+                    self.path.unlink()
+                if text == "{broken":
+                    self.path.write_text(text, encoding="utf-8")
+                else:
+                    ConfigDatabase(self.path).write_settings(json.loads(text))
                 data = service.doctor_data(include_keys=False)
                 self.assertFalse(data["config_loaded"])
                 self.assertEqual(data["config_status"], "error")
@@ -55,10 +61,12 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
     def test_doctor_reports_missing_explicit_config(self):
         data = service.doctor_data(include_keys=False)
         self.assertFalse(data["config_loaded"])
-        self.assertIn("not found", data["config_error"])
+        self.assertNotIn("config_error", data)
+        self.assertEqual(data["config_status"], "defaults")
+        self.assertEqual(data["config_storage"], {"backend": "sqlite-dpapi", "schema_version": 1})
 
     def test_doctor_network_reports_partial_failure(self):
-        self.path.write_text("{}", encoding="utf-8")
+        ConfigDatabase(self.path).write_settings({})
         response = mock.MagicMock()
         response.__enter__.return_value = response
         response.read.return_value = b"{}"
@@ -72,7 +80,7 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
         self.assertIn("probe timeout", data["network_checks"][1]["error"])
 
     def test_doctor_network_success_and_no_network_default(self):
-        self.path.write_text("{}", encoding="utf-8")
+        ConfigDatabase(self.path).write_settings({})
         with mock.patch("multi_search_mcp.src.support.http.urlopen_retry") as opener:
             data = service.doctor_data(include_keys=False)
             opener.assert_not_called()
@@ -97,7 +105,7 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
                 code = cli.main(["doctor", "--format", output_format], stdout=stdout, stderr=stderr)
                 self.assertEqual(code, 1)
                 self.assertIn("config_error", stdout.getvalue())
-                self.assertIn("not valid JSON", stdout.getvalue())
+                self.assertIn("database operation failed", stdout.getvalue())
                 self.assertIn("network_checked", stdout.getvalue())
 
 

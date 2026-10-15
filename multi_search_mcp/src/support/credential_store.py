@@ -1,12 +1,8 @@
-"""Windows Credential Manager access for single-secret search providers.
+"""Shared SQLite configuration with current-user Windows DPAPI credentials.
 
-Each provider secret is one generic credential named ``<namespace>/<provider>``.
-The credential blob is UTF-8 JSON ``{"v": 1, "key": <secret>, "saved_at": <unix seconds>}``.
-The Tauri desktop writes the same format (``desktop/src-tauri/src/credential.rs``);
-change both together.
-
-Errors never include secret material. Store failures raise ``CredentialStoreError``
-and callers must surface them; there is no plaintext fallback.
+Legacy Credential Manager access is retained only for explicit import. The default
+store never reads it. Backend seams allow isolated tests; production never falls
+back to plaintext when encryption, initialization, or a transaction fails.
 """
 from __future__ import annotations
 
@@ -14,6 +10,10 @@ import json
 import os
 import sys
 import time
+import math
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -35,7 +35,7 @@ class CredentialStoreError(RuntimeError):
 
 @dataclass(frozen=True)
 class StoredKey:
-    key: str
+    key: Any
     saved_at: float
 
 
@@ -141,14 +141,209 @@ def validate_key(key: object) -> str:
     return text
 
 
+CONFIG_DB_ENV = "MULTI_SEARCH_CONFIG_DB"
+SCHEMA_VERSION = 1
+PROVIDERS = ("baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github", "jina")
+
+
+def config_db_path(environ=None) -> Path:
+    env = os.environ if environ is None else environ
+    selected = env.get(CONFIG_DB_ENV)
+    if selected:
+        # Match desktop PathBuf semantics: this selector is a literal path, not
+        # shell input; '~' and environment variables are not expanded.
+        return Path(selected)
+    # Respect the same explicit home order as the desktop process.
+    home = env.get("USERPROFILE") or env.get("HOME")
+    return (Path(home) if home else Path.home()) / ".multi-search" / "config.sqlite"
+
+
+def validate_value(provider: str, value: Any) -> Any:
+    """Keep single/list/Jina JSON shapes, validating each key without echoing it."""
+    if isinstance(value, str):
+        return validate_key(value)
+    if isinstance(value, list) and value and all(isinstance(item, str) or (provider == "jina" and isinstance(item, dict)) for item in value):
+        return [validate_value(provider, item) for item in value]
+    if provider == "jina" and isinstance(value, dict) and "key" in value:
+        result = dict(value)
+        result["key"] = validate_key(value["key"])
+        if "exhausted" in value and not isinstance(value["exhausted"], bool):
+            raise ValueError("Jina exhausted requires a boolean")
+        # Ensure extra legacy metadata remains JSON, not a Python-only object.
+        try:
+            json.dumps(result, allow_nan=False)
+        except (TypeError, ValueError):
+            raise ValueError("Jina entry must contain JSON values") from None
+        return result
+    raise ValueError("credential requires a key string, nonempty key list, or Jina entry")
+
+
+class WindowsDPAPI:
+    """Current-user protection, no optional entropy and no interactive UI."""
+
+    def _crypt(self, value: bytes, *, decrypt: bool) -> bytes:
+        if sys.platform != "win32":
+            raise CredentialStoreError("Windows DPAPI is only available on Windows")
+        import ctypes
+        from ctypes import wintypes
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
+
+        dll = ctypes.WinDLL("crypt32", use_last_error=True)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        buffer = (ctypes.c_ubyte * len(value)).from_buffer_copy(value)
+        source = DATA_BLOB(len(value), buffer)
+        target = DATA_BLOB()
+        fn = dll.CryptUnprotectData if decrypt else dll.CryptProtectData
+        fn.argtypes = [ctypes.POINTER(DATA_BLOB), ctypes.c_void_p, ctypes.c_void_p,
+                       ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(DATA_BLOB)]
+        fn.restype = wintypes.BOOL
+        kernel.LocalFree.argtypes = [ctypes.c_void_p]
+        kernel.LocalFree.restype = ctypes.c_void_p
+        if not fn(ctypes.byref(source), None, None, None, None, 1, ctypes.byref(target)):
+            raise CredentialStoreError("DPAPI decryption failed" if decrypt else "DPAPI encryption failed")
+        try:
+            return ctypes.string_at(target.pbData, target.cbData)
+        finally:
+            kernel.LocalFree(target.pbData)
+
+    def encrypt(self, value: bytes) -> bytes:
+        return self._crypt(value, decrypt=False)
+
+    def decrypt(self, value: bytes) -> bytes:
+        return self._crypt(value, decrypt=True)
+
+
+class ConfigDatabase:
+    """Owns schema initialization and transactions shared by keys and settings."""
+
+    def __init__(self, path: str | Path | None = None):
+        self.path = Path(path) if path is not None else config_db_path()
+
+    @contextmanager
+    def connect(self, *, create: bool = False):
+        if not create and not self.path.exists():
+            yield None
+            return
+        conn = None
+        try:
+            if create:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(self.path), timeout=5)
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, SCHEMA_VERSION):
+                raise CredentialStoreError("unsupported configuration database schema version")
+            if version == 0:
+                # A preexisting nonempty database is not silently repurposed.
+                conn.execute("BEGIN IMMEDIATE")
+                # Another process may have initialized while this one waited.
+                locked_version = conn.execute("PRAGMA user_version").fetchone()[0]
+                if locked_version == 0:
+                    if conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]:
+                        raise CredentialStoreError("configuration database schema is invalid")
+                    conn.execute("CREATE TABLE credentials(provider TEXT PRIMARY KEY, encrypted_value BLOB NOT NULL, saved_at REAL NOT NULL)")
+                    conn.execute("CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)")
+                    conn.execute("PRAGMA user_version=1")
+                elif locked_version != SCHEMA_VERSION:
+                    raise CredentialStoreError("unsupported configuration database schema version")
+                conn.commit()
+            expected = {"credentials": [("provider", "TEXT", 0, 1), ("encrypted_value", "BLOB", 1, 0), ("saved_at", "REAL", 1, 0)],
+                        "settings": [("id", "INTEGER", 0, 1), ("data", "TEXT", 1, 0)]}
+            for table, columns in expected.items():
+                actual = [(r[1], r[2].upper(), r[3], r[5]) for r in conn.execute(f"PRAGMA table_info({table})")]
+                if actual != columns:
+                    raise CredentialStoreError("configuration database schema is invalid")
+            yield conn
+            conn.commit()
+        except CredentialStoreError:
+            if conn is not None:
+                conn.rollback()
+            raise
+        except (sqlite3.Error, OSError):
+            if conn is not None:
+                conn.rollback()
+            raise CredentialStoreError("configuration database operation failed") from None
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def read_settings(self) -> dict:
+        with self.connect() as conn:
+            row = conn.execute("SELECT data FROM settings WHERE id=1").fetchone() if conn else None
+        if not row:
+            return {}
+        try:
+            data = json.loads(row[0])
+            if not isinstance(data, dict):
+                raise ValueError
+            return data
+        except (TypeError, ValueError):
+            raise CredentialStoreError("stored settings are unreadable") from None
+
+    def write_settings(self, data: dict) -> None:
+        try:
+            raw = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        except (TypeError, ValueError):
+            raise CredentialStoreError("settings must contain JSON values") from None
+        with self.connect(create=True) as conn:
+            conn.execute("INSERT INTO settings(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (raw,))
+
+
+class SQLiteCredentialBackend:
+    def __init__(self, path=None, protector=None):
+        self.database = ConfigDatabase(path)
+        self.protector = protector or WindowsDPAPI()
+
+    def read(self, target: str) -> bytes | None:
+        provider = target.rsplit("/", 1)[-1]
+        with self.database.connect() as conn:
+            row = conn.execute("SELECT encrypted_value FROM credentials WHERE provider=?", (provider,)).fetchone() if conn else None
+        if not row:
+            return None
+        try:
+            return self.protector.decrypt(bytes(row[0]))
+        except (ValueError, TypeError):
+            raise CredentialStoreError("stored credential ciphertext is unreadable") from None
+
+    def write(self, target: str, blob: bytes) -> None:
+        provider = target.rsplit("/", 1)[-1]
+        encrypted = self.protector.encrypt(blob)
+        stamp = float(json.loads(blob)["saved_at"])
+        with self.database.connect(create=True) as conn:
+            conn.execute("INSERT INTO credentials(provider,encrypted_value,saved_at) VALUES(?,?,?) ON CONFLICT(provider) DO UPDATE SET encrypted_value=excluded.encrypted_value,saved_at=excluded.saved_at", (provider, encrypted, stamp))
+
+    def delete(self, target: str) -> bool:
+        provider = target.rsplit("/", 1)[-1]
+        with self.database.connect() as conn:
+            return bool(conn.execute("DELETE FROM credentials WHERE provider=?", (provider,)).rowcount) if conn else False
+
+    def import_batch(self, values: dict, settings: dict | None, check) -> None:
+        """Lock, revalidate, and import the entire approved selection atomically."""
+        with self.database.connect(create=True) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            check()
+            stamp = time.time()
+            for provider, value in values.items():
+                raw = json.dumps({"v": 1, "key": validate_value(provider, value), "saved_at": stamp},
+                                 separators=(",", ":")).encode("utf-8")
+                encrypted = self.protector.encrypt(raw)
+                conn.execute("INSERT INTO credentials(provider,encrypted_value,saved_at) VALUES(?,?,?) ON CONFLICT(provider) DO UPDATE SET encrypted_value=excluded.encrypted_value,saved_at=excluded.saved_at", (provider, encrypted, stamp))
+            if settings is not None:
+                raw = json.dumps(settings, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+                conn.execute("INSERT INTO settings(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (raw,))
+
+
 class CredentialStore:
-    """Single-secret store keyed by provider name, over a pluggable backend."""
+    """JSON-valued credentials over a pluggable backend; SQLite/DPAPI by default."""
 
     def __init__(self, backend: CredentialBackend, namespace: str = DEFAULT_NAMESPACE) -> None:
         self._backend = backend
         self.namespace = namespace or DEFAULT_NAMESPACE
 
     def target(self, provider: str) -> str:
+        if provider not in PROVIDERS:
+            raise ValueError("unsupported credential provider")
         return f"{self.namespace}/{provider}"
 
     def get_record(self, provider: str) -> StoredKey | None:
@@ -159,20 +354,23 @@ class CredentialStore:
             data = json.loads(blob.decode("utf-8"))
             key = data["key"]
             saved_at = float(data["saved_at"])
-            if data.get("v") != BLOB_VERSION or not isinstance(key, str) or not key:
+            if data.get("v") != BLOB_VERSION or not math.isfinite(saved_at):
                 raise ValueError
+            key = validate_value(provider, key)
         except (UnicodeDecodeError, ValueError, KeyError, TypeError):
             # Do not echo the entry contents; the entry is unusable as stored.
             raise CredentialStoreError(f"stored credential for {provider} is unreadable") from None
         return StoredKey(key=key, saved_at=saved_at)
 
-    def get(self, provider: str) -> str | None:
+    def get(self, provider: str) -> Any:
         record = self.get_record(provider)
         return record.key if record else None
 
-    def set(self, provider: str, key: str, *, saved_at: float | None = None) -> float:
-        value = validate_key(key)
+    def set(self, provider: str, key: Any, *, saved_at: float | None = None) -> float:
+        value = validate_value(provider, key)
         stamp = time.time() if saved_at is None else float(saved_at)
+        if not math.isfinite(stamp):
+            raise ValueError("saved_at must be finite")
         blob = json.dumps(
             {"v": BLOB_VERSION, "key": value, "saved_at": stamp},
             separators=(",", ":"),
@@ -190,4 +388,9 @@ def credential_namespace(environ: dict | os._Environ | None = None) -> str:
 
 
 def default_store(environ: dict | os._Environ | None = None) -> CredentialStore:
+    return CredentialStore(SQLiteCredentialBackend(config_db_path(environ)))
+
+
+def legacy_store(environ=None) -> CredentialStore:
+    """Explicit migration source only; callers must never write/delete this store."""
     return CredentialStore(WindowsCredentialBackend(), credential_namespace(environ))

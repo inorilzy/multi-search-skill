@@ -106,6 +106,7 @@ impl DesktopManager {
             return Err("Unsupported search options".into());
         }
         let cli = self.execution_cli(path)?;
+        self.require_storage_cli(&cli)?;
         let mut slot = self
             .execution_slot
             .lock()
@@ -136,12 +137,8 @@ impl DesktopManager {
             args.push("--source".into());
             args.push(source);
         }
-        let process = OwnedProcess::spawn(
-            &cli,
-            &args,
-            &self.environment,
-        )
-        .map_err(|_| "Could not start the CLI")?;
+        let process = OwnedProcess::spawn(&cli, &args, &self.environment)
+            .map_err(|_| "Could not start the CLI")?;
         let execution = Arc::new(Mutex::new(Execution {
             state: ExecutionStatus {
                 id,

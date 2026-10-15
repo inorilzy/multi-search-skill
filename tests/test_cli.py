@@ -14,6 +14,13 @@ class CliTests(unittest.TestCase):
         code = cli.main(argv, stdout=stdout, stderr=stderr)
         return code, stdout.getvalue(), stderr.getvalue()
 
+    def test_legacy_migration_command_is_not_available(self):
+        code, stdout, stderr = self.run_cli(["migrate-legacy", "plan"])
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("invalid choice", stderr)
+        self.assertNotIn("migrate-legacy", cli.build_parser().format_help())
+
     def test_search_json_calls_search_web_with_repeated_sources_and_expand(self):
         captured = {}
 

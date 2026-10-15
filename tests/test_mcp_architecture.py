@@ -1114,8 +1114,8 @@ class PluginServiceConfigTests(unittest.TestCase):
         data = doctor_data(include_keys=False)
 
         self.assertIn("config_path", data)
-        self.assertEqual(data["key_sources"]["file"], "~/.search-keys.json")
-        self.assertIn("TAVILY_API_KEY", data["key_sources"]["env"])
+        self.assertEqual(data["key_sources"]["storage"], "sqlite-dpapi")
+        self.assertEqual(data["key_sources"]["legacy_sources"], "explicit import only")
         self.assertEqual(data["key_sources"]["state"], data["state_path"])
         self.assertNotIn("levels", data)
 
@@ -1349,7 +1349,7 @@ class PluginEntryLayerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = Path(tmp) / "cfg.json"
             cfg.write_text("{}", encoding="utf-8")
-            with mock.patch.dict("os.environ", {config_module.CONFIG_ENV_VAR: str(cfg)}):
+            with mock.patch.dict("os.environ", {"MULTI_SEARCH_CONFIG_DB": str(cfg)}):
                 self.assertEqual(config_module.resolve_config_path(), cfg)
 
     def test_load_config_missing_default_returns_empty_without_raising(self):

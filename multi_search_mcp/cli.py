@@ -7,7 +7,6 @@ import importlib.metadata
 import json
 import sys
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any, TextIO
 
 from .src.service import (
@@ -60,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--source", action="append", dest="sources", default=[])
     search_parser.add_argument("--count", type=int, help="per-provider recall count; final output is at most 15")
     search_parser.add_argument("--timeout", type=int)
+    search_parser.add_argument("--no-scrape", action="store_true", help="skip body fetch for this call only")
     search_parser.add_argument("--expand", action="append", default=None)
     _add_format_argument(search_parser)
     search_parser.set_defaults(handler=_handle_search)
@@ -164,6 +164,7 @@ def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
             sources=list(args.sources or []),
             timeout=args.timeout,
             expand=None if args.expand is None else list(args.expand),
+            no_scrape=args.no_scrape,
         )
     )
     statuses = payload.get("provider_status") or []

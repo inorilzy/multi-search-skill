@@ -620,7 +620,7 @@ class KeyTests(unittest.TestCase):
                 with mock.patch.dict(os.environ, {"EXA_API_KEY": "env-exa"}, clear=False):
                     keys = load_keys()
 
-        self.assertEqual(keys["exa"], "env-exa")
+        self.assertNotIn("exa", keys)
 
     def test_load_keys_raises_on_corrupt_json_without_leaking_content(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -631,7 +631,7 @@ class KeyTests(unittest.TestCase):
             keys_path.write_text('{"brave": "SUPERSECRET123"', encoding="utf-8")
             with mock.patch("pathlib.Path.home", return_value=Path(tmp)):
                 with self.assertRaises(KeysError) as ctx:
-                    load_keys()
+                    load_keys(keys_file=keys_path)
         self.assertIn(str(keys_path), str(ctx.exception))
         self.assertNotIn("SUPERSECRET123", str(ctx.exception))
 
@@ -647,8 +647,8 @@ class KeyTests(unittest.TestCase):
                 with mock.patch.dict(os.environ, {"TWITTER_COOKIES_PATH": env_path}, clear=False):
                     keys = load_keys()
 
-        self.assertEqual(keys["twitter"], env_path)
-        self.assertEqual(keys["twitter_cookies"], env_path)
+        self.assertNotIn("twitter", keys)
+        self.assertNotIn("twitter_cookies", keys)
 
     def test_jina_env_key_is_loaded(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -656,7 +656,7 @@ class KeyTests(unittest.TestCase):
                 with mock.patch.dict(os.environ, {"JINA_API_KEY": "jina-env-key"}, clear=False):
                     keys = load_keys()
 
-        self.assertEqual(keys["jina"], "jina-env-key")
+        self.assertNotIn("jina", keys)
 
     def test_parallel_env_key_is_loaded(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -665,7 +665,7 @@ class KeyTests(unittest.TestCase):
                     "PARALLEL_API_KEY": "parallel-env-key",
                 })
 
-        self.assertEqual(keys["parallel"], "parallel-env-key")
+        self.assertNotIn("parallel", keys)
 
     def test_jina_config_keys_filter_statically_exhausted_without_shuffle(self):
         cfg = [

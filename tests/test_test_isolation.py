@@ -70,10 +70,24 @@ print("isolated defaults ok")
         with isolated_test_environment(source_root=ROOT):
             from multi_search_mcp.src.state.keys import load_keys
 
-            with mock.patch.dict(os.environ, {"EXA_API_KEY": "synthetic-exa"}, clear=False):
+            from multi_search_mcp.src.support.credential_store import default_store
+            store = default_store()
+            store.set("exa", "synthetic-exa")
+            with mock.patch.dict(os.environ, {"EXA_API_KEY": "synthetic-exa-env"}, clear=False):
                 loaded_keys = load_keys()
                 self.assertEqual(set(loaded_keys), {"exa"})
-                self.assertTrue(loaded_keys["exa"])
+                self.assertEqual(loaded_keys["exa"], "synthetic-exa")
+
+    def test_child_cannot_inherit_an_external_configuration_database(self):
+        with isolated_test_environment(source_root=ROOT) as isolation:
+            external = str(isolation.root.parent / "must-not-be-read.sqlite")
+            completed = subprocess.run(
+                [sys.executable, "-c", "import os;print(os.environ['MULTI_SEARCH_CONFIG_DB'])"],
+                env=dict(os.environ, MULTI_SEARCH_CONFIG_DB=external),
+                capture_output=True, text=True,
+            )
+            self.assertEqual(completed.returncode, 0)
+            self.assertEqual(completed.stdout.strip(), str(isolation.home / ".multi-search" / "config.sqlite"))
 
     def test_external_opener_is_blocked_before_dns_and_recorded(self):
         with isolated_test_environment(source_root=ROOT) as isolation:

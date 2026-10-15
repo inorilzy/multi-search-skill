@@ -6,6 +6,36 @@ use std::{
 };
 
 #[test]
+fn legacy_cli_cannot_search_using_old_credentials() {
+    let mut profile = common::Profile::new();
+    profile
+        .environment
+        .variables
+        .insert("FIXTURE_STORAGE".into(), "legacy".into());
+    let manager = DesktopManager::new(profile.environment.clone());
+    let error = manager
+        .start_search(
+            None,
+            SearchOptions {
+                query: "controlled".into(),
+                route: "dev".into(),
+                sources: vec!["hackernews".into()],
+                timeout: 5,
+            },
+        )
+        .unwrap_err();
+    assert!(error.contains("不支持 SQLite/DPAPI") && error.contains("不会读取旧 Key"));
+}
+
+#[test]
+fn database_error_is_not_reported_as_old_cli_capability() {
+    let mut profile=common::Profile::new(); profile.environment.variables.insert("FIXTURE_STORAGE".into(),"corrupt".into());
+    let manager=DesktopManager::new(profile.environment.clone());
+    let error=manager.start_search(None,SearchOptions {query:"controlled".into(),route:"dev".into(),sources:vec![],timeout:5}).unwrap_err();
+    assert!(error.contains("当前配置数据库") && !error.contains("更新 CLI"));
+}
+
+#[test]
 fn search_preserves_literal_arguments_and_reports_real_success() {
     let profile = common::Profile::new();
     let manager = DesktopManager::new(profile.environment.clone());

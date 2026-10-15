@@ -120,13 +120,12 @@ class CliProcessTests(unittest.TestCase):
                               capture_output=True, text=True, encoding="utf-8", timeout=30)
 
     def test_keyless_source_controls_reach_real_cli_and_controlled_http_independently(self):
-        config = self.isolation.root / "source-test.json"
-        config.write_text(json.dumps({"no_scrape": True}), encoding="utf-8")
-        self.environment["MULTI_SEARCH_CONFIG"] = str(config)
+        from multi_search_mcp.src.support.credential_store import ConfigDatabase
+        ConfigDatabase(self.environment["MULTI_SEARCH_CONFIG_DB"]).write_settings({"timeout": 7})
         self.environment["CLI_FIXTURE_KEYLESS"] = "1"
         for source in ("hackernews", "stackoverflow", "sov2ex"):
             with self.subTest(source=source):
-                result = self.run_cli("search", "fixture", "--source", source, "--format", "json")
+                result = self.run_cli("search", "fixture", "--source", source, "--no-scrape", "--format", "json")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 rows = json.loads(result.stdout)["provider_status"]
                 self.assertEqual([row["source"] for row in rows], [source])

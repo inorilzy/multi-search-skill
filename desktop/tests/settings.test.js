@@ -14,7 +14,7 @@ function setup() {
 
 function view(overrides = {}) {
   return {
-    config_path: 'C:/Users/test/.multi-search/multi-search-config.json',
+    config_path: 'C:/Users/test/.multi-search/config.sqlite',
     path_source: 'user',
     file_present: true,
     route: 'default',
@@ -91,8 +91,9 @@ test('env override of the config path and of the Twitter path is shown, values a
     }),
   });
   const env = root.querySelector('[data-info="env"]').textContent;
-  assert.match(env, /MULTI_SEARCH_CONFIG/);
-  assert.match(env, /TWITTER_COOKIES_PATH/);
+  assert.match(root.querySelector('[data-status="path-source"]').textContent, /MULTI_SEARCH_CONFIG_DB/);
+  assert.match(env, /唯一生效来源/);
+  assert.doesNotMatch(env, /优先|覆盖/);
   assert.equal(root.querySelector('[data-field="twitter"]').value, 'C:/cookies/saved.json');
   window.close();
 });
@@ -107,15 +108,15 @@ test('dev-fallback values show the save-creates-override notice before the user 
     }),
   });
   const info = root.querySelector('[data-info="env"]').textContent;
-  assert.match(info, /开发目录/);
-  assert.match(info, /保存会创建用户配置文件/);
+  assert.match(info, /显式导入/);
+  assert.doesNotMatch(info, /开发目录|保存会创建用户配置文件/);
   window.close();
 });
 
 test('once the user file is read, no override notice is shown', async () => {
   const { window, root } = setup();
   await mountSettings(root, { settingsView: async () => view({ read_source: 'user', save_creates_override: false }) });
-  assert.equal(root.querySelector('[data-info="env"]').textContent, '');
+  assert.match(root.querySelector('[data-info="env"]').textContent, /SQLite 是唯一生效来源/);
   window.close();
 });
 
