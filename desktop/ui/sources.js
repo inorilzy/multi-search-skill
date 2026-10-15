@@ -39,7 +39,7 @@ export async function mountSources(root, api) {
   const doc = root.ownerDocument;
   root.classList.add('sources-page');
   root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">SOURCES</p><h1>搜索源与凭据</h1><p>管理各搜索源的 API Key 和启用状态，并可快速测试连接，确保服务可用。</p></div>
-    <aside class="key-hint"><span>${icon('lock')}</span><div><strong>凭据保存在本地</strong><p>测试时仅向对应服务商发送认证请求，不回显已保存的 Key。</p></div></aside></section>
+    <aside class="key-hint"><span>${icon('lock')}</span><div><strong>SQLite / DPAPI 本地存储</strong><p>展开可查看完整 Key；旧来源仅在显式导入后生效。</p></div></aside></section>
     <div class="sources-overview"><section class="stats" aria-label="搜索源概览">${statCard('enabled', '已启用', 'toggle')}${statCard('configured', '已配置', 'key')}${statCard('error', '异常', 'alert')}${statCard('absent', '未配置', 'box')}</section>
     <div class="toolbar"><label class="source-search">${icon('search')}<input type="search" data-search aria-label="搜索搜索源" placeholder="搜索搜索源名称、描述…"><kbd>Ctrl K</kbd></label><div class="filters" role="group" aria-label="筛选">${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === 'all'}">${label}</button>`).join('')}</div></div></div>
     <p class="source-test-warning">测试会向对应服务发送外部请求，可能消耗额度。已配置不代表连接已验证；无需凭据的服务不计入已配置数量。</p>
@@ -49,6 +49,7 @@ export async function mountSources(root, api) {
   const search = root.querySelector('[data-search]');
   const rows = new Map();
   let settingsState = null;
+  let settingsRevision = 0;
   let expanded = null;
   let detailMount = null;
   let activeTicket = 0;
@@ -89,6 +90,20 @@ export async function mountSources(root, api) {
     rec.row.querySelector('[data-toggle-label]').textContent = settingsState ? rec.box.checked ? '已启用' : '未启用' : '状态未知';
   }
   function applySettings(view) {
+    const stamp = value => JSON.stringify([value?.route, value?.timeout, value?.disabled_sources, value?.twitter_cookies_path]);
+    if (settingsState && stamp(settingsState) !== stamp(view)) {
+      settingsRevision += 1;
+      for (const rec of rows.values()) updateTest(rec, IDLE);
+      if (expanded) {
+        const detail = rows.get(expanded).detail;
+        const title = detail.querySelector('[data-status="test"]');
+        if (title) title.textContent = IDLE.title;
+        const info = detail.querySelector('[data-info="test"]');
+        if (info) info.textContent = '';
+        const result = detail.querySelector('.test-result');
+        if (result) result.dataset.kind = 'idle';
+      }
+    }
     settingsState = view;
     const disabled = new Set(view.disabled_sources || []);
     for (const rec of rows.values()) {
@@ -96,7 +111,7 @@ export async function mountSources(root, api) {
       rec.box.disabled = false;
       renderToggle(rec);
       if (rec.entry.cookie) {
-        const configured = Boolean(view.twitter_cookies_path || view.twitter_env_overrides);
+        const configured = Boolean(view.twitter_cookies_path);
         setRow(rec, configured ? 'configured' : 'absent', configured ? 'Cookie 路径已配置' : '未配置 Cookie 路径');
       }
     }
@@ -128,12 +143,12 @@ export async function mountSources(root, api) {
     refreshStats();
   }
   function updateRow(rec, view) {
-    const provenance = JSON.stringify([view.effective_source, view.env_var, view.file_key_count, view.store?.state, view.store?.saved_at]);
+    const provenance = JSON.stringify([view.effective_source, view.store?.state, view.store?.saved_at]);
     if (rec.provenance && rec.provenance !== provenance) updateTest(rec, IDLE);
     rec.provenance = provenance;
     if (view.effective_source === 'unavailable' || ['unavailable', 'unreadable'].includes(view.store?.state)) return setRow(rec, 'error', '凭据库异常');
     if (view.effective_source === 'none') return setRow(rec, 'absent', '未配置');
-    const labels = { env: '环境变量生效', credential_store: '已配置', file: '文件 Key 生效' };
+    const labels = { sqlite: '已配置' };
     setRow(rec, 'configured', labels[view.effective_source] || '状态未知');
   }
   function updateTest(rec, result) {
@@ -207,7 +222,12 @@ export async function mountSources(root, api) {
     rec.detail.append(body);
     const previous = { ...rec.test };
     const previousProvenance = rec.provenance;
-    const mounted = await mountCredentialBody(body, api, {
+    const mounted = await mountCredentialBody(body, { ...api, credentialTest: async (...args) => {
+      const revision = settingsRevision;
+      const outcome = await api.credentialTest(...args);
+      if (revision !== settingsRevision) throw '配置已变化，请重新测试。';
+      return outcome;
+    } }, {
       source,
       onStatus: view => { if (!disposed && ticket === activeTicket) updateRow(rec, view); },
       onTest: result => { if (!disposed && ticket === activeTicket) updateTest(rec, result); },
@@ -239,11 +259,12 @@ export async function mountSources(root, api) {
     show(rec.test);
     button.addEventListener('click', async () => {
       button.disabled = true;
+      const revision = settingsRevision;
       show({ kind: 'running', title: '正在测试', message: '' });
       try {
         const outcome = await api.credentialTest(rec.entry.source, null);
-        show({ kind: outcome.result === 'success' ? 'success' : 'error', title: outcome.result === 'success' ? '测试成功' : '测试失败', message: outcome.message || outcome.result });
-      } catch { show({ kind: 'error', title: '测试失败', message: '测试启动失败，请检查 CLI 后重试。' }); }
+        if (revision === settingsRevision) show({ kind: outcome.result === 'success' ? 'success' : 'error', title: outcome.result === 'success' ? '测试成功' : '测试失败', message: outcome.message || outcome.result });
+      } catch { if (revision === settingsRevision) show({ kind: 'error', title: '测试失败', message: '测试启动失败，请检查 CLI 后重试。' }); }
       finally { if (!stale && !disposed) button.disabled = false; }
     });
     return { dispose() { stale = true; } };

@@ -1,13 +1,14 @@
 //! Native management boundary; the CLI remains the search implementation.
+pub(crate) mod config_db;
 pub(crate) mod credential;
 pub(crate) mod credential_commands;
 mod diagnostics;
 mod environment;
-pub(crate) mod settings;
 mod execution;
 mod install;
 mod process;
 mod redaction;
+pub(crate) mod settings;
 mod skill;
 mod skill_manage;
 pub mod user_path;
@@ -16,17 +17,23 @@ mod window;
 pub use diagnostics::{CliStatus, DesktopManager, Discovery, RuntimeEnvironment};
 pub use execution::{ExecutionStatus, SearchOptions};
 pub use skill::{SkillInstall, SkillPlan};
-pub use skill_manage::{InstallState, RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome, UpdatePlan};
+pub use skill_manage::{
+    InstallState, RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome, UpdatePlan,
+};
 
 /// Test seam for the settings writer. Not a supported public API.
 #[doc(hidden)]
 pub mod settings_fixture {
     pub use crate::settings::{
-        config_path, save, save_with_dev, validate, view, view_with_dev, SettingsInput, SettingsView, Validated,
+        config_path, save, save_with_dev, validate, view, view_with_dev, SettingsInput,
+        SettingsView, Validated,
     };
     /// Dev fallback location for the real app: the repo-root file the CLI reads when no user file exists.
     pub fn default_dev_config() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("multi-search-config.json")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("multi-search-config.json")
     }
     /// Whether the execution allowlist accepts a `--source` name.
     pub fn is_allowed_source(name: &str) -> bool {
@@ -91,7 +98,50 @@ pub mod credential_fixture {
         source: &str,
     ) -> Result<CredentialOverview, String> {
         let entry = credential_commands::resolve_source(source)?;
-        Ok(credential_commands::overview(&Adapter(backend), variables, entry))
+        Ok(credential_commands::overview(
+            &Adapter(backend),
+            variables,
+            entry,
+        ))
+    }
+    pub fn read_for<B: Backend + Sync + ?Sized>(
+        backend: &B,
+        variables: &BTreeMap<String, String>,
+        source: &str,
+    ) -> Result<String, String> {
+        let entry = credential_commands::resolve_source(source)?;
+        Ok(credential_commands::read(&Adapter(backend), variables, entry)?.value)
+    }
+    pub fn save_for<B: Backend + Sync + ?Sized>(
+        backend: &B,
+        variables: &BTreeMap<String, String>,
+        source: &str,
+        key: &str,
+        now: f64,
+    ) -> Result<CredentialOverview, String> {
+        credential_commands::save(
+            &Adapter(backend),
+            variables,
+            credential_commands::resolve_source(source)?,
+            key,
+            now,
+        )
+    }
+    /// Isolated native store test seam: caller supplies an explicit disposable database path.
+    pub fn native_write(path: &std::path::Path, provider: &str, key: &Value, now: f64) -> Result<(),String> {
+        use crate::credential::{self, CredentialBackend};
+        if !credential::STORE_PROVIDERS.contains(&provider) { return Err("unsupported provider".into()); }
+        credential::SqliteCredentialBackend { path: path.to_path_buf() }.write(provider, &credential::encode_blob(key,now)).map_err(|e| e.to_string())
+    }
+    pub fn native_read(path: &std::path::Path, provider: &str) -> Result<Option<Value>,String> {
+        use crate::credential;
+        if !credential::STORE_PROVIDERS.contains(&provider) { return Err("unsupported provider".into()); }
+        credential::load(&credential::SqliteCredentialBackend { path: path.to_path_buf() }, "", provider).map(|v| v.map(|(key,_)|key)).map_err(|e| e.to_string())
+    }
+    pub fn native_delete(path: &std::path::Path, provider: &str) -> Result<bool,String> {
+        use crate::credential::{self, CredentialBackend};
+        if !credential::STORE_PROVIDERS.contains(&provider) { return Err("unsupported provider".into()); }
+        credential::SqliteCredentialBackend { path: path.to_path_buf() }.delete(provider).map_err(|e|e.to_string())
     }
     pub fn resolve(source: &str) -> Result<(&'static str, &'static str), String> {
         let entry = credential_commands::resolve_source(source)?;
@@ -103,9 +153,15 @@ pub mod credential_fixture {
     pub fn test_args(query: &str) -> Vec<String> {
         credential_commands::test_args(query, tavily())
     }
-    pub fn source_test(source: &str, payload: &Value) -> Result<(Vec<String>, TestOutcome), String> {
+    pub fn source_test(
+        source: &str,
+        payload: &Value,
+    ) -> Result<(Vec<String>, TestOutcome), String> {
         let entry = credential_commands::resolve_test_source(source)?;
-        Ok((credential_commands::test_args("synthetic connectivity", entry), credential_commands::interpret_source(payload, entry)))
+        Ok((
+            credential_commands::test_args("synthetic connectivity", entry),
+            credential_commands::interpret_source(payload, entry),
+        ))
     }
 }
 #[cfg(feature = "native-window")]

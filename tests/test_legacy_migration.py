@@ -70,14 +70,15 @@ class LegacyMigrationTests(unittest.TestCase):
         self.write_keys({"exa": [SYN_OTHER]})
         self.assertEqual(self.item(self.plan(), "exa")["action"], "migrate")
 
-    def test_multi_key_lists_and_jina_are_reported_unsupported_and_never_collapsed(self):
-        self.write_keys({"tavily": [SYN_TAVILY, SYN_OTHER], "jina": [{"key": SYN_BRAVE, "exhausted": False}]})
+    def test_multi_key_lists_and_jina_migrate_without_collapsing(self):
+        values = {"tavily": [SYN_TAVILY, SYN_OTHER], "jina": [{"key": SYN_BRAVE, "exhausted": False}]}
+        self.write_keys(values)
         plan = self.plan()
-        for provider in ("tavily", "jina"):
-            item = self.item(plan, provider)
-            self.assertEqual(item["action"], "unsupported", provider)
-            self.assertIn("reason", item)
-        self.assertNotIn("tavily", self.backend.entries)
+        for provider in values:
+            self.assertEqual(self.item(plan, provider)["action"], "migrate")
+        lm.apply_migration(self.keys_file, self.store, plan, approved=list(values), choices={})
+        for provider, value in values.items():
+            self.assertEqual(self.store.get(provider), value)
 
     def test_unknown_provider_names_are_unsupported_not_guessed(self):
         self.write_keys({"mystery": SYN_TAVILY})
@@ -85,16 +86,16 @@ class LegacyMigrationTests(unittest.TestCase):
 
     def test_twitter_missing_path_reference_is_unsupported_and_not_reported_usable(self):
         self.write_keys({"twitter": str(self.dir / "absent-cookies.json")})
-        item = self.item(self.plan(), "twitter")
-        self.assertEqual(item["action"], "unsupported")
-        self.assertFalse(item["path_exists"])
+        item = self.item(self.plan(), "settings")
+        self.assertEqual(item["action"], "migrate")
+        self.assertNotIn("path_exists", item)
 
     def test_twitter_existing_path_reference_is_already_current_without_reading_cookies(self):
         cookies = self.dir / "synthetic-cookies.json"
         cookies.write_text(json.dumps({"auth_token": SYN_OTHER, "ct0": SYN_BRAVE}), encoding="utf-8")
         self.write_keys({"twitter": str(cookies)})
-        item = self.item(self.plan(), "twitter")
-        self.assertEqual(item["action"], "already_current")
+        item = self.item(self.plan(), "settings")
+        self.assertEqual(item["action"], "migrate")
         self.assertNotIn(SYN_OTHER, json.dumps(self.plan()))
         self.assertNotIn("twitter", self.plan()["migratable"])
 
@@ -108,9 +109,9 @@ class LegacyMigrationTests(unittest.TestCase):
         self.assertNotIn(SYN_OTHER, json.dumps(plan))
 
     def test_unsupported_skips_are_listed_so_they_are_never_reported_as_full_success(self):
-        self.write_keys({"tavily": SYN_TAVILY, "jina": SYN_BRAVE})
+        self.write_keys({"tavily": SYN_TAVILY, "unsupported-provider": SYN_BRAVE})
         plan = self.plan()
-        self.assertEqual(plan["skipped"], ["jina"])
+        self.assertEqual(plan["skipped"], ["unsupported-provider"])
         self.assertEqual(plan["migratable"], ["tavily"])
 
     def test_non_object_or_invalid_file_is_an_explicit_error(self):
@@ -249,7 +250,7 @@ class LegacyMigrationCliTests(unittest.TestCase):
         self.assertNotIn(SYN_TAVILY, out)
         self.assertEqual(json.loads(out)["written"], ["tavily"])
         self.assertEqual(self.store.get("tavily"), SYN_TAVILY)
-        self.assertIn("jina", plan["skipped"], "jina skip is reported")
+        self.assertIn("jina", plan["migratable"], "Jina migration is supported without data loss")
 
     def test_stale_plan_token_is_refused_before_any_write(self):
         code, out, _ = self.run_cli("migrate-legacy", "plan", "--keys-file", str(self.keys_file), "--format", "json")
@@ -260,6 +261,90 @@ class LegacyMigrationCliTests(unittest.TestCase):
         code, _, err = self.run_cli("migrate-legacy", "apply", "--keys-file", str(self.keys_file), "--request", str(request), "--format", "json")
         self.assertNotEqual(code, 0)
         self.assertNotIn(SYN_OTHER, err)
+        self.assertIsNone(self.store.get("tavily"))
+
+
+class MultiSourceSQLiteMigrationTests(unittest.TestCase):
+    def setUp(self):
+        from multi_search_mcp.src.support.credential_store import SQLiteCredentialBackend, ConfigDatabase
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.path = self.root / "config.sqlite"
+        self.backend = SQLiteCredentialBackend(self.path)
+        self.store = CredentialStore(self.backend)
+        self.db = ConfigDatabase(self.path)
+        self.keys_file = self.root / "keys.json"
+        self.settings_file = self.root / "settings.json"
+        self.keys_file.write_text(json.dumps({"tavily": [SYN_TAVILY, SYN_OTHER], "jina": [{"key": SYN_BRAVE, "exhausted": True}]}), encoding="utf-8")
+        self.settings_file.write_text(json.dumps({"type": "fast", "timeout": 8, "disabled_sources": ["brave"]}), encoding="utf-8")
+        self.old_backend = MemoryBackend()
+        self.old_store = CredentialStore(self.old_backend)
+        self.old_store.set("tavily", "synthetic-legacy-manager-0011")
+        self.env = {"TAVILY_API_KEY": "synthetic-environment-0012", "JINA_API_KEY": "synthetic-jina-env-0013"}
+        self.options = dict(settings_file=self.settings_file, include_credentials=True,
+                            include_environment=True, legacy_store=self.old_store, environ=self.env,
+                            database=self.db)
+
+    @unittest.skipUnless(__import__("sys").platform == "win32", "native DPAPI requires Windows")
+    def test_all_explicit_sources_require_choice_and_preserve_sources(self):
+        before = (self.keys_file.read_bytes(), self.settings_file.read_bytes(), dict(self.old_backend.entries), dict(self.env))
+        plan = lm.plan_migration(self.keys_file, self.store, **self.options)
+        tavily = next(i for i in plan["items"] if i["provider"] == "tavily")
+        self.assertTrue(tavily["source_conflict"])
+        self.assertFalse(tavily["target_conflict"])
+        self.assertEqual({s["source"] for s in tavily["sources"]}, {"file", "credentials", "environment:TAVILY_API_KEY"})
+        self.assertNotIn(SYN_TAVILY, json.dumps(plan))
+        with self.assertRaises(lm.MigrationError):
+            lm.apply_migration(self.keys_file, self.store, plan, approved=["tavily"], choices={}, **self.options)
+        result = lm.apply_migration(self.keys_file, self.store, plan,
+                                   approved=["tavily", "jina", "settings"], choices={},
+                                   sources={"tavily": "file", "jina": "file"}, **self.options)
+        self.assertTrue(result["complete"])
+        self.assertEqual(self.store.get("tavily"), [SYN_TAVILY, SYN_OTHER])
+        self.assertEqual(self.store.get("jina"), [{"key": SYN_BRAVE, "exhausted": True}])
+        self.assertEqual(self.db.read_settings()["type"], "fast")
+        self.assertEqual(before, (self.keys_file.read_bytes(), self.settings_file.read_bytes(), self.old_backend.entries, self.env))
+
+    def test_environment_manager_and_settings_changes_invalidate_preview(self):
+        for source in ("environment", "credentials", "settings"):
+            plan = lm.plan_migration(self.keys_file, self.store, **self.options)
+            if source == "environment":
+                self.env["TAVILY_API_KEY"] += "changed"
+            elif source == "credentials":
+                self.old_store.set("tavily", SYN_OTHER)
+            else:
+                self.settings_file.write_text('{"timeout": 10}', encoding="utf-8")
+            with self.assertRaises(lm.MigrationError):
+                lm.apply_migration(self.keys_file, self.store, plan, approved=[], choices={}, **self.options)
+            self.assertFalse(self.path.exists())
+
+    def test_entire_import_rolls_back_on_second_encryption_failure(self):
+        from multi_search_mcp.src.support.credential_store import CredentialStoreError
+        self.db.write_settings({"timeout": 3, "unrelated": True})
+        original = self.db.read_settings()
+        self.backend.protector = __import__("unittest").mock.Mock()
+        self.backend.protector.encrypt.side_effect = [b"synthetic-ciphertext", CredentialStoreError("DPAPI encryption failed")]
+        plan = lm.plan_migration(self.keys_file, self.store, settings_file=self.settings_file, database=self.db)
+        result = lm.apply_migration(self.keys_file, self.store, plan, approved=["tavily", "jina", "settings"],
+                                   choices={"settings": "replace"}, settings_file=self.settings_file, database=self.db)
+        self.assertEqual(result["written"], [])
+        self.assertEqual(set(result["failed"]), {"tavily", "jina", "settings"})
+        self.assertEqual(self.db.read_settings(), original)
+        self.assertIsNone(self.store.get("tavily"))
+        self.assertIsNone(self.store.get("jina"))
+
+    @unittest.skipUnless(__import__("sys").platform == "win32", "native DPAPI requires Windows")
+    def test_apply_rechecks_destination_under_transaction_lock(self):
+        self.db.write_settings({"timeout": 3})
+        plan = lm.plan_migration(self.keys_file, self.store, database=self.db)
+        original_import = self.backend.import_batch
+        def changed(values, settings, check):
+            self.store.set("brave", SYN_OTHER)
+            return original_import(values, settings, check)
+        self.backend.import_batch = changed
+        with self.assertRaises(lm.MigrationError):
+            lm.apply_migration(self.keys_file, self.store, plan, approved=["tavily"], choices={}, database=self.db)
         self.assertIsNone(self.store.get("tavily"))
 
 

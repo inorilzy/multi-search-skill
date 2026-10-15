@@ -24,6 +24,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
   const seen = [];
   const api = {
     settingsView: async () => settings(),
+    credentialRead: async () => ({ value: '' }),
     credentialStatus: async source => { seen.push(source); return absent; },
     credentialTest: async () => ({ result: 'success', message: '' }),
   };
@@ -55,20 +56,21 @@ test('sources page lists every allowlisted source once and mounts only the selec
 
 test('per-source test outcomes map to their own source and never leak into a rebuilt detail', async () => {
   const { window, root } = setup();
-  const stored = { store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store', env_overrides_store: false, env_var: '', file_key_count: 0 };
+  const stored = { store: { state: 'present', saved_at: 1, error: null }, effective_source: 'sqlite', env_overrides_store: false, env_var: '', file_key_count: 0 };
   const outcomes = { tavily: 'success', brave: 'auth_failed', exa: 'quota' };
   const resolvers = {};
   const api = {
     settingsView: async () => settings(),
+    credentialRead: async () => ({ value: '' }),
     credentialStatus: async () => stored,
     credentialTest: source => new Promise(resolve => { resolvers[source] = () => resolve({ result: outcomes[source], message: '' }); }),
   };
   await mountSources(root, api);
 
   const expected = {
-    tavily: '测试成功：Tavily 本次使用Windows 凭据库。',
-    brave: '认证失败：Brave 搜索 拒绝了该 key。',
-    exa: '额度不足：Exa 额度已用尽。',
+    tavily: '测试成功',
+    brave: '测试失败',
+    exa: '测试失败',
   };
   for (const name of ['tavily', 'brave', 'exa']) {
     await pick(root, name);
@@ -96,6 +98,7 @@ test('all twelve sources expose independent explicit test controls', async () =>
   const called = [];
   const api = {
     settingsView: async () => settings(),
+    credentialRead: async () => ({ value: '' }),
     credentialStatus: async () => absent,
     credentialTest: async source => { called.push(source); return { result: 'success', message: source }; },
   };
@@ -118,6 +121,7 @@ test('an enable toggle preserves route, timeout and the Twitter path it was not 
   let sent = null;
   const current = settings({ route: 'dev', timeout: 25, disabled_sources: ['exa'], twitter_cookies_path: 'C:/cookies.json' });
   const api = {
+    credentialRead: async () => ({ value: '' }),
     credentialStatus: async () => absent,
     settingsView: async () => current,
     settingsSave: async input => { sent = input; return settings({ ...input }); },
@@ -141,6 +145,7 @@ test('a rejected toggle save reverts the switch and keeps the error visible', as
   const { window, root } = setup();
   const api = {
     settingsView: async () => settings(),
+    credentialRead: async () => ({ value: '' }),
     credentialStatus: async () => absent,
     settingsSave: async () => { throw '现有配置文件无法读取，保存已被阻止。'; },
   };
@@ -158,7 +163,8 @@ test('overview, search, filters and keyboard shortcut use real source state', as
   const { window, root } = setup();
   const mounted = await mountSources(root, {
     settingsView: async () => settings({ disabled_sources: ['exa', 'twitter'] }),
-    credentialStatus: async source => source === 'baidu' ? { ...absent, effective_source: 'credential_store', store: { state: 'present', saved_at: 1 } } : absent,
+    credentialRead: async () => ({ value: '' }),
+    credentialStatus: async source => source === 'baidu' ? { ...absent, effective_source: 'sqlite', store: { state: 'present', saved_at: 1 } } : absent,
   });
   assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '10');
   assert.equal(root.querySelector('[data-stat="configured"]').textContent, '1');
@@ -183,7 +189,8 @@ test('overview, search, filters and keyboard shortcut use real source state', as
 
 test('unknown settings never pretend sources are enabled', async () => {
   const { window, root } = setup();
-  await mountSources(root, { settingsView: async () => { throw Error('offline'); }, credentialStatus: async () => absent });
+  await mountSources(root, { settingsView: async () => { throw Error('offline'); }, credentialRead: async () => ({ value: '' }),
+    credentialStatus: async () => absent });
   assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '—');
   assert.ok([...root.querySelectorAll('[data-toggle]')].every(input => input.disabled));
   assert.match(root.querySelector('[data-list-error]').textContent, /状态未知/);
@@ -195,6 +202,7 @@ test('queued source changes reread current settings and preserve both toggles', 
   let current = settings();
   let reads = 0;
   await mountSources(root, {
+    credentialRead: async () => ({ value: '' }),
     credentialStatus: async () => absent,
     settingsView: async () => { reads += 1; return { ...current, disabled_sources: [...current.disabled_sources] }; },
     settingsSave: async input => { await flush(); current = settings(input); return current; },
@@ -217,9 +225,10 @@ test('queued source changes reread current settings and preserve both toggles', 
 test('row testing sends one request and saving invalidates row success', async () => {
   const { window, root } = setup();
   let calls = 0;
-  const stored = { ...absent, effective_source: 'credential_store', store: { state: 'present', saved_at: 1 } };
+  const stored = { ...absent, effective_source: 'sqlite', store: { state: 'present', saved_at: 1 } };
   await mountSources(root, {
     settingsView: async () => settings(),
+    credentialRead: async () => ({ value: '' }),
     credentialStatus: async () => stored,
     credentialTest: async () => { calls += 1; return { result: 'success', message: 'synthetic response' }; },
     credentialSave: async () => ({ ...stored, store: { state: 'present', saved_at: 2 } }),
@@ -236,6 +245,25 @@ test('row testing sends one request and saving invalidates row success', async (
   assert.equal(row.querySelector('[data-row-result]').dataset.kind, 'idle');
   assert.equal(calls, 1);
   window.close();
+});
+
+test('persisted source setting changes invalidate prior row and editor success', async () => {
+  const {window,root}=setup();let current=settings();
+  await mountSources(root,{settingsView:async()=>current,settingsSave:async input=>(current=settings(input)),credentialStatus:async()=>({...absent,effective_source:'sqlite',store:{state:'present',saved_at:1}}),credentialRead:async()=>({value:'synthetic'}),credentialTest:async()=>({result:'success',message:'verified'})});
+  await pick(root,'tavily');detailOf(root).querySelector('[data-action="test"]').click();await flush();assert.equal(root.querySelector('[data-source-row="tavily"] [data-row-result]').dataset.kind,'success');
+  const toggle=root.querySelector('[data-toggle="brave"]');toggle.checked=false;toggle.dispatchEvent(new window.Event('change'));await flush();
+  assert.equal(root.querySelector('[data-source-row="tavily"] [data-row-result]').dataset.kind,'idle');assert.equal(detailOf(root).querySelector('.test-result').dataset.kind,'idle');window.close();
+});
+
+test('in-flight keyless and cookie tests cannot restore results after settings change', async () => {
+  for (const source of ['hackernews','twitter']) for (const rejects of [false,true]) {
+    const {window,root}=setup();let current=settings(),finish;
+    await mountSources(root,{settingsView:async()=>current,settingsSave:async input=>(current=settings(input)),credentialStatus:async()=>absent,credentialRead:async()=>({value:''}),credentialTest:()=>new Promise((resolve,reject)=>{finish=()=>rejects?reject('late error'):resolve({result:'success',message:'late success'});})});
+    await pick(root,source);detailOf(root).querySelector('[data-action="test"]').click();await flush();
+    const toggle=root.querySelector('[data-toggle="brave"]');toggle.checked=false;toggle.dispatchEvent(new window.Event('change'));await flush();
+    finish();await flush();
+    assert.equal(root.querySelector(`[data-source-row="${source}"] [data-row-result]`).dataset.kind,'idle');assert.equal(detailOf(root).querySelector('.test-result').dataset.kind,'idle');assert.doesNotMatch(detailOf(root).textContent,/late success|late error/);assert.equal(detailOf(root).querySelector('[data-action="test"]').disabled,false);window.close();
+  }
 });
 
 function flush() { return new Promise(resolve => setTimeout(resolve, 0)); }

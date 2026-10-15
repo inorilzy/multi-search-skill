@@ -1,35 +1,28 @@
-//! Windows Credential Manager access for the Tavily key.
-//!
-//! Mirrors `multi_search_mcp/src/support/credential_store.py`: one generic
-//! credential named `<namespace>/<provider>` holding UTF-8 JSON
-//! `{"v":1,"key":<secret>,"saved_at":<unix seconds>}`. Change both together.
-//!
-//! Secrets never leave this module except through the CLI's stdin-free env path
-//! (never argv) and are never included in returned errors or status values.
-
+//! SQLite credential storage with current-user DPAPI encryption. Shared Python protocol v1.
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use serde_json::Value;
 
-pub(crate) const NAMESPACE_ENV: &str = "MULTI_SEARCH_CREDENTIAL_NAMESPACE";
-pub(crate) const DEFAULT_NAMESPACE: &str = "multi-search";
 pub(crate) const MAX_KEY_LENGTH: usize = 1024;
-/// Single-secret key providers stored in the credential store (mirrors Python CREDENTIAL_STORE_PROVIDERS).
-/// Used by the contract test only; the runtime allowlist lives in credential_commands::SOURCES.
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const STORE_PROVIDERS: &[&str] = &[
-    "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github",
+    "baidu",
+    "brave",
+    "parallel",
+    "tavily",
+    "exa",
+    "firecrawl",
+    "serpapi",
+    "github",
+    "jina",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CredentialError {
-    /// Store is denied or unavailable. Message never includes secret material.
     Unavailable(String),
-    /// Entry exists but cannot be parsed as the versioned blob.
     Unreadable,
-    /// Input key failed validation; message never echoes the value.
     Invalid(&'static str),
 }
-
 impl std::fmt::Display for CredentialError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -39,166 +32,80 @@ impl std::fmt::Display for CredentialError {
         }
     }
 }
-
-/// Backend seam so tests can run against an in-memory store without touching Windows.
+/// Plain JSON backend boundary; native implementation encrypts before writing and decrypts on read.
+/// Test memory implementations never access real user data.
 pub(crate) trait CredentialBackend: Send + Sync {
-    fn read(&self, target: &str) -> Result<Option<Vec<u8>>, CredentialError>;
-    fn write(&self, target: &str, blob: &[u8]) -> Result<(), CredentialError>;
-    fn delete(&self, target: &str) -> Result<bool, CredentialError>;
+    fn read(&self, provider: &str) -> Result<Option<Vec<u8>>, CredentialError>;
+    fn write(&self, provider: &str, blob: &[u8]) -> Result<(), CredentialError>;
+    fn delete(&self, provider: &str) -> Result<bool, CredentialError>;
 }
-
-/// Validate and trim a key. Errors never echo the value.
 pub(crate) fn validate_key(key: &str) -> Result<String, CredentialError> {
     let text = key.trim();
-    if text.is_empty() || text.len() > MAX_KEY_LENGTH {
-        return Err(CredentialError::Invalid(
-            "key must be 1-1024 characters with no control characters",
-        ));
-    }
-    if text.chars().any(|c| (c as u32) < 32 || c as u32 == 127) {
+    if text.is_empty()
+        || text.len() > MAX_KEY_LENGTH
+        || text.chars().any(|c| (c as u32) < 32 || c as u32 == 127)
+    {
         return Err(CredentialError::Invalid(
             "key must be 1-1024 characters with no control characters",
         ));
     }
     Ok(text.to_string())
 }
-
-/// Namespace from the environment, matching Python `credential_namespace`.
-pub(crate) fn namespace(variables: &std::collections::BTreeMap<String, String>) -> String {
-    variables
-        .get(NAMESPACE_ENV)
-        .filter(|value| !value.is_empty())
-        .cloned()
-        .unwrap_or_else(|| DEFAULT_NAMESPACE.to_string())
+// Namespace no longer controls normal storage; provider is the database primary key.
+pub(crate) fn namespace(_: &std::collections::BTreeMap<String, String>) -> String {
+    String::new()
 }
-
-pub(crate) fn target(namespace: &str, provider: &str) -> String {
-    format!("{namespace}/{provider}")
+pub(crate) fn target(_: &str, provider: &str) -> String {
+    provider.to_string()
 }
-
-pub(crate) fn encode_blob(key: &str, saved_at: f64) -> Vec<u8> {
-    serde_json::json!({ "v": 1, "key": key, "saved_at": saved_at })
+fn validate_value(provider: &str, value: &Value) -> bool {
+    match value {
+        Value::String(s) => validate_key(s).is_ok(),
+        Value::Array(items) => !items.is_empty() && items.iter().all(|v| (v.is_string() || provider == "jina" && v.is_object()) && validate_value(provider,v)),
+        Value::Object(map) if provider == "jina" => map.get("key").and_then(Value::as_str).is_some_and(|s| validate_key(s).is_ok()) && map.get("exhausted").is_none_or(Value::is_boolean),
+        _ => false,
+    }
+}
+fn editor_value(text: &str) -> Result<Value, CredentialError> {
+    let keys: Vec<String> = text.lines().map(validate_key).collect::<Result<_, _>>()?;
+    if keys.is_empty() || keys.len() > 256 {
+        return Err(CredentialError::Invalid("provide 1-256 keys, one per line"));
+    }
+    Ok(if keys.len() == 1 {
+        Value::String(keys[0].clone())
+    } else {
+        serde_json::json!(keys)
+    })
+}
+pub(crate) fn encode_blob(key: &Value, saved_at: f64) -> Vec<u8> {
+    serde_json::json!({"v":1,"key":key,"saved_at":saved_at})
         .to_string()
         .into_bytes()
 }
-
-/// Returns the stored key and saved timestamp, or `Unreadable` without echoing content.
-pub(crate) fn decode_blob(blob: &[u8]) -> Result<(String, f64), CredentialError> {
-    let text = std::str::from_utf8(blob).map_err(|_| CredentialError::Unreadable)?;
-    let data: Value = serde_json::from_str(text).map_err(|_| CredentialError::Unreadable)?;
-    let key = data.get("key").and_then(Value::as_str).unwrap_or_default();
-    let saved_at = data.get("saved_at").and_then(Value::as_f64);
-    if data.get("v").and_then(Value::as_i64) != Some(1) || key.is_empty() {
+pub(crate) fn decode_blob(provider: &str, blob: &[u8]) -> Result<(Value, f64), CredentialError> {
+    let data: Value = serde_json::from_slice(blob).map_err(|_| CredentialError::Unreadable)?;
+    let key = data.get("key").ok_or(CredentialError::Unreadable)?.clone();
+    let valid = validate_value(provider, &key);
+    let saved_at = data
+        .get("saved_at")
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite())
+        .ok_or(CredentialError::Unreadable)?;
+    if data.get("v").and_then(Value::as_i64) != Some(1) || !valid {
         return Err(CredentialError::Unreadable);
     }
-    let saved_at = saved_at.ok_or(CredentialError::Unreadable)?;
-    Ok((key.to_string(), saved_at))
+    Ok((key, saved_at))
 }
-
-/// Windows Credential Manager backend (advapi32 CredRead/CredWrite/CredDelete).
-/// Reached only through `with_native`, which the native-window build wires up.
-#[cfg(windows)]
-#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-pub(crate) struct WindowsCredentialBackend;
-
-#[cfg(windows)]
-impl CredentialBackend for WindowsCredentialBackend {
-    fn read(&self, target: &str) -> Result<Option<Vec<u8>>, CredentialError> {
-        use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND};
-        use windows_sys::Win32::Security::Credentials::{
-            CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC,
-        };
-        let wide = to_wide(target);
-        let mut out: *mut CREDENTIALW = std::ptr::null_mut();
-        unsafe {
-            if CredReadW(wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut out) == 0 {
-                let code = GetLastError();
-                if code == ERROR_NOT_FOUND {
-                    return Ok(None);
-                }
-                return Err(store_error(code));
-            }
-            let cred = &*out;
-            let bytes = if cred.CredentialBlobSize == 0 || cred.CredentialBlob.is_null() {
-                Vec::new()
-            } else {
-                std::slice::from_raw_parts(cred.CredentialBlob, cred.CredentialBlobSize as usize)
-                    .to_vec()
-            };
-            CredFree(out as *const std::ffi::c_void);
-            Ok(Some(bytes))
-        }
-    }
-
-    fn write(&self, target: &str, blob: &[u8]) -> Result<(), CredentialError> {
-        use windows_sys::Win32::Foundation::GetLastError;
-        use windows_sys::Win32::Security::Credentials::{
-            CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
-        };
-        let mut wide = to_wide(target);
-        let mut cred: CREDENTIALW = unsafe { std::mem::zeroed() };
-        cred.Type = CRED_TYPE_GENERIC;
-        cred.TargetName = wide.as_mut_ptr();
-        cred.CredentialBlobSize = blob.len() as u32;
-        cred.CredentialBlob = blob.as_ptr() as *mut u8;
-        cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
-        unsafe {
-            if CredWriteW(&cred, 0) == 0 {
-                return Err(store_error(GetLastError()));
-            }
-        }
-        Ok(())
-    }
-
-    fn delete(&self, target: &str) -> Result<bool, CredentialError> {
-        use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND};
-        use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
-        let wide = to_wide(target);
-        unsafe {
-            if CredDeleteW(wide.as_ptr(), CRED_TYPE_GENERIC, 0) != 0 {
-                return Ok(true);
-            }
-            let code = GetLastError();
-            if code == ERROR_NOT_FOUND {
-                return Ok(false);
-            }
-            Err(store_error(code))
-        }
-    }
-}
-
-#[cfg(windows)]
-#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-fn to_wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain(Some(0)).collect()
-}
-
-#[cfg(windows)]
-#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-fn store_error(code: u32) -> CredentialError {
-    use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
-    if code == ERROR_ACCESS_DENIED {
-        CredentialError::Unavailable("credential store access denied".into())
-    } else {
-        CredentialError::Unavailable(format!(
-            "credential store unavailable (Windows error {code})"
-        ))
-    }
-}
-
-/// Read and decode the stored key. `Ok(None)` means no entry.
 pub(crate) fn load(
     backend: &dyn CredentialBackend,
     namespace: &str,
     provider: &str,
-) -> Result<Option<(String, f64)>, CredentialError> {
-    match backend.read(&target(namespace, provider))? {
-        None => Ok(None),
-        Some(blob) => decode_blob(&blob).map(Some),
-    }
+) -> Result<Option<(Value, f64)>, CredentialError> {
+    backend
+        .read(&target(namespace, provider))?
+        .map(|blob| decode_blob(provider, &blob))
+        .transpose()
 }
-
-/// Validate, then persist a trimmed key with a timestamp. Returns the saved_at stamp.
 pub(crate) fn save(
     backend: &dyn CredentialBackend,
     namespace: &str,
@@ -206,11 +113,10 @@ pub(crate) fn save(
     key: &str,
     saved_at: f64,
 ) -> Result<f64, CredentialError> {
-    let value = validate_key(key)?;
+    let value = editor_value(key)?;
     backend.write(&target(namespace, provider), &encode_blob(&value, saved_at))?;
     Ok(saved_at)
 }
-
 pub(crate) fn remove(
     backend: &dyn CredentialBackend,
     namespace: &str,
@@ -219,19 +125,127 @@ pub(crate) fn remove(
     backend.delete(&target(namespace, provider))
 }
 
-/// Provenance and saved state only. Never carries the key value.
+#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
+pub(crate) struct SqliteCredentialBackend {
+    pub path: std::path::PathBuf,
+}
+impl SqliteCredentialBackend {
+    fn connection(&self) -> Result<rusqlite::Connection, CredentialError> {
+        if self.path.as_os_str().is_empty() {
+            return Err(CredentialError::Unavailable("无法定位配置数据库".into()));
+        }
+        crate::config_db::open(&self.path).map_err(CredentialError::Unavailable)
+    }
+}
+impl CredentialBackend for SqliteCredentialBackend {
+    fn read(&self, provider: &str) -> Result<Option<Vec<u8>>, CredentialError> {
+        if self.path.as_os_str().is_empty() {
+            return Err(CredentialError::Unavailable("无法定位配置数据库".into()));
+        }
+        if !self.path.exists() {
+            return Ok(None);
+        }
+        let connection = self.connection()?;
+        let encrypted: Option<Vec<u8>> = connection
+            .query_row(
+                "SELECT encrypted_value FROM credentials WHERE provider=?1",
+                [provider],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|_| CredentialError::Unavailable("无法读取配置数据库凭据".into()))?;
+        encrypted.map(|blob| crypt(&blob, false)).transpose()
+    }
+    fn write(&self, provider: &str, blob: &[u8]) -> Result<(), CredentialError> {
+        let (_, saved_at) = decode_blob(provider, blob)?;
+        let encrypted = crypt(blob, true)?; // Encryption must succeed before touching database.
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|_| CredentialError::Unavailable("配置数据库事务失败".into()))?;
+        transaction.execute("INSERT INTO credentials(provider,encrypted_value,saved_at) VALUES(?1,?2,?3) ON CONFLICT(provider) DO UPDATE SET encrypted_value=excluded.encrypted_value,saved_at=excluded.saved_at", rusqlite::params![provider, encrypted, saved_at])
+            .map_err(|_| CredentialError::Unavailable("保存凭据失败，原值未改变".into()))?;
+        transaction
+            .commit()
+            .map_err(|_| CredentialError::Unavailable("保存凭据失败，原值未改变".into()))
+    }
+    fn delete(&self, provider: &str) -> Result<bool, CredentialError> {
+        if self.path.as_os_str().is_empty() { return Err(CredentialError::Unavailable("无法定位配置数据库".into())); }
+        if !self.path.exists() {
+            return Ok(false);
+        }
+        self.connection()?
+            .execute("DELETE FROM credentials WHERE provider=?1", [provider])
+            .map(|n| n > 0)
+            .map_err(|_| CredentialError::Unavailable("删除凭据失败".into()))
+    }
+}
+#[cfg(windows)]
+pub(crate) fn crypt(bytes: &[u8], encrypt: bool) -> Result<Vec<u8>, CredentialError> {
+    use windows_sys::Win32::{
+        Foundation::{GetLastError, LocalFree},
+        Security::Cryptography::{
+            CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+        },
+    };
+    if bytes.len() > u32::MAX as usize {
+        return Err(CredentialError::Unreadable);
+    }
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: bytes.len() as u32,
+        pbData: bytes.as_ptr() as *mut u8,
+    };
+    let mut output: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
+    unsafe {
+        let ok = if encrypt {
+            CryptProtectData(
+                &input,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            )
+        } else {
+            CryptUnprotectData(
+                &input,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut output,
+            )
+        };
+        if ok == 0 {
+            return Err(CredentialError::Unavailable(format!(
+                "DPAPI {}失败 (Windows error {})",
+                if encrypt { "加密" } else { "解密" },
+                GetLastError()
+            )));
+        }
+        let value = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+        LocalFree(output.pbData as *mut std::ffi::c_void);
+        Ok(value)
+    }
+}
+#[cfg(not(windows))]
+pub(crate) fn crypt(_: &[u8], _: bool) -> Result<Vec<u8>, CredentialError> {
+    Err(CredentialError::Unavailable(
+        "DPAPI is only available on Windows; no plaintext fallback".into(),
+    ))
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct CredentialStatus {
-    /// "present" | "absent" | "unavailable" | "unreadable"
     pub state: String,
     pub saved_at: Option<f64>,
     pub error: String,
 }
-
-/// Maps a backend-level result into a status row. Never exposes the key.
-pub(crate) fn status_of(result: Result<Option<(String, f64)>, CredentialError>) -> CredentialStatus {
+pub(crate) fn status_of(result: Result<Option<(Value, f64)>, CredentialError>) -> CredentialStatus {
     match result {
-        Ok(Some((_key, saved_at))) => CredentialStatus {
+        Ok(Some((_, saved_at))) => CredentialStatus {
             state: "present".into(),
             saved_at: Some(saved_at),
             error: String::new(),
@@ -241,44 +255,15 @@ pub(crate) fn status_of(result: Result<Option<(String, f64)>, CredentialError>) 
             saved_at: None,
             error: String::new(),
         },
-        Err(CredentialError::Unreadable) => CredentialStatus {
-            state: "unreadable".into(),
-            saved_at: None,
-            error: CredentialError::Unreadable.to_string(),
-        },
         Err(error) => CredentialStatus {
-            state: "unavailable".into(),
+            state: if error == CredentialError::Unreadable {
+                "unreadable"
+            } else {
+                "unavailable"
+            }
+            .into(),
             saved_at: None,
             error: error.to_string(),
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn target_is_namespaced_per_provider() {
-        assert_eq!(target("ns", "tavily"), "ns/tavily");
-        assert_eq!(target("ns", "brave"), "ns/brave");
-        assert_eq!(target("multi-search", "github"), "multi-search/github");
-    }
-
-    #[test]
-    fn every_store_provider_is_a_distinct_target() {
-        let targets: std::collections::BTreeSet<String> =
-            STORE_PROVIDERS.iter().map(|p| target("ns", p)).collect();
-        assert_eq!(targets.len(), STORE_PROVIDERS.len());
-    }
-
-    /// Must equal `CREDENTIAL_STORE_PROVIDERS` in multi_search_mcp/src/state/keys.py.
-    #[test]
-    fn store_providers_match_python_contract_order_free() {
-        let mut rust: Vec<&str> = STORE_PROVIDERS.to_vec();
-        rust.sort_unstable();
-        let mut python = vec!["baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github"];
-        python.sort_unstable();
-        assert_eq!(rust, python);
     }
 }

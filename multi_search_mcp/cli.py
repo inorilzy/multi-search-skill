@@ -45,6 +45,23 @@ def _add_format_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_migration_sources(parser):
+    parser.add_argument("--keys-file")
+    parser.add_argument("--settings-file")
+    parser.add_argument("--include-credentials", action="store_true")
+    parser.add_argument("--include-environment", action="store_true")
+
+
+def _migration_options(args):
+    if not any((args.keys_file, args.settings_file, args.include_credentials, args.include_environment)):
+        raise CLIUsageError("select at least one explicit legacy import source")
+    return {
+        "settings_file": Path(args.settings_file).expanduser() if args.settings_file else None,
+        "include_credentials": args.include_credentials,
+        "include_environment": args.include_environment,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _ArgumentParser(prog="multi-search", description="Thin CLI for the shared multi-search core.")
     try:
@@ -60,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--source", action="append", dest="sources", default=[])
     search_parser.add_argument("--count", type=int, help="per-provider recall count; final output is at most 15")
     search_parser.add_argument("--timeout", type=int)
+    search_parser.add_argument("--no-scrape", action="store_true", help="skip body fetch for this call only")
     search_parser.add_argument("--expand", action="append", default=None)
     _add_format_argument(search_parser)
     search_parser.set_defaults(handler=_handle_search)
@@ -111,14 +129,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate_subparsers = migrate_parser.add_subparsers(dest="migrate_command", required=True)
     migrate_plan_parser = migrate_subparsers.add_parser("plan", help="masked preview of the legacy keys file")
-    migrate_plan_parser.add_argument("--keys-file", required=True)
+    _add_migration_sources(migrate_plan_parser)
     _add_format_argument(migrate_plan_parser)
     migrate_plan_parser.set_defaults(handler=_handle_migrate_plan)
 
     migrate_apply_parser = migrate_subparsers.add_parser(
         "apply", help="apply an approved plan; the request file names approved providers and conflict choices"
     )
-    migrate_apply_parser.add_argument("--keys-file", required=True)
+    _add_migration_sources(migrate_apply_parser)
     migrate_apply_parser.add_argument("--request", required=True, help="JSON file with approved, choices, plan_token")
     _add_format_argument(migrate_apply_parser)
     migrate_apply_parser.set_defaults(handler=_handle_migrate_apply)
@@ -182,6 +200,7 @@ def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
             sources=list(args.sources or []),
             timeout=args.timeout,
             expand=None if args.expand is None else list(args.expand),
+            no_scrape=args.no_scrape,
         )
     )
     statuses = payload.get("provider_status") or []
@@ -249,7 +268,10 @@ def _plan_token(plan: dict[str, Any]) -> str:
 def _handle_migrate_plan(args: argparse.Namespace) -> dict[str, Any]:
     from .src.support import legacy_migration
 
-    plan = legacy_migration.plan_migration(Path(args.keys_file).expanduser(), _migration_store())
+    plan = legacy_migration.plan_migration(
+        Path(args.keys_file).expanduser() if args.keys_file else None, _migration_store(),
+        **_migration_options(args),
+    )
     # Digests stay in-process; the caller gets an opaque token that changes if either side changes.
     visible = {k: v for k, v in plan.items() if k not in ("source_digest", "store_digest")}
     visible["plan_token"] = _plan_token(plan)
@@ -259,10 +281,16 @@ def _handle_migrate_plan(args: argparse.Namespace) -> dict[str, Any]:
 def _handle_migrate_apply(args: argparse.Namespace) -> dict[str, Any]:
     from .src.support import legacy_migration
 
-    keys_file = Path(args.keys_file).expanduser()
+    keys_file = Path(args.keys_file).expanduser() if args.keys_file else None
+    options = _migration_options(args)
     store = _migration_store()
-    request = json.loads(Path(args.request).read_text(encoding="utf-8-sig"))
-    plan = legacy_migration.plan_migration(keys_file, store)
+    try:
+        request = json.loads(Path(args.request).read_text(encoding="utf-8-sig"))
+        if not isinstance(request, dict) or not isinstance(request.get("approved", []), list) or not isinstance(request.get("choices", {}), dict) or not isinstance(request.get("sources", {}), dict):
+            raise ValueError
+    except (ValueError, OSError):
+        raise CLIUsageError("invalid migration request JSON") from None
+    plan = legacy_migration.plan_migration(keys_file, store, **options)
     if request.get("plan_token") != _plan_token(plan):
         raise CLIUsageError("the migration plan changed since preview; run the preview again")
     return legacy_migration.apply_migration(
@@ -271,6 +299,8 @@ def _handle_migrate_apply(args: argparse.Namespace) -> dict[str, Any]:
         plan,
         approved=list(request.get("approved", [])),
         choices=dict(request.get("choices", {})),
+        sources=dict(request.get("sources", {})),
+        **options,
     )
 
 

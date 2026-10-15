@@ -108,7 +108,7 @@ class LoadKeysPriorityTests(unittest.TestCase):
             environ={"TAVILY_API_KEY": "env-tavily-key-0003"},
             credential_store=self.store_with(SYNTHETIC_KEY),
         )
-        self.assertEqual(keys["tavily"], "env-tavily-key-0003")
+        self.assertEqual(keys["tavily"], SYNTHETIC_KEY)
 
     def test_file_used_when_store_empty(self):
         self.write_file({"tavily": self.file_key})
@@ -150,9 +150,9 @@ class KeySourcesTests(unittest.TestCase):
         store.set("tavily", SYNTHETIC_KEY)
         report = key_sources(self.keys_file, environ={"TAVILY_API_KEY": "env-tavily-key-0003"}, credential_store=store)
         row = report["tavily"]
-        self.assertEqual(row["effective_source"], "env")
+        self.assertEqual(row["effective_source"], "sqlite")
         self.assertEqual(row["env_vars_set"], ["TAVILY_API_KEY"])
-        self.assertTrue(row["env_overrides_store"])
+        self.assertFalse(row["env_overrides_store"])
         self.assertEqual(row["credential_store"], "present")
         self.assertTrue(row["file_present"])
         serialized = json.dumps(report)
@@ -185,7 +185,7 @@ class AllKeyProvidersStoreTests(unittest.TestCase):
         store = CredentialStore(MemoryBackend(), namespace="ns-test")
         store.set("exa", SYNTHETIC_KEY)
         keys = load_keys(self.keys_file, environ={"EXA_API_KEY": "env-exa-key-0021"}, credential_store=store)
-        self.assertEqual(keys["exa"], "env-exa-key-0021")
+        self.assertEqual(keys["exa"], SYNTHETIC_KEY)
 
     def test_key_sources_reports_every_key_provider_without_values(self):
         store = CredentialStore(MemoryBackend(), namespace="ns-test")
@@ -193,7 +193,7 @@ class AllKeyProvidersStoreTests(unittest.TestCase):
         report = key_sources(self.keys_file, environ={}, credential_store=store)
         for provider in ("baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github"):
             self.assertIn(provider, report)
-        self.assertEqual(report["firecrawl"]["effective_source"], "credential_store")
+        self.assertEqual(report["firecrawl"]["effective_source"], "sqlite")
         self.assertNotIn(SYNTHETIC_KEY, json.dumps(report))
 
     def test_store_overrides_file_list_explicitly_and_file_is_untouched(self):
@@ -219,7 +219,7 @@ class AllKeyProvidersStoreTests(unittest.TestCase):
         store = CredentialStore(MemoryBackend(), namespace="ns-test")
         store.set("brave", SYNTHETIC_KEY)
         row = key_sources(self.keys_file, environ={}, credential_store=store)["brave"]
-        self.assertEqual(row["effective_source"], "credential_store")
+        self.assertEqual(row["effective_source"], "sqlite")
         self.assertEqual(row["file_key_count"], 2)
         self.assertNotIn("file-brave-key-0031", json.dumps(row))
 
@@ -249,6 +249,165 @@ class RustBlobContractTests(unittest.TestCase):
             "tavily", "  synthetic-roundtrip-key-0009  ", saved_at=1700000001.5
         )
         self.assertEqual(backend.entries["ns-roundtrip/tavily"], b'{"v":1,"key":"synthetic-roundtrip-key-0009","saved_at":1700000001.5}')
+
+
+class SQLiteDPAPIStoreTests(unittest.TestCase):
+    """Real DPAPI with synthetic values; all SQLite paths are disposable."""
+
+    def setUp(self):
+        from multi_search_mcp.src.support.credential_store import SQLiteCredentialBackend, ConfigDatabase
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "config.sqlite"
+        self.backend = SQLiteCredentialBackend(self.path)
+        self.store = CredentialStore(self.backend)
+        self.db = ConfigDatabase(self.path)
+
+    def test_explicit_database_selector_is_literal_and_home_priority_matches_desktop(self):
+        from multi_search_mcp.src.support.credential_store import config_db_path
+        for selected in ("~/config.sqlite", "%USERPROFILE%/config.sqlite", "relative/config.sqlite"):
+            self.assertEqual(config_db_path({"MULTI_SEARCH_CONFIG_DB": selected}), Path(selected))
+        self.assertEqual(config_db_path({"USERPROFILE": self.tmp.name, "HOME": "ignored"}),
+                         Path(self.tmp.name) / ".multi-search" / "config.sqlite")
+        self.assertEqual(config_db_path({"USERPROFILE": "", "HOME": self.tmp.name}),
+                         Path(self.tmp.name) / ".multi-search" / "config.sqlite")
+
+    def test_missing_database_read_does_not_create_or_touch_legacy_store(self):
+        self.assertIsNone(self.store.get("tavily"))
+        self.assertEqual(self.db.read_settings(), {})
+        self.assertFalse(self.path.exists())
+
+    @unittest.skipUnless(__import__("sys").platform == "win32", "native DPAPI requires Windows")
+    def test_native_encrypted_roundtrip_restart_lists_jina_and_settings(self):
+        import sqlite3
+        from multi_search_mcp.src.support.credential_store import SQLiteCredentialBackend, WindowsDPAPI
+        values = {"tavily": [SYNTHETIC_KEY, "synthetic-second-0011"],
+                  "jina": [{"key": "synthetic-jina-0012", "exhausted": True, "metadata": "preserved"}]}
+        for provider, value in values.items():
+            self.store.set(provider, value, saved_at=1700000001.5)
+        self.db.write_settings({"type": "fast", "timeout": 9, "disabled_sources": ["brave"]})
+        restarted = CredentialStore(SQLiteCredentialBackend(self.path))
+        for provider, value in values.items():
+            self.assertEqual(restarted.get(provider), value)
+        self.assertEqual(self.db.read_settings()["type"], "fast")
+        from contextlib import closing
+        with closing(sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+            encrypted, stamp = conn.execute("SELECT encrypted_value,saved_at FROM credentials WHERE provider='tavily'").fetchone()
+        self.assertEqual(json.loads(WindowsDPAPI().decrypt(encrypted))["saved_at"], stamp)
+        for file in self.path.parent.iterdir():
+            if file.is_file():
+                raw = file.read_bytes()
+                for secret in (SYNTHETIC_KEY, "synthetic-second-0011", "synthetic-jina-0012"):
+                    self.assertNotIn(secret.encode(), raw)
+        self.assertTrue(restarted.delete("tavily"))
+        self.assertIsNone(restarted.get("tavily"))
+
+    def test_future_schema_corruption_and_unreadable_settings_fail_explicitly(self):
+        import sqlite3
+        self.path.write_bytes(b"not sqlite " + SYNTHETIC_KEY.encode())
+        with self.assertRaises(CredentialStoreError) as error:
+            self.store.get("tavily")
+        self.assertNotIn(SYNTHETIC_KEY, str(error.exception))
+        self.path.unlink()
+        from contextlib import closing
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("PRAGMA user_version=2")
+        with self.assertRaisesRegex(CredentialStoreError, "schema version"):
+            self.db.read_settings()
+        self.path.unlink()
+        self.db.write_settings({})
+        from contextlib import closing
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("UPDATE settings SET data=?", (SYNTHETIC_KEY,))
+            conn.commit()
+        with self.assertRaisesRegex(CredentialStoreError, "settings are unreadable"):
+            self.db.read_settings()
+
+    def test_failed_encrypt_and_transaction_never_write_plaintext_or_partial_changes(self):
+        self.backend.protector = mock.Mock()
+        self.backend.protector.encrypt.side_effect = CredentialStoreError("DPAPI encryption failed")
+        with self.assertRaises(CredentialStoreError):
+            self.store.set("tavily", SYNTHETIC_KEY)
+        self.assertFalse(self.path.exists())
+        self.db.write_settings({"timeout": 8})
+        with self.assertRaises(RuntimeError):
+            with self.db.connect() as conn:
+                conn.execute("UPDATE settings SET data='{}'")
+                raise RuntimeError("synthetic failure")
+        self.assertEqual(self.db.read_settings(), {"timeout": 8})
+
+    @unittest.skipUnless(__import__("sys").platform == "win32", "native DPAPI requires Windows")
+    def test_default_database_ignores_all_legacy_sources_even_after_delete(self):
+        from multi_search_mcp.src.support.credential_store import default_store
+        from multi_search_mcp.src.support.config import load_config
+        old_keys = Path(self.tmp.name) / ".search-keys.json"
+        old_keys.write_text(json.dumps({"tavily": "synthetic-old-file-0012"}), encoding="utf-8")
+        old_config = Path(self.tmp.name) / "old-config.json"
+        old_config.write_text(json.dumps({"timeout": 55}), encoding="utf-8")
+        env = {"MULTI_SEARCH_CONFIG_DB": str(self.path), "MULTI_SEARCH_CONFIG": str(old_config),
+               "USERPROFILE": self.tmp.name, "HOME": self.tmp.name, "TAVILY_API_KEY": "synthetic-env-0013"}
+        with mock.patch.dict("os.environ", env):
+            store = default_store()
+            store.set("tavily", SYNTHETIC_KEY)
+            self.db.write_settings({"timeout": 7})
+            self.assertEqual(load_keys()["tavily"], SYNTHETIC_KEY)
+            self.assertEqual(load_config()["timeout"], 7)
+            store.delete("tavily")
+            with mock.patch("multi_search_mcp.src.support.credential_store.WindowsCredentialBackend", side_effect=AssertionError("no legacy reads")):
+                self.assertNotIn("tavily", load_keys())
+            self.assertEqual(old_keys.read_text(encoding="utf-8"), json.dumps({"tavily": "synthetic-old-file-0012"}))
+
+    def test_version_zero_nonempty_and_version_one_missing_or_wrong_columns_rejected(self):
+        import sqlite3
+        from contextlib import closing
+        for statements in (("CREATE TABLE unrelated(value TEXT)",),
+                           ("PRAGMA user_version=1",),
+                           ("CREATE TABLE settings(id INTEGER PRIMARY KEY,data BLOB)", "PRAGMA user_version=1")):
+            if self.path.exists():
+                self.path.unlink()
+            with closing(sqlite3.connect(self.path)) as conn:
+                for sql in statements:
+                    conn.execute(sql)
+                conn.commit()
+            before = self.path.read_bytes()
+            with self.assertRaisesRegex(CredentialStoreError, "schema is invalid"):
+                self.db.read_settings()
+            self.assertEqual(self.path.read_bytes(), before)
+
+    @unittest.skipUnless(__import__("sys").platform == "win32", "native DPAPI requires Windows")
+    def test_corrupt_ciphertext_is_explicit_without_plaintext_fallback(self):
+        self.store.set("tavily", SYNTHETIC_KEY)
+        with self.db.connect() as conn:
+            conn.execute("UPDATE credentials SET encrypted_value=? WHERE provider='tavily'", (b"synthetic-invalid-ciphertext",))
+        with self.assertRaisesRegex(CredentialStoreError, "DPAPI decryption failed"):
+            self.store.get("tavily")
+
+    def test_hash_fingerprint_contains_no_key_prefix_or_suffix(self):
+        from multi_search_mcp.src.state.key_state import key_fingerprint
+        value = key_fingerprint(SYNTHETIC_KEY)
+        self.assertTrue(value.startswith("sha256:"))
+        self.assertNotIn(SYNTHETIC_KEY[:4], value)
+        self.assertNotIn(SYNTHETIC_KEY[-4:], value)
+
+    def test_legacy_state_display_masks_are_replaced_with_hashes(self):
+        from multi_search_mcp.src.state.state_store import StateStore
+        from multi_search_mcp.src.state.key_state import SQLiteKeyManager, key_id_for
+        state = StateStore(Path(self.tmp.name) / "state.sqlite")
+        state.execute("INSERT INTO key_state(provider,key_id,key_fingerprint,status,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                      ("tavily", key_id_for("tavily", SYNTHETIC_KEY), "synt...0001 (old)", "active", "now", "now"))
+        manager = SQLiteKeyManager(state)
+        fingerprint = manager.status_rows()[0]["key_fingerprint"]
+        self.assertTrue(fingerprint.startswith("sha256:"))
+        self.assertNotIn("synt", fingerprint)
+        self.assertNotIn("0001", fingerprint)
+
+    def test_invalid_nested_pools_and_unknown_provider_are_rejected(self):
+        for value in ([[SYNTHETIC_KEY]], [], [None], {"key": SYNTHETIC_KEY}):
+            with self.assertRaises(ValueError):
+                self.store.set("tavily", value)
+        with self.assertRaises(ValueError):
+            self.store.set("not-a-provider", SYNTHETIC_KEY)
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ const statusText = {
 
 export async function mountSettings(root, api) {
   root.innerHTML = '<section class="heading"><p class="eyebrow">SETTINGS</p><h1>搜索默认设置。</h1>'
-    + '<p>路由、超时和 Twitter cookie 文件路径保存在 CLI 的配置文件中。key 不写入该文件。</p></section>'
+    + '<p>路由、超时和 Twitter cookie 文件路径保存在 SQLite 中。API Key 在同一数据库中由 DPAPI 加密保存。</p></section>'
     + '<section class="panel"><div class="section-title"><h2>配置文件</h2><button type="button" data-action="refresh">刷新</button></div>'
     + '<dl class="cred-status"><dt>配置文件</dt><dd data-status="path"></dd><dt>路径来源</dt><dd data-status="path-source"></dd>'
     + '<dt>当前路由会运行</dt><dd data-status="active"></dd></dl>'
@@ -45,12 +45,8 @@ export async function mountSettings(root, api) {
   function fill(view) {
     saved = view;
     text('[data-status="path"]', view.config_path || '无法确定配置文件位置');
-    text('[data-status="path-source"]', view.path_source === 'env' ? `环境变量 MULTI_SEARCH_CONFIG（${view.file_present ? '文件已存在' : '文件尚未创建'}）` : `用户配置（${view.file_present ? '文件已存在' : '文件尚未创建'}）`);
-    const notes = [];
-    if (view.path_source === 'env') notes.push('检测到 MULTI_SEARCH_CONFIG，保存会写入该路径，而不是用户配置文件。');
-    if (view.read_source === 'dev_fallback') notes.push('当前显示的是开发目录中的配置（用户配置尚不存在）。');
-    if (view.save_creates_override) notes.push('保存会创建用户配置文件，之后 CLI 将使用它，不再读取开发目录配置。');
-    text('[data-info="env"]', notes.join(' '));
+    text('[data-status="path-source"]', view.path_source === 'env' ? `隔离数据库 MULTI_SEARCH_CONFIG_DB（${view.file_present ? '已存在' : '尚未创建'}）` : `用户 SQLite 配置（${view.file_present ? '已存在' : '尚未创建'}）`);
+    text('[data-info="env"]', 'SQLite 是唯一生效来源；旧 JSON、凭据库和环境变量须在迁移页显式导入。');
     text('[data-status="active"]', view.active_sources.length ? view.active_sources.join('、') : '无');
     text('[data-info="active-warning"]', statusText[view.status] ?? view.message ?? '');
     q('[data-field="route"]').value = view.route;
@@ -59,9 +55,6 @@ export async function mountSettings(root, api) {
     disabled = new Set(view.disabled_sources);
     q('[data-field="twitter"]').value = view.twitter_cookies_path || '';
     text('[data-info="error"]', '');
-    if (view.twitter_env_overrides) {
-      text('[data-info="env"]', `${q('[data-info="env"]').textContent} 检测到 TWITTER_COOKIES_PATH，它优先于这里保存的路径。`.trim());
-    }
   }
 
   async function refresh() {
