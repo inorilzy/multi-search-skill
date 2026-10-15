@@ -58,6 +58,16 @@ fn main() {
         thread::sleep(Duration::from_secs(60));
         return;
     }
+    if let Ok(path) = env::var("FIXTURE_ARGS_PATH") {
+        let body = format!(
+            "[{}]",
+            args.iter()
+                .map(|arg| format!("\"{}\"", arg.replace('\\', "\\\\").replace('\"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        std::fs::write(path, body).unwrap();
+    }
     let query = args.get(1).map(String::as_str).unwrap_or("");
     if query == "hang" {
         let _child = Command::new(env::current_exe().unwrap())

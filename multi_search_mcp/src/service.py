@@ -392,7 +392,7 @@ def _run_search_candidates(
 
         providers = build_provider_registry()
     base_sources, active_sources = resolve_active_sources(
-        plan.route, plan.sources, plan.disabled_sources
+        plan.route, plan.sources, plan.disabled_sources, plan.route_sources
     )
     if base_sources and not active_sources:
         raise ValueError(
@@ -401,7 +401,7 @@ def _run_search_candidates(
 
     def route_resolver(_route):
         _selected, active = resolve_active_sources(
-            _route, plan.sources, plan.disabled_sources
+            _route, plan.sources, plan.disabled_sources, plan.route_sources
         )
         return active
 
@@ -904,9 +904,11 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
     store = StateStore()
     config_path = resolve_config_path()
     config_error = None
+    route_names = available_routes()
     try:
         config = load_config()
-        resolve_search_plan(MultiSearchRequest(query="doctor"), config)
+        doctor_plan = resolve_search_plan(MultiSearchRequest(query="doctor"), config)
+        route_names = list(doctor_plan.available_routes)
         variants = config_list(config, "expand") or config_list(config, "expand_queries")
         query_plan = build_query_plan("doctor", variants)
         QueryFusionPolicy.from_config(config).weights(query_plan.queries, query_plan.primary_query)
@@ -923,7 +925,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
             "file": "~/.search-keys.json",
             "state": str(store.path),
         },
-        "routes": available_routes(),
+        "routes": route_names,
         "network_checked": False,
         "network_ok": None,
         "network_checks": [],

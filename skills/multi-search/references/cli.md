@@ -55,9 +55,40 @@ multi-search search "Python TaskGroup cancellation" --source hackernews --count 
 multi-search search "Python TaskGroup cancellation" --route dev --expand "TaskGroup ExceptionGroup" --expand "TaskGroup cancellation semantics" --format json
 ```
 
-`--source` and `--expand` can repeat. `--count` controls each provider's recall;
-Core ranks and fetches up to 15 final URLs. Keep configured timeouts unless the
-user supplies a tighter budget. Inspect `results`, `scrapes` matched by
+`--route` selects a configured route-group id. `--source` and `--expand` can
+repeat; explicit sources replace the selected group's source list for that
+request, while globally disabled sources are still filtered. Route groups live
+in the non-secret JSON config as a complete `routes` map:
+
+```json
+{
+  "type": "research",
+  "routes": {
+    "research": {
+      "label": "Research",
+      "sources": ["hackernews", "github_repos", "stackoverflow"],
+      "timeout": 30
+    }
+  }
+}
+```
+
+Each id is 1-64 ASCII lowercase letters, digits, `_`, or `-`; `web` is reserved
+as an alias for `default`. For an id beginning with `-`, pass the explicit CLI
+selection in equals form, for example `--route=-focus`. Labels are trimmed to
+1-80 characters. Sources use
+the twelve canonical search ids (legacy aliases such as `github` and `v2ex`
+are normalized and duplicates removed), and each group needs at least one.
+Group timeout is `null`/omitted to inherit or an integer from 1 through 60.
+An explicit `routes` map is authoritative: deleted built-ins are not restored.
+When `routes` is absent, the five legacy groups are supplied for compatibility.
+Timeout precedence is command `--timeout`, group timeout, global config timeout,
+then the built-in route behavior. The configured `type` must name an existing
+group.
+
+`--count` controls each provider's recall; Core ranks and fetches up to 15 final
+URLs. Keep configured timeouts unless the user supplies a tighter budget.
+Inspect `results`, `scrapes` matched by
 `source_id`, `provider_status`, and `errors`, then remove only clearly irrelevant
 candidates. Retain all relevant or uncertain candidates without a count quota,
 in original rank order, with original previews for the main Agent to review.

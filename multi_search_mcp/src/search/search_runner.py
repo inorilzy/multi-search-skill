@@ -32,21 +32,51 @@ SOURCE_ALIASES = {
     "v2ex": "sov2ex",
 }
 
-ROUTE_PROFILES = {
-    "default": {"brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"},
-    "fast": {"baidu", "tavily", "firecrawl", "exa"},
-    "social": {"twitter"},
-    "dev": {"stackoverflow", "github_repos", "hackernews"},
-    "all": {
+BUILTIN_ROUTE_SOURCES = {
+    "default": ("brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"),
+    "fast": ("baidu", "tavily", "firecrawl", "exa"),
+    "all": (
         "brave", "parallel", "tavily", "exa", "serpapi", "baidu",
         "firecrawl", "twitter", "stackoverflow", "github_repos",
         "hackernews", "sov2ex",
-    },
+    ),
+    "social": ("twitter",),
+    "dev": ("stackoverflow", "github_repos", "hackernews"),
+}
+
+ROUTE_PROFILES = {
+    route_id: set(sources)
+    for route_id, sources in BUILTIN_ROUTE_SOURCES.items()
 }
 
 ROUTE_ALIASES = {
     "web": "default",
 }
+
+BUILTIN_ROUTE_LABELS = {
+    "default": "默认（网页综合）",
+    "fast": "快速",
+    "all": "全部",
+    "social": "社交（Twitter）",
+    "dev": "开发者（Stack Overflow / GitHub / Hacker News）",
+}
+
+
+def default_routes_config() -> dict[str, dict[str, Any]]:
+    """按桌面 JSON 结构返回旧版路由组。
+
+    缺少 ``routes`` 表示初始化这些默认值。每次返回新的列表和字典，
+    避免校验或界面代码修改内置来源配置。
+    """
+    return {
+        route_id: {
+            "label": BUILTIN_ROUTE_LABELS[route_id],
+            "sources": list(BUILTIN_ROUTE_SOURCES[route_id]),
+            "timeout": None,
+        }
+        for route_id in ("default", "fast", "all", "social", "dev")
+    }
+
 
 # Route-level behavior. A route decides *which sources* to fan out to plus
 # source-shaped defaults (count/timeout/snippet rendering) and whether providers

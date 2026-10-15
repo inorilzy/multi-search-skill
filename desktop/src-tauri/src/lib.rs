@@ -22,7 +22,8 @@ pub use skill_manage::{InstallState, RemoveOutcome, RemovePlan, SkillStatus, Upd
 #[doc(hidden)]
 pub mod settings_fixture {
     pub use crate::settings::{
-        config_path, save, save_with_dev, validate, view, view_with_dev, SettingsInput, SettingsView, Validated,
+        builtin_routes, config_path, save, save_with_dev, validate, view, view_with_dev,
+        RouteConfig, RouteMap, SettingsInput, SettingsView, Validated,
     };
     /// Dev fallback location for the real app: the repo-root file the CLI reads when no user file exists.
     pub fn default_dev_config() -> std::path::PathBuf {

@@ -34,6 +34,131 @@ fn search_preserves_literal_arguments_and_reports_real_success() {
 }
 
 #[test]
+fn custom_route_is_validated_from_current_config_and_explicit_timeout_still_wins() {
+    let mut profile = common::Profile::new();
+    let config = profile.root.join("route-config.json");
+    let args_path = profile.root.join("args.json");
+    std::fs::write(
+        &config,
+        r#"{"type":"-focus","timeout":40,"routes":{"-focus":{"label":"Focus","sources":["hackernews"],"timeout":2}}}"#,
+    )
+    .unwrap();
+    profile.environment.variables.insert(
+        "MULTI_SEARCH_CONFIG".into(),
+        config.to_string_lossy().into_owned(),
+    );
+    profile.environment.variables.insert(
+        "FIXTURE_ARGS_PATH".into(),
+        args_path.to_string_lossy().into_owned(),
+    );
+    let manager = DesktopManager::new(profile.environment.clone());
+    let id = manager
+        .start_search(
+            None,
+            SearchOptions {
+                query: "custom route".into(),
+                route: "-focus".into(),
+                sources: vec!["hackernews".into()],
+                timeout: 5,
+            },
+        )
+        .unwrap();
+    let started = Instant::now();
+    while manager.execution(id).unwrap().status == "running" {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(10));
+    }
+    let args: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string(args_path).unwrap()).unwrap();
+    assert!(
+        args.iter().any(|arg| arg == "--route=-focus"),
+        "a legal leading-dash id must stay the value of --route"
+    );
+    assert_eq!(
+        args[args.iter().position(|arg| arg == "--timeout").unwrap() + 1],
+        "5",
+        "the explicit execution timeout overrides the route preview"
+    );
+
+    assert!(
+        manager
+            .start_search(
+                None,
+                SearchOptions {
+                    query: "removed builtin".into(),
+                    route: "dev".into(),
+                    sources: vec![],
+                    timeout: 5
+                },
+            )
+            .is_err(),
+        "an explicitly deleted built-in is no longer accepted"
+    );
+}
+
+#[test]
+fn non_default_legacy_route_timeout_can_be_tested_but_arbitrary_values_above_sixty_are_rejected() {
+    let mut profile = common::Profile::new();
+    let config = profile.root.join("legacy-all-config.json");
+    std::fs::write(&config, r#"{"type":"fast"}"#).unwrap();
+    profile.environment.variables.insert(
+        "MULTI_SEARCH_CONFIG".into(),
+        config.to_string_lossy().into_owned(),
+    );
+    let manager = DesktopManager::new(profile.environment.clone());
+    let id = manager
+        .start_search(
+            None,
+            SearchOptions {
+                query: "legacy all".into(),
+                route: "all".into(),
+                sources: vec!["hackernews".into()],
+                timeout: 90,
+            },
+        )
+        .unwrap();
+    let started = Instant::now();
+    while manager.execution(id).unwrap().status == "running" {
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(manager
+        .start_search(
+            None,
+            SearchOptions {
+                query: "bad timeout".into(),
+                route: "all".into(),
+                sources: vec![],
+                timeout: 89,
+            },
+        )
+        .is_err());
+}
+
+#[test]
+fn unreadable_route_config_blocks_execution_instead_of_falling_back_to_builtins() {
+    let mut profile = common::Profile::new();
+    let config = profile.root.join("bad-route-config.json");
+    std::fs::write(&config, r#"{"type":"missing","routes":{}}"#).unwrap();
+    profile.environment.variables.insert(
+        "MULTI_SEARCH_CONFIG".into(),
+        config.to_string_lossy().into_owned(),
+    );
+    let manager = DesktopManager::new(profile.environment.clone());
+    assert!(manager
+        .start_search(
+            None,
+            SearchOptions {
+                query: "must not run".into(),
+                route: "default".into(),
+                sources: vec![],
+                timeout: 5
+            },
+        )
+        .is_err());
+}
+
+#[test]
 fn partial_failure_is_visible_and_known_credentials_are_redacted() {
     let mut profile = common::Profile::new();
     profile

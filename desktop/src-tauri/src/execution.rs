@@ -87,7 +87,7 @@ impl DesktopManager {
     pub fn start_search(
         &self,
         path: Option<PathBuf>,
-        options: SearchOptions,
+        mut options: SearchOptions,
     ) -> Result<u64, String> {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return Err("Desktop manager is closed".into());
@@ -98,8 +98,19 @@ impl DesktopManager {
         {
             return Err("Enter a query of 1–2000 bytes".into());
         }
-        if !["default", "fast", "all", "social", "dev"].contains(&options.route.as_str())
-            || !(1..=60).contains(&options.timeout)
+        // `web` 继续作为内置 `default` 的兼容别名，但不能被定义为路由 ID。
+        // 其他 ID 必须存在于 CLI 当前读取的配置中，既支持自定义分组，也避免任意路由参数。
+        if options.route == "web" {
+            options.route = "default".into();
+        }
+        let settings = crate::settings::view(&self.environment);
+        // 没有全局超时的配置仍可能得到 CLI 旧版 `all=90` 实际值。诊断页可以显式传入
+        // 这一精确预览值，但其他超出可编辑 1..=60 范围的任意值仍会被拒绝。
+        let legacy_preview_timeout = !settings.timeout_configured
+            && settings.effective_timeouts.get(&options.route) == Some(&options.timeout);
+        if settings.status == "config_unreadable"
+            || !settings.routes.contains_key(&options.route)
+            || (!(1..=60).contains(&options.timeout) && !legacy_preview_timeout)
             || options.sources.len() > 16
             || options.sources.iter().any(|s| !is_allowed_source(s))
         {
@@ -125,8 +136,7 @@ impl DesktopManager {
         let mut args = vec![
             "search".into(),
             options.query,
-            "--route".into(),
-            options.route,
+            format!("--route={}", options.route),
             "--timeout".into(),
             options.timeout.to_string(),
             "--format".into(),
@@ -136,12 +146,8 @@ impl DesktopManager {
             args.push("--source".into());
             args.push(source);
         }
-        let process = OwnedProcess::spawn(
-            &cli,
-            &args,
-            &self.environment,
-        )
-        .map_err(|_| "Could not start the CLI")?;
+        let process = OwnedProcess::spawn(&cli, &args, &self.environment)
+            .map_err(|_| "Could not start the CLI")?;
         let execution = Arc::new(Mutex::new(Execution {
             state: ExecutionStatus {
                 id,

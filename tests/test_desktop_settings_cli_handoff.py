@@ -19,7 +19,7 @@ from unittest import mock
 
 from multi_search_mcp import cli
 from multi_search_mcp.src.search import registry
-from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES
+from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES, default_routes_config
 from multi_search_mcp.src.state.state_store import StateStore
 
 HANDOFF = os.environ.get("MS_SETTINGS_HANDOFF")
@@ -76,6 +76,7 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
         desktop = json.loads(self.config.read_text(encoding="utf-8"))
         self.assertEqual(desktop["disabled_sources"], ["brave"])
         self.assertEqual(desktop["type"], "default")
+        self.assertEqual(desktop["routes"], default_routes_config())
         self.assertEqual(desktop["timeout"], 25)
         code, payload, _err = self.run_cli()
         self.assertEqual(payload["diagnostics"]["disabled_sources"], ["brave"])
