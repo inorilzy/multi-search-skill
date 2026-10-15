@@ -11,7 +11,7 @@ use crate::credential::{self, CredentialBackend, CredentialStatus};
 use crate::credential::CredentialError;
 #[cfg(feature = "native-window")]
 use crate::{DesktopManager, RuntimeEnvironment};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 #[cfg(feature = "native-window")]
 use std::time::Duration;
@@ -354,166 +354,9 @@ pub(crate) fn with_native<T>(operation: impl FnOnce(&dyn CredentialBackend) -> T
     }
 }
 
-// Legacy migration adapter. The Python CLI (`migrate-legacy`) owns every rule and every store
-// access. This layer only maps UI source names to providers, writes a request file that holds
-// names and choices (never key values), runs the CLI, and returns its masked output.
-
-/// One planned item from the CLI. Carries masked previews and reasons only.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MigrationItem {
-    pub provider: String,
-    pub action: String,
-    #[serde(default)]
-    pub preview: String,
-    #[serde(default)]
-    pub reason: String,
-}
-
-/// Masked preview returned to the UI. `plan_token` is an opaque digest pair, not key material.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MigrationPlan {
-    pub plan_token: String,
-    pub items: Vec<MigrationItem>,
-    pub migratable: Vec<String>,
-    pub skipped: Vec<String>,
-}
-
-/// Provider names only. The CLI never returns values.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MigrationResult {
-    pub written: Vec<String>,
-    pub kept: Vec<String>,
-    pub unchanged: Vec<String>,
-    pub failed: Vec<String>,
-    pub not_done: Vec<String>,
-    pub complete: bool,
-}
-
-/// Request file contents for `apply`. Holds only provider names, choices, and the plan token.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct MigrationRequest {
-    pub plan_token: String,
-    pub approved: Vec<String>,
-    pub choices: BTreeMap<String, String>,
-}
-
-/// Validate UI selections against the allowlist before anything reaches the CLI.
-pub(crate) fn migration_request(
-    plan_token: &str,
-    approved_sources: &[String],
-    choices_by_source: &BTreeMap<String, String>,
-) -> Result<MigrationRequest, String> {
-    if plan_token.len() != 64 || !plan_token.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err("迁移预览无效，请重新预览".into());
-    }
-    let mut approved = Vec::new();
-    for source in approved_sources {
-        approved.push(resolve_source(source)?.provider.to_string());
-    }
-    approved.sort();
-    approved.dedup();
-    let mut choices = BTreeMap::new();
-    for (source, choice) in choices_by_source {
-        let provider = resolve_source(source)?.provider.to_string();
-        if choice != "keep" && choice != "replace" {
-            return Err("冲突选择无效，请选择保留或替换".into());
-        }
-        if !approved.contains(&provider) {
-            return Err("冲突选择必须对应已批准的源".into());
-        }
-        choices.insert(provider, choice.clone());
-    }
-    Ok(MigrationRequest {
-        plan_token: plan_token.into(),
-        approved,
-        choices,
-    })
-}
-
-/// Request file under the temp directory; removed on drop. Holds no key material.
-struct RequestFile(PathBuf);
-impl RequestFile {
-    fn create(dir: &Path, request: &MigrationRequest) -> Result<Self, String> {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let path = dir.join(format!("migrate-request-{}-{nanos}.json", std::process::id()));
-        let body = serde_json::to_string(request).map_err(|_| "无法准备迁移请求".to_string())?;
-        std::fs::write(&path, body).map_err(|_| "无法准备迁移请求".to_string())?;
-        Ok(Self(path))
-    }
-}
-impl Drop for RequestFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
-#[cfg(feature = "native-window")]
-fn run_migration_cli(
-    manager: &DesktopManager,
-    cli: &Path,
-    args: &[String],
-) -> Result<crate::process::Output, String> {
-    let output = crate::process::bounded(cli, args, &manager.environment, TEST_TIMEOUT)
-        .map_err(|_| "无法启动 CLI".to_string())?;
-    if output.timed_out {
-        return Err("迁移操作超时，请稍后重试。".into());
-    }
-    if output.code != Some(0) {
-        return Err("迁移操作未完成，请重新预览后再试。".into());
-    }
-    Ok(output)
-}
-
-#[cfg(feature = "native-window")]
-impl DesktopManager {
-    /// Masked preview of the legacy keys file via the CLI.
-    pub(crate) fn migration_plan(&self, cli: PathBuf, keys_file: &Path) -> Result<MigrationPlan, String> {
-        let args = vec![
-            "migrate-legacy".into(),
-            "plan".into(),
-            "--keys-file".into(),
-            keys_file.to_string_lossy().into_owned(),
-            "--format".into(),
-            "json".into(),
-        ];
-        let output = run_migration_cli(self, &cli, &args)?;
-        serde_json::from_str::<MigrationPlan>(&output.stdout)
-            .map_err(|_| "无法解析迁移预览".to_string())
-    }
-
-    /// Apply an approved request via the CLI, which re-checks the file and store itself.
-    pub(crate) fn migration_apply(
-        &self,
-        cli: PathBuf,
-        keys_file: &Path,
-        request: &MigrationRequest,
-    ) -> Result<MigrationResult, String> {
-        let dir = std::env::temp_dir();
-        let request_file = RequestFile::create(&dir, request)?;
-        let args = vec![
-            "migrate-legacy".into(),
-            "apply".into(),
-            "--keys-file".into(),
-            keys_file.to_string_lossy().into_owned(),
-            "--request".into(),
-            request_file.0.to_string_lossy().into_owned(),
-            "--format".into(),
-            "json".into(),
-        ];
-        let output = run_migration_cli(self, &cli, &args)?;
-        serde_json::from_str::<MigrationResult>(&output.stdout)
-            .map_err(|_| "无法解析迁移结果".to_string())
-    }
-}
-
 #[cfg(test)]
-mod migration_tests {
+mod test_config_tests {
     use super::*;
-
-    const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     #[cfg(feature = "native-window")]
     #[test]
@@ -541,44 +384,7 @@ mod migration_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    fn github_repos_maps_to_github_provider_and_duplicates_collapse() {
-        let request = migration_request(TOKEN, &["github-repos".into(), "github_repos".into()], &BTreeMap::new()).unwrap();
-        assert_eq!(request.approved, vec!["github".to_string()]);
     }
-
-    #[test]
-    fn unknown_source_and_bad_token_are_rejected_before_any_cli_call() {
-        assert!(migration_request(TOKEN, &["jina".into()], &BTreeMap::new()).is_err());
-        assert!(migration_request("not-a-token", &["tavily".into()], &BTreeMap::new()).is_err());
-    }
-
-    #[test]
-    fn choice_must_be_keep_or_replace_and_match_an_approved_source() {
-        let bad_value = BTreeMap::from([("tavily".to_string(), "overwrite".to_string())]);
-        assert!(migration_request(TOKEN, &["tavily".into()], &bad_value).is_err());
-        let unapproved = BTreeMap::from([("brave".to_string(), "replace".to_string())]);
-        assert!(migration_request(TOKEN, &["tavily".into()], &unapproved).is_err());
-        let ok = BTreeMap::from([("tavily".to_string(), "replace".to_string())]);
-        assert_eq!(migration_request(TOKEN, &["tavily".into()], &ok).unwrap().choices["tavily"], "replace");
-    }
-
-    #[test]
-    fn request_never_carries_key_material_fields() {
-        let request = migration_request(TOKEN, &["tavily".into()], &BTreeMap::new()).unwrap();
-        let body = serde_json::to_string(&request).unwrap();
-        assert!(body.contains("plan_token") && body.contains("approved") && body.contains("choices"));
-        assert!(!body.contains("api_key") && !body.contains("\"key\""));
-    }
-
-    #[test]
-    fn plan_parse_keeps_preview_masked_and_ignores_unknown_fields() {
-        let json = r#"{"plan_token":"abc","items":[{"provider":"tavily","action":"migrate","preview":"synth…0001","extra":1}],"migratable":["tavily"],"skipped":[]}"#;
-        let plan: MigrationPlan = serde_json::from_str(json).unwrap();
-        assert_eq!(plan.items[0].preview, "synth…0001");
-        assert_eq!(plan.migratable, vec!["tavily".to_string()]);
-    }
-}
 
 /// Real Windows Credential Manager round trip with a synthetic, unique namespace.
 /// Runs only when MULTI_SEARCH_NATIVE_CREDENTIAL_TEST=1 so routine test runs never touch the store.

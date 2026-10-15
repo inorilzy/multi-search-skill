@@ -197,41 +197,6 @@ async fn credential_test(
 }
 
 #[tauri::command]
-async fn migration_plan(
-    manager: tauri::State<'_, Arc<DesktopManager>>,
-    path: Option<String>,
-) -> Result<crate::credential_commands::MigrationPlan, String> {
-    let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let keys_file = crate::credential_commands::keys_file_path(&manager.environment.variables)
-            .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
-        let cli = manager.execution_cli(path.map(PathBuf::from))?;
-        manager.migration_plan(cli, &keys_file)
-    })
-    .await
-    .map_err(|_| "Migration plan worker failed".to_string())?
-}
-#[tauri::command]
-async fn migration_apply(
-    manager: tauri::State<'_, Arc<DesktopManager>>,
-    plan_token: String,
-    approved: Vec<String>,
-    choices: std::collections::BTreeMap<String, String>,
-    path: Option<String>,
-) -> Result<crate::credential_commands::MigrationResult, String> {
-    let request = crate::credential_commands::migration_request(&plan_token, &approved, &choices)?;
-    let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let keys_file = crate::credential_commands::keys_file_path(&manager.environment.variables)
-            .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
-        let cli = manager.execution_cli(path.map(PathBuf::from))?;
-        manager.migration_apply(cli, &keys_file, &request)
-    })
-    .await
-    .map_err(|_| "Migration apply worker failed".to_string())?
-}
-
-#[tauri::command]
 fn settings_view(
     manager: tauri::State<'_, Arc<DesktopManager>>,
 ) -> Result<crate::settings::SettingsView, String> {
@@ -335,8 +300,6 @@ pub fn run() {
             credential_save,
             credential_delete,
             credential_test,
-            migration_plan,
-            migration_apply,
             settings_view,
             settings_save
         ])

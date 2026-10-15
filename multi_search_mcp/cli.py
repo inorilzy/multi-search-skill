@@ -105,24 +105,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_format_argument(keys_reset_parser)
     keys_reset_parser.set_defaults(handler=_handle_keys_reset)
 
-    migrate_parser = subparsers.add_parser(
-        "migrate-legacy",
-        help="preview or apply an explicit migration of legacy search keys into the credential store",
-    )
-    migrate_subparsers = migrate_parser.add_subparsers(dest="migrate_command", required=True)
-    migrate_plan_parser = migrate_subparsers.add_parser("plan", help="masked preview of the legacy keys file")
-    migrate_plan_parser.add_argument("--keys-file", required=True)
-    _add_format_argument(migrate_plan_parser)
-    migrate_plan_parser.set_defaults(handler=_handle_migrate_plan)
-
-    migrate_apply_parser = migrate_subparsers.add_parser(
-        "apply", help="apply an approved plan; the request file names approved providers and conflict choices"
-    )
-    migrate_apply_parser.add_argument("--keys-file", required=True)
-    migrate_apply_parser.add_argument("--request", required=True, help="JSON file with approved, choices, plan_token")
-    _add_format_argument(migrate_apply_parser)
-    migrate_apply_parser.set_defaults(handler=_handle_migrate_apply)
-
     return parser
 
 
@@ -231,47 +213,6 @@ def _handle_keys_status(args: argparse.Namespace) -> dict[str, Any]:
 def _handle_keys_reset(args: argparse.Namespace) -> dict[str, Any]:
     manager = SQLiteKeyManager(StateStore())
     return {"updated": manager.reset(provider=args.provider, key_id=args.key_id)}
-
-
-def _migration_store():
-    from .src.support.credential_store import default_store
-
-    return default_store()
-
-
-def _plan_token(plan: dict[str, Any]) -> str:
-    import hashlib
-
-    raw = json.dumps({"s": plan["source_digest"], "t": plan["store_digest"]}, sort_keys=True)
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _handle_migrate_plan(args: argparse.Namespace) -> dict[str, Any]:
-    from .src.support import legacy_migration
-
-    plan = legacy_migration.plan_migration(Path(args.keys_file).expanduser(), _migration_store())
-    # Digests stay in-process; the caller gets an opaque token that changes if either side changes.
-    visible = {k: v for k, v in plan.items() if k not in ("source_digest", "store_digest")}
-    visible["plan_token"] = _plan_token(plan)
-    return visible
-
-
-def _handle_migrate_apply(args: argparse.Namespace) -> dict[str, Any]:
-    from .src.support import legacy_migration
-
-    keys_file = Path(args.keys_file).expanduser()
-    store = _migration_store()
-    request = json.loads(Path(args.request).read_text(encoding="utf-8-sig"))
-    plan = legacy_migration.plan_migration(keys_file, store)
-    if request.get("plan_token") != _plan_token(plan):
-        raise CLIUsageError("the migration plan changed since preview; run the preview again")
-    return legacy_migration.apply_migration(
-        keys_file,
-        store,
-        plan,
-        approved=list(request.get("approved", [])),
-        choices=dict(request.get("choices", {})),
-    )
 
 
 def _write_payload(payload: Any, output_format: str, stream: TextIO) -> None:
