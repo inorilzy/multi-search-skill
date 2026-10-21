@@ -182,3 +182,95 @@ mod tests {
         assert_eq!(super::decode_utf16(&[0x41, 0]).unwrap(), "A");
     }
 }
+
+/// Read one raw registry value (type + bytes) under HKEY_CURRENT_USER. `Ok(None)`
+/// means the value is absent. Used by the user-PATH store.
+#[cfg(windows)]
+pub(crate) fn user_registry_value(
+    subkey: &str,
+    name: &str,
+) -> Result<Option<(u32, Vec<u8>)>, String> {
+    use windows_sys::Win32::System::Registry::*;
+    let key: Vec<u16> = subkey.encode_utf16().chain(Some(0)).collect();
+    let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+    let (mut kind, mut length) = (0, 0);
+    unsafe {
+        let result = RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_ANY | RRF_NOEXPAND,
+            &mut kind,
+            std::ptr::null_mut(),
+            &mut length,
+        );
+        if result == 2 {
+            return Ok(None);
+        }
+        if result != 0 {
+            return Err(format!("读取用户 PATH 失败（{result}）"));
+        }
+        let mut bytes = vec![0u8; length as usize];
+        let result = RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_ANY | RRF_NOEXPAND,
+            &mut kind,
+            bytes.as_mut_ptr().cast(),
+            &mut length,
+        );
+        if result != 0 {
+            return Err(format!("读取用户 PATH 失败（{result}）"));
+        }
+        bytes.truncate(length as usize);
+        Ok(Some((kind, bytes)))
+    }
+}
+
+/// Write or delete one registry value under HKEY_CURRENT_USER.
+#[cfg(windows)]
+pub(crate) fn set_user_registry_value(
+    subkey: &str,
+    name: &str,
+    value: Option<(u32, &str)>,
+) -> Result<(), String> {
+    use windows_sys::Win32::System::Registry::*;
+    let key: Vec<u16> = subkey.encode_utf16().chain(Some(0)).collect();
+    let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let mut handle = std::ptr::null_mut();
+        let result = RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            0,
+            std::ptr::null(),
+            0,
+            KEY_SET_VALUE,
+            std::ptr::null(),
+            &mut handle,
+            std::ptr::null_mut(),
+        );
+        if result != 0 {
+            return Err(format!("打开用户 PATH 失败（{result}）"));
+        }
+        let result = if let Some((kind, text)) = value {
+            let data: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+            RegSetValueExW(
+                handle,
+                name.as_ptr(),
+                0,
+                kind,
+                data.as_ptr().cast(),
+                (data.len() * 2) as u32,
+            )
+        } else {
+            RegDeleteValueW(handle, name.as_ptr())
+        };
+        RegCloseKey(handle);
+        if result != 0 && !(value.is_none() && result == 2) {
+            return Err(format!("保存用户 PATH 失败（{result}）；请重新检查"));
+        }
+        Ok(())
+    }
+}
