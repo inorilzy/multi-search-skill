@@ -25,7 +25,7 @@ fn release_06_marker_without_hashes_remains_managed() {
     let profile = common::Profile::new();
     install_global(&profile);
     let target = skill_dir(&profile.root);
-    fs::write(target.join(".multi-search-install.json"), r#"{"managed_by":"multi-search-desktop","skill":"multi-search","skill_version":"1","files":["SKILL.md","references/cli.md","references/search.md","references/subagents.md","references/verification.md"]}"#).unwrap();
+    fs::write(target.join(".multi-search-install.json"), r#"{"managed_by":"multi-search-desktop","skill":"multi-search","skill_version":"1","files":["SKILL.md","references/cli.md","references/executor.md","references/verification.md"]}"#).unwrap();
     assert_eq!(
         manager(&profile)
             .skill_status("global", None)

@@ -48,10 +48,43 @@ installing the project. XKit uses saved cookies and initializes its X web
 session on the first request; no browser installation or separate setup command
 is needed. Installation success does not verify X connectivity or authentication.
 
+## Commands and flags
+
+`multi-search --help` and `multi-search <command> --help` are authoritative; do
+not guess flags the help does not show. The full surface shipped by this CLI:
+
+- `multi-search search "<query>" [--route ROUTE] [--source NAME]... [--expand TEXT]... [--count N] [--timeout S] [--no-scrape] [--format json|human|markdown]`
+  - Searches the configured or selected sources, ranks the union by RRF, and
+    fetches bodies for the final 15 URLs. `--source` and `--expand` may repeat.
+    `--count` sets per-provider recall, not the final count. `--no-scrape`
+    skips the body-fetch stage for this call only; results still carry
+    `source_id` so a later `fetch` can read them.
+- `multi-search fetch [<source_id> | --url "<url>"] [--full-content] [--backend NAME]... [--max-chars N] [--timeout S] [--format ...]`
+  - Exactly one of `source_id` or `--url` is required. `--backend` may repeat
+    to restrict the scraper chain for this call. `--max-chars` caps the body
+    preview (default 20000); `--full-content` overrides it and returns every
+    acquired character, subject to acquisition/retention limits.
+- `multi-search read <source_id> [--keyword TEXT] [--offset N] [--limit N] [--format ...]`
+  - Reads cached passages only; never touches the network. `limit` is clamped
+    to 8000 characters per call. Inspect `has_more` and `next_offset` to page
+    through.
+- `multi-search doctor [--network] [--no-keys] [--format ...]`
+  - `--no-keys` skips key health; `--network` probes public Hacker News and
+    GitHub APIs under a shared 5-second budget. Reports configuration and key
+    state read from `config.sqlite`.
+- `multi-search keys status [--provider NAME] [--format ...]`
+  - Lists per-key health rows (provider, key id, current status) from the
+    SQLite key manager. Useful to confirm rotation is healthy or to spot a
+    key stuck in `cooldown` / `invalid` / `quota_exhausted`.
+- `multi-search keys reset [--provider NAME] [--key-id ID] [--format ...]`
+  - Clears key-health rows so a previously disabled or invalid key can rejoin
+    rotation. With no flags, resets every row. Use sparingly; resetting a key
+    that genuinely fails will only re-trigger the same failure on next use.
+
 ## Search, select, fetch, verify
 
 In delegated mode, the search subagent runs the search commands and returns the
-handoff from [subagents.md](subagents.md). The main Agent reviews the retained
+handoff from [executor.md](executor.md). The main Agent reviews the retained
 original previews, makes the final selection, and fetches necessary bodies.
 
 ```sh
@@ -92,13 +125,15 @@ Timeout precedence is command `--timeout`, group timeout, global config timeout,
 then the built-in route behavior. The configured `type` must name an existing
 group.
 
-`--count` controls each provider's recall; Core ranks and fetches up to 15 final
-URLs. Keep configured timeouts unless the user supplies a tighter budget.
+`--count` controls each provider's recall; it does not change the final
+RRF-cut size documented above under `search`. Keep configured timeouts unless
+the user supplies a tighter budget.
 Inspect `results`, `scrapes` matched by
 `source_id`, `provider_status`, and `errors`, then remove only clearly irrelevant
 candidates. Retain all relevant or uncertain candidates without a count quota,
 in original rank order, with original previews for the main Agent to review.
-Search previews can start at a matching page title or a paragraph matching the
+Search returns up to 1200 characters per acquired body by default. A bounded
+preview starts at an exact matching page title or a paragraph matching the
 complete search snippet to skip leading navigation. Snippet matching requires
 at least 32 non-space characters and allows only whitespace differences.
 Their `preview_start` / `preview_end` are zero-based character offsets in the

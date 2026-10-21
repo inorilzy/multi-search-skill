@@ -27,17 +27,9 @@
 
 > 注意：旧的 `level`（fast/normal）维度已删除。`fast` 现在是一个 route。
 
-各 route 当前定义（以 `ROUTE_PROFILES` 为准，可能随代码变动）：
+各 route 的 source 集合以代码 `ROUTE_PROFILES` 为准，逐项列举见 [route-capability-table.md](route-capability-table.md#最终-route-设计)，本表不再重复。
 
-| route | 类别 | source 集合 |
-|-------|------|------------|
-| `default` / `web` | 通用 | brave + parallel + tavily + exa + serpapi + firecrawl + baidu |
-| `fast` | 通用 | baidu + tavily + firecrawl + exa |
-| `all` | 通用 | default 的源 + twitter + stackoverflow + github_repos + hackernews + v2ex |
-| `social` | 专用 | twitter |
-| `dev` | 专用 | stackoverflow + github_repos + hackernews |
-
-`v2ex` 是 SOV2EX 提供的第三方 V2EX 专用索引搜索，匿名调用 API，无需 Firecrawl。它加入 `all`，也可通过 `sources=["v2ex"]` 单独选择；不加入 `default` / `fast` / `dev`。搜索阶段只提供标题、URL 和清理后的高亮摘要，忽略 SOV2EX 索引正文。最终入选 RRF 前 15 条后，再统一抓取原帖 URL 或复用此前 URL 抓取的正文缓存。
+`sov2ex` 是 SOV2EX 提供的第三方 V2EX 专用索引搜索，匿名调用 API，无需 Firecrawl。它加入 `all`，也可通过 `sources=["sov2ex"]` 单独选择；不加入 `default` / `fast` / `dev`。`v2ex` 仅作为兼容别名保留，会被归一化为 `sov2ex`。搜索阶段只提供标题、URL 和清理后的高亮摘要，忽略 SOV2EX 索引正文。最终入选 RRF 前 15 条后，再统一抓取原帖 URL 或复用此前 URL 抓取的正文缓存。
 
 ## 3. 选源方式
 

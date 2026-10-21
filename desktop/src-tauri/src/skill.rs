@@ -18,7 +18,7 @@ pub(crate) static STAGING_ID: AtomicU64 = AtomicU64::new(0);
 /// canonical `skills/multi-search/` directory at the repository root. The
 /// desktop app never maintains a second, hand-edited copy. `agents/interface.yaml`
 /// is adapter-generation metadata and is not deployed with the installed skill.
-pub(crate) const FILES: [(&str, &str); 5] = [
+pub(crate) const FILES: [(&str, &str); 4] = [
     (
         "SKILL.md",
         include_str!("../../../skills/multi-search/SKILL.md"),
@@ -28,12 +28,8 @@ pub(crate) const FILES: [(&str, &str); 5] = [
         include_str!("../../../skills/multi-search/references/cli.md"),
     ),
     (
-        "references/search.md",
-        include_str!("../../../skills/multi-search/references/search.md"),
-    ),
-    (
-        "references/subagents.md",
-        include_str!("../../../skills/multi-search/references/subagents.md"),
+        "references/executor.md",
+        include_str!("../../../skills/multi-search/references/executor.md"),
     ),
     (
         "references/verification.md",
