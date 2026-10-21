@@ -1,7 +1,7 @@
 //! Status, safe update, and safe removal of the CLI-only Skill this tool installed.
 //! Only files listed in our marker are ever touched; unknown files and other skills are never deleted.
 use crate::skill::{record_target, STAGING_ID};
-use crate::skill_common::{self, FILES, MARKER, SKILL_NAME, SKILL_VERSION};
+use crate::skill_common::{self, FILES, MARKER, SKILL_VERSION};
 use crate::windows_util::is_link;
 use crate::DesktopManager;
 use serde::Serialize;

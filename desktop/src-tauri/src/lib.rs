@@ -6,6 +6,8 @@ mod diagnostics;
 mod environment;
 mod execution;
 mod install;
+mod journal;
+mod manifest;
 mod process;
 pub mod provider;
 mod redaction;

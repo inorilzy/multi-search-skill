@@ -15,7 +15,7 @@ pub(crate) static STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
 // Re-exported so `skill_manage` can import everything Skill-related from one
 // module without importing `skill` itself (which would create a cycle).
-pub(crate) use crate::skill_common::{file_names, sha256_hex, verify_directory, write_directory};
+pub(crate) use crate::skill_common::{file_names, verify_directory, write_directory};
 
 fn registry_path(environment: &RuntimeEnvironment) -> Result<PathBuf, String> {
     Ok(home_directory(environment).ok_or("Missing user profile")?.join(".multi-search/managed-skills.json"))
