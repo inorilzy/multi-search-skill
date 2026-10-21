@@ -1307,6 +1307,18 @@ class PluginEntryLayerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "query is required"):
             run_multi_search(MultiSearchRequest(query="", use_state=False))
 
+    def test_invalid_output_mode_is_rejected_at_service_boundary(self):
+        with self.assertRaisesRegex(ValueError, "invalid output mode"):
+            run_multi_search(MultiSearchRequest(query="q", output="markdwon", use_state=False))
+
+    def test_invalid_scrape_output_mode_is_rejected_at_service_boundary(self):
+        with self.assertRaisesRegex(ValueError, "invalid output mode"):
+            service_module.run_scrape(
+                service_module.ScrapeRequest(
+                    url="https://example.com", output="markdwon", use_state=False,
+                )
+            )
+
     def test_multi_search_use_state_false_skips_state_store(self):
         captured = {}
 
