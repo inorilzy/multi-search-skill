@@ -14,7 +14,7 @@
 //!   stage -> verify -> probe pipeline both entry points use.
 use crate::journal::{self, StagingCleanup};
 use crate::manifest::{self, Failure, Manifest, ARTIFACT, MANIFEST};
-use crate::{process, DesktopManager, RuntimeEnvironment};
+use crate::{process, RuntimeEnvironment};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -373,9 +373,9 @@ fn perform_update(
         "检查安装来源与完整性",
         "暂存、校验并探测新 CLI",
     )?;
-    if let Err(reason) = DesktopManager::new(env.clone())
-        .check_managed_compatibility(&staging.join("bin").join(ARTIFACT).to_string_lossy())
-    {
+    let compatibility =
+        crate::skill::check_managed_compatibility(env, &staging.join("bin").join(ARTIFACT).to_string_lossy());
+    if let Err(reason) = compatibility {
         return Err((
             if reason.starts_with("unverified:") {
                 "unverified"
@@ -508,7 +508,13 @@ fn perform(
     }
 }
 
-impl DesktopManager {
+/// Install/update/uninstall domain. Stateless apart from the environment it
+/// was constructed with; all methods are defined here, not spread across files.
+pub(crate) struct InstallManager<'a> {
+    pub(crate) environment: &'a RuntimeEnvironment,
+}
+
+impl InstallManager<'_> {
     /// `bundled` is the app's own `cli-bundle` resource directory; `None` means the resource is absent.
     pub(crate) fn install_plan_from(&self, bundled: Option<&Path>) -> InstallPlan {
         let lay = match layout(&self.environment, bundled) {
@@ -568,7 +574,7 @@ impl DesktopManager {
             plan.compatibility_reason = "无法运行待安装的 CLI，无法确认 Skill 兼容性".into();
             return;
         }
-        match self.check_managed_compatibility(&artifact.to_string_lossy()) {
+        match crate::skill::check_managed_compatibility(self.environment, &artifact.to_string_lossy()) {
             Ok(()) => {
                 plan.compatibility = "compatible".into();
                 plan.compatibility_reason = "现有 Skill 所需的 CLI 参数均可用".into();

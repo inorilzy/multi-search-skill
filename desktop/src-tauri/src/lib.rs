@@ -7,6 +7,7 @@ mod environment;
 mod execution;
 mod install;
 mod journal;
+mod manager;
 mod manifest;
 mod process;
 pub mod provider;
@@ -19,7 +20,9 @@ pub mod user_path;
 mod windows_util;
 #[cfg(feature = "native-window")]
 mod window;
-pub use diagnostics::{CliStatus, DesktopManager, Discovery, RuntimeEnvironment};
+pub use diagnostics::{CliStatus, Discovery, RuntimeEnvironment};
+
+pub use manager::DesktopManager;
 pub use execution::{ExecutionStatus, SearchOptions};
 pub use skill::{SkillInstall, SkillPlan};
 pub use skill_manage::{

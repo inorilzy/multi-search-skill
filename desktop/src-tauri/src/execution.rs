@@ -1,4 +1,8 @@
-use crate::{process::OwnedProcess, provider, DesktopManager};
+use crate::diagnostics::CliDiscovery;
+use crate::install::InstallManager;
+use crate::{process::OwnedProcess, provider, RuntimeEnvironment};
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::Arc as StdArc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -67,7 +71,19 @@ impl Execution {
         }
     }
 }
-impl DesktopManager {
+/// Shared execution state owned by `DesktopManager` (the slot, id counter and
+/// closed flag). The manager itself lives in `manager.rs`; this type only
+/// holds the state its methods need.
+pub(crate) struct ExecutionManager<'a> {
+    pub(crate) environment: &'a RuntimeEnvironment,
+    pub(crate) execution_slot: &'a Mutex<Option<StdArc<Mutex<Execution>>>>,
+    pub(crate) next_id: &'a AtomicU64,
+    pub(crate) closed: &'a AtomicBool,
+    pub(crate) discovery: CliDiscovery<'a>,
+    pub(crate) install: InstallManager<'a>,
+}
+
+impl ExecutionManager<'_> {
     pub fn start_search(
         &self,
         path: Option<PathBuf>,
@@ -100,8 +116,8 @@ impl DesktopManager {
         {
             return Err("Unsupported search options".into());
         }
-        let cli = self.execution_cli(path)?;
-        self.require_storage_cli(&cli)?;
+        let cli = self.discovery.execution_path(path)?;
+        crate::credential_commands::require_storage_cli(self.environment, &cli)?;
         let mut slot = self
             .execution_slot
             .lock()

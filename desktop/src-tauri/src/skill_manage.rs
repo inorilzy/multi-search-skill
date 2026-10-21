@@ -3,7 +3,7 @@
 use crate::skill::{record_target, STAGING_ID};
 use crate::skill_common::{self, FILES, MARKER, SKILL_VERSION};
 use crate::windows_util::is_link;
-use crate::DesktopManager;
+use crate::skill::SkillManager;
 use serde::Serialize;
 use std::{
     fs,
@@ -217,7 +217,7 @@ pub(crate) fn classify(
 }
 
 fn join_target(
-    manager: &DesktopManager,
+    manager: &SkillManager<'_>,
     scope: &str,
     project: Option<PathBuf>,
 ) -> Result<PathBuf, String> {
@@ -279,7 +279,7 @@ fn copy_user_entry(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
-impl DesktopManager {
+impl SkillManager<'_> {
     /// Updates an installed skill that this tool manages. Modified files need `confirm_overwrite`
     /// and are backed up first. The old skill stays in place until the new one is verified.
     pub fn skill_update(
@@ -321,7 +321,7 @@ impl DesktopManager {
             };
         }
         // Compatibility is checked by the same path as install; an incompatible CLI blocks the update.
-        let cli = self.detect_cli(None).user;
+        let cli = self.discovery.detect(None).user;
         if cli.status != "ready" {
             return UpdateOutcome {
                 status: "blocked".into(),
@@ -333,7 +333,7 @@ impl DesktopManager {
                 ),
             };
         }
-        if let Err(reason) = self.check_compatibility(cli.path.as_deref().unwrap_or_default()) {
+        if let Err(reason) = crate::skill::check_compatibility(self.environment, cli.path.as_deref().unwrap_or_default()) {
             return UpdateOutcome {
                 status: "blocked".into(),
                 verified: false,
@@ -563,9 +563,9 @@ impl DesktopManager {
     ) -> Result<SkillStatus, String> {
         let target = join_target(self, scope, project)?;
         let (state, installed_version, modified_files, unknown_entries, reason) = classify(&target);
-        let cli = self.detect_cli(None).user;
+        let cli = self.discovery.detect(None).user;
         let compatibility = if cli.status == "ready" {
-            self.check_compatibility(cli.path.as_deref().unwrap_or_default())
+            crate::skill::check_compatibility(self.environment, cli.path.as_deref().unwrap_or_default())
         } else {
             Err(format!(
                 "CLI is not discoverable ({}). Install a compatible CLI first.",

@@ -2,7 +2,8 @@
 use crate::skill_common::{
     self, home_directory, target_directory, Requirements, FILES, MARKER, SKILL_NAME, SKILL_VERSION,
 };
-use crate::{process, DesktopManager, RuntimeEnvironment};
+use crate::diagnostics::CliDiscovery;
+use crate::{process, RuntimeEnvironment};
 use serde::Serialize;
 use std::{
     fs,
@@ -113,7 +114,14 @@ fn blocked_plan(scope: &str, status: &str, reason: String, target: Option<String
     }
 }
 
-impl DesktopManager {
+/// Skill install/capability domain. `discovery` supplies the user-CLI lookup
+/// the plan needs; nothing else is shared with the manager.
+pub(crate) struct SkillManager<'a> {
+    pub(crate) environment: &'a RuntimeEnvironment,
+    pub(crate) discovery: CliDiscovery<'a>,
+}
+
+impl SkillManager<'_> {
     pub fn skill_plan(&self, scope: &str, project: Option<PathBuf>) -> SkillPlan {
         let target = match target_directory(&self.environment, scope, project.as_deref()) {
             Ok(target) => target,
@@ -129,7 +137,7 @@ impl DesktopManager {
                 Some(target_text),
             );
         }
-        let cli = self.detect_cli(None).user;
+        let cli = self.discovery.detect(None).user;
         if cli.status != "ready" {
             let reason = format!(
                 "The CLI is not discoverable from the user environment ({}). Install the CLI first.",
@@ -137,7 +145,7 @@ impl DesktopManager {
             );
             return blocked_plan(scope, "cli_missing", reason, Some(target_text));
         }
-        if let Err(reason) = self.check_compatibility(cli.path.as_deref().unwrap_or_default()) {
+        if let Err(reason) = check_compatibility(self.environment, cli.path.as_deref().unwrap_or_default()) {
             return blocked_plan(scope, "cli_incompatible", reason, Some(target_text));
         }
         SkillPlan {
@@ -219,21 +227,36 @@ impl DesktopManager {
         }
     }
 
-    pub(crate) fn check_compatibility(&self, cli_path: &str) -> Result<(), String> {
-        self.check_requirements(cli_path, skill_common::requirements())
-    }
+}
 
-    pub(crate) fn check_managed_compatibility(&self, cli_path: &str) -> Result<(), String> {
-        self.check_requirements(cli_path, installed_requirements(&self.environment)?)
-    }
+/// Pure function: checks the installed CLI against the shipped capability set.
+pub(crate) fn check_compatibility(
+    environment: &RuntimeEnvironment,
+    cli_path: &str,
+) -> Result<(), String> {
+    check_requirements(environment, cli_path, skill_common::requirements())
+}
 
-    fn check_requirements(&self, cli_path: &str, required: Requirements) -> Result<(), String> {
+/// Pure function: checks a candidate CLI against the requirements recorded by
+/// managed Skill installs. Used by install/update previews.
+pub(crate) fn check_managed_compatibility(
+    environment: &RuntimeEnvironment,
+    cli_path: &str,
+) -> Result<(), String> {
+    check_requirements(environment, cli_path, installed_requirements(environment)?)
+}
+
+fn check_requirements(
+    environment: &RuntimeEnvironment,
+    cli_path: &str,
+    required: Requirements,
+) -> Result<(), String> {
         let cli = PathBuf::from(cli_path);
         for (subcommand, flags) in required {
             let output = process::bounded(
                 &cli,
                 &[subcommand.clone(), "--help".into()],
-                &self.environment,
+                environment,
                 Duration::from_secs(5),
             )
             .map_err(|_| "The CLI help could not be read".to_string())?;
@@ -248,5 +271,4 @@ impl DesktopManager {
             }
         }
         Ok(())
-    }
 }

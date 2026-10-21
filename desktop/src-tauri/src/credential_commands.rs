@@ -313,37 +313,15 @@ pub(crate) fn supports_storage(payload: &Value) -> bool {
             && v.get("schema_version").and_then(Value::as_i64) == Some(1)
     })
 }
-impl crate::DesktopManager {
+/// Credential-domain operations. Stateless: the environment is passed in so
+/// `DesktopManager` need not be involved and no domain state leaks into it.
+pub(crate) struct CredentialManager<'a> {
+    pub(crate) environment: &'a crate::RuntimeEnvironment,
+}
+
+impl CredentialManager<'_> {
     pub(crate) fn require_storage_cli(&self, cli: &Path) -> Result<(), String> {
-        let output = crate::process::bounded(
-            cli,
-            &[
-                "doctor".into(),
-                "--no-keys".into(),
-                "--format".into(),
-                "json".into(),
-            ],
-            &self.environment,
-            TEST_TIMEOUT,
-        )
-        .map_err(|_| "无法检测 CLI 配置协议".to_string())?;
-        let payload = serde_json::from_str::<Value>(&output.stdout).ok();
-        if output.timed_out || !payload.as_ref().is_some_and(supports_storage) {
-            return Err(
-                "此 CLI 不支持 SQLite/DPAPI 配置协议，请更新 CLI 后重试；不会读取旧 Key 来源。"
-                    .into(),
-            );
-        }
-        let payload = payload.unwrap();
-        if payload.get("config_error").is_some()
-            || payload.get("keys_error").is_some()
-            || output.code != Some(0)
-        {
-            return Err(
-                "CLI 支持 SQLite/DPAPI，但当前配置数据库或凭据无法读取，请检查数据库。".into(),
-            );
-        }
-        Ok(())
+        crate::credential_commands::require_storage_cli(self.environment, cli)
     }
     pub(crate) fn test_source(
         &self,
@@ -355,7 +333,7 @@ impl crate::DesktopManager {
         let output = crate::process::bounded(
             &cli,
             &test_args(query, entry),
-            &self.environment,
+            self.environment,
             TEST_TIMEOUT,
         )
         .map_err(|_| "无法启动 CLI".to_string())?;
@@ -373,6 +351,43 @@ impl crate::DesktopManager {
             }),
         }
     }
+}
+
+/// Free function so callers that do not own a manager (install/update) can
+/// reuse the same storage-capability gate.
+pub(crate) fn require_storage_cli(
+    environment: &crate::RuntimeEnvironment,
+    cli: &Path,
+) -> Result<(), String> {
+    let output = crate::process::bounded(
+        cli,
+        &[
+            "doctor".into(),
+            "--no-keys".into(),
+            "--format".into(),
+            "json".into(),
+        ],
+        environment,
+        TEST_TIMEOUT,
+    )
+    .map_err(|_| "无法检测 CLI 配置协议".to_string())?;
+    let payload = serde_json::from_str::<Value>(&output.stdout).ok();
+    if output.timed_out || !payload.as_ref().is_some_and(supports_storage) {
+        return Err(
+            "此 CLI 不支持 SQLite/DPAPI 配置协议，请更新 CLI 后重试；不会读取旧 Key 来源。"
+                .into(),
+        );
+    }
+    let payload = payload.unwrap();
+    if payload.get("config_error").is_some()
+        || payload.get("keys_error").is_some()
+        || output.code != Some(0)
+    {
+        return Err(
+            "CLI 支持 SQLite/DPAPI，但当前配置数据库或凭据无法读取，请检查数据库。".into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
+use crate::user_path::PathStore;
 use serde::Serialize;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 /// Explicit system boundary: production snapshots the environment; tests supply a disposable one.
 #[derive(Clone)]
@@ -33,27 +34,25 @@ fn find_cli(paths: &[PathBuf]) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-pub struct DesktopManager {
-    pub(crate) environment: RuntimeEnvironment,
-    pub(crate) user_path_store: Option<std::sync::Arc<dyn crate::user_path::PathStore>>,
-    pub(crate) execution_slot:
-        std::sync::Mutex<Option<std::sync::Arc<std::sync::Mutex<crate::execution::Execution>>>>,
-    pub(crate) next_id: std::sync::atomic::AtomicU64,
-    pub(crate) closed: std::sync::atomic::AtomicBool,
+/// CLI discovery and execution-path selection. Stateless: every method takes
+/// the environment it should inspect, so this domain owns no shared state.
+pub(crate) struct CliDiscovery<'a> {
+    pub(crate) environment: &'a RuntimeEnvironment,
+    pub(crate) user_path_store: Option<&'a Arc<dyn PathStore>>,
 }
 
-impl DesktopManager {
-    pub fn new(environment: RuntimeEnvironment) -> Self {
+impl<'a> CliDiscovery<'a> {
+    pub(crate) fn new(
+        environment: &'a RuntimeEnvironment,
+        user_path_store: Option<&'a Arc<dyn PathStore>>,
+    ) -> Self {
         Self {
             environment,
-            user_path_store: None,
-            execution_slot: std::sync::Mutex::new(None),
-            next_id: std::sync::atomic::AtomicU64::new(1),
-            closed: std::sync::atomic::AtomicBool::new(false),
+            user_path_store,
         }
     }
 
-    pub fn detect_cli(&self, explicit_path: Option<PathBuf>) -> CliStatus {
+    pub(crate) fn detect(&self, explicit_path: Option<PathBuf>) -> CliStatus {
         let app = self.probe(explicit_path.or_else(|| find_cli(&self.environment.app_path)));
         let paths = self.current_user_paths();
         let mut user_environment = self.environment.clone();
@@ -62,8 +61,7 @@ impl DesktopManager {
                 .variables
                 .insert("PATH".into(), path.to_string_lossy().into_owned());
         }
-        let user_manager = Self::new(user_environment);
-        let user = user_manager.probe(find_cli(&paths));
+        let user = CliDiscovery::new(&user_environment, None).probe(find_cli(&paths));
         let restart_required = app.status != "ready" && user.status == "ready";
         CliStatus {
             app,
@@ -74,12 +72,37 @@ impl DesktopManager {
 
     /// Keep diagnostics truthful about the old app PATH, while UI commands can use the
     /// newly verified user PATH immediately. An explicitly selected bad executable never falls back.
-    pub fn execution_cli(&self, explicit_path: Option<PathBuf>) -> Result<PathBuf, String> {
+    pub(crate) fn execution_path(&self, explicit_path: Option<PathBuf>) -> Result<PathBuf, String> {
         let explicit = explicit_path.is_some();
-        let detected = self.detect_cli(explicit_path);
-        let selected = if detected.app.status == "ready" || explicit { detected.app } else { detected.user };
-        if selected.status != "ready" { return Err(selected.reason); }
-        selected.path.map(PathBuf::from).ok_or_else(|| "CLI 路径不可用".into())
+        let detected = self.detect(explicit_path);
+        let selected = if detected.app.status == "ready" || explicit {
+            detected.app
+        } else {
+            detected.user
+        };
+        if selected.status != "ready" {
+            return Err(selected.reason);
+        }
+        selected
+            .path
+            .map(PathBuf::from)
+            .ok_or_else(|| "CLI 路径不可用".into())
+    }
+
+    pub(crate) fn current_user_paths(&self) -> Vec<PathBuf> {
+        let Some(store) = self.user_path_store else {
+            return self.environment.user_path.clone();
+        };
+        let Ok(value) = store.read() else {
+            return Vec::new();
+        };
+        let mut paths = self.environment.user_path.clone();
+        // The production base is the machine PATH, not a stale snapshot of the user's PATH.
+        paths.extend(std::env::split_paths(&crate::windows_util::expand(
+            &value.text,
+            &self.environment.variables,
+        )));
+        paths
     }
 
     fn probe(&self, path: Option<PathBuf>) -> Discovery {
@@ -110,7 +133,7 @@ impl DesktopManager {
         match crate::process::bounded(
             &path,
             &["--version".into()],
-            &self.environment,
+            self.environment,
             std::time::Duration::from_secs(3),
         ) {
             Err(error) => {
@@ -133,7 +156,7 @@ impl DesktopManager {
                     result.version = version.map(|value| {
                         crate::redaction::scrub(
                             &value,
-                            &crate::redaction::secrets(&self.environment),
+                            &crate::redaction::secrets(self.environment),
                         )
                     });
                 } else {
@@ -143,7 +166,7 @@ impl DesktopManager {
                     } else {
                         let detail = crate::redaction::scrub(
                             output.stderr.trim(),
-                            &crate::redaction::secrets(&self.environment),
+                            &crate::redaction::secrets(self.environment),
                         );
                         let detail: String = detail.chars().take(400).collect();
                         format!(

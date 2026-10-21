@@ -1,5 +1,5 @@
 //! Explicit, current-user-only PATH registration. No mutation occurs during installation.
-use crate::DesktopManager;
+use crate::install::InstallManager;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -88,24 +88,22 @@ fn normalized(value: &str, variables: &BTreeMap<String, String>) -> String {
         .trim_end_matches('\\')
         .to_lowercase()
 }
-impl DesktopManager {
-    /// Explicit dependency injection for isolated acceptance. Production uses the native registry.
-    pub fn with_user_path_store(
-        environment: crate::RuntimeEnvironment,
-        store: Arc<dyn PathStore>,
-    ) -> Self {
-        let mut manager = Self::new(environment);
-        manager.user_path_store = Some(store);
-        manager
-    }
-    pub fn user_path_plan(&self) -> Result<PathPlan, String> {
+/// PATH registration domain. `install` supplies the managed bin directory;
+/// `store` is the injected OS boundary.
+pub(crate) struct UserPathManager<'a> {
+    pub(crate) environment: &'a crate::RuntimeEnvironment,
+    pub(crate) store: Option<&'a Arc<dyn PathStore>>,
+    pub(crate) install: InstallManager<'a>,
+}
+
+impl UserPathManager<'_> {
+    pub fn plan(&self) -> Result<PathPlan, String> {
         let store = self
-            .user_path_store
-            .as_ref()
+            .store
             .ok_or("当前环境未连接用户 PATH 存储")?;
         let current = store.read()?;
         let receipt = store.receipt()?;
-        let install = self.install_plan();
+        let install = self.install.install_plan();
         let directory = PathBuf::from(&install.bin)
             .parent()
             .ok_or("安装目录不可用")?
@@ -126,13 +124,13 @@ impl DesktopManager {
             can_remove: owned,
         })
     }
-    pub fn user_path_change(&self, remove: bool, confirmed: bool) -> Result<PathPlan, String> {
-        let mut plan = self.user_path_plan()?;
+    pub fn change(&self, remove: bool, confirmed: bool) -> Result<PathPlan, String> {
+        let mut plan = self.plan()?;
         if !confirmed {
             plan.status = "confirmation_required".into();
             return Ok(plan);
         }
-        let store = self.user_path_store.as_ref().ok_or("用户 PATH 不可用")?;
+        let store = self.store.ok_or("用户 PATH 不可用")?;
         let current = store.read()?;
         if remove {
             let receipt = store
@@ -169,21 +167,6 @@ impl DesktopManager {
             plan.status = "added".into();
         }
         Ok(plan)
-    }
-    pub(crate) fn current_user_paths(&self) -> Vec<PathBuf> {
-        let Some(store) = self.user_path_store.as_ref() else {
-            return self.environment.user_path.clone();
-        };
-        let Ok(value) = store.read() else {
-            return Vec::new();
-        };
-        let mut paths = self.environment.user_path.clone();
-        // The production base is the machine PATH, not a stale snapshot of the user's PATH.
-        paths.extend(std::env::split_paths(&crate::environment::expand(
-            &value.text,
-            &self.environment.variables,
-        )));
-        paths
     }
 }
 
@@ -292,21 +275,7 @@ impl NativePathStore {
 }
 #[cfg(windows)]
 fn decode(bytes: &[u8]) -> Result<String, String> {
-    if !bytes.len().is_multiple_of(2) {
-        return Err("注册表 PATH 格式不支持".into());
-    }
-    let mut words: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
-        .collect();
-    if words.last() == Some(&0) {
-        words.pop();
-    }
-    let text = String::from_utf16(&words).map_err(|_| "注册表 PATH 不是有效文本")?;
-    if text.contains('\0') {
-        return Err("注册表 PATH 包含无效字符".into());
-    }
-    Ok(text)
+    crate::windows_util::decode_utf16(bytes)
 }
 #[cfg(windows)]
 impl PathStore for NativePathStore {

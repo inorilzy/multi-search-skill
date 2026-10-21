@@ -176,7 +176,9 @@ mod tests {
     #[test]
     fn decode_utf16_rejects_odd_bytes_and_embedded_nul() {
         assert!(super::decode_utf16(&[0, 1, 2]).is_err());
-        assert!(super::decode_utf16(&[0x41, 0, 0, 0]).is_err());
+        // A trailing terminator is stripped; an *embedded* NUL is rejected.
+        assert_eq!(super::decode_utf16(&[0x41, 0, 0, 0]).unwrap(), "A");
+        assert!(super::decode_utf16(&[0x41, 0, 0, 0, 0x42, 0]).is_err());
         assert_eq!(super::decode_utf16(&[0x41, 0]).unwrap(), "A");
     }
 }
