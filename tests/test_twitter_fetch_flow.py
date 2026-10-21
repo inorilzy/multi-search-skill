@@ -10,6 +10,7 @@ from unittest import mock
 
 from multi_search_mcp.src.scrape import stage as scrape_stage
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
+from tests.scrape_ctx import context
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.service import run_fetch_source, run_read_source, run_search_web
 from multi_search_mcp.src.state.content_store import ContentStore
@@ -365,7 +366,7 @@ class TwitterFetchFlowTests(unittest.TestCase):
 
         def record_actual_scraper(url, **kwargs):
             observed.append(kwargs)
-            return scrape_url_smart(url, **kwargs)
+            return scrape_url_smart(url, kwargs.get("ctx") or context())
 
         with api.patched(), self.assertRaisesRegex(ValueError, "missing key for backend: exa"):
             run_fetch_source(

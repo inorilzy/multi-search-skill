@@ -131,7 +131,10 @@ class FetchSourceCoreTests(unittest.TestCase):
             now[0] += 0.25
             return ["93.184.216.34"]
 
-        def fake_scraper(url, **kwargs):
+        def fake_scraper(url, ctx=None, **kwargs):
+            if ctx is not None:
+                observed["deadline"] = ctx.deadline
+                observed["timeout"] = ctx.timeout
             observed.update(kwargs)
             return {"url": url, "markdown": "configured body", "via": "fake"}
 

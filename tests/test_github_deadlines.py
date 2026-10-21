@@ -10,6 +10,7 @@ from multi_search_mcp.src.search import registry, search_runner
 from multi_search_mcp.src.search.registry import build_provider_registry
 from multi_search_mcp.src.search.search_runner import ProviderSpec, SearchRunner, SearchRunnerConfig
 from multi_search_mcp.src.search.searchers import github
+from multi_search_mcp.src.state import key_state
 from multi_search_mcp.src.support import concurrency
 from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
 
@@ -41,7 +42,7 @@ class GitHubDeadlineTests(unittest.TestCase):
     def setUp(self):
         self.now = 100.0
         clock = SimpleNamespace(monotonic=lambda: self.now)
-        for module in (search_runner, github, concurrency):
+        for module in (search_runner, github, concurrency, key_state):
             patcher = mock.patch.object(module, "time", clock)
             patcher.start()
             self.addCleanup(patcher.stop)

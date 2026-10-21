@@ -8,6 +8,7 @@ from unittest import mock
 from multi_search_mcp import cli
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape import scrape
+from tests.scrape_ctx import context
 
 
 URL = "https://example.com/post"
@@ -113,9 +114,12 @@ class ScraperContractTests(unittest.TestCase):
         url = "https://www.reddit.com/r/test/comments/abc123/post/" if backend == "reddit" else URL
         with mock.patch.object(scrape, f"scrape_url_{backend}", return_value=copy.deepcopy(payload)):
             return scrape.scrape_url_smart(
-                url, backends=None if backend == "reddit" else [backend],
-                exa_keys=["fixture-key"], tavily_keys=["fixture-key"],
-                url_resolver=lambda _host: ["93.184.216.34"],
+                url,
+                context(
+                    backends=None if backend == "reddit" else [backend],
+                    keys={"exa": ["fixture-key"], "tavily": ["fixture-key"]},
+                    url_resolver=lambda _host: ["93.184.216.34"],
+                ),
             )
 
     def test_all_five_backends_share_success_fields_and_preserve_markdown(self):

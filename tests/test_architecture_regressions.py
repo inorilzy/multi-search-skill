@@ -72,8 +72,8 @@ class ContentFlowRegressionTests(unittest.TestCase):
     def test_backend_acquisition_limit_is_independent_of_preview_size(self):
         body = "complete acquired body" * 100
 
-        def scraper(url, **kwargs):
-            acquired = body[:kwargs["scrape_chars"]]
+        def scraper(url, ctx=None, **kwargs):
+            acquired = body[:ctx.scrape_chars]
             return {"url": url, "markdown": acquired, "via": "bounded-backend"}
 
         first = service.run_fetch_source(
