@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
+from tests.scrape_ctx import context
 from multi_search_mcp.src.scrape.scrapers import _eddrit, reddit
 from multi_search_mcp.src.service import FetchSourceRequest, run_fetch_source
 from multi_search_mcp.src.state.state_store import StateStore
@@ -42,7 +43,7 @@ def token_response(token="test-token", ttl=3600):
 class RedditRoutingTests(unittest.TestCase):
     def test_unknown_backend_is_still_rejected_for_reddit(self):
         with mock.patch.object(reddit, "get_post_json") as fetch:
-            result = scrape_url_smart(URL, backends=("typo",), url_resolver=PUBLIC)
+            result = scrape_url_smart(URL, context(backends=("typo",), url_resolver=PUBLIC))
         self.assertEqual(result["error"], "unknown scrape backend: typo")
         fetch.assert_not_called()
 
@@ -50,7 +51,7 @@ class RedditRoutingTests(unittest.TestCase):
         with mock.patch.object(reddit, "get_post_json", return_value=response_data()), \
              mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina") as jina, \
              mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_exa") as exa:
-            result = scrape_url_smart(URL, backends=("exa", "jina"), url_resolver=PUBLIC)
+            result = scrape_url_smart(URL, context(backends=("exa", "jina"), url_resolver=PUBLIC))
         self.assertEqual(result["via"], "reddit")
         self.assertIn("Nested comment", result["markdown"])
         jina.assert_not_called()
@@ -61,7 +62,7 @@ class RedditRoutingTests(unittest.TestCase):
             with self.subTest(host=host), \
                  mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_reddit") as dedicated, \
                  mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", return_value={"markdown": "ordinary page"}) as generic:
-                result = scrape_url_smart(f"https://{host}/", backends=("jina",), url_resolver=PUBLIC)
+                result = scrape_url_smart(f"https://{host}/", context(backends=("jina",), url_resolver=PUBLIC))
                 self.assertEqual(result["markdown"], "ordinary page")
                 dedicated.assert_not_called()
                 generic.assert_called_once()
@@ -69,7 +70,7 @@ class RedditRoutingTests(unittest.TestCase):
     def test_reddit_failure_is_not_hidden_by_generic_backend(self):
         with mock.patch.object(reddit, "get_post_json", side_effect=_eddrit.EddritError("Reddit returned HTTP 403")), \
              mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina") as generic:
-            result = scrape_url_smart(URL, url_resolver=PUBLIC)
+            result = scrape_url_smart(URL, context(url_resolver=PUBLIC))
         self.assertIn("403", result["error"])
         self.assertEqual(result["markdown"], "")
         self.assertEqual(result["via"], "reddit")
@@ -79,7 +80,7 @@ class RedditRoutingTests(unittest.TestCase):
         for url, resolver in ((URL, lambda host: ["127.0.0.1"]),
                               (URL.replace("https://", "https://user:password@"), PUBLIC)):
             with self.subTest(url=url), mock.patch.object(reddit, "get_post_json") as fetch:
-                self.assertIn("error", scrape_url_smart(url, url_resolver=resolver))
+                self.assertIn("error", scrape_url_smart(url, context(url_resolver=resolver)))
                 fetch.assert_not_called()
 
     def test_supported_permalink_variants_and_comment_focus(self):
@@ -97,19 +98,19 @@ class RedditRoutingTests(unittest.TestCase):
     def test_unsupported_urls_do_not_send_auth(self):
         for path in ("/r/python/", "/r/python/s/sharetoken", "/wiki/api", "/login", "/comments/../"):
             with self.subTest(path=path), mock.patch.object(reddit, "get_post_json") as fetch:
-                result = scrape_url_smart("https://www.reddit.com" + path, url_resolver=PUBLIC)
+                result = scrape_url_smart("https://www.reddit.com" + path, context(url_resolver=PUBLIC))
                 self.assertIn("Unsupported Reddit URL", result["error"])
                 fetch.assert_not_called()
 
     def test_expired_deadline_never_fetches(self):
         with mock.patch.object(reddit, "get_post_json") as fetch:
-            result = scrape_url_smart(URL, deadline=time.monotonic()-1, url_resolver=PUBLIC)
+            result = scrape_url_smart(URL, context(deadline=time.monotonic()-1, url_resolver=PUBLIC))
         self.assertIn("deadline", result["error"])
         fetch.assert_not_called()
 
     def test_transport_error_never_exposes_credentials(self):
         with mock.patch.object(reddit, "get_post_json", side_effect=RuntimeError("secret-proxy-password")):
-            result = scrape_url_smart(URL, url_resolver=PUBLIC)
+            result = scrape_url_smart(URL, context(url_resolver=PUBLIC))
         self.assertIn("RuntimeError", result["error"])
         self.assertNotIn("secret-proxy-password", result["error"])
 

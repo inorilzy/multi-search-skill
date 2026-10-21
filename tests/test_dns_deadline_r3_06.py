@@ -13,6 +13,7 @@ from unittest import mock
 
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
+from tests.scrape_ctx import context
 from multi_search_mcp.src.scrape.scrapers.reddit import scrape_url_reddit
 from multi_search_mcp.src.support import http, url_security
 from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
@@ -92,10 +93,12 @@ class DnsDeadlineTests(unittest.TestCase):
         with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl") as scraper:
             result = scrape_url_smart(
                 "https://slow.example/path",
-                primary="firecrawl",
-                backends=("firecrawl",),
-                deadline=time.monotonic() + 0.01,
-                url_resolver=self._slow_resolver(finished),
+                context(
+                    primary="firecrawl",
+                    backends=("firecrawl",),
+                    deadline=time.monotonic() + 0.01,
+                    url_resolver=self._slow_resolver(finished),
+                ),
             )
         elapsed = time.monotonic() - start
 

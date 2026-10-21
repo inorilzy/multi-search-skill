@@ -427,7 +427,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             ctx = kwargs.get("ctx")
             batch_deadline = ctx.deadline if ctx is not None else kwargs["deadline"]
             try:
-                return scrape.scrape_url_smart(url, **kwargs)
+                return scrape.scrape_url_smart(url, kwargs.get("ctx"))
             finally:
                 finished.set()
 

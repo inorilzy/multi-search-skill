@@ -175,32 +175,15 @@ class ScrapeContext:
             return 0.0
         return min(float(self.timeout), remaining)
 
-    @classmethod
-    def from_kwargs(cls, **kwargs: Any) -> "ScrapeContext":
-        """Build a context from the legacy ``scrape_url_smart`` keyword shape.
 
-        Accepts the pre-ctx signature so older callers (tests, REPL helpers)
-        keep working while internal callers migrate to passing a context.
-        ``*_keys``/``*_key`` pairs normalize to ``list[KeyCandidate]``.
-        """
-        keys_by_backend: dict[str, list[KeyCandidate]] = {}
-        for spec in _SCRAPE_BACKENDS:
-            single = kwargs.pop(f"{spec.name}_key", "") or ""
-            plural = kwargs.pop(f"{spec.name}_keys", None)
-            raw = _key_candidates_from(plural) if plural is not None else _key_candidates_from(single)
-            if raw:
-                keys_by_backend[spec.name] = [
-                    _candidate_for(spec.key_provider, key) for key in raw
-                ]
-        allowed = {
-            "deadline", "site_memory", "key_manager", "url_resolver",
-            "scrape_chars", "timeout", "jina_prefer_keyed", "twitter_cookies",
-            "primary", "backends",
-        }
-        unknown = set(kwargs) - allowed
-        if unknown:
-            raise TypeError(f"unexpected ScrapeContext kwargs: {sorted(unknown)}")
-        return cls(keys_by_backend=keys_by_backend, **{k: v for k, v in kwargs.items() if k in allowed})
+def keys_for_backend(provider: str, value: Any) -> list[KeyCandidate]:
+    """Build unfiltered key candidates for one backend.
+
+    Callers with a state store pass ``KeyManager.candidates(...)`` results
+    instead; this helper covers stateless/test callers that just need
+    ``ScrapeContext.keys_by_backend`` populated.
+    """
+    return [_candidate_for(provider, key) for key in _key_candidates_from(value)]
 
 
 def _scrape_with_key_candidates(
@@ -370,22 +353,13 @@ _SCRAPE_DISPATCH: dict[str, Callable[[str, ScrapeContext, dict], dict | None]] =
 }
 
 
-def scrape_url_smart(
-    url: str,
-    ctx: ScrapeContext | None = None,
-    **legacy_kwargs: Any,
-) -> dict:
+def scrape_url_smart(url: str, ctx: ScrapeContext | None = None) -> dict:
     """Dispatch platform URLs to their scrapers; use generic backends otherwise.
 
-    The contract is ``(url, ctx)``. ``ctx`` is a :class:`ScrapeContext`; for
-    backward compatibility callers may still pass the legacy keyword shape,
-    which is normalized through :meth:`ScrapeContext.from_kwargs`.
+    ``ctx`` carries keys, deadline, site memory, resolver and per-call options;
+    omitted means a default policy/identity context (no keys, no state).
     """
-    if ctx is None:
-        ctx = ScrapeContext.from_kwargs(**legacy_kwargs)
-    elif legacy_kwargs:
-        raise TypeError("pass either ctx or legacy kwargs, not both")
-    return _scrape_with_context(url, ctx)
+    return _scrape_with_context(url, ctx or ScrapeContext())
 
 
 def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:

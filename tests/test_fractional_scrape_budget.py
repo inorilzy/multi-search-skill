@@ -4,6 +4,7 @@ from unittest import mock
 
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape import scrape
+from tests.scrape_ctx import context
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 
 
@@ -173,10 +174,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
         ):
             result = scrape.scrape_url_smart(
                 URL,
-                backends=["jina"],
-                timeout=1,
-                deadline=100.05,
-                url_resolver=_resolver,
+                context(backends=["jina"], timeout=1, deadline=100.05, url_resolver=_resolver),
             )
 
         self.assertNotIn("error", result)
@@ -192,10 +190,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
         ):
             result = scrape.scrape_url_smart(
                 URL,
-                backends=["jina"],
-                timeout=1,
-                deadline=100.0,
-                url_resolver=_resolver,
+                context(backends=["jina"], timeout=1, deadline=100.0, url_resolver=_resolver),
             )
 
         backend.assert_not_called()
