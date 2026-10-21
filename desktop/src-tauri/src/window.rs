@@ -156,7 +156,7 @@ async fn credential_status(
     let variables = manager.inner().environment.variables.clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::credential_commands::with_native(&variables, |backend| {
-            crate::credential_commands::overview(backend, &variables, entry)
+            crate::credential_commands::overview(backend, &variables, &entry)
         })
     })
     .await
@@ -171,7 +171,7 @@ async fn credential_read(
     let variables = manager.inner().environment.variables.clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::credential_commands::with_native(&variables, |backend| {
-            crate::credential_commands::read(backend, &variables, entry)
+            crate::credential_commands::read(backend, &variables, &entry)
         })
     })
     .await
@@ -195,7 +195,7 @@ async fn credential_save(
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         crate::credential_commands::with_native(&variables, |backend| {
-            crate::credential_commands::save(backend, &variables, entry, &key, now)
+            crate::credential_commands::save(backend, &variables, &entry, &key, now)
         })
     })
     .await
@@ -210,7 +210,7 @@ async fn credential_delete(
     let variables = manager.inner().environment.variables.clone();
     tauri::async_runtime::spawn_blocking(move || {
         crate::credential_commands::with_native(&variables, |backend| {
-            crate::credential_commands::delete(backend, &variables, entry)
+            crate::credential_commands::delete(backend, &variables, &entry)
         })
     })
     .await
@@ -226,7 +226,7 @@ async fn credential_test(
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let cli = manager.execution_cli(path.map(PathBuf::from))?;
-        manager.test_source(cli, entry, &format!("{} connectivity check", entry.source))
+        manager.test_source(cli, &entry, &format!("{} connectivity check", entry.source))
     })
     .await
     .map_err(|_| "Credential test worker failed".to_string())?
