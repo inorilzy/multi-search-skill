@@ -42,6 +42,42 @@ pub mod settings_fixture {
     }
 }
 
+/// Test seam for the CLI child-process environment boundary. Not a supported public API.
+#[doc(hidden)]
+pub mod process_fixture {
+    use std::collections::BTreeMap;
+
+    /// Filter a desktop environment the same way `OwnedProcess::spawn` does.
+    pub fn child_environment(variables: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+        crate::process::child_environment(variables)
+    }
+
+    /// Run a program through the real `OwnedProcess` boundary with a synthetic
+    /// desktop environment, and return its stdout. Used to prove that the
+    /// allowlist applies to an actual child process, not just the pure filter.
+    pub fn run(
+        program: &std::path::Path,
+        args: &[String],
+        variables: BTreeMap<String, String>,
+        cwd: std::path::PathBuf,
+    ) -> Result<String, String> {
+        let environment = crate::RuntimeEnvironment {
+            app_path: vec![],
+            user_path: vec![],
+            variables,
+            cwd,
+        };
+        crate::process::bounded(
+            program,
+            args,
+            &environment,
+            std::time::Duration::from_secs(10),
+        )
+        .map(|output| output.stdout)
+        .map_err(|error| error.to_string())
+    }
+}
+
 /// Test seam for the Tavily credential store. Not a supported public API.
 #[doc(hidden)]
 pub mod credential_fixture {

@@ -7,6 +7,22 @@ use std::{
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+    // Test boundary: print the child's environment as JSON (names and values),
+    // so tests can prove provider credentials never cross the process boundary.
+    if args.first().map(String::as_str) == Some("env-dump") {
+        let mut rows: Vec<String> = env::vars()
+            .map(|(name, value)| {
+                format!(
+                    "\"{}\":\"{}\"",
+                    name.replace('\\', "\\\\").replace('"', "\\\""),
+                    value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+                )
+            })
+            .collect();
+        rows.sort();
+        println!("{{{}}}", rows.join(","));
+        return;
+    }
     if args.first().map(String::as_str) == Some("--version") {
         if let Ok(root) = env::var("FIXTURE_FAIL_ACTIVE_ROOT") {
             if env::current_exe().unwrap().starts_with(std::path::Path::new(&root).join("bin")) {
@@ -29,7 +45,11 @@ fn main() {
                 std::process::exit(2);
             }
             Ok("secret") => {
-                eprintln!("{}", env::var("EXA_API_KEY").unwrap());
+                // Emit the secret the parent injected under the test-only name.
+                // The parent also exports it as EXA_API_KEY so redaction knows
+                // the value, but the allowlist must keep EXA_API_KEY itself out
+                // of this child's environment.
+                eprintln!("{}", env::var("FIXTURE_SECRET").unwrap_or_default());
                 std::process::exit(2);
             }
             Ok("hang") => thread::sleep(Duration::from_secs(30)),
@@ -87,7 +107,7 @@ fn main() {
     if query == "empty" { println!("{{\"outcome\":\"empty\",\"results\":[],\"errors\":[]}}"); return; }
     if query == "failure" { eprintln!("provider unavailable"); println!("{{\"outcome\":\"failed\",\"results\":[],\"errors\":[{{\"source\":\"brave\",\"error\":\"provider unavailable\"}}]}}"); std::process::exit(1); }
     if query == "partial" {
-        println!("{{\"outcome\":\"partial\",\"results\":[{{\"title\":\"Fixture article\"}}],\"errors\":[{{\"source\":\"brave\",\"error\":\"unavailable {}\"}}]}}", env::var("EXA_API_KEY").unwrap_or_default());
+        println!("{{\"outcome\":\"partial\",\"results\":[{{\"title\":\"Fixture article\"}}],\"errors\":[{{\"source\":\"brave\",\"error\":\"unavailable {}\"}}]}}", env::var("FIXTURE_SECRET").unwrap_or_default());
     } else {
         println!(
             "{{\"outcome\":\"success\",\"results\":[{{\"title\":\"{}\"}}],\"errors\":[]}}",

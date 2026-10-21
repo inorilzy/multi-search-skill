@@ -234,6 +234,12 @@ fn partial_failure_is_visible_and_known_credentials_are_redacted() {
         .environment
         .variables
         .insert("EXA_API_KEY".into(), "fixture-private-key".into());
+    // The fixture emits FIXTURE_SECRET; redaction learns the value from
+    // EXA_API_KEY, which the child allowlist keeps out of the subprocess.
+    profile
+        .environment
+        .variables
+        .insert("FIXTURE_SECRET".into(), "fixture-private-key".into());
     let manager = DesktopManager::new(profile.environment.clone());
     let id = manager
         .start_search(

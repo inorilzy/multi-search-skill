@@ -60,6 +60,10 @@ name = "provider_parity"
 path = "tests/provider_parity.rs"
 
 [[test]]
+name = "process_env"
+path = "tests/process_env.rs"
+
+[[test]]
 name = "sqlite_credentials"
 path = "tests/sqlite_credentials.rs"
 

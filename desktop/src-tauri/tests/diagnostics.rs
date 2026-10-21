@@ -73,7 +73,11 @@ fn legacy_cli_reports_version_failure_with_exit_code_and_update_guidance() {
 fn failed_version_output_is_redacted_before_returning_to_callers() {
     let mut profile = common::Profile::new();
     profile.environment.variables.insert("FIXTURE_VERSION".into(), "secret".into());
+    // The fixture emits FIXTURE_SECRET, but redaction learns the value from
+    // EXA_API_KEY. The allowlist must keep EXA_API_KEY out of the child while
+    // still letting the fixture emit the same string for scrubbing.
     profile.environment.variables.insert("EXA_API_KEY".into(), "synthetic-detection-secret".into());
+    profile.environment.variables.insert("FIXTURE_SECRET".into(), "synthetic-detection-secret".into());
     let status = DesktopManager::new(profile.environment.clone()).detect_cli(None);
     assert!(!status.app.reason.contains("synthetic-detection-secret"));
     assert!(status.app.reason.contains("REDACTED"), "{}", status.app.reason);
