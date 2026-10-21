@@ -350,6 +350,66 @@ fn independent_cli_handoff_database() {
     std::fs::copy(s.db(), PathBuf::from(target)).unwrap();
 }
 
+/// Ticket 05: a database written by the desktop (Rust) must be readable by the
+/// Python CLI without re-creating or migrating schema. Also asserts the CLI
+/// refuses a database whose `user_version` is newer than it understands.
+#[test]
+fn python_cli_reads_desktop_written_settings_and_rejects_future_versions() {
+    let s = Sandbox::new("python-interop");
+    let e = s.env(&[]);
+    let view = fixture::save(&e, &input("fast", 30, &["exa"])).unwrap();
+    assert_eq!(view.route, "fast");
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read_script = r#"
+import json, sys
+from multi_search_mcp.src.support.credential_store import ConfigDatabase
+data = ConfigDatabase(sys.argv[1]).read_settings()
+print(json.dumps({"type": data.get("type"), "timeout": data.get("timeout"), "disabled_sources": data.get("disabled_sources")}))
+"#;
+    let output = std::process::Command::new("python")
+        .args(["-B", "-c", read_script])
+        .arg(s.db())
+        .env("PYTHONPATH", &root)
+        .env("HOME", &s.0)
+        .env("USERPROFILE", &s.0)
+        .env("MULTI_SEARCH_CONFIG_DB", s.db())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "python read failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["type"], "fast");
+    assert_eq!(payload["timeout"], 30);
+    assert_eq!(payload["disabled_sources"], serde_json::json!(["exa"]));
+
+    // A future schema version is rejected by the CLI rather than silently
+    // treated as the current layout.
+    let c = rusqlite::Connection::open(s.db()).unwrap();
+    c.pragma_update(None, "user_version", 99).unwrap();
+    drop(c);
+    let future = std::process::Command::new("python")
+        .args(["-B", "-c", read_script])
+        .arg(s.db())
+        .env("PYTHONPATH", &root)
+        .env("HOME", &s.0)
+        .env("USERPROFILE", &s.0)
+        .env("MULTI_SEARCH_CONFIG_DB", s.db())
+        .output()
+        .unwrap();
+    assert!(!future.status.success());
+    let stderr = String::from_utf8_lossy(&future.stderr);
+    assert!(
+        stderr.contains("schema version") && stderr.contains("desktop"),
+        "future version must point at the desktop owner: {stderr}"
+    );
+    // The desktop itself also refuses the future version instead of downgrading.
+    assert!(fixture::save(&s.env(&[]), &input("fast", 30, &[])).is_err());
+}
+
 fn custom_routes() -> RouteMap {
     let mut routes = fixture::builtin_routes();
     routes.insert(

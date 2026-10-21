@@ -491,12 +491,24 @@ def isolated_test_environment(
         (home / ".local" / "state").mkdir(parents=True)
 
         config_path = home / ".multi-search" / "multi-search-config.json"
+        config_db_path = home / ".multi-search" / "config.sqlite"
         keys_path = home / ".search-keys.json"
         state_path = home / ".multi-search" / "state.sqlite"
         report_path = temp_root / "network-violations.log"
         config_path.write_text("{}\n", encoding="utf-8")
         keys_path.write_text("{}\n", encoding="utf-8")
         report_path.touch()
+        # The desktop owns schema creation; tests run against a disposable
+        # database already created with the desktop's version-1 schema.
+        import sqlite3
+        from contextlib import closing
+        with closing(sqlite3.connect(config_db_path)) as conn:
+            conn.executescript(
+                "CREATE TABLE credentials(provider TEXT PRIMARY KEY, encrypted_value BLOB NOT NULL, saved_at REAL NOT NULL);"
+                "CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);"
+                "PRAGMA user_version=1;"
+            )
+            conn.commit()
 
         bootstrap = temp_root / "bootstrap"
         bootstrap.mkdir()

@@ -216,38 +216,34 @@ class WindowsDPAPI:
 
 
 class ConfigDatabase:
-    """Owns schema initialization and transactions shared by keys and settings."""
+    """Read/write a desktop-owned ``config.sqlite``.
+
+    The desktop owns schema creation and migration. This class only validates
+    the on-disk schema version and column layout; it never creates tables and
+    never upgrades a version. A missing database reads as empty settings, and
+    an unversioned or future-versioned database raises an explicit error that
+    points the user at the desktop application instead of silently building a
+    second schema.
+    """
 
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path is not None else config_db_path()
 
     @contextmanager
-    def connect(self, *, create: bool = False):
-        if not create and not self.path.exists():
+    def connect(self):
+        if not self.path.exists():
             yield None
             return
         conn = None
         try:
-            if create:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(str(self.path), timeout=5)
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, SCHEMA_VERSION):
-                raise CredentialStoreError("unsupported configuration database schema version")
-            if version == 0:
-                # A preexisting nonempty database is not silently repurposed.
-                conn.execute("BEGIN IMMEDIATE")
-                # Another process may have initialized while this one waited.
-                locked_version = conn.execute("PRAGMA user_version").fetchone()[0]
-                if locked_version == 0:
-                    if conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]:
-                        raise CredentialStoreError("configuration database schema is invalid")
-                    conn.execute("CREATE TABLE credentials(provider TEXT PRIMARY KEY, encrypted_value BLOB NOT NULL, saved_at REAL NOT NULL)")
-                    conn.execute("CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL)")
-                    conn.execute("PRAGMA user_version=1")
-                elif locked_version != SCHEMA_VERSION:
-                    raise CredentialStoreError("unsupported configuration database schema version")
-                conn.commit()
+            if version != SCHEMA_VERSION:
+                raise CredentialStoreError(
+                    "configuration database schema version "
+                    f"{version} is not supported by this CLI (expected {SCHEMA_VERSION}); "
+                    "the desktop application owns schema creation and migration"
+                )
             expected = {"credentials": [("provider", "TEXT", 0, 1), ("encrypted_value", "BLOB", 1, 0), ("saved_at", "REAL", 1, 0)],
                         "settings": [("id", "INTEGER", 0, 1), ("data", "TEXT", 1, 0)]}
             for table, columns in expected.items():
@@ -286,7 +282,15 @@ class ConfigDatabase:
             raw = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
         except (TypeError, ValueError):
             raise CredentialStoreError("settings must contain JSON values") from None
-        with self.connect(create=True) as conn:
+        with self.connect() as conn:
+            if conn is None:
+                # No database means the desktop has not created one yet. Creating
+                # it here would make the CLI a second schema owner, so fail with
+                # an actionable message instead.
+                raise CredentialStoreError(
+                    "configuration database is missing; open the desktop application "
+                    "to create and migrate config.sqlite"
+                )
             conn.execute("INSERT INTO settings(id,data) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data", (raw,))
 
 
@@ -310,7 +314,12 @@ class SQLiteCredentialBackend:
         provider = target.rsplit("/", 1)[-1]
         encrypted = self.protector.encrypt(blob)
         stamp = float(json.loads(blob)["saved_at"])
-        with self.database.connect(create=True) as conn:
+        with self.database.connect() as conn:
+            if conn is None:
+                raise CredentialStoreError(
+                    "configuration database is missing; open the desktop application "
+                    "to create and migrate config.sqlite"
+                )
             conn.execute("INSERT INTO credentials(provider,encrypted_value,saved_at) VALUES(?,?,?) ON CONFLICT(provider) DO UPDATE SET encrypted_value=excluded.encrypted_value,saved_at=excluded.saved_at", (provider, encrypted, stamp))
 
     def delete(self, target: str) -> bool:
@@ -320,7 +329,12 @@ class SQLiteCredentialBackend:
 
     def import_batch(self, values: dict, settings: dict | None, check) -> None:
         """Lock, revalidate, and import the entire approved selection atomically."""
-        with self.database.connect(create=True) as conn:
+        with self.database.connect() as conn:
+            if conn is None:
+                raise CredentialStoreError(
+                    "configuration database is missing; open the desktop application "
+                    "to create and migrate config.sqlite"
+                )
             conn.execute("BEGIN IMMEDIATE")
             check()
             stamp = time.time()

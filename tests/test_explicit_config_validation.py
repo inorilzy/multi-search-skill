@@ -14,6 +14,7 @@ from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support import config
 from multi_search_mcp.src.support.credential_store import ConfigDatabase, CONFIG_DB_ENV
+from tests.desktop_schema import create_config_db
 
 
 BAD_CONFIGS = (
@@ -46,6 +47,9 @@ class ExplicitConfigValidationTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def write_config(self, value):
+        # The desktop owns schema creation; start each write from a
+        # desktop-shaped database instead of letting the CLI create one.
+        create_config_db(self.path)
         ConfigDatabase(self.path).write_settings(value)
         self.provider.reset_mock()
 

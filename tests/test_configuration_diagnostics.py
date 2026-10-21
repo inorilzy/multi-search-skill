@@ -11,6 +11,7 @@ from multi_search_mcp.src import service
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support import config
 from multi_search_mcp.src.support.credential_store import ConfigDatabase, CONFIG_DB_ENV
+from tests.desktop_schema import create_config_db, reset_config_db
 
 
 class ConfigurationDiagnosticsTests(unittest.TestCase):
@@ -51,6 +52,7 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
                 if text == "{broken":
                     self.path.write_text(text, encoding="utf-8")
                 else:
+                    create_config_db(self.path)
                     ConfigDatabase(self.path).write_settings(json.loads(text))
                 data = service.doctor_data(include_keys=False)
                 self.assertFalse(data["config_loaded"])
@@ -66,6 +68,7 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
         self.assertEqual(data["config_storage"], {"backend": "sqlite-dpapi", "schema_version": 1})
 
     def test_doctor_network_reports_partial_failure(self):
+        create_config_db(self.path)
         ConfigDatabase(self.path).write_settings({})
         response = mock.MagicMock()
         response.__enter__.return_value = response
@@ -80,6 +83,7 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
         self.assertIn("probe timeout", data["network_checks"][1]["error"])
 
     def test_doctor_network_success_and_no_network_default(self):
+        create_config_db(self.path)
         ConfigDatabase(self.path).write_settings({})
         with mock.patch("multi_search_mcp.src.support.http.urlopen_retry") as opener:
             data = service.doctor_data(include_keys=False)

@@ -119,12 +119,9 @@ class SQLiteKeyManager(BasicKeyManager):
 
     def __init__(self, store: StateStore | None = None):
         self.store = store or StateStore()
-        # Old releases persisted a prefix/suffix display mask. The already-hashed
-        # key_id supplies its replacement without reading any credential source.
-        self.store.execute(
-            "UPDATE key_state SET key_fingerprint = 'sha256:' || substr(key_id, instr(key_id, ':') + 1, 8) "
-            "WHERE key_fingerprint NOT LIKE 'sha256:%'",
-        )
+        # Legacy display-mask -> hash migration is a one-shot data migration
+        # guarded by StateStore's schema version; constructing a manager must
+        # not rewrite key_state on every process start.
 
     def candidates(self, provider: str, key_value: Any) -> list[KeyCandidate]:
         raw = [

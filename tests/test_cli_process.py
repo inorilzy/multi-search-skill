@@ -8,6 +8,7 @@ import unittest
 
 from scripts.test_isolation import isolated_test_environment
 from multi_search_mcp.src.support.credential_store import ConfigDatabase
+from tests.desktop_schema import create_config_db
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,6 +115,8 @@ class CliProcessTests(unittest.TestCase):
         self.config_db = ConfigDatabase(self.environment["MULTI_SEARCH_CONFIG_DB"])
 
     def write_settings(self, settings):
+        # The desktop owns schema creation; the CLI must never create it.
+        create_config_db(self.environment["MULTI_SEARCH_CONFIG_DB"])
         self.config_db.write_settings(settings)
 
     def run_cli(self, *args, future=False, no_http=False, fixture_env=None):
