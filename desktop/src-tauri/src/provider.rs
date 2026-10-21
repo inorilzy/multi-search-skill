@@ -193,11 +193,13 @@ pub(crate) fn is_allowed_source(name: &str) -> bool {
 /// Public payload returned to the UI: the same provider list the desktop uses
 /// internally. Serialized as `source`/`cliSource`/`provider`/`label`/`keyed`/
 /// `cookie`/`aliases` so the UI does not hardcode a copy.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export_to = "types.d.ts")]
 #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
 pub struct ProviderInfo {
     pub source: &'static str,
     #[serde(rename = "cliSource")]
+    #[ts(rename = "cliSource")]
     pub cli_source: &'static str,
     pub provider: Option<&'static str>,
     pub label: &'static str,

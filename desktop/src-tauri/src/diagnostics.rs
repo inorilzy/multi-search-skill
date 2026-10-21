@@ -1,6 +1,7 @@
 use crate::user_path::PathStore;
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use ts_rs::TS;
 
 /// Explicit system boundary: production snapshots the environment; tests supply a disposable one.
 #[derive(Clone)]
@@ -11,15 +12,18 @@ pub struct RuntimeEnvironment {
     pub cwd: PathBuf,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct Discovery {
+    /// One of `ready`, `missing`, `not_executable`, `version_failed`, `unavailable`, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub path: Option<String>,
     pub version: Option<String>,
     pub reason: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct CliStatus {
     pub app: Discovery,
     pub user: Discovery,

@@ -1,21 +1,21 @@
 //! Native management boundary; the CLI remains the search implementation.
 pub(crate) mod config_db;
-pub(crate) mod credential;
-pub(crate) mod credential_commands;
-mod diagnostics;
+pub mod credential;
+pub mod credential_commands;
+pub mod diagnostics;
 mod environment;
-mod execution;
-mod install;
+pub mod execution;
+pub mod install;
 mod journal;
 mod manager;
 mod manifest;
 mod process;
 pub mod provider;
 mod redaction;
-pub(crate) mod settings;
-mod skill;
+pub mod settings;
+pub mod skill;
 mod skill_common;
-mod skill_manage;
+pub mod skill_manage;
 pub mod user_path;
 mod windows_util;
 #[cfg(feature = "native-window")]
@@ -28,6 +28,25 @@ pub use skill::{SkillInstall, SkillPlan};
 pub use skill_manage::{
     InstallState, RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome, UpdatePlan,
 };
+
+/// Re-exports used by the UI contract test (`tests/ui_contract.rs`) so every
+/// command payload is reachable from a single, stable namespace. These are
+/// the same Rust types each `#[tauri::command]` already returns or accepts;
+/// no new public surface is added beyond what the IPC layer exposes.
+pub mod contract {
+    pub use crate::credential::CredentialStatus;
+    pub use crate::credential_commands::{CredentialOverview, CredentialValue, TestOutcome};
+    pub use crate::diagnostics::{CliStatus, Discovery};
+    pub use crate::execution::{ExecutionStatus, SearchOptions};
+    pub use crate::install::{InstallOutcome, InstallPlan, InstallStep};
+    pub use crate::provider::ProviderInfo;
+    pub use crate::settings::{RouteConfig, SettingsInput, SettingsView};
+    pub use crate::skill::{SkillInstall, SkillPlan};
+    pub use crate::skill_manage::{
+        InstallState, RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome, UpdatePlan,
+    };
+    pub use crate::user_path::{PathPlan, PathReceipt, PathValue};
+}
 
 /// Test seam for the settings writer. Not a supported public API.
 #[doc(hidden)]

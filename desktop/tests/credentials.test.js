@@ -93,7 +93,11 @@ test('application link stays disabled without mapping, configured entry passes s
   }
 });
 test('typed Tauri adapter reads source only and opens fixed application source', async () => {
-  const calls = [], client = managementApi(async (...args) => { calls.push(args); });
+  const calls = [], client = managementApi(async (cmd, args) => {
+    calls.push([cmd, args]);
+    if (cmd === 'credential_read') return { value: '' };
+    return null;
+  });
   await client.credentialRead('tavily'); await client.credentialApplicationOpen('brave');
   assert.deepEqual(calls, [['credential_read', { source: 'tavily' }], ['credential_application_open', { source: 'brave' }]]);
 });
