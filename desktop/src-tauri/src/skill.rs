@@ -1,47 +1,21 @@
 //! Installs the CLI-only Skill for Claude Code. The CLI stays the only search implementation.
+use crate::skill_common::{
+    self, home_directory, target_directory, Requirements, FILES, MARKER, SKILL_NAME, SKILL_VERSION,
+};
 use crate::{process, DesktopManager, RuntimeEnvironment};
 use serde::Serialize;
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
-pub(crate) const SKILL_NAME: &str = "multi-search";
-pub(crate) const SKILL_VERSION: &str = "1";
-pub(crate) const MARKER: &str = ".multi-search-install.json";
 pub(crate) static STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Files shipped with this product release, embedded so the desktop app never reads a loose copy.
-pub(crate) const FILES: [(&str, &str); 3] = [
-    (
-        "SKILL.md",
-        include_str!("../../skill/multi-search/SKILL.md"),
-    ),
-    (
-        "references/cli.md",
-        include_str!("../../skill/multi-search/references/cli.md"),
-    ),
-    (
-        "references/verification.md",
-        include_str!("../../skill/multi-search/references/verification.md"),
-    ),
-];
-
-/// Flags the Skill relies on, per subcommand, as printed by the CLI's own `--help`.
-pub(crate) const REQUIRED_FLAGS: [(&str, &[&str]); 4] = [
-    ("search", &["--route", "--expand", "--format", "--source", "--count", "--timeout"]),
-    ("fetch", &["--full-content", "--format", "--url"]),
-    ("read", &["--keyword", "--offset", "--format", "--limit"]),
-    ("doctor", &["--no-keys", "--format"]),
-];
-
-type Requirements = BTreeMap<String, Vec<String>>;
-fn requirements() -> Requirements {
-    REQUIRED_FLAGS.iter().map(|(command, flags)| (command.to_string(), flags.iter().map(|f| f.to_string()).collect())).collect()
-}
+// Re-exported so `skill_manage` can import everything Skill-related from one
+// module without importing `skill` itself (which would create a cycle).
+pub(crate) use crate::skill_common::{file_names, sha256_hex, verify_directory, write_directory};
 
 fn registry_path(environment: &RuntimeEnvironment) -> Result<PathBuf, String> {
     Ok(home_directory(environment).ok_or("Missing user profile")?.join(".multi-search/managed-skills.json"))
@@ -76,9 +50,9 @@ fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requiremen
     // Legacy global installs predate the registry; inspect this one known location, never scan projects.
     let global = target_directory(environment, "global", None)?;
     if fs::symlink_metadata(global.join(MARKER)).is_ok() && !targets.contains(&global) { targets.push(global); }
-    let mut required = requirements();
+    let mut required = skill_common::requirements();
     for target in targets {
-        if !crate::skill_manage::safe_managed_paths(&target) {
+        if !skill_common::safe_managed_paths(&target) {
             return Err(format!("unverified: unsafe managed Skill path {}", target.display()));
         }
         let raw = fs::read(target.join(MARKER)).map_err(|_| format!("unverified: missing managed Skill record {}", target.display()))?;
@@ -91,7 +65,7 @@ fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requiremen
             return Err("unverified: unknown Skill file inventory".into());
         }
         let parsed = match value.get("requirements") {
-            None => requirements(), // Legacy v1 maps to the full documented capability set.
+            None => skill_common::requirements(), // Legacy v1 maps to the full documented capability set.
             Some(value) => serde_json::from_value::<Requirements>(value.clone()).map_err(|_| "unverified: invalid Skill requirements")?,
         };
         if parsed.is_empty() || parsed.iter().any(|(c, flags)| c.is_empty() || c.starts_with('-') || c.contains(char::is_whitespace) || flags.is_empty() || flags.iter().any(|f| !f.starts_with("--") || f.contains(char::is_whitespace))) {
@@ -127,40 +101,6 @@ pub struct SkillInstall {
     pub files: Vec<String>,
 }
 
-pub(crate) fn file_names() -> Vec<String> {
-    FILES.iter().map(|(name, _)| (*name).to_string()).collect()
-}
-
-fn home_directory(environment: &RuntimeEnvironment) -> Option<PathBuf> {
-    environment
-        .variables
-        .get("USERPROFILE")
-        .or_else(|| environment.variables.get("HOME"))
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-}
-
-/// Resolves the skill directory; the parent `.claude` directory is the only one this module creates.
-pub(crate) fn target_directory(
-    environment: &RuntimeEnvironment,
-    scope: &str,
-    project: Option<&Path>,
-) -> Result<PathBuf, String> {
-    let base = match scope {
-        "global" => home_directory(environment)
-            .ok_or_else(|| "The user profile directory is not available".to_string())?,
-        "project" => {
-            let project = project.ok_or_else(|| "Select the project directory".to_string())?;
-            if !project.is_absolute() || !project.is_dir() {
-                return Err("Select an existing absolute project directory".into());
-            }
-            project.to_path_buf()
-        }
-        _ => return Err("Scope must be global or project".into()),
-    };
-    Ok(base.join(".claude").join("skills").join(SKILL_NAME))
-}
-
 fn blocked_plan(scope: &str, status: &str, reason: String, target: Option<String>) -> SkillPlan {
     SkillPlan {
         host: "claude-code".into(),
@@ -171,58 +111,6 @@ fn blocked_plan(scope: &str, status: &str, reason: String, target: Option<String
         files: file_names(),
         can_install: false,
     }
-}
-
-pub(crate) fn verify_directory(directory: &Path) -> Result<(), String> {
-    for (name, expected) in FILES {
-        let actual = fs::read_to_string(directory.join(name))
-            .map_err(|_| format!("{name} is missing after writing"))?;
-        if actual != expected {
-            return Err(format!("{name} does not match the released content"));
-        }
-    }
-    let marker = fs::read_to_string(directory.join(MARKER))
-        .map_err(|_| "The install marker is missing".to_string())?;
-    let marker: serde_json::Value =
-        serde_json::from_str(&marker).map_err(|_| "The install marker is invalid".to_string())?;
-    if marker["managed_by"] != "multi-search-desktop" || marker["skill_version"] != SKILL_VERSION {
-        return Err("The install marker does not match this release".into());
-    }
-    Ok(())
-}
-
-pub(crate) fn sha256_hex(content: &str) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(content.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-pub(crate) fn write_directory(directory: &Path) -> Result<(), String> {
-    for (name, content) in FILES {
-        let path = directory.join(name);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Cannot create {name}: {e}"))?;
-        }
-        fs::write(&path, content).map_err(|e| format!("Cannot write {name}: {e}"))?;
-    }
-    // Hashes let later status and update checks tell an unmodified file from a user edit.
-    let hashes: serde_json::Map<String, serde_json::Value> = FILES
-        .iter()
-        .map(|(name, content)| ((*name).to_string(), serde_json::Value::String(sha256_hex(content))))
-        .collect();
-    let marker = serde_json::json!({
-        "managed_by": "multi-search-desktop",
-        "skill": SKILL_NAME,
-        "skill_version": SKILL_VERSION,
-        "files": file_names(),
-        "hashes": hashes,
-        "requirements": requirements(),
-    });
-    fs::write(directory.join(MARKER), format!("{marker}\n"))
-        .map_err(|e| format!("Cannot write {MARKER}: {e}"))?;
-    verify_directory(directory)
 }
 
 impl DesktopManager {
@@ -332,7 +220,7 @@ impl DesktopManager {
     }
 
     pub(crate) fn check_compatibility(&self, cli_path: &str) -> Result<(), String> {
-        self.check_requirements(cli_path, requirements())
+        self.check_requirements(cli_path, skill_common::requirements())
     }
 
     pub(crate) fn check_managed_compatibility(&self, cli_path: &str) -> Result<(), String> {

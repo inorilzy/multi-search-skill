@@ -1,10 +1,11 @@
 //! Status, safe update, and safe removal of the CLI-only Skill this tool installed.
 //! Only files listed in our marker are ever touched; unknown files and other skills are never deleted.
-use crate::skill::{self, FILES, MARKER, SKILL_NAME, SKILL_VERSION};
+use crate::skill::{record_target, STAGING_ID};
+use crate::skill_common::{self, FILES, MARKER, SKILL_NAME, SKILL_VERSION};
+use crate::windows_util::is_link;
 use crate::DesktopManager;
 use serde::Serialize;
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -86,81 +87,6 @@ pub struct RemoveOutcome {
     pub reason: String,
 }
 
-/// Parsed view of our marker. `None` means the folder is not ours.
-#[derive(Debug)]
-struct Marker {
-    version: String,
-    hashes: BTreeMap<String, String>,
-}
-
-fn is_link(metadata: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        metadata.file_attributes() & 0x400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        metadata.file_type().is_symlink()
-    }
-}
-
-pub(crate) fn safe_managed_paths(directory: &Path) -> bool {
-    // Every ancestor matters: references/ or the target itself may be a junction.
-    for ancestor in directory.ancestors() {
-        if let Ok(metadata) = fs::symlink_metadata(ancestor) {
-            if is_link(&metadata) || !metadata.is_dir() {
-                return false;
-            }
-        }
-    }
-    for (name, _) in FILES.iter().copied().chain(std::iter::once((MARKER, ""))) {
-        let path = directory.join(name);
-        if let Some(parent) = path.parent() {
-            if let Ok(metadata) = fs::symlink_metadata(parent) {
-                if is_link(&metadata) || !metadata.is_dir() {
-                    return false;
-                }
-            }
-        }
-        match fs::symlink_metadata(path) {
-            Ok(metadata) if is_link(&metadata) || !metadata.is_file() => return false,
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return false,
-            _ => {}
-        }
-    }
-    true
-}
-
-fn read_marker(directory: &Path) -> Option<Marker> {
-    if !safe_managed_paths(directory) {
-        return None;
-    }
-    let text = fs::read_to_string(directory.join(MARKER)).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-    if value["managed_by"] != "multi-search-desktop" || value["skill"] != SKILL_NAME {
-        return None;
-    }
-    let files = value["files"].as_array()?;
-    if files.len() != FILES.len()
-        || !FILES
-            .iter()
-            .all(|(name, _)| files.iter().any(|v| v.as_str() == Some(name)))
-    {
-        return None; // Ownership must match the known release manifest, never caller paths.
-    }
-    let version = value["skill_version"].as_str()?.to_string();
-    let hashes = match value.get("hashes") {
-        None => BTreeMap::new(), // The verified 06 release did not record hashes.
-        Some(hashes) => hashes
-            .as_object()?
-            .iter()
-            .map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
-            .collect::<Option<BTreeMap<_, _>>>()?,
-    };
-    Some(Marker { version, hashes })
-}
-
 /// Entries directly inside the target that we did not place there.
 fn unknown_entries(directory: &Path) -> Result<Vec<String>, String> {
     let managed: Vec<String> = FILES.iter().map(|(name, _)| top_level(name)).collect();
@@ -222,7 +148,7 @@ pub(crate) fn classify(
             "Nothing is installed here.".into(),
         );
     }
-    if !safe_managed_paths(directory) {
+    if !skill_common::safe_managed_paths(directory) {
         return (
             InstallState::Unknown,
             None,
@@ -235,7 +161,7 @@ pub(crate) fn classify(
         Ok(entries) => entries,
         Err(reason) => return (InstallState::Unknown, None, vec![], vec![], reason),
     };
-    let Some(marker) = read_marker(directory) else {
+    let Some(marker) = skill_common::read_marker(directory) else {
         return (
             InstallState::Unknown,
             None,
@@ -245,33 +171,41 @@ pub(crate) fn classify(
         );
     };
     let mut modified = Vec::new();
-    for (name, shipped) in FILES {
-        // Baseline: the hash recorded when we wrote the file. Markers from the 06 release carry no hashes,
-        // so for a same-version marker the shipped content is the only baseline we can prove.
-        let baseline = match marker.hashes.get(name) {
-            Some(hash) => Some(hash.clone()),
-            None if marker.version == SKILL_VERSION => Some(skill::sha256_hex(shipped)),
-            None => None,
-        };
+    let mut marker_unverified = false;
+    for (name, _shipped) in FILES {
+        // Verified baseline only: the hash recorded at install time. A marker
+        // without hashes (pre-schema releases) cannot prove the on-disk bytes
+        // are unmodified, so such an install is classified Outdated rather
+        // than treating the shipped content as if it had been verified.
+        let baseline = marker.hashes.as_ref().and_then(|hashes| hashes.get(name));
         let on_disk = fs::read_to_string(directory.join(name))
             .ok()
-            .map(|content| skill::sha256_hex(&content));
-        if on_disk != baseline {
-            modified.push(name.to_string());
+            .map(|content| skill_common::sha256_hex(&content));
+        match baseline {
+            Some(hash) if on_disk.as_deref() == Some(hash.as_str()) => {}
+            Some(_) => modified.push(name.to_string()),
+            None => marker_unverified = true,
         }
     }
     let state = if !modified.is_empty() {
         InstallState::Modified
-    } else if marker.version != SKILL_VERSION {
+    } else if marker_unverified
+        || marker.marker_schema != Some(skill_common::MARKER_SCHEMA)
+        || marker.skill_version != SKILL_VERSION
+    {
         InstallState::Outdated
     } else {
         InstallState::Current
     };
     let reason = match state {
         InstallState::Current => "Installed and matches this release.".into(),
+        InstallState::Outdated if marker_unverified => format!(
+            "Installed marker records no file hashes (schema {:?}); the install cannot be verified, so it is treated as outdated.",
+            marker.marker_schema
+        ),
         InstallState::Outdated => format!(
             "Installed version {} differs from release {SKILL_VERSION}.",
-            marker.version
+            marker.skill_version
         ),
         InstallState::Modified => format!(
             "Managed files were edited locally: {}.",
@@ -279,7 +213,7 @@ pub(crate) fn classify(
         ),
         _ => String::new(),
     };
-    (state, Some(marker.version), modified, unknown, reason)
+    (state, Some(marker.skill_version), modified, unknown, reason)
 }
 
 fn join_target(
@@ -287,7 +221,7 @@ fn join_target(
     scope: &str,
     project: Option<PathBuf>,
 ) -> Result<PathBuf, String> {
-    skill::target_directory(&manager.environment, scope, project.as_deref())
+    skill_common::target_directory(&manager.environment, scope, project.as_deref())
 }
 
 /// Copies every modified managed file into a timestamped backup folder beside the skill, before overwrite.
@@ -306,7 +240,7 @@ fn backup_modified(directory: &Path, modified: &[String]) -> Result<Option<PathB
     let backup = base.join(format!(
         ".multi-search-backup-{stamp}-{}-{}",
         std::process::id(),
-        skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     fs::create_dir(&backup).map_err(|e| format!("Cannot reserve backup folder: {e}"))?;
     for name in modified {
@@ -431,7 +365,7 @@ impl DesktopManager {
         let staging = base.join(format!(
             ".multi-search-update-{}-{}",
             std::process::id(),
-            skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         if let Err(error) = fs::create_dir(&staging) {
             return UpdateOutcome {
@@ -443,7 +377,7 @@ impl DesktopManager {
                 ),
             };
         }
-        if let Err(reason) = skill::write_directory(&staging) {
+        if let Err(reason) = skill_common::write_directory(&staging) {
             let _ = fs::remove_dir_all(&staging);
             return UpdateOutcome {
                 status: "failed".into(),
@@ -467,7 +401,7 @@ impl DesktopManager {
         let old = base.join(format!(
             ".multi-search-old-{}-{}",
             std::process::id(),
-            skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         if let Err(error) = fs::rename(&target, &old) {
             let _ = fs::remove_dir_all(&staging);
@@ -496,7 +430,7 @@ impl DesktopManager {
                 reason: format!("Update failed. {recovery} {error}"),
             };
         }
-        match skill::verify_directory(&target).and_then(|()| skill::record_target(&self.environment, &target, true)) {
+        match skill_common::verify_directory(&target).and_then(|()| record_target(&self.environment, &target, true)) {
             Ok(()) => {
                 let _ = fs::remove_dir_all(&old);
                 UpdateOutcome {
@@ -602,7 +536,7 @@ impl DesktopManager {
             .iter()
             .any(|name| target.join(name).exists());
         if !managed_left {
-            if let Err(reason) = skill::record_target(&self.environment, &target, false) {
+            if let Err(reason) = record_target(&self.environment, &target, false) {
                 return RemoveOutcome { status: "failed".into(), deleted, kept, reason };
             }
             RemoveOutcome {
@@ -651,7 +585,7 @@ impl DesktopManager {
             state,
             installed_version,
             release_version: SKILL_VERSION.into(),
-            cli_requirements: skill::REQUIRED_FLAGS
+            cli_requirements: skill_common::REQUIRED_FLAGS
                 .iter()
                 .map(|(command, flags)| format!("{command}: {}", flags.join(" ")))
                 .collect::<Vec<_>>()
@@ -659,7 +593,7 @@ impl DesktopManager {
             cli_compatible,
             compatibility_reason,
             can_update,
-            managed_files: skill::file_names(),
+            managed_files: skill_common::file_names(),
             modified_files,
             unknown_entries,
             reason,

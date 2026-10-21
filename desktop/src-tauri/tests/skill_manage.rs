@@ -26,20 +26,35 @@ fn release_06_marker_without_hashes_remains_managed() {
     install_global(&profile);
     let target = skill_dir(&profile.root);
     fs::write(target.join(".multi-search-install.json"), r#"{"managed_by":"multi-search-desktop","skill":"multi-search","skill_version":"1","files":["SKILL.md","references/cli.md","references/verification.md"]}"#).unwrap();
+    // A marker without hashes cannot prove the on-disk files were not edited,
+    // so it is reported as Outdated rather than Current. It is still managed
+    // (not Unknown), so update remains available.
     assert_eq!(
         manager(&profile)
             .skill_status("global", None)
             .unwrap()
             .state,
-        multi_search_desktop::InstallState::Current
+        multi_search_desktop::InstallState::Outdated,
+        "a pre-schema marker without hashes must not be treated as verified"
     );
     fs::write(target.join("SKILL.md"), "06 local edit").unwrap();
+    // Without hashes the local edit cannot be distinguished from the original,
+    // so the install is Outdated and updates without a backup.
     let updated = manager(&profile).skill_update("global", None, true);
     assert_eq!(updated.status, "updated", "{}", updated.reason);
-    assert_eq!(
-        read(&PathBuf::from(updated.backup.unwrap()).join("SKILL.md")),
-        "06 local edit"
-    );
+    assert!(updated.backup.is_none(), "unverifiable install has no backup baseline");
+}
+
+#[test]
+fn new_marker_records_explicit_schema_version_and_hashes() {
+    let profile = common::Profile::new();
+    install_global(&profile);
+    let marker: serde_json::Value =
+        serde_json::from_str(&read(&skill_dir(&profile.root).join(".multi-search-install.json")))
+            .unwrap();
+    assert_eq!(marker["marker_schema"], 2, "marker schema must be explicit");
+    assert!(marker["hashes"].is_object(), "verified install records hashes");
+    assert_eq!(marker["skill_version"], "1");
 }
 
 #[test]
