@@ -1,11 +1,12 @@
-# CLI-only installation and workflow
+# CLI installation and workflow
 
 Requires Python 3.10+, Git, and [uv](https://docs.astral.sh/uv/getting-started/installation/).
-The CLI runs Core directly; no MCP server or MCP client configuration is needed.
+The `multi-search` command runs the shared Core directly. There is no server,
+no daemon, and no agent-tool adapter to configure.
 
 ## Install
 
-This MCP-free migration is currently a local candidate, not a new published
+This build is currently a local candidate, not a new published
 release. The historical `v0.4.0` tag does not include these changes. From the
 verified local checkout, run at the repository root:
 
@@ -18,7 +19,7 @@ To reinstall the same local candidate use `uv tool install --force --reinstall .
 Do not substitute guessed remote tags or URLs for the verified local artifact.
 The historical distribution/module name `multi-search-mcp` / `multi_search_mcp`
 is retained for compatibility; the only product command is `multi-search` and
-there is no MCP entrypoint, dependency, client configuration, or persistent service.
+there is no remote service, daemon, or per-agent adapter to configure.
 
 If the command is absent from PATH, run `uv tool update-shell` and reopen the
 terminal. Without uv, use a virtual environment and `python -m pip install .`
@@ -27,10 +28,11 @@ from the checkout, then `python -m multi_search_mcp.cli --help`.
 The CLI reads settings and provider credentials from the shared SQLite database
 at `~/.multi-search/config.sqlite`; credential values are protected with DPAPI.
 `MULTI_SEARCH_CONFIG_DB` selects an alternate database for an explicitly isolated
-runtime. Legacy provider environment variables, `~/.search-keys.json`, and JSON
-settings files are not implicit runtime inputs. The saved Twitter cookie path is
-a non-secret settings reference; cookie contents and provider keys do not belong
-in these commands.
+runtime. Legacy provider environment variables and JSON settings files are not
+implicit runtime inputs. `~/.search-keys.json` is read only by an explicit
+one-time migration helper; it is not consulted during normal search. The saved
+Twitter cookie path is a non-secret settings reference; cookie contents and
+provider keys do not belong in these commands.
 
 CLI installations include `xkit-py` for Twitter/X automatically, from
 the GitHub commit pinned in the project dependencies. The PyPI 2.6.3 archives

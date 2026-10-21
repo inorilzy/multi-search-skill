@@ -10,6 +10,13 @@
   Follow that implementation's schema for model, context, and tool access.
   A graph is not required. Prefer the multi-search CLI through the child's command
   tool.
+- **Claude Code:** use the built-in `Task` (subagent) tool. Spawn one
+  `general-purpose` (or equivalent read-capable) subagent and pass the task
+  packet described below in its prompt. Select a lightweight model via the
+  host's supported mechanism (e.g. the `model` parameter when exposed);
+  do not inherit the parent model silently if a cheaper one is configured.
+  The subagent runs `multi-search` through its shell tool and returns the
+  compact handoff described below.
 
 Use only a model exposed and permitted by the host; a model already known to be
 rejected for this account is not eligible. Keep model IDs, providers, credentials,
