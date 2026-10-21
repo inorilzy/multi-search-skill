@@ -137,8 +137,8 @@ class InvalidStreakTests(unittest.TestCase):
                     )["result"]
 
             self.assertEqual(request.call_count, 1)
-            self.assertEqual(result["error_origin"], "target")
-            self.assertEqual(result["error_type"], "target")
+            self.assertEqual(result["origin"], "target")
+            self.assertEqual(result["kind"], "target")
             self.assertEqual(manager.status_rows("exa"), before_target)
             row = before_target[0]
             self.assertEqual(row["status"], TRANSIENT_INVALID)

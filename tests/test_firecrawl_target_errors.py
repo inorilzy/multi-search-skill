@@ -94,8 +94,8 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
             )["result"]
 
         self.assertEqual(fetch.call_count, 1)
-        self.assertEqual(result["error_origin"], "target")
-        self.assertEqual(result["error_type"], "target")
+        self.assertEqual(result["origin"], "target")
+        self.assertEqual(result["kind"], "target")
         self.assertIn("SCRAPE_SSL_ERROR", result["error"])
         self.assertIn("Page SSL certificate is invalid", result["error"])
         self.assertEqual(self.manager.status_rows("firecrawl"), before)
@@ -120,8 +120,8 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
             )["result"]
 
         self.assertEqual(fetch.call_count, 1)
-        self.assertEqual(result["error_origin"], "target")
-        self.assertEqual(result["error_type"], "target")
+        self.assertEqual(result["origin"], "target")
+        self.assertEqual(result["kind"], "target")
         self.assertIn("Page SSL certificate is invalid", result["error"])
         self.assertEqual(self.manager.status_rows("firecrawl")[0]["status"], ACTIVE)
         self.assertEqual(self.manager.status_rows("firecrawl")[0]["failure_count"], 0)
@@ -168,7 +168,7 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                     )["result"]
 
                 self.assertEqual(fetch.call_count, 1)
-                self.assertEqual(result["error_origin"], "target")
+                self.assertEqual(result["origin"], "target")
                 self.assertEqual(self.manager.status_rows("firecrawl"), before)
                 self.assertEqual(before[0]["status"], expected_status)
 
@@ -181,7 +181,7 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
         )
         keys = [KEY, "fixture-firecrawl-second"]
         success = {"success": True, "data": {"markdown": "fixture body"}}
-        for status_code, expected_type, expected_status in cases:
+        for status_code, expected_kind, expected_status in cases:
             with self.subTest(status_code=status_code):
                 self.manager.reset("firecrawl")
                 self.manager = SQLiteKeyManager(self.store)
@@ -213,8 +213,8 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                     if row["key_id"] == candidates[0].key_id
                 )
                 self.assertEqual(failed["status"], expected_status)
-                self.assertEqual(failed["last_error_type"], expected_type)
-                self.assertNotEqual(result.get("error_origin"), "target")
+                self.assertEqual(failed["last_error_type"], expected_kind)
+                self.assertNotEqual(result.get("origin"), "target")
 
     def test_unknown_codes_and_malformed_error_bodies_are_not_target(self):
         normal_payloads = (
@@ -229,7 +229,7 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                 ):
                     result = firecrawl_scraper.scrape_url_firecrawl(URL, KEY)
                 self.assertIn("error", result)
-                self.assertNotEqual(result.get("error_origin"), "target")
+                self.assertNotEqual(result.get("origin"), "target")
 
         for body in (b"not json", json.dumps({"success": False, "error": "unknown"}).encode()):
             with self.subTest(body=body):
@@ -245,9 +245,9 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                 ):
                     result = firecrawl_scraper.scrape_url_firecrawl(URL, KEY)
                 self.assertIn("error", result)
-                self.assertEqual(result["error_origin"], "provider")
-                self.assertEqual(result["error_type"], "error")
-                self.assertNotEqual(result.get("error_origin"), "target")
+                self.assertEqual(result["origin"], "provider")
+                self.assertEqual(result["kind"], "error")
+                self.assertNotEqual(result.get("origin"), "target")
 
     def test_error_body_read_is_bounded_closed_and_redacted(self):
         body = RecordingBody(json.dumps({
@@ -265,7 +265,7 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
         with mock.patch.object(firecrawl_scraper, "urlopen_retry", side_effect=error):
             result = firecrawl_scraper.scrape_url_firecrawl(URL, KEY)
 
-        self.assertEqual(result["error_origin"], "target")
+        self.assertEqual(result["origin"], "target")
         self.assertNotIn(KEY, json.dumps(result))
         self.assertEqual(body.read_sizes, [firecrawl_scraper._FIRECRAWL_ERROR_BODY_LIMIT])
         self.assertTrue(body.closed)
@@ -324,8 +324,8 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                 peer_result = peer_future.result(timeout=10)
 
         self.assertEqual(fetch.call_count, 2)
-        self.assertEqual(target_result["error_origin"], "target")
-        self.assertEqual(peer_result["error_origin"], "target")
+        self.assertEqual(target_result["origin"], "target")
+        self.assertEqual(peer_result["origin"], "target")
         row = self.manager.status_rows("firecrawl")[0]
         self.assertEqual(row["status"], COOLDOWN)
         self.assertEqual(row["rate_limit_count"], 1)

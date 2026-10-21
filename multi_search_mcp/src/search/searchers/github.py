@@ -8,6 +8,12 @@ import urllib.parse
 import urllib.request
 
 from ...support.http import urlopen_retry
+from ...support.models import (
+    ERROR_KIND_ERROR,
+    ERROR_KIND_INVALID,
+    ERROR_KIND_RATE_LIMIT,
+    ERROR_ORIGIN_PROVIDER,
+)
 from ...support.secrets import scrub_secrets
 
 
@@ -21,10 +27,9 @@ _GITHUB_RATE_LIMIT_HEADERS = frozenset({
 class _GitHubHTTPError(Exception):
     """Redacted GitHub HTTP failure with key-pool classification."""
 
-    def __init__(self, message: str, *, error_type: str, rate_limited: bool = False):
+    def __init__(self, message: str, *, error_kind: str):
         super().__init__(message)
-        self.error_type = error_type
-        self.rate_limited = rate_limited
+        self.error_kind = error_kind
 
 
 def _github_error_body_text(raw) -> str:
@@ -71,17 +76,17 @@ def _has_explicit_rate_limit_message(message: str) -> bool:
 def _classify_github_error(status: int | None, message: str = "", headers=None) -> str:
     """Classify only GitHub's explicit auth and rate-limit responses."""
     if status == 401:
-        return "invalid"
+        return ERROR_KIND_INVALID
     if status == 429:
-        return "rate_limit"
+        return ERROR_KIND_RATE_LIMIT
     if status != 403:
-        return "error"
+        return ERROR_KIND_ERROR
     rate_headers = _github_rate_limit_headers(headers or {})
     if rate_headers.get("x-ratelimit-remaining") == "0":
-        return "rate_limit"
+        return ERROR_KIND_RATE_LIMIT
     if rate_headers.get("retry-after", "").isdigit():
-        return "rate_limit"
-    return "rate_limit" if _has_explicit_rate_limit_message(message) else "invalid"
+        return ERROR_KIND_RATE_LIMIT
+    return ERROR_KIND_RATE_LIMIT if _has_explicit_rate_limit_message(message) else ERROR_KIND_INVALID
 
 
 def _request_timeout(timeout: float, deadline: float | None) -> float | None:
@@ -123,16 +128,15 @@ def _github_http_error(
     body, body_diagnostic = _read_github_error_body(exc, deadline=deadline)
     status = getattr(exc, "code", None)
     fallback = str(exc) or f"HTTP Error {status}"
-    error_type = _classify_github_error(status, body or fallback, headers)
-    if body_diagnostic.startswith("error body unavailable") and status == 403 and error_type == "invalid":
-        error_type = "error"
+    error_kind = _classify_github_error(status, body or fallback, headers)
+    if body_diagnostic.startswith("error body unavailable") and status == 403 and error_kind == ERROR_KIND_INVALID:
+        error_kind = ERROR_KIND_ERROR
     message = f"HTTP Error {status}: {body}" if body else fallback
     if body_diagnostic:
         message = f"{message}; {body_diagnostic}"
     return _GitHubHTTPError(
         scrub_secrets(message, token),
-        error_type=error_type,
-        rate_limited=error_type == "rate_limit",
+        error_kind=error_kind,
     )
 
 
@@ -140,23 +144,20 @@ def _github_error_row(
     message: str,
     token: str,
     *,
-    error_type: str = "",
-    rate_limited: bool = False,
+    error_kind: str = "",
 ) -> dict:
-    result = {"source": "github-repos", "error": scrub_secrets(message, token)}
-    if error_type:
-        result.update({"error_origin": "provider", "error_type": error_type})
-    if rate_limited:
-        result["rate_limited"] = True
+    result: dict = {"source": "github-repos", "error": scrub_secrets(message, token)}
+    if error_kind:
+        result.update(origin=ERROR_ORIGIN_PROVIDER, kind=error_kind)
     return result
 
 
-def _github_cli_error_type(message: str) -> str:
+def _github_cli_error_kind(message: str) -> str:
     text = str(message or "")
     match = re.search(r"\b(?:http(?: status)?|status(?: code)?)?\s*(401|403|429)\b", text, re.I)
     if match:
         return _classify_github_error(int(match.group(1)), text)
-    return "rate_limit" if _has_explicit_rate_limit_message(text) else ""
+    return ERROR_KIND_RATE_LIMIT if _has_explicit_rate_limit_message(text) else ""
 
 
 def _run_gh(
@@ -222,15 +223,11 @@ def search_github_repos(
     try:
         rc, stdout, stderr = _github_api(endpoint, token, timeout=timeout, deadline=deadline)
     except _GitHubHTTPError as exc:
-        return [_github_error_row(
-            str(exc), token, error_type=exc.error_type, rate_limited=exc.rate_limited,
-        )]
+        return [_github_error_row(str(exc), token, error_kind=exc.error_kind)]
     if rc != 0:
         message = stderr.strip() or f"exit {rc}"
-        error_type = _github_cli_error_type(message)
-        return [_github_error_row(
-            message, token, error_type=error_type, rate_limited=error_type == "rate_limit",
-        )]
+        error_kind = _github_cli_error_kind(message)
+        return [_github_error_row(message, token, error_kind=error_kind)]
     try:
         data = json.loads(stdout)
     except Exception as e:

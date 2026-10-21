@@ -73,8 +73,8 @@ class TavilyTargetErrorTests(unittest.TestCase):
 
                 self.assertEqual(fetch.call_count, 2)
                 self.assertIn(f"HTTP {code} {detail}", result["error"])
-                self.assertEqual(result["error_origin"], "target")
-                self.assertEqual(result["error_type"], "target")
+                self.assertEqual(result["origin"], "target")
+                self.assertEqual(result["kind"], "target")
                 self.assertEqual(result["markdown"], "")
                 self.assertEqual(result["length"], 0)
                 self.assertEqual(result["via"], "tavily")
@@ -98,8 +98,8 @@ class TavilyTargetErrorTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 2)
         self.assertIn("Tavily advanced:", result["error"])
         self.assertIn("Tavily basic:", result["error"])
-        self.assertEqual(result["error_origin"], "target")
-        self.assertEqual(result["error_type"], "target")
+        self.assertEqual(result["origin"], "target")
+        self.assertEqual(result["kind"], "target")
 
     def test_target_origin_survives_merge_with_unmarked_empty_fallback(self):
         with mock.patch.object(tavily_scraper, "urlopen_retry", side_effect=[
@@ -108,8 +108,8 @@ class TavilyTargetErrorTests(unittest.TestCase):
         ]):
             result = tavily_scraper.scrape_url_tavily(URL, KEYS[0])
 
-        self.assertEqual(result["error_origin"], "target")
-        self.assertEqual(result["error_type"], "target")
+        self.assertEqual(result["origin"], "target")
+        self.assertEqual(result["kind"], "target")
 
     def test_target_error_does_not_overwrite_existing_auth_failure(self):
         candidate = self.manager.candidates("tavily", KEYS)[0]
@@ -132,7 +132,7 @@ class TavilyTargetErrorTests(unittest.TestCase):
             result = self.scrape()
 
         self.assertEqual(request.call_count, 2)
-        self.assertEqual(result["error_origin"], "target")
+        self.assertEqual(result["origin"], "target")
         self.assertEqual(self.manager.status_rows("tavily"), before)
         row = next(row for row in before if row["key_id"] == candidate.key_id)
         self.assertEqual(row["status"], TRANSIENT_INVALID)
@@ -168,7 +168,7 @@ class TavilyTargetErrorTests(unittest.TestCase):
 
         self.assertNotIn(KEYS[0], json.dumps(result))
         self.assertIn("403", result["error"])
-        self.assertEqual(result["error_origin"], "target")
+        self.assertEqual(result["origin"], "target")
 
 
 if __name__ == "__main__":

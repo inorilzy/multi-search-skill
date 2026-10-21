@@ -104,9 +104,9 @@ class GitHubRateLimitTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(result["error_type"], "rate_limit")
-        self.assertTrue(result["rate_limited"])
-        self.assertEqual(result["error_origin"], "provider")
+        self.assertEqual(result["kind"], "rate_limit")
+        self.assertEqual(result["kind"], "rate_limit")
+        self.assertEqual(result["origin"], "provider")
         self.assertIn("API rate limit exceeded", result["error"])
         self.assertNotIn(KEY, json.dumps(result))
         self.assertEqual(body.read_sizes[0], 4096)
@@ -122,15 +122,15 @@ class GitHubRateLimitTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(result["error_type"], "rate_limit")
-        self.assertTrue(result["rate_limited"])
+        self.assertEqual(result["kind"], "rate_limit")
+        self.assertEqual(result["kind"], "rate_limit")
         self.assertIn("secondary rate limit", result["error"])
 
     def test_429_is_rate_limit_without_relying_on_error_text(self):
         result = self.call_adapter(http_error(429, "Too Many Requests", None))
 
-        self.assertEqual(result["error_type"], "rate_limit")
-        self.assertTrue(result["rate_limited"])
+        self.assertEqual(result["kind"], "rate_limit")
+        self.assertEqual(result["kind"], "rate_limit")
 
     def test_auth_and_permission_403_are_not_rate_limits(self):
         for status, reason, message in (
@@ -141,8 +141,8 @@ class GitHubRateLimitTests(unittest.TestCase):
                 result = self.call_adapter(
                     http_error(status, reason, io.BytesIO(json.dumps({"message": message}).encode()))
                 )
-                self.assertEqual(result["error_type"], "invalid")
-                self.assertNotIn("rate_limited", result)
+                self.assertEqual(result["kind"], "invalid")
+                self.assertNotEqual(result.get("kind"), "rate_limit")
 
     def test_ambiguous_or_malformed_errors_are_not_rate_limits(self):
         cases = (
@@ -153,8 +153,8 @@ class GitHubRateLimitTests(unittest.TestCase):
         for status, reason, body, expected_type in cases:
             with self.subTest(status=status, body=body):
                 result = self.call_adapter(http_error(status, reason, io.BytesIO(body)))
-                self.assertEqual(result["error_type"], expected_type)
-                self.assertNotIn("rate_limited", result)
+                self.assertEqual(result["kind"], expected_type)
+                self.assertNotEqual(result.get("kind"), "rate_limit")
 
     def test_error_body_read_is_bounded_and_failures_are_explicit(self):
         body = TrackingBody(b'{"message":"' + b"x" * 20_000 + b'"}')
@@ -167,7 +167,7 @@ class GitHubRateLimitTests(unittest.TestCase):
             )
         )
         self.assertLessEqual(body.read_sizes[0], 4096)
-        self.assertEqual(result["error_type"], "rate_limit")
+        self.assertEqual(result["kind"], "rate_limit")
 
         failing_body = FailingBody()
         result = self.call_adapter(
@@ -180,13 +180,13 @@ class GitHubRateLimitTests(unittest.TestCase):
         )
         self.assertLessEqual(failing_body.read_sizes[0], 4096)
         self.assertIn("error body unavailable", result["error"])
-        self.assertEqual(result["error_type"], "rate_limit")
+        self.assertEqual(result["kind"], "rate_limit")
         self.assertTrue(failing_body.closed)
 
         unknown_body = FailingBody()
         result = self.call_adapter(http_error(403, "Forbidden", unknown_body))
-        self.assertEqual(result["error_type"], "error")
-        self.assertNotIn("rate_limited", result)
+        self.assertEqual(result["kind"], "error")
+        self.assertNotEqual(result.get("kind"), "rate_limit")
 
     def test_expired_deadline_skips_error_body_read(self):
         body = TrackingBody(b'{"message":"API rate limit exceeded"}')
@@ -203,7 +203,7 @@ class GitHubRateLimitTests(unittest.TestCase):
             )
 
         self.assertEqual(body.read_sizes, [])
-        self.assertEqual(result["error_type"], "rate_limit")
+        self.assertEqual(result["kind"], "rate_limit")
         self.assertIn("error body unavailable", result["error"])
 
     def test_error_body_read_drops_body_when_deadline_expires_during_read(self):
@@ -217,7 +217,7 @@ class GitHubRateLimitTests(unittest.TestCase):
 
         self.assertEqual(body.read_sizes, [4096])
         self.assertIn("error body unavailable (deadline exceeded)", result["error"])
-        self.assertEqual(result["error_type"], "rate_limit")
+        self.assertEqual(result["kind"], "rate_limit")
 
     def test_keyed_runner_redacts_error_body_in_result_and_state(self):
         with tempfile.TemporaryDirectory(prefix="github-rate-limit-redaction-") as temp:
@@ -256,8 +256,8 @@ class GitHubRateLimitTests(unittest.TestCase):
         ):
             result = github.search_github_repos("fixture", token="", timeout=1)[0]
 
-        self.assertEqual(result["error_type"], "rate_limit")
-        self.assertTrue(result["rate_limited"])
+        self.assertEqual(result["kind"], "rate_limit")
+        self.assertEqual(result["kind"], "rate_limit")
 
     def test_three_rate_limits_cool_then_success_without_invalidating_token(self):
         with tempfile.TemporaryDirectory(prefix="github-rate-limit-tests-") as temp:

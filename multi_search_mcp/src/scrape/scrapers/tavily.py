@@ -5,6 +5,11 @@ import urllib.error
 import urllib.request
 
 from ...support.http import urlopen_retry
+from ...support.models import (
+    ERROR_KIND_TARGET,
+    ERROR_ORIGIN_PROVIDER,
+    ERROR_ORIGIN_TARGET,
+)
 from ...support.secrets import scrub_secrets
 from ...support.tavily import tavily_http_error
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
@@ -53,7 +58,7 @@ def scrape_url_tavily(
             message = failed[0].get("error", "no content") if failed else "no results"
             error = {"url": url, "error": f"Tavily {depth}: {scrub_secrets(message, api_key)}"}
             if failed:
-                error.update(error_origin="target", error_type="target")
+                error.update(origin=ERROR_ORIGIN_TARGET, kind=ERROR_KIND_TARGET)
             return error
         result = results[0]
         markdown = result.get("raw_content") or ""
@@ -83,18 +88,18 @@ def scrape_url_tavily(
             "error": f"{advanced['error']}; fallback {basic['error']}",
         }
         if (
-            advanced.get("error_origin") == "target"
-            or basic.get("error_origin") == "target"
+            advanced.get("origin") == ERROR_ORIGIN_TARGET
+            or basic.get("origin") == ERROR_ORIGIN_TARGET
         ):
-            merged.update(error_origin="target", error_type="target")
+            merged.update(origin=ERROR_ORIGIN_TARGET, kind=ERROR_KIND_TARGET)
         return merged
     except urllib.error.HTTPError as exc:
-        message, error_type = tavily_http_error(exc, api_key)
+        message, kind = tavily_http_error(exc, api_key)
         return {
             "url": url,
             "error": f"Tavily: {message}",
-            "error_origin": "provider",
-            "error_type": error_type,
+            "origin": ERROR_ORIGIN_PROVIDER,
+            "kind": kind,
         }
     except Exception as exc:
         return {"url": url, "error": f"Tavily: {scrub_secrets(exc, api_key)}"}

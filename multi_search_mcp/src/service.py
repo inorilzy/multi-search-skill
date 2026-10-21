@@ -573,11 +573,13 @@ def _query_provider_status(
                 if str(row.get("source") or "?") != source:
                     continue
                 if row.get("error"):
-                    # error_type lets callers tell auth, quota, and network failures apart.
+                    # Diagnostic field name stays error_type for output
+                    # compatibility; its value is the row's structured ``kind``
+                    # (or classify_error's fallback when the row is unclassified).
                     errors.append({
                         "query": query,
                         "error": str(row["error"]),
-                        "error_type": classify_error(str(row["error"]), error_type=row.get("error_type", "")),
+                        "error_type": classify_error(str(row["error"]), kind=row.get("kind", "")),
                     })
                 else:
                     succeeded = True
