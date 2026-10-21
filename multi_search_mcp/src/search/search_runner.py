@@ -311,18 +311,30 @@ def run_keyed_source(
     error_rows = [row for row in last_results if "error" in row]
     # Prefer a provider-origin row: target failures are not evidence about the key.
     chosen = next(
-        (row for row in error_rows if row.get("error_origin") != "target"),
+        (row for row in error_rows if _row_origin(row) != "target"),
         error_rows[0] if error_rows else {},
     )
     err = chosen.get("error", "key pool exhausted") if chosen else "key pool exhausted"
     err = scrub_secrets(err, key_value)
     error = {"source": source, "error": f"key pool exhausted after {len(candidates)} key(s): {err}"}
     # Carry only the controlled classification of the chosen row, never its other fields.
-    for field_name in ("error_origin", "error_type"):
+    for field_name in ("origin", "kind"):
         value = chosen.get(field_name) if chosen else None
         if isinstance(value, str) and value:
             error[field_name] = value
     return _merge_partial_rows(source, partial_rows, [error]) if partial_rows else [error]
+
+
+def _row_origin(row: dict) -> str:
+    if not isinstance(row, dict):
+        return ""
+    origin = row.get("origin")
+    if isinstance(origin, str) and origin:
+        return origin
+    legacy = row.get("error_origin")
+    if isinstance(legacy, str) and legacy:
+        return legacy
+    return ""
 
 
 _SEARCH_POOL = BoundedDaemonExecutor(

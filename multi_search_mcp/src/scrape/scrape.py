@@ -2,7 +2,11 @@
 import time
 
 from ..support.auth import is_key_retryable_error
-from ..support.models import normalize_scrape_result
+from ..support.models import (
+    ERROR_KIND_RATE_LIMIT,
+    ERROR_ORIGIN_TARGET,
+    normalize_scrape_result,
+)
 from ..support.url_security import (
     UrlSecurityError,
     validate_scrape_url,
@@ -101,10 +105,22 @@ def _candidate_for(provider: str, key: str) -> KeyCandidate:
 def _record_key_result(provider: str, key: str, result: dict, key_manager) -> None:
     # A target-page failure is neutral to credential health, including any
     # auth failure another in-flight request may already have recorded.
-    if key_manager is None or result.get("error_origin") == "target":
+    if key_manager is None or _row_origin(result) == ERROR_ORIGIN_TARGET:
         return
     candidate = _candidate_for(provider, key)
     key_manager.record_result(provider, candidate, key_manager.classify_result(provider, result))
+
+
+def _row_origin(row: dict) -> str:
+    if not isinstance(row, dict):
+        return ""
+    origin = row.get("origin")
+    if isinstance(origin, str) and origin:
+        return origin
+    legacy = row.get("error_origin")
+    if isinstance(legacy, str) and legacy:
+        return legacy
+    return ""
 
 
 def _scrape_with_key_pool(provider: str, keys: list[str], call, deadline: float | None = None, key_manager=None) -> dict | None:
@@ -240,10 +256,10 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                     return {
                         "url": scrape_target,
                         "error": "Jina: anonymous rate limit cooldown active",
-                        "rate_limited": True,
+                        "kind": ERROR_KIND_RATE_LIMIT,
                     }
                 result = scrape_url_jina(scrape_target, "", timeout=call_timeout, **policy["jina"])
-                if "error" in result and result.get("rate_limited"):
+                if "error" in result and result.get("kind") == ERROR_KIND_RATE_LIMIT:
                     _record_jina_anonymous_rate_limit()
                 return result
 
@@ -279,7 +295,7 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
             anon = _scrape_anonymous()
             if "error" not in anon:
                 return anon
-            if not anon.get("rate_limited"):
+            if anon.get("kind") != ERROR_KIND_RATE_LIMIT:
                 return anon
             keyed = keyed_pool()
             return keyed if keyed is not None else anon

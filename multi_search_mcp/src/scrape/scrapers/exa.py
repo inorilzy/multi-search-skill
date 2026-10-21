@@ -4,11 +4,27 @@ import urllib.error
 import urllib.request
 
 from ...support.http import urlopen_retry
+from ...support.models import (
+    ERROR_KIND_ERROR,
+    ERROR_KIND_INVALID,
+    ERROR_KIND_QUOTA_EXHAUSTED,
+    ERROR_KIND_RATE_LIMIT,
+    ERROR_KIND_TARGET,
+    ERROR_ORIGIN_PROVIDER,
+    ERROR_ORIGIN_TARGET,
+)
 from ...support.secrets import scrub_secrets
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
 
 
 _EXA_DEFAULT_MAX_CHARS = 8000
+
+_EXA_HTTP_ERROR_KINDS = {
+    401: ERROR_KIND_INVALID,
+    403: ERROR_KIND_INVALID,
+    402: ERROR_KIND_QUOTA_EXHAUSTED,
+    429: ERROR_KIND_RATE_LIMIT,
+}
 
 
 def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
@@ -47,7 +63,7 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
             # /contents succeeded; statuses describe the target page, not the key.
             return {
                 "url": url, "error": scrub_secrets(msg, api_key),
-                "error_origin": "target", "error_type": "target",
+                "origin": ERROR_ORIGIN_TARGET, "kind": ERROR_KIND_TARGET,
             }
         results = data.get("results") or []
         if not results:
@@ -66,8 +82,8 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
     except urllib.error.HTTPError as exc:
         return {
             "url": url, "error": f"Exa: {scrub_secrets(exc, api_key)}",
-            "error_origin": "provider",
-            "error_type": {401: "invalid", 403: "invalid", 402: "quota_exhausted", 429: "rate_limit"}.get(exc.code, "error"),
+            "origin": ERROR_ORIGIN_PROVIDER,
+            "kind": _EXA_HTTP_ERROR_KINDS.get(exc.code, ERROR_KIND_ERROR),
         }
     except Exception as exc:
         return {"url": url, "error": f"Exa: {scrub_secrets(exc, api_key)}"}

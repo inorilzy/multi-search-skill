@@ -7,6 +7,11 @@ import urllib.parse
 import urllib.request
 
 from ...support.http import urlopen_retry
+from ...support.models import (
+    ERROR_KIND_QUOTA_EXHAUSTED,
+    ERROR_KIND_RATE_LIMIT,
+    ERROR_ORIGIN_PROVIDER,
+)
 from ...support.secrets import scrub_secrets
 from . import (
     _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
@@ -125,8 +130,9 @@ def scrape_url_jina(
 
     secrets = api_key
     last_error = ""
-    rate_limited = False
-    key_exhausted = False
+    # ``kind`` reflects the most specific credential signal seen; quota_exhausted
+    # is reserved for the keyed channel and outranks a generic rate_limit.
+    kind = ""
     if skip_anonymous:
         attempts = (api_key,) if api_key else ()
     else:
@@ -169,14 +175,16 @@ def scrape_url_jina(
             last_error = f"HTTP {exc.code}: {message}"
             limited = _jina_rate_limited(exc.code, message)
             if limited:
-                rate_limited = True
                 if not key:
                     _record_jina_anonymous_rate_limit()
+                    kind = kind or ERROR_KIND_RATE_LIMIT
                 # Classify exhaustion from the error itself instead of issuing a
                 # blocking balance-API round-trip; the key-state store (and the
                 # caller) only need to know this key is out of quota.
-                if key and _jina_quota_exhausted(exc.code, message):
-                    key_exhausted = True
+                elif _jina_quota_exhausted(exc.code, message):
+                    kind = ERROR_KIND_QUOTA_EXHAUSTED
+                else:
+                    kind = kind or ERROR_KIND_RATE_LIMIT
             try:
                 exc.close()
             except Exception:
@@ -189,9 +197,7 @@ def scrape_url_jina(
     if not attempts:
         last_error = "no Jina key available"
     result = {"url": url, "error": f"Jina: {scrub_secrets(last_error, secrets)}"}
-    if rate_limited:
-        result["rate_limited"] = True
-    if key_exhausted:
-        result["key_exhausted"] = True
-        result["exhausted"] = True
+    if kind:
+        result["kind"] = kind
+        result["origin"] = ERROR_ORIGIN_PROVIDER
     return result

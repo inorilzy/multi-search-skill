@@ -78,8 +78,8 @@ class TavilyQuotaErrorTests(unittest.TestCase):
                             quota_body(),
                         )
                         result = self._call_adapter(operation, error)
-                        self.assertEqual(result["error_origin"], "provider")
-                        self.assertEqual(result["error_type"], "quota_exhausted")
+                        self.assertEqual(result["origin"], "provider")
+                        self.assertEqual(result["kind"], "quota_exhausted")
                         self.assertIn(str(code), result["error"])
                         self.assertIn("Plan usage limit exceeded", result["error"])
 
@@ -93,7 +93,7 @@ class TavilyQuotaErrorTests(unittest.TestCase):
             433: "quota_exhausted",
         }
         for operation in ("search", "extract"):
-            for code, error_type in expected.items():
+            for code, expected_kind in expected.items():
                 for body in (None, io.BytesIO(b""), io.BytesIO(b"not-json")):
                     with self.subTest(operation=operation, code=code, body=body is not None):
                         result = self._call_adapter(
@@ -105,8 +105,8 @@ class TavilyQuotaErrorTests(unittest.TestCase):
                                 body,
                             ),
                         )
-                        self.assertEqual(result["error_origin"], "provider")
-                        self.assertEqual(result["error_type"], error_type)
+                        self.assertEqual(result["origin"], "provider")
+                        self.assertEqual(result["kind"], expected_kind)
 
     def test_error_body_is_bounded_and_redacted(self):
         secret = KEYS[0]
@@ -132,7 +132,7 @@ class TavilyQuotaErrorTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory(prefix="tavily-status-tests-") as temp:
             for operation in ("search", "extract"):
-                for code, error_type, status in cases:
+                for code, expected_kind, status in cases:
                     with self.subTest(operation=operation, code=code):
                         store = StateStore(Path(temp) / f"{operation}-{code}.sqlite")
                         calls = []
@@ -182,9 +182,9 @@ class TavilyQuotaErrorTests(unittest.TestCase):
                         failed = rows[key_id_for("tavily", KEYS[0])]
                         succeeded = rows[key_id_for("tavily", KEYS[1])]
                         self.assertEqual(failed["status"], status)
-                        self.assertEqual(failed["last_error_type"], error_type)
+                        self.assertEqual(failed["last_error_type"], expected_kind)
                         self.assertEqual(failed["use_count"], 1)
-                        self.assertEqual(failed["quota_error_count"], int(error_type == "quota_exhausted"))
+                        self.assertEqual(failed["quota_error_count"], int(expected_kind == "quota_exhausted"))
                         self.assertEqual(succeeded["status"], "active")
                         self.assertEqual(succeeded["success_count"], 1)
 
@@ -226,7 +226,7 @@ class TavilyQuotaErrorTests(unittest.TestCase):
                                 keys={"tavily": KEYS}, state_store=store,
                                 url_resolver=lambda _host: ["93.184.216.34"],
                             )
-                        self.assertEqual(result["result"]["error_type"], "error")
+                        self.assertEqual(result["result"]["kind"], "error")
 
                     self.assertEqual(len(calls), 1)
                     rows = {

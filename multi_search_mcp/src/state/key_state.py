@@ -7,6 +7,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..support.auth import is_key_retryable_error
+from ..support.models import (
+    ERROR_KIND_ERROR,
+    ERROR_KIND_INVALID,
+    ERROR_KIND_QUOTA_EXHAUSTED,
+    ERROR_KIND_RATE_LIMIT,
+    ERROR_KIND_TARGET,
+    ERROR_KIND_TIMEOUT,
+    ERROR_KIND_NETWORK,
+    ERROR_ORIGIN_TARGET,
+    KEYED_ERROR_KINDS,
+)
 from ..support.secrets import scrub_secrets
 from .state_store import StateStore
 
@@ -84,22 +95,29 @@ class BasicKeyManager:
             return KeyOutcome(success=True, retryable=False)
         message = "; ".join(str(row.get("error", "")) for row in error_rows)
         # Target failures carry no evidence that a provider credential failed.
-        error_rows = [row for row in error_rows if row.get("error_origin") != "target"]
-        if not error_rows:
-            return KeyOutcome(False, False, "target", message)
-        if any(row.get("exhausted") or row.get("key_exhausted") for row in error_rows):
-            return KeyOutcome(False, True, "quota_exhausted", message)
-        if any(row.get("rate_limited") for row in error_rows):
-            return KeyOutcome(False, True, "rate_limit", message)
-        error_types = [
-            classify_error(str(row["error"]), error_type=row.get("error_type", ""))
-            for row in error_rows
+        provider_rows = [row for row in error_rows if _row_origin(row) != ERROR_ORIGIN_TARGET]
+        if not provider_rows:
+            return KeyOutcome(False, False, ERROR_KIND_TARGET, message)
+        kinds = [
+            classify_error(str(row["error"]), kind=_row_kind(row))
+            for row in provider_rows
         ]
-        error_type = next((
-            kind for kind in ("invalid", "quota_exhausted", "rate_limit", "timeout", "network")
-            if kind in error_types
-        ), error_types[0])
-        return KeyOutcome(False, is_key_retryable_error(error_rows), error_type, message)
+        # Prefer the strongest credential signal; fall back to the first kind.
+        error_type = next(
+            (
+                kind
+                for kind in (
+                    ERROR_KIND_INVALID,
+                    ERROR_KIND_QUOTA_EXHAUSTED,
+                    ERROR_KIND_RATE_LIMIT,
+                    ERROR_KIND_TIMEOUT,
+                    ERROR_KIND_NETWORK,
+                )
+                if kind in kinds
+            ),
+            kinds[0],
+        )
+        return KeyOutcome(False, is_key_retryable_error(provider_rows), error_type, message)
 
     def record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:
         return None
@@ -191,7 +209,7 @@ class SQLiteKeyManager(BasicKeyManager):
             )
             return
         error_type = outcome.error_type or classify_error(outcome.error_message)
-        if error_type == "target":
+        if error_type == ERROR_KIND_TARGET:
             # Target-page failures carry no credential-health evidence. The
             # scrape entry point normally filters these before this method;
             # keep the state boundary neutral if one reaches it directly.
@@ -207,7 +225,7 @@ class SQLiteKeyManager(BasicKeyManager):
         # breaks the consecutive-invalid streak. The invalid branch below
         # replaces this with an atomic increment.
         strike_assignment = "invalid_strikes = 0"
-        if error_type == "invalid":
+        if error_type == ERROR_KIND_INVALID:
             # A single 401/403 is often a transient upstream blip (Cloudflare,
             # gateway, brief rate misclassification). Cool the key down and only
             # escalate to a permanent INVALID after repeated consecutive hits.
@@ -224,11 +242,11 @@ class SQLiteKeyManager(BasicKeyManager):
             )
             status = TRANSIENT_INVALID
             cooldown_until = _iso(_now() + INVALID_COOLDOWN)
-        elif error_type == "rate_limit":
+        elif error_type == ERROR_KIND_RATE_LIMIT:
             status = COOLDOWN
             cooldown_until = _iso(_now() + timedelta(minutes=15))
             rate_inc = 1
-        elif error_type == "quota_exhausted":
+        elif error_type == ERROR_KIND_QUOTA_EXHAUSTED:
             status = QUOTA_EXHAUSTED
             exhausted_until = _iso(_now() + timedelta(hours=24))
             quota_inc = 1
@@ -284,21 +302,59 @@ class SQLiteKeyManager(BasicKeyManager):
         )
 
 
-def classify_error(message: str, *, error_type: str = "") -> str:
-    if error_type:
-        return error_type
+def _row_origin(row: dict) -> str:
+    if not isinstance(row, dict):
+        return ""
+    origin = row.get("origin")
+    if isinstance(origin, str) and origin:
+        return origin
+    legacy = row.get("error_origin")
+    if isinstance(legacy, str) and legacy:
+        return legacy
+    if _row_kind(row) == ERROR_KIND_TARGET:
+        return ERROR_ORIGIN_TARGET
+    return ""
+
+
+def _row_kind(row: dict) -> str:
+    if not isinstance(row, dict):
+        return ""
+    kind = row.get("kind")
+    if isinstance(kind, str) and kind:
+        return kind
+    legacy = row.get("error_type")
+    if isinstance(legacy, str) and legacy:
+        return legacy
+    if row.get("key_exhausted") or row.get("exhausted"):
+        return ERROR_KIND_QUOTA_EXHAUSTED
+    if row.get("rate_limited"):
+        return ERROR_KIND_RATE_LIMIT
+    return ""
+
+
+def classify_error(message: str, *, kind: str = "", error_type: str = "") -> str:
+    """Best-effort error kind.
+
+    ``kind`` (preferred) or the legacy ``error_type`` keyword supplies the
+    already-structured classification; otherwise keyword substring matching on
+    the message text provides a degraded fallback for emitters that still lack
+    a structured ``kind``.
+    """
+    declared = kind or error_type
+    if declared:
+        return declared
     text = str(message or "").lower()
     if any(token in text for token in ("invalid api", "invalid key", "unauthorized", "forbidden", "401", "403")):
-        return "invalid"
+        return ERROR_KIND_INVALID
     if any(token in text for token in ("quota", "credits", "billing", "payment", "insufficient", "exceeded your")):
-        return "quota_exhausted"
+        return ERROR_KIND_QUOTA_EXHAUSTED
     if any(token in text for token in ("429", "rate limit", "rate_limit", "too many requests", "limit exceeded")):
-        return "rate_limit"
+        return ERROR_KIND_RATE_LIMIT
     if "timeout" in text or "timed out" in text:
-        return "timeout"
+        return ERROR_KIND_TIMEOUT
     if any(token in text for token in ("network", "connection", "dns", "ssl")):
-        return "network"
-    return "error"
+        return ERROR_KIND_NETWORK
+    return ERROR_KIND_ERROR
 
 
 def _ordered_key_pool(value: Any) -> list[str]:

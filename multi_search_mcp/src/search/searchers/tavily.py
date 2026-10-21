@@ -4,6 +4,7 @@ import urllib.error
 import urllib.request
 
 from ...support.http import urlopen_retry
+from ...support.models import ERROR_ORIGIN_PROVIDER, error_row
 from ...support.secrets import scrub_secrets
 from ...support.tavily import tavily_http_error
 
@@ -43,15 +44,10 @@ def search_tavily(
         with urlopen_retry(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        message, error_type = tavily_http_error(e, api_key)
-        return [{
-            "source": "tavily",
-            "error": message,
-            "error_origin": "provider",
-            "error_type": error_type,
-        }]
+        message, kind = tavily_http_error(e, api_key)
+        return [error_row("tavily", message, kind=kind, origin=ERROR_ORIGIN_PROVIDER)]
     except Exception as e:
-        return [{"source": "tavily", "error": scrub_secrets(e, api_key)}]
+        return [error_row("tavily", scrub_secrets(e, api_key))]
 
     results = []
     for item in data.get("results", []):
