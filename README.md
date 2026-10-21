@@ -60,6 +60,10 @@ npm --prefix desktop test
 
 应用只启动固定 CLI 程序并传独立参数；取消/关闭只结束本次 Windows Job Object 归属的执行和子进程，独立终端 CLI 不受影响。输出当纯文本展示并脱敏。测试使用一次性 profile 与受控 HTTP，不能证明真实付费源可用。原生窗口验收使用 `scripts/desktop_acceptance.py`，需要先在隔离 `.wheel-venv` 安装本地 wheel；`scripts/desktop_native_acceptance.py` 只验 native API 链路，不是窗口替代。
 
+**子进程环境边界。** 桌面进程不会把自身环境变量原样传给 CLI。`desktop/src-tauri/src/process.rs` 只放行 `PATH`、`PATHEXT`、`COMSPEC`、`SYSTEMROOT`/`SYSTEMDRIVE`/`WINDIR`、`USERPROFILE`/`HOME`/`HOMEDRIVE`/`HOMEPATH`、`TEMP`/`TMP`/`TMPDIR`、`PYTHONIOENCODING` 以及桌面自有的 `MULTI_SEARCH_*` 选择器；任何命中 `API_KEY`/`TOKEN`/`SECRET`/`PASSWORD`/`ACCESS_KEY` 等敏感标记的变量都不会下传。凭据仍由 CLI 从 `config.sqlite` + DPAPI 自行读取。
+
+**query 的命令行暴露面（已知取舍）。** 搜索结果通过 `multi-search search <query> ...` 调用，query 因此出现在 CLI 进程的命令行参数中，本机同一用户或其他具备进程列表读取权限的程序可以看到它。当前保留 argv 传递而不是改为 stdin，因为：CLI 的公开入口和现有脚本/测试都以位置参数定义 query；改为 stdin 需要 CLI 端新增协议并同步更新独立 CLI 的调用约定。桌面端不做日志记录，输出展示仍会脱敏，但这不改变 argv 对同机进程可见这一事实。
+
 ## 适用场景
 
 - 让 agent 一次性查多个来源，而不是只依赖单一搜索 API。
