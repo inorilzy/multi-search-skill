@@ -26,8 +26,8 @@ class FullContentFlowTests(unittest.TestCase):
         self.store = StateStore(Path(temporary) / "state.sqlite")
         stack.enter_context(mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")))
         stack.enter_context(mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected network")))
-        self.scraper = mock.Mock(side_effect=lambda url, **kwargs: {
-            "url": url, "markdown": BODY[:kwargs["scrape_chars"]], "via": "fixture",
+        self.scraper = mock.Mock(side_effect=lambda url, ctx=None, **kwargs: {
+            "url": url, "markdown": BODY[:ctx.scrape_chars if ctx is not None else kwargs["scrape_chars"]], "via": "fixture",
         })
 
     def fetch(self, **request):
@@ -58,7 +58,7 @@ class FullContentFlowTests(unittest.TestCase):
         self.assert_full_body(fetched)
         self.assertFalse(fetched["cache_hit"])
         self.assertTrue(fetched["persisted"])
-        self.assertEqual(self.scraper.call_args.kwargs["scrape_chars"], DEFAULT_MAX_OBJECT_BYTES)
+        self.assertEqual(self.scraper.call_args.kwargs["ctx"].scrape_chars, DEFAULT_MAX_OBJECT_BYTES)
         cached = self.fetch(source_id=fetched["source_id"], full_content=True)
         self.assert_full_body(cached)
         self.assertTrue(cached["cache_hit"])

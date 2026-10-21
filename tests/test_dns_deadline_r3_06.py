@@ -205,7 +205,8 @@ class DnsDeadlineTests(unittest.TestCase):
 
         self.assertEqual(result["body"], "ok")
         scraper.assert_called_once()
-        scrape_deadline = scraper.call_args.kwargs["deadline"]
+        ctx = scraper.call_args.kwargs["ctx"]
+        scrape_deadline = ctx.deadline
         self.assertGreater(scrape_deadline, time.monotonic())
         self.assertLessEqual(scrape_deadline, start + 1.04)
         self.assertTrue(finished.is_set())

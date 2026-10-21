@@ -1052,7 +1052,8 @@ class PluginServiceConfigTests(unittest.TestCase):
     def test_direct_scrape_passes_configured_jina_keys(self):
         captured = {}
 
-        def fake_scrape(url, **kwargs):
+        def fake_scrape(url, ctx=None, **kwargs):
+            captured["ctx"] = ctx
             captured.update(kwargs)
             return {"url": url, "markdown": "ok", "via": "jina"}
 
@@ -1061,7 +1062,8 @@ class PluginServiceConfigTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.scrape_url_smart", side_effect=fake_scrape):
             run_scrape(ScrapeRequest(url="https://example.com", use_state=False))
 
-        self.assertEqual(captured["jina_keys"], ["j1"])
+        jina_keys = [candidate.key for candidate in captured["ctx"].keys_by_backend["jina"]]
+        self.assertEqual(jina_keys, ["j1"])
 
     def test_direct_scrape_json_result_respects_scrape_chars(self):
         body = "x" * 100

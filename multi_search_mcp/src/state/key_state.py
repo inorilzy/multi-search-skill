@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -363,3 +365,35 @@ def _ordered_key_pool(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if item]
     return [str(value)]
+
+
+def rotate_keys(
+    provider: str,
+    candidates: list[KeyCandidate],
+    call: Callable[[str], Any],
+    *,
+    key_manager: Any = None,
+    deadline: float | None = None,
+) -> Iterator[tuple[KeyCandidate, Any, KeyOutcome]]:
+    """Single keyed-call executor shared by search and scrape.
+
+    For each candidate, in order:
+      record_use → call(candidate.key) → classify_result → record_result.
+
+    Yields ``(candidate, raw_result, outcome)`` so the caller picks the merge or
+    short-circuit strategy. Target-origin failures are classified ``target``
+    and skipped at ``record_result`` (neutral to credential health). ``call``
+    may return a list (search) or a dict (scrape); ``classify_result`` handles
+    both shapes.
+    """
+    if key_manager is None:
+        key_manager = BasicKeyManager()
+    for candidate in candidates:
+        if deadline is not None and time.monotonic() >= deadline:
+            return
+        key_manager.record_use(provider, candidate)
+        result = call(candidate.key)
+        outcome = key_manager.classify_result(provider, result)
+        if outcome.error_type != ERROR_KIND_TARGET:
+            key_manager.record_result(provider, candidate, outcome)
+        yield candidate, result, outcome

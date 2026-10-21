@@ -15,7 +15,7 @@ from .support.format import body_preview_start, format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager, classify_error
 from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, key_sources, load_keys
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content
-from .scrape.scrape import scrape_url_smart
+from .scrape.scrape import ScrapeContext, scrape_url_smart
 from .scrape.scrapers.twitter import is_twitter_url, validate_twitter_url
 from .scrape.stage import run_ranked_fetch_stage
 from .search.search_runner import (
@@ -854,22 +854,24 @@ def _run_scrape_raw(
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
     site_memory = SiteScraperMemory(store) if store else None
     scraper_fn = scraper or scrape_url_smart
-    result = scraper_fn(
-        request.url,
-        timeout=timeout,
+    ctx = ScrapeContext(
+        keys_by_backend={
+            "jina": key_manager.candidates("jina", jina_config_keys(runtime_keys.get("jina"))),
+            "exa": key_manager.candidates("exa", runtime_keys.get("exa")),
+            "firecrawl": key_manager.candidates("firecrawl", runtime_keys.get("firecrawl")),
+            "tavily": key_manager.candidates("tavily", runtime_keys.get("tavily")),
+        },
         deadline=deadline,
-        backends=tuple(request.backends) if request.backends else None,
-        jina_keys=[candidate.key for candidate in key_manager.candidates("jina", jina_config_keys(runtime_keys.get("jina")))],
-        exa_keys=[candidate.key for candidate in key_manager.candidates("exa", runtime_keys.get("exa"))],
-        firecrawl_keys=[candidate.key for candidate in key_manager.candidates("firecrawl", runtime_keys.get("firecrawl"))],
-        tavily_keys=[candidate.key for candidate in key_manager.candidates("tavily", runtime_keys.get("tavily"))],
         site_memory=site_memory,
         key_manager=key_manager,
-        scrape_chars=scrape_chars,
         url_resolver=url_resolver,
+        scrape_chars=scrape_chars,
+        timeout=timeout,
+        backends=tuple(request.backends) if request.backends else None,
         **({"twitter_cookies": runtime_keys.get("twitter") or runtime_keys.get("twitter_cookies", "")}
            if is_twitter_url(request.url) else {}),
     )
+    result = scraper_fn(request.url, ctx=ctx)
     result = normalize_scrape_result(result, url=request.url)
     return result, site_memory.consume_updates() if site_memory else [], scrape_chars
 

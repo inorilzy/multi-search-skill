@@ -73,7 +73,10 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
     def test_runtime_fractional_timeout_is_not_reparsed_as_integer(self):
         observed = {}
 
-        def instant_scraper(url, **kwargs):
+        def instant_scraper(url, ctx=None, **kwargs):
+            if ctx is not None:
+                observed["timeout"] = ctx.timeout
+                observed["deadline"] = ctx.deadline
             observed.update(kwargs)
             return {"url": url, "markdown": BODY, "via": "fixture"}
 
@@ -135,9 +138,9 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
     def test_search_fetch_reuses_one_absolute_batch_deadline(self):
         captured = {}
 
-        def instant_scraper(url, **kwargs):
-            captured["scraper_deadline"] = kwargs["deadline"]
-            captured["scraper_timeout"] = kwargs["timeout"]
+        def instant_scraper(url, ctx=None, **kwargs):
+            captured["scraper_deadline"] = ctx.deadline if ctx is not None else kwargs["deadline"]
+            captured["scraper_timeout"] = ctx.timeout if ctx is not None else kwargs["timeout"]
             return {"url": url, "markdown": BODY, "via": "fixture"}
 
         def fetch_stage(hits, **kwargs):

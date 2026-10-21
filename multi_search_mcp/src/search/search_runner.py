@@ -11,7 +11,7 @@ from typing import Any, Callable
 from .capabilities import PROVIDER_CAPABILITIES
 from ..support.concurrency import BoundedDaemonExecutor
 from ..support.auth import is_key_retryable_error
-from ..state.key_state import BasicKeyManager, KeyCandidate
+from ..state.key_state import BasicKeyManager, KeyCandidate, rotate_keys
 from ..state.keys import key_pool
 from ..support.models import ANSWER_SOURCES, as_dicts, empty_result_row, is_empty_result
 from ..support.secrets import scrub_secrets
@@ -290,15 +290,13 @@ def run_keyed_source(
         return missing(source, "missing API key")
     last_results: list[dict] = []
     partial_rows: list[dict] = []
-    for idx, candidate in enumerate(candidates):
-        if deadline is not None and time.monotonic() >= deadline:
-            break
-        key = candidate.key if isinstance(candidate, KeyCandidate) else str(candidate)
-        if hasattr(manager, "record_use") and isinstance(candidate, KeyCandidate):
-            manager.record_use(provider, candidate)
-        results = _attach_provider_ranks(as_dicts(call_with_key(key) or []))
-        outcome = manager.classify_result(provider, results)
-        manager.record_result(provider, candidate, outcome)
+    last_candidate: KeyCandidate | None = None
+    for candidate, raw_results, outcome in rotate_keys(
+        provider, candidates, call_with_key,
+        key_manager=manager, deadline=deadline,
+    ):
+        last_candidate = candidate
+        results = _attach_provider_ranks(as_dicts(raw_results or []))
         if not outcome.retryable:
             return (
                 _merge_partial_rows(source, partial_rows, results)
@@ -306,8 +304,6 @@ def run_keyed_source(
             )
         partial_rows.extend(row for row in results if "error" not in row)
         last_results = results
-        if idx == len(candidates) - 1:
-            break
     error_rows = [row for row in last_results if "error" in row]
     # Prefer a provider-origin row: target failures are not evidence about the key.
     chosen = next(
