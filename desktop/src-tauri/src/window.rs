@@ -246,6 +246,13 @@ fn settings_save(
     crate::settings::save(&manager.inner().environment, &input)
 }
 
+/// Provider manifest for the sources/settings pages. Returns the same rows the
+/// desktop uses internally; the UI keeps no copy of this table.
+#[tauri::command]
+fn provider_list() -> Vec<crate::provider::ProviderInfo> {
+    crate::provider::list()
+}
+
 #[tauri::command]
 async fn skill_status(
     manager: tauri::State<'_, Arc<DesktopManager>>,
@@ -363,7 +370,8 @@ pub fn run() {
             credential_delete,
             credential_test,
             settings_view,
-            settings_save
+            settings_save,
+            provider_list
         ])
         .on_window_event(|window, event| {
             if matches!(

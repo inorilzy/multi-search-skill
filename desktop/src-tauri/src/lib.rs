@@ -7,6 +7,7 @@ mod environment;
 mod execution;
 mod install;
 mod process;
+pub mod provider;
 mod redaction;
 pub(crate) mod settings;
 mod skill;
@@ -68,7 +69,7 @@ pub mod credential_fixture {
         }
     }
 
-    fn tavily() -> &'static credential_commands::SourceEntry {
+    fn tavily() -> credential_commands::SourceEntry {
         credential_commands::resolve_source("tavily").expect("tavily is allowlisted")
     }
     pub fn save<B: Backend + Sync + ?Sized>(
@@ -77,19 +78,19 @@ pub mod credential_fixture {
         key: &str,
         now: f64,
     ) -> Result<CredentialOverview, String> {
-        credential_commands::save(&Adapter(backend), variables, tavily(), key, now)
+        credential_commands::save(&Adapter(backend), variables, &tavily(), key, now)
     }
     pub fn delete<B: Backend + Sync + ?Sized>(
         backend: &B,
         variables: &BTreeMap<String, String>,
     ) -> Result<CredentialOverview, String> {
-        credential_commands::delete(&Adapter(backend), variables, tavily())
+        credential_commands::delete(&Adapter(backend), variables, &tavily())
     }
     pub fn overview<B: Backend + Sync + ?Sized>(
         backend: &B,
         variables: &BTreeMap<String, String>,
     ) -> CredentialOverview {
-        credential_commands::overview(&Adapter(backend), variables, tavily())
+        credential_commands::overview(&Adapter(backend), variables, &tavily())
     }
     /// Source-aware overview for any allowlisted UI name. Unknown names return an error.
     pub fn overview_for<B: Backend + Sync + ?Sized>(
@@ -101,7 +102,7 @@ pub mod credential_fixture {
         Ok(credential_commands::overview(
             &Adapter(backend),
             variables,
-            entry,
+            &entry,
         ))
     }
     pub fn read_for<B: Backend + Sync + ?Sized>(
@@ -110,7 +111,7 @@ pub mod credential_fixture {
         source: &str,
     ) -> Result<String, String> {
         let entry = credential_commands::resolve_source(source)?;
-        Ok(credential_commands::read(&Adapter(backend), variables, entry)?.value)
+        Ok(credential_commands::read(&Adapter(backend), variables, &entry)?.value)
     }
     pub fn save_for<B: Backend + Sync + ?Sized>(
         backend: &B,
@@ -122,7 +123,7 @@ pub mod credential_fixture {
         credential_commands::save(
             &Adapter(backend),
             variables,
-            credential_commands::resolve_source(source)?,
+            &credential_commands::resolve_source(source)?,
             key,
             now,
         )
@@ -175,10 +176,10 @@ pub mod credential_fixture {
         Ok((entry.source, entry.provider))
     }
     pub fn interpret(payload: &Value) -> TestOutcome {
-        credential_commands::interpret_source(payload, tavily())
+        credential_commands::interpret_source(payload, &tavily())
     }
     pub fn test_args(query: &str) -> Vec<String> {
-        credential_commands::test_args(query, tavily())
+        credential_commands::test_args(query, &tavily())
     }
     pub fn source_test(
         source: &str,
@@ -186,8 +187,8 @@ pub mod credential_fixture {
     ) -> Result<(Vec<String>, TestOutcome), String> {
         let entry = credential_commands::resolve_test_source(source)?;
         Ok((
-            credential_commands::test_args("synthetic connectivity", entry),
-            credential_commands::interpret_source(payload, entry),
+            credential_commands::test_args("synthetic connectivity", &entry),
+            credential_commands::interpret_source(payload, &entry),
         ))
     }
 }

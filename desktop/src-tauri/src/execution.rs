@@ -1,4 +1,4 @@
-use crate::{process::OwnedProcess, DesktopManager};
+use crate::{process::OwnedProcess, provider, DesktopManager};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -15,28 +15,12 @@ pub struct SearchOptions {
     pub sources: Vec<String>,
     pub timeout: u32,
 }
-/// Source names the CLI accepts for `--source`. Includes the settings page's canonical names
-/// (`sov2ex`, `github_repos`) and the CLI aliases (`v2ex`, `github-repos`, `github`), which the
-/// CLI maps to the same source. Mirrors `ALL_SOURCE_NAMES` and `SOURCE_ALIASES` in search_runner.py.
+/// Whether `name` may be passed to CLI `--source`. The allowlist is the union
+/// of every canonical source, its `cli_source` spelling, and its registered
+/// aliases — all derived from `provider::PROVIDERS`. Mirrors the Python
+/// `ALL_SOURCE_NAMES` ∪ `SOURCE_ALIASES` set; a contract test asserts parity.
 pub(crate) fn is_allowed_source(name: &str) -> bool {
-    [
-        "brave",
-        "parallel",
-        "tavily",
-        "exa",
-        "serpapi",
-        "firecrawl",
-        "baidu",
-        "twitter",
-        "stackoverflow",
-        "github_repos",
-        "github-repos",
-        "github",
-        "hackernews",
-        "sov2ex",
-        "v2ex",
-    ]
-    .contains(&name)
+    provider::is_allowed_source(name)
 }
 
 #[derive(Clone, Serialize)]

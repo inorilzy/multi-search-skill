@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 import { mountSources } from '../ui/sources.js';
+import { withProviders } from './providers.js';
 
 const ALL = ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter'];
 const KEYED = ALL.slice(0, 8);
@@ -28,7 +29,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
     credentialStatus: async source => { seen.push(source); return absent; },
     credentialTest: async () => ({ result: 'success', message: '' }),
   };
-  const mounted = await mountSources(root, api);
+  const mounted = await mountSources(root, withProviders(api));
 
   const rows = [...root.querySelectorAll('[data-source-row]')].map(node => node.getAttribute('data-source-row'));
   assert.deepEqual(rows, ALL, 'all twelve sources appear as list rows in a stable order');
@@ -65,7 +66,7 @@ test('per-source test outcomes map to their own source and never leak into a reb
     credentialStatus: async () => stored,
     credentialTest: source => new Promise(resolve => { resolvers[source] = () => resolve({ result: outcomes[source], message: '' }); }),
   };
-  await mountSources(root, api);
+  await mountSources(root, withProviders(api));
 
   const expected = {
     tavily: '测试成功',
@@ -102,7 +103,7 @@ test('all twelve sources expose independent explicit test controls', async () =>
     credentialStatus: async () => absent,
     credentialTest: async source => { called.push(source); return { result: 'success', message: source }; },
   };
-  const mounted = await mountSources(root, api);
+  const mounted = await mountSources(root, withProviders(api));
   for (const name of ALL) {
     await pick(root, name);
     const detail = detailOf(root);
@@ -126,7 +127,7 @@ test('an enable toggle preserves route, timeout and the Twitter path it was not 
     settingsView: async () => current,
     settingsSave: async input => { sent = input; return settings({ ...input }); },
   };
-  await mountSources(root, api);
+  await mountSources(root, withProviders(api));
   const toggle = root.querySelector('[data-toggle="brave"]');
   toggle.checked = false;
   toggle.dispatchEvent(new window.Event('change'));
@@ -149,7 +150,7 @@ test('a rejected toggle save reverts the switch and keeps the error visible', as
     credentialStatus: async () => absent,
     settingsSave: async () => { throw '现有配置文件无法读取，保存已被阻止。'; },
   };
-  await mountSources(root, api);
+  await mountSources(root, withProviders(api));
   const toggle = root.querySelector('[data-toggle="exa"]');
   toggle.checked = false;
   toggle.dispatchEvent(new window.Event('change'));
@@ -161,11 +162,11 @@ test('a rejected toggle save reverts the switch and keeps the error visible', as
 
 test('overview, search, filters and keyboard shortcut use real source state', async () => {
   const { window, root } = setup();
-  const mounted = await mountSources(root, {
+  const mounted = await mountSources(root, withProviders({
     settingsView: async () => settings({ disabled_sources: ['exa', 'twitter'] }),
     credentialRead: async () => ({ value: '' }),
     credentialStatus: async source => source === 'baidu' ? { ...absent, effective_source: 'sqlite', store: { state: 'present', saved_at: 1 } } : absent,
-  });
+  }));
   assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '10');
   assert.equal(root.querySelector('[data-stat="configured"]').textContent, '1');
   assert.equal(root.querySelector('[data-stat="absent"]').textContent, '8');
@@ -189,8 +190,8 @@ test('overview, search, filters and keyboard shortcut use real source state', as
 
 test('unknown settings never pretend sources are enabled', async () => {
   const { window, root } = setup();
-  await mountSources(root, { settingsView: async () => { throw Error('offline'); }, credentialRead: async () => ({ value: '' }),
-    credentialStatus: async () => absent });
+  await mountSources(root, withProviders({ settingsView: async () => { throw Error('offline'); }, credentialRead: async () => ({ value: '' }),
+    credentialStatus: async () => absent }));
   assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '—');
   assert.ok([...root.querySelectorAll('[data-toggle]')].every(input => input.disabled));
   assert.match(root.querySelector('[data-list-error]').textContent, /状态未知/);
@@ -201,12 +202,12 @@ test('queued source changes reread current settings and preserve both toggles', 
   const { window, root } = setup();
   let current = settings();
   let reads = 0;
-  await mountSources(root, {
+  await mountSources(root, withProviders({
     credentialRead: async () => ({ value: '' }),
     credentialStatus: async () => absent,
     settingsView: async () => { reads += 1; return { ...current, disabled_sources: [...current.disabled_sources] }; },
     settingsSave: async input => { await flush(); current = settings(input); return current; },
-  });
+  }));
   current = settings({ route: 'dev', timeout: 22, twitter_cookies_path: 'new-cookie-path' });
   for (const source of ['exa', 'brave']) {
     const input = root.querySelector(`[data-toggle="${source}"]`);
@@ -226,13 +227,13 @@ test('row testing sends one request and saving invalidates row success', async (
   const { window, root } = setup();
   let calls = 0;
   const stored = { ...absent, effective_source: 'sqlite', store: { state: 'present', saved_at: 1 } };
-  await mountSources(root, {
+  await mountSources(root, withProviders({
     settingsView: async () => settings(),
     credentialRead: async () => ({ value: '' }),
     credentialStatus: async () => stored,
     credentialTest: async () => { calls += 1; return { result: 'success', message: 'synthetic response' }; },
     credentialSave: async () => ({ ...stored, store: { state: 'present', saved_at: 2 } }),
-  });
+  }));
   const row = root.querySelector('[data-source-row="tavily"]');
   row.querySelector('[data-row-test]').click();
   await flush(); await flush();
@@ -249,7 +250,7 @@ test('row testing sends one request and saving invalidates row success', async (
 
 test('persisted source setting changes invalidate prior row and editor success', async () => {
   const {window,root}=setup();let current=settings();
-  await mountSources(root,{settingsView:async()=>current,settingsSave:async input=>(current=settings(input)),credentialStatus:async()=>({...absent,effective_source:'sqlite',store:{state:'present',saved_at:1}}),credentialRead:async()=>({value:'synthetic'}),credentialTest:async()=>({result:'success',message:'verified'})});
+  await mountSources(root,withProviders({settingsView:async()=>current,settingsSave:async input=>(current=settings(input)),credentialStatus:async()=>({...absent,effective_source:'sqlite',store:{state:'present',saved_at:1}}),credentialRead:async()=>({value:'synthetic'}),credentialTest:async()=>({result:'success',message:'verified'})}));
   await pick(root,'tavily');detailOf(root).querySelector('[data-action="test"]').click();await flush();assert.equal(root.querySelector('[data-source-row="tavily"] [data-row-result]').dataset.kind,'success');
   const toggle=root.querySelector('[data-toggle="brave"]');toggle.checked=false;toggle.dispatchEvent(new window.Event('change'));await flush();
   assert.equal(root.querySelector('[data-source-row="tavily"] [data-row-result]').dataset.kind,'idle');assert.equal(detailOf(root).querySelector('.test-result').dataset.kind,'idle');window.close();
@@ -258,7 +259,7 @@ test('persisted source setting changes invalidate prior row and editor success',
 test('in-flight keyless and cookie tests cannot restore results after settings change', async () => {
   for (const source of ['hackernews','twitter']) for (const rejects of [false,true]) {
     const {window,root}=setup();let current=settings(),finish;
-    await mountSources(root,{settingsView:async()=>current,settingsSave:async input=>(current=settings(input)),credentialStatus:async()=>absent,credentialRead:async()=>({value:''}),credentialTest:()=>new Promise((resolve,reject)=>{finish=()=>rejects?reject('late error'):resolve({result:'success',message:'late success'});})});
+    await mountSources(root,withProviders({settingsView:async()=>current,settingsSave:async input=>(current=settings(input)),credentialStatus:async()=>absent,credentialRead:async()=>({value:''}),credentialTest:()=>new Promise((resolve,reject)=>{finish=()=>rejects?reject('late error'):resolve({result:'success',message:'late success'});})}));
     await pick(root,source);detailOf(root).querySelector('[data-action="test"]').click();await flush();
     const toggle=root.querySelector('[data-toggle="brave"]');toggle.checked=false;toggle.dispatchEvent(new window.Event('change'));await flush();
     finish();await flush();

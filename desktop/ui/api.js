@@ -24,5 +24,6 @@ export function managementApi(invoke) {
     credentialTest: (source, path) => invoke('credential_test', { source, path }),
     settingsView: () => invoke('settings_view'),
     settingsSave: input => invoke('settings_save', { input }),
+    providerList: () => invoke('provider_list'),
   };
 }
