@@ -9,6 +9,11 @@ from typing import Iterator
 
 DEFAULT_STATE_PATH = Path.home() / ".multi-search" / "state.sqlite"
 
+# Bump when adding an entry to _DATA_MIGRATIONS. Schema objects themselves are
+# still created idempotently (CREATE IF NOT EXISTS / ADD COLUMN), but one-shot
+# data rewrites must run exactly once and are guarded by ``PRAGMA user_version``.
+STATE_SCHEMA_VERSION = 1
+
 
 SCHEMA = (
     """
@@ -177,6 +182,26 @@ class StateStore:
                 "CREATE INDEX IF NOT EXISTS idx_content_sources_url_scope "
                 "ON content_sources (canonical_url, cache_scope, expires_at)"
             )
+            self._migrate_data(conn)
+
+    def _migrate_data(self, conn: sqlite3.Connection) -> None:
+        """Run one-shot data migrations exactly once, guarded by user_version.
+
+        Older releases stored a prefix/suffix display mask in
+        ``key_state.key_fingerprint``. The already-hashed ``key_id`` supplies
+        its replacement without reading any credential source. Running this on
+        every ``SQLiteKeyManager`` construction would rewrite the whole table on
+        every process start, so it lives here behind the schema version.
+        """
+        from_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if from_version >= STATE_SCHEMA_VERSION:
+            return
+        if from_version == 0:
+            conn.execute(
+                "UPDATE key_state SET key_fingerprint = 'sha256:' || substr(key_id, instr(key_id, ':') + 1, 8) "
+                "WHERE key_fingerprint NOT LIKE 'sha256:%'"
+            )
+        conn.execute(f"PRAGMA user_version={STATE_SCHEMA_VERSION}")
 
     def _ensure_columns(self, conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
         existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}

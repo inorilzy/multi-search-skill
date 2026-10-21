@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ from multi_search_mcp.src.support.credential_store import (
     credential_namespace,
     validate_key,
 )
+from tests.desktop_schema import create_config_db as desktop_create_config_db
 
 
 class MemoryBackend:
@@ -262,6 +264,7 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
         self.backend = SQLiteCredentialBackend(self.path)
         self.store = CredentialStore(self.backend)
         self.db = ConfigDatabase(self.path)
+        desktop_create_config_db(self.path)
 
     def test_explicit_database_selector_is_literal_and_home_priority_matches_desktop(self):
         from multi_search_mcp.src.support.credential_store import config_db_path
@@ -273,8 +276,14 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
                          Path(self.tmp.name) / ".multi-search" / "config.sqlite")
 
     def test_missing_database_read_does_not_create_or_touch_legacy_store(self):
+        self.path.unlink()
         self.assertIsNone(self.store.get("tavily"))
         self.assertEqual(self.db.read_settings(), {})
+        self.assertFalse(self.path.exists())
+        # Writes must fail loudly rather than letting the CLI become a second
+        # schema owner by creating the database itself.
+        with self.assertRaisesRegex(CredentialStoreError, "desktop application"):
+            self.db.write_settings({})
         self.assertFalse(self.path.exists())
 
     @unittest.skipUnless(__import__("sys").platform == "win32", "native DPAPI requires Windows")
@@ -316,6 +325,7 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(CredentialStoreError, "schema version"):
             self.db.read_settings()
         self.path.unlink()
+        desktop_create_config_db(self.path)
         self.db.write_settings({})
         from contextlib import closing
         with closing(sqlite3.connect(self.path)) as conn:
@@ -329,7 +339,9 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
         self.backend.protector.encrypt.side_effect = CredentialStoreError("DPAPI encryption failed")
         with self.assertRaises(CredentialStoreError):
             self.store.set("tavily", SYNTHETIC_KEY)
-        self.assertFalse(self.path.exists())
+        # Encryption fails before any SQL runs: the credentials table stays empty.
+        with self.db.connect() as conn:
+            self.assertEqual(conn.execute("SELECT count(*) FROM credentials").fetchone()[0], 0)
         self.db.write_settings({"timeout": 8})
         with self.assertRaises(RuntimeError):
             with self.db.connect() as conn:
@@ -358,12 +370,48 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
                 self.assertNotIn("tavily", load_keys())
             self.assertEqual(old_keys.read_text(encoding="utf-8"), json.dumps({"tavily": "synthetic-old-file-0012"}))
 
-    def test_version_zero_nonempty_and_version_one_missing_or_wrong_columns_rejected(self):
-        import sqlite3
+    def test_cli_never_creates_or_migrates_schema(self):
+        """Ticket 05: the CLI must not perform schema creation or migration SQL."""
+        import sqlite3 as _sqlite3
         from contextlib import closing
-        for statements in (("CREATE TABLE unrelated(value TEXT)",),
-                           ("PRAGMA user_version=1",),
-                           ("CREATE TABLE settings(id INTEGER PRIMARY KEY,data BLOB)", "PRAGMA user_version=1")):
+        # Missing database: read is empty, write refuses and no file appears.
+        self.path.unlink()
+        self.assertEqual(self.db.read_settings(), {})
+        with self.assertRaisesRegex(CredentialStoreError, "desktop application"):
+            self.db.write_settings({"timeout": 5})
+        self.assertFalse(self.path.exists())
+        # Version 0 database: untouched byte-for-byte and reported as unsupported.
+        with closing(_sqlite3.connect(self.path)) as conn:
+            conn.execute("CREATE TABLE unrelated(value TEXT)")
+            conn.commit()
+        before = self.path.read_bytes()
+        with self.assertRaisesRegex(CredentialStoreError, "desktop application"):
+            self.db.read_settings()
+        with self.assertRaisesRegex(CredentialStoreError, "desktop application"):
+            self.db.write_settings({})
+        self.assertEqual(self.path.read_bytes(), before)
+        with closing(_sqlite3.connect(self.path)) as conn:
+            self.assertEqual(
+                conn.execute("PRAGMA user_version").fetchone()[0],
+                0,
+                "the CLI must not bump user_version",
+            )
+        # Version 1 database: writes are allowed but the version is unchanged.
+        self.path.unlink()
+        desktop_create_config_db(self.path)
+        self.db.write_settings({"timeout": 5})
+        with closing(_sqlite3.connect(self.path)) as conn:
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
+
+    def test_version_zero_nonempty_and_version_one_missing_or_wrong_columns_rejected(self):
+        from contextlib import closing
+        # v0 (even with plausible-looking tables) is never adopted: the CLI does
+        # not migrate or create schema.
+        for statements, pattern in (
+            (("CREATE TABLE unrelated(value TEXT)",), "desktop application"),
+            (("PRAGMA user_version=1",), "schema is invalid"),
+            (("CREATE TABLE settings(id INTEGER PRIMARY KEY,data BLOB)", "PRAGMA user_version=1"), "schema is invalid"),
+        ):
             if self.path.exists():
                 self.path.unlink()
             with closing(sqlite3.connect(self.path)) as conn:
@@ -371,7 +419,7 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
                     conn.execute(sql)
                 conn.commit()
             before = self.path.read_bytes()
-            with self.assertRaisesRegex(CredentialStoreError, "schema is invalid"):
+            with self.assertRaisesRegex(CredentialStoreError, pattern):
                 self.db.read_settings()
             self.assertEqual(self.path.read_bytes(), before)
 
@@ -393,14 +441,40 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
     def test_legacy_state_display_masks_are_replaced_with_hashes(self):
         from multi_search_mcp.src.state.state_store import StateStore
         from multi_search_mcp.src.state.key_state import SQLiteKeyManager, key_id_for
-        state = StateStore(Path(self.tmp.name) / "state.sqlite")
-        state.execute("INSERT INTO key_state(provider,key_id,key_fingerprint,status,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                      ("tavily", key_id_for("tavily", SYNTHETIC_KEY), "synt...0001 (old)", "active", "now", "now"))
+        state_path = Path(self.tmp.name) / "state.sqlite"
+        # Write the legacy row into a v0 state database so the one-shot
+        # migration (guarded by PRAGMA user_version) performs the rewrite when
+        # the store is opened. Constructing the manager afterwards must not
+        # rewrite anything.
+        import sqlite3 as _sqlite3
+        from contextlib import closing
+        with closing(_sqlite3.connect(state_path)) as conn:
+            conn.executescript(
+                "CREATE TABLE key_state (provider TEXT NOT NULL, key_id TEXT NOT NULL, key_fingerprint TEXT NOT NULL, "
+                "status TEXT NOT NULL, success_count INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, "
+                "rate_limit_count INTEGER NOT NULL DEFAULT 0, quota_error_count INTEGER NOT NULL DEFAULT 0, "
+                "use_count INTEGER NOT NULL DEFAULT 0, invalid_strikes INTEGER NOT NULL DEFAULT 0, last_used_at TEXT, "
+                "last_success_at TEXT, last_failure_at TEXT, last_error_type TEXT, last_error_message TEXT, "
+                "cooldown_until TEXT, exhausted_until TEXT, manually_disabled INTEGER NOT NULL DEFAULT 0, "
+                "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (provider, key_id));"
+            )
+            conn.execute("INSERT INTO key_state(provider,key_id,key_fingerprint,status,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                         ("tavily", key_id_for("tavily", SYNTHETIC_KEY), "synt...0001 (old)", "active", "now", "now"))
+            conn.commit()
+        state = StateStore(state_path)
         manager = SQLiteKeyManager(state)
         fingerprint = manager.status_rows()[0]["key_fingerprint"]
         self.assertTrue(fingerprint.startswith("sha256:"))
         self.assertNotIn("synt", fingerprint)
         self.assertNotIn("0001", fingerprint)
+        # The migration is one-shot: a legacy-format row written after the
+        # version bump is not silently rewritten on every manager construction.
+        state.execute("INSERT INTO key_state(provider,key_id,key_fingerprint,status,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                      ("brave", key_id_for("brave", "synthetic-brave-0002"), "brv...0002 (old)", "active", "now", "now"))
+        SQLiteKeyManager(state)
+        fingerprints = {row["provider"]: row["key_fingerprint"] for row in SQLiteKeyManager(state).status_rows()}
+        self.assertTrue(fingerprints["tavily"].startswith("sha256:"))
+        self.assertEqual(fingerprints["brave"], "brv...0002 (old)")
 
     def test_invalid_nested_pools_and_unknown_provider_are_rejected(self):
         for value in ([[SYNTHETIC_KEY]], [], [None], {"key": SYNTHETIC_KEY}):
