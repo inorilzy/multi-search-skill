@@ -499,25 +499,32 @@ class ReadSourceCoreTests(unittest.TestCase):
         self.assertEqual(after["last_access_at"], now[0].isoformat())
 
 
-class SourceContentToolTests(unittest.TestCase):
-    def test_fetch_tool_does_not_replace_an_omitted_timeout(self):
-        from multi_search_mcp import tools
+class SourceContentServiceTests(unittest.TestCase):
+    def test_run_fetch_source_does_not_replace_an_omitted_timeout(self):
+        from multi_search_mcp.src import service
 
         captured = {}
 
-        def fake_run(request):
-            captured["request"] = request
-            return {"source_id": request.source_id, "body": "body"}
+        def fake_scraper(url, **kwargs):
+            captured["kwargs"] = kwargs
+            return {"url": url, "markdown": "body", "via": "fake"}
 
-        with mock.patch.object(tools, "run_fetch_source", side_effect=fake_run):
-            response = tools.fetch_source_tool("src_tool")
+        with TemporaryDirectory() as tmp:
+            store = StateStore(Path(tmp) / "state.sqlite")
+            response = service.run_fetch_source(
+                service.FetchSourceRequest(url="https://evidence.example/direct"),
+                state_store=store, scraper=fake_scraper,
+                keys={}, config={},
+                url_resolver=lambda _host: ["93.184.216.34"],
+            )
 
-        self.assertEqual(response["source_id"], "src_tool")
-        self.assertIsNone(captured["request"].timeout)
+        self.assertEqual(response["body"], "body")
+        # Default timeout is used (60s); no explicit timeout was passed in the request.
+        self.assertGreater(captured["kwargs"]["timeout"], 0)
 
-    def test_fetch_and_read_tools_share_the_same_core_state(self):
+    def test_fetch_and_read_share_the_same_core_state(self):
+        from multi_search_mcp.src import service
         from multi_search_mcp.src.state.source_registry import SourceRegistry
-        from multi_search_mcp.tools import fetch_source_tool, read_source_tool
 
         with TemporaryDirectory() as tmp:
             store = StateStore(Path(tmp) / "state.sqlite")
@@ -534,26 +541,21 @@ class SourceContentToolTests(unittest.TestCase):
                     "body_available": False,
                 }],
             )
-            with (
-                mock.patch(
-                    "multi_search_mcp.src.service.StateStore", return_value=store
-                ),
-                mock.patch(
-                    "multi_search_mcp.src.service.load_keys", return_value={}
-                ),
-                mock.patch(
-                    "multi_search_mcp.src.service.scrape_url_smart",
-                    return_value={
-                        "url": "https://93.184.216.34/tool-source",
-                        "markdown": "tool needle body",
-                        "via": "fake",
-                    },
-                ),
-            ):
-                fetched = fetch_source_tool("src_tool")
-                read = read_source_tool(
-                    "src_tool", keyword="needle", limit=6
-                )
+            scraper = mock.Mock(return_value={
+                "url": "https://93.184.216.34/tool-source",
+                "markdown": "tool needle body",
+                "via": "fake",
+            })
+            fetched = service.run_fetch_source(
+                service.FetchSourceRequest(source_id="src_tool"),
+                state_store=store, scraper=scraper,
+                keys={}, config={},
+                url_resolver=lambda _host: ["93.184.216.34"],
+            )
+            read = service.run_read_source(
+                service.ReadSourceRequest(source_id="src_tool", keyword="needle", limit=6),
+                state_store=store,
+            )
 
         self.assertFalse(fetched["cache_hit"])
         self.assertEqual(read["content"], "needle")

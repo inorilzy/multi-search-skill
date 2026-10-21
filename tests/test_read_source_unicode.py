@@ -8,7 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from multi_search_mcp import cli, tools
+from multi_search_mcp import cli
 from multi_search_mcp.src import service
 from multi_search_mcp.src.service import ReadSourceRequest, run_read_source
 from multi_search_mcp.src.state.content_store import ContentStore
@@ -161,7 +161,10 @@ class ReadSourceUnicodeTests(unittest.TestCase):
             offset = 0
             for expected in ("[TARGET].", "🙂 后续"):
                 output, errors = io.StringIO(), io.StringIO()
-                result = tools.read_source_tool("src_unicode", keyword="[target].", offset=offset, limit=9)
+                result = run_read_source(
+                    ReadSourceRequest("src_unicode", keyword="[target].", offset=offset, limit=9),
+                    state_store=self.store,
+                )
                 exit_code = cli.main(
                     ["read", "src_unicode", "--keyword", "[target].", "--offset", str(offset), "--limit", "9"],
                     stdout=output, stderr=errors,

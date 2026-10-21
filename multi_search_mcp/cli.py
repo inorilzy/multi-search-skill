@@ -137,11 +137,19 @@ def main(
     except CLIUsageError as exc:
         stderr.write(f"usage error: {exc}\n")
         return 2
+    except ValueError as exc:
+        if args is not None:
+            _write_payload({
+                "error": str(exc),
+                "error_type": "invalid_request",
+            }, args.format, stdout)
+        stderr.write(f"error: {exc}\n")
+        return 1
     except Exception as exc:  # noqa: BLE001 - CLI boundary should be explicit and terse
         if args is not None:
             _write_payload({
                 "error": str(exc),
-                "error_type": "invalid_request" if isinstance(exc, ValueError) else "runtime_error",
+                "error_type": "runtime_error",
             }, args.format, stdout)
         stderr.write(f"error: {exc}\n")
         return 1

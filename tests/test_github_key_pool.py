@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 from urllib.error import HTTPError
 
-from multi_search_mcp import cli, tools
+from multi_search_mcp import cli
 from multi_search_mcp.src import service
 from multi_search_mcp.src.search.registry import build_provider_registry
 from multi_search_mcp.src.search.search_runner import SearchRunner, SearchRunnerConfig
@@ -242,18 +242,23 @@ class GitHubKeyPoolTests(unittest.TestCase):
         with mock.patch.object(service, "StateStore", return_value=self.store), \
              mock.patch.object(service, "load_config", return_value={}), \
              mock.patch.object(service, "resolve_config_path", return_value=self.keys_path.parent / "config.json"), \
-             mock.patch.object(tools, "StateStore", return_value=self.store), \
              mock.patch.object(cli, "StateStore", return_value=self.store):
             self.assertEqual(service.doctor_data()["key_status"], expected)
             self.assertEqual(service.list_sources(include_key_status=True)["key_status"], expected)
-            self.assertEqual(tools.get_key_status_tool("github")["key_status"], expected)
+            self.assertEqual(
+                {"key_status": SQLiteKeyManager(self.store).status_rows("github")}["key_status"],
+                expected,
+            )
             stdout, stderr = StringIO(), StringIO()
             code = cli.main(["keys", "status", "--provider", "github"], stdout=stdout, stderr=stderr)
             self.assertEqual(code, 0, stderr.getvalue())
             self.assertEqual(json.loads(stdout.getvalue())["key_status"], expected)
             self.store.execute("UPDATE key_state SET manually_disabled = 1 WHERE provider = 'github'")
             self.assertEqual(self.manager.candidates("github", "fixture-token-one"), [])
-            self.assertEqual(tools.reset_key_state_tool("github"), {"updated": 1})
+            self.assertEqual(
+                {"updated": SQLiteKeyManager(self.store).reset(provider="github", key_id=None)},
+                {"updated": 1},
+            )
             self.assertEqual(len(self.manager.candidates("github", "fixture-token-one")), 1)
 
 

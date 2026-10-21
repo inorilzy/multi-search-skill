@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from multi_search_mcp import cli, tools
+from multi_search_mcp import cli
 from multi_search_mcp.src import service
 from multi_search_mcp.src.search import registry
 from multi_search_mcp.src.search.search_runner import ProviderSpec
@@ -43,31 +43,38 @@ class QueryFusionAdapterTests(unittest.TestCase):
                         mock.patch.object(service, "validate_public_http_url", return_value=None), \
                         mock.patch.object(service, "scrape_url_smart", side_effect=lambda url, **_: {"url": url, "markdown": "Attribution: original release. " * 20, "via": "fake"}):
                     for variants in (["angle", "original", "angle"], []):
-                        mcp_result = tools.search_web_tool("original", sources=["brave"], count=1, expand=variants)
+                        service_result = service.run_search_web(
+                            service.SearchWebRequest(
+                                query="original", sources=["brave"], count=1, expand=variants,
+                            ),
+                        )
                         output, errors = io.StringIO(), io.StringIO()
                         argv = ["search", "original", "--source", "brave", "--count", "1"]
                         for variant in variants:
                             argv.extend(["--expand", variant])
                         self.assertEqual(cli.main(argv, stdout=output, stderr=errors), 0, errors.getvalue())
                         cli_result = json.loads(output.getvalue())
-                        self.assertEqual(stable_hits(mcp_result), stable_hits(cli_result))
+                        self.assertEqual(stable_hits(service_result), stable_hits(cli_result))
                         self.assertTrue(all(hit["body_backend"] == "content-store" for hit in cli_result["results"]))
-                        self.assertEqual(mcp_result["diagnostics"]["query_fusion"], cli_result["diagnostics"]["query_fusion"])
+                        self.assertEqual(service_result["diagnostics"]["query_fusion"], cli_result["diagnostics"]["query_fusion"])
                         self.assertEqual(cli_result["scrapes"][0]["markdown"], "Attribution: original release. " * 20)
                         self.assertNotIn("body", cli_result["results"][0])
-                        source_id = mcp_result["results"][0]["source_id"]
+                        source_id = service_result["results"][0]["source_id"]
                         fetched = service.run_fetch_source(
                             {"source_id": source_id, "max_chars": 12}, state_store=store,
                             scraper=lambda url, **_: {"url": url, "markdown": "Attribution: original release. " * 20},
                             keys={}, config={}, url_resolver=lambda _: ["93.184.216.34"],
                         )
                         self.assertEqual(len(fetched["body"]), 12)
-                        mcp_read = tools.read_source_tool(source_id, keyword="original", limit=17)
+                        service_read = service.run_read_source(
+                            service.ReadSourceRequest(source_id, keyword="original", limit=17),
+                            state_store=store,
+                        )
                         read_output = io.StringIO()
                         self.assertEqual(cli.main(["read", source_id, "--keyword", "original", "--limit", "17"],
                                                   stdout=read_output, stderr=errors), 0, errors.getvalue())
-                        self.assertEqual(mcp_read, json.loads(read_output.getvalue()))
-                        self.assertEqual(mcp_read["content"], "original release.")
+                        self.assertEqual(service_read, json.loads(read_output.getvalue()))
+                        self.assertEqual(service_read["content"], "original release.")
 
 
 if __name__ == "__main__":

@@ -739,6 +739,10 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     """Compatibility presentation of the shared RRF search-and-fetch flow."""
     if isinstance(request, dict):
         request = MultiSearchRequest(**request)
+    if request.output not in {"json", "markdown", "both"}:
+        raise ValueError(
+            f"invalid output mode: {request.output!r}; valid: json, markdown, both"
+        )
     config = _load_config_safe(request.config_path)
     plan = resolve_search_plan(request, config)
     query_runs = []
@@ -810,6 +814,10 @@ def run_scrape(
 ) -> dict:
     if isinstance(request, dict):
         request = ScrapeRequest(**request)
+    if request.output not in {"json", "markdown", "both"}:
+        raise ValueError(
+            f"invalid output mode: {request.output!r}; valid: json, markdown, both"
+        )
     result, updates, scrape_chars = _run_scrape_raw(
         request, state_store=state_store, scraper=scraper, keys=keys,
         config=config, url_resolver=url_resolver,
