@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
 
-from multi_search_mcp import cli, tools
+from multi_search_mcp import cli
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape.scrapers import exa as exa_scraper
 from multi_search_mcp.src.search.searchers import exa as exa_searcher
@@ -225,8 +225,7 @@ class ExaTargetErrorTests(unittest.TestCase):
             return response(target_error(403, f"SOURCE_NOT_AVAILABLE {req.get_header('X-api-key')}"))
 
         with mock.patch.object(exa_scraper, "urlopen_retry", side_effect=fetch), \
-                mock.patch.object(cli, "run_fetch_source", side_effect=fetch_source), \
-                mock.patch.object(tools, "run_fetch_source", side_effect=fetch_source):
+                mock.patch.object(cli, "run_fetch_source", side_effect=fetch_source):
             for output_format in cli.OUTPUT_FORMATS:
                 with self.subTest(output_format=output_format):
                     stdout, stderr = io.StringIO(), io.StringIO()
@@ -239,29 +238,29 @@ class ExaTargetErrorTests(unittest.TestCase):
                     self.assertIn("403", output)
                     for key in KEYS:
                         self.assertNotIn(key, output)
-            result = tools.fetch_source_tool(url=URL, backends=["exa"])
-            output = json.dumps(result)
+            # The service raises ValueError on a target scrape failure;
+            # verify the message surfaces the provider detail and that
+            # the keys are still redacted.
+            with self.assertRaises(ValueError) as raised:
+                fetch_source(
+                    service.FetchSourceRequest(url=URL, backends=["exa"])
+                )
+            output = str(raised.exception)
             self.assertIn("SOURCE_NOT_AVAILABLE", output)
             self.assertIn("403", output)
-            self.assertEqual(json.loads(output)["error_type"], "invalid_request")
             for key in KEYS:
                 self.assertNotIn(key, output)
         self.assertEqual(len(self.manager.candidates("exa", KEYS)), 2)
 
     def test_adapter_scrape_preserves_nested_error_metadata_in_all_modes(self):
-        def scrape(request):
-            return service.run_scrape(
-                request, keys=self.keys, config={}, state_store=self.store,
-                url_resolver=lambda _host: ["93.184.216.34"],
-            )
-
-        with mock.patch.object(exa_scraper, "urlopen_retry", side_effect=lambda *_a, **_k: response(target_error())), \
-                mock.patch.object(tools, "run_scrape", side_effect=scrape):
+        with mock.patch.object(exa_scraper, "urlopen_retry", side_effect=lambda *_a, **_k: response(target_error())):
             for mode in ("json", "markdown", "both"):
                 with self.subTest(mode=mode):
-                    result = tools.scrape_url_tool(url=URL, backends=["exa"], output=mode)
-                    output = json.dumps(result)
-                    payload = json.loads(output)
+                    payload = service.run_scrape(
+                        service.ScrapeRequest(url=URL, backends=["exa"], output=mode),
+                        keys=self.keys, config={}, state_store=self.store,
+                        url_resolver=lambda _host: ["93.184.216.34"],
+                    )
                     self.assertEqual(payload["result"]["error_origin"], "target")
                     self.assertEqual(payload["result"]["error_type"], "target")
                     self.assertIn("SOURCE_NOT_AVAILABLE (403)", payload["result"]["error"])

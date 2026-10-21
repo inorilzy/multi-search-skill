@@ -30,8 +30,8 @@ from multi_search_mcp.src.state.keys import (
     load_keys,
     pick_key,
 )
-from multi_search_mcp.src.state.key_state import BasicKeyManager
-from multi_search_mcp.src.state.mark_exhausted import _mark_config_exhausted
+from multi_search_mcp.src.state.key_state import BasicKeyManager, SQLiteKeyManager
+from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support.dedup import _norm_url
 from multi_search_mcp.src.support.models import ProviderError, ScrapeResult, SearchResult, empty_result_row, is_empty_result
 from multi_search_mcp.src.support.secrets import scrub_secrets
@@ -682,30 +682,37 @@ class KeyTests(unittest.TestCase):
         self.assertEqual(active, ["active", "second-active"])
         self.assertEqual(count_jina_keys(cfg), (2, 3))
 
-    def test_mark_config_exhausted_updates_key_pool_entry(self):
+    def test_sqlite_key_manager_drops_a_key_after_quota_exhaustion(self):
+        # ``mark_exhausted`` was retired with the legacy ~/.search-keys.json
+        # reader. The equivalent live disable is a QUOTA_EXHAUSTED record on
+        # the SQLite-backed key manager.
+        from multi_search_mcp.src.state.key_state import (
+            KeyCandidate,
+            KeyOutcome,
+            key_fingerprint,
+            key_id_for,
+        )
+
         with tempfile.TemporaryDirectory() as tmpdir:
-            keys_path = Path(tmpdir) / ".search-keys.json"
-            keys_path.write_text(
-                json.dumps({"jina": [{"key": "j1"}, {"key": "j2", "exhausted": False}]}),
-                encoding="utf-8",
+            manager = SQLiteKeyManager(StateStore(Path(tmpdir) / "state.sqlite"))
+            candidate = KeyCandidate(
+                key="j1",
+                key_id=key_id_for("jina", "j1"),
+                fingerprint=key_fingerprint("j1"),
             )
+            first = manager.candidates("jina", ["j1", "j2"])
+            manager.record_result(
+                "jina", candidate,
+                KeyOutcome(
+                    success=False, retryable=True,
+                    error_type="quota_exhausted",
+                    error_message="quota exceeded",
+                ),
+            )
+            second = manager.candidates("jina", ["j1", "j2"])
 
-            with mock.patch("pathlib.Path.home", return_value=Path(tmpdir)):
-                changed = _mark_config_exhausted("j2")
-
-            saved = json.loads(keys_path.read_text(encoding="utf-8"))
-
-        self.assertTrue(changed)
-        self.assertFalse(saved["jina"][0].get("exhausted", False))
-        self.assertTrue(saved["jina"][1]["exhausted"])
-
-    def test_mark_config_exhausted_raises_on_corrupt_file(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            keys_path = Path(tmpdir) / ".search-keys.json"
-            keys_path.write_text('{"jina": ["j1"', encoding="utf-8")
-            with mock.patch("pathlib.Path.home", return_value=Path(tmpdir)):
-                with self.assertRaises(KeysError):
-                    _mark_config_exhausted("j1")
+        self.assertEqual([c.key for c in first], ["j1", "j2"])
+        self.assertEqual([c.key for c in second], ["j2"])
 
 
 if __name__ == "__main__":

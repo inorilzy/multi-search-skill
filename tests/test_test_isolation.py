@@ -48,9 +48,8 @@ from multi_search_mcp.src.support import config as config_module
 from multi_search_mcp.src.state import state_store
 from multi_search_mcp.src.state.keys import load_keys
 
-assert config_module.USER_CONFIG_PATH == home / ".multi-search" / "multi-search-config.json"
-assert config_module.USER_CONFIG_PATH.is_file()
-assert json.loads(config_module.USER_CONFIG_PATH.read_text(encoding="utf-8")) == {}
+assert config_module.resolve_config_path() == home / ".multi-search" / "config.sqlite"
+# The SQLite config DB is created on first write, not eagerly.
 keys_path = home / ".search-keys.json"
 assert keys_path.is_file()
 assert json.loads(keys_path.read_text(encoding="utf-8")) == {}
@@ -218,9 +217,8 @@ assert active_guard() is not None, "child test isolation was not activated"
 home = Path.home()
 assert home == Path(os.environ["USERPROFILE"])
 assert os.environ.get("MULTI_SEARCH_CONFIG", "") == ""
-from multi_search_mcp.src.support.config import USER_CONFIG_PATH
-assert USER_CONFIG_PATH == home / ".multi-search" / "multi-search-config.json"
-assert USER_CONFIG_PATH.is_file()
+from multi_search_mcp.src.support.config import resolve_config_path
+assert resolve_config_path() == home / ".multi-search" / "config.sqlite"
 assert json.loads((home / ".search-keys.json").read_text(encoding="utf-8")) == {}
 from multi_search_mcp.src.state.keys import load_keys
 loaded_keys = load_keys()

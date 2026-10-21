@@ -27,7 +27,6 @@ from multi_search_mcp.src.state.key_state import (
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.state.site_memory import ScrapeAttempt, SiteScraperMemory
 from multi_search_mcp.src.support.format import format_results
-from multi_search_mcp import tools
 from multi_search_mcp.src.support import config as config_module
 from multi_search_mcp.src.support.dedup import _norm_url, rank_results
 from multi_search_mcp.src import service as service_module
@@ -1171,9 +1170,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
     def test_explicit_source_fully_disabled_returns_structured_error(self):
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"disabled_sources": ["brave"]}), \
              mock.patch("multi_search_mcp.src.service.load_keys", return_value={}):
-            result = tools.multi_search_tool("q", sources=["brave"], use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("all selected sources are disabled", result["error"])
+            with self.assertRaisesRegex(ValueError, "all selected sources are disabled"):
+                run_multi_search(MultiSearchRequest(query="q", sources=["brave"], use_state=False))
 
     def test_disabled_source_alias_is_normalized(self):
         captured = {}
@@ -1196,9 +1194,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
     def test_unknown_disabled_source_is_invalid_request(self):
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"disabled_sources": ["not-a-source"]}), \
              mock.patch("multi_search_mcp.src.service.load_keys", return_value={}):
-            result = tools.multi_search_tool("q", use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("unknown disabled source", result["error"])
+            with self.assertRaisesRegex(ValueError, "unknown disabled source"):
+                run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
     def test_disabled_sources_non_list_is_invalid_request(self):
         # Exercise the real config_list ConfigError -> ValueError -> invalid_request path.
@@ -1257,10 +1254,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
 
 class PluginEntryLayerTests(unittest.TestCase):
     def test_multi_search_unknown_route_returns_structured_error(self):
-        result = tools.multi_search_tool("q", route="discussion", use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("valid routes", result["error"])
-        self.assertNotIn("markdown", result)
+        with self.assertRaisesRegex(ValueError, "valid routes"):
+            run_multi_search(MultiSearchRequest(query="q", route="discussion", use_state=False))
 
     def test_multi_search_web_route_uses_default_profile(self):
         captured = {}
@@ -1277,7 +1272,7 @@ class PluginEntryLayerTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=_fake_ranked_fetch_stage):
-            result = tools.multi_search_tool("q", route="web", use_state=False)
+            result = run_multi_search(MultiSearchRequest(query="q", route="web", use_state=False))
 
         self.assertNotIn("error", result)
         self.assertEqual(captured["route"], "default")
@@ -1302,26 +1297,15 @@ class PluginEntryLayerTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
-            result = tools.multi_search_tool("q", timeout=None, scrape_timeout=None, use_state=False)
+            result = run_multi_search(MultiSearchRequest(query="q", timeout=None, scrape_timeout=None, use_state=False))
 
         self.assertNotIn("error", result)
         self.assertEqual(captured["timeout"], 60)
         self.assertEqual(captured["scrape_timeout"], 60)
 
     def test_multi_search_empty_query_returns_structured_error(self):
-        result = tools.multi_search_tool("", use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertEqual(result["error"], "query is required")
-
-    def test_invalid_output_mode_is_rejected_at_tool_boundary(self):
-        result = tools.multi_search_tool("q", output="markdwon", use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("both", result["valid_output"])
-
-    def test_set_site_scraper_preference_rejects_unknown_backend(self):
-        result = tools.set_site_scraper_preference_tool("example.com", "not-a-backend")
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("jina", result["valid_scrapers"])
+        with self.assertRaisesRegex(ValueError, "query is required"):
+            run_multi_search(MultiSearchRequest(query="", use_state=False))
 
     def test_multi_search_use_state_false_skips_state_store(self):
         captured = {}
@@ -1341,7 +1325,7 @@ class PluginEntryLayerTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
-            tools.multi_search_tool("q", use_state=False)
+            run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
         self.assertEqual(captured["key_manager"], "BasicKeyManager")
 

@@ -543,25 +543,29 @@ class SearchWebCoreTests(unittest.TestCase):
         )
 
 
-class SearchWebToolTests(unittest.TestCase):
-    def test_mcp_tool_does_not_replace_an_omitted_timeout(self):
-        from multi_search_mcp import tools
+class SearchWebServiceTests(unittest.TestCase):
+    def test_run_search_web_does_not_replace_an_omitted_timeout(self):
+        from multi_search_mcp.src import service
 
         captured = {}
 
-        def fake_run(request):
+        def fake_candidates(request, **kwargs):
             captured["request"] = request
-            return {"query": request.query, "results": []}
+            return {
+                "query": request.query, "results": [], "errors": [],
+                "provider_status": [], "diagnostics": {},
+            }
 
-        with mock.patch.object(tools, "run_search_web", side_effect=fake_run):
-            response = tools.search_web_tool("tool query")
+        with mock.patch.object(service, "_run_search_candidates", side_effect=fake_candidates):
+            response = service.run_search_web(
+                service.SearchWebRequest(query="tool query", use_state=False, no_scrape=True),
+            )
 
         self.assertEqual(response["query"], "tool query")
         self.assertIsNone(captured["request"].timeout)
 
-    def test_mcp_tool_is_a_thin_contract_over_candidate_core(self):
-        from multi_search_mcp.src.service import _run_search_candidates
-        from multi_search_mcp.tools import search_web_tool
+    def test_run_search_web_is_a_thin_contract_over_candidate_core(self):
+        from multi_search_mcp.src import service
 
         provider = ProviderSpec(
             name="brave",
@@ -577,19 +581,17 @@ class SearchWebToolTests(unittest.TestCase):
             ],
         )
         # Isolate argument forwarding from the public search body-fetch stage.
-        with mock.patch(
-            "multi_search_mcp.tools.run_search_web",
-            side_effect=lambda request: _run_search_candidates(
-                request, providers={"brave": provider}, keys={}, config={},
+        response = service.run_search_web(
+            service.SearchWebRequest(
+                query="tool query", sources=["brave"], count=1,
+                use_state=False, no_scrape=True,
             ),
-        ):
-            response = search_web_tool(
-                "tool query", sources=["brave"], count=1, use_state=False
-            )
+            providers={"brave": provider}, keys={}, config={},
+        )
 
         self.assertEqual(response["query"], "tool query")
         self.assertEqual(response["results"][0]["source"], "brave")
-        self.assertNotIn("scrapes", response)
+        self.assertEqual(response["scrapes"], [])
 
 
 if __name__ == "__main__":

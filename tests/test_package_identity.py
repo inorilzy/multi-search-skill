@@ -8,7 +8,7 @@ class PackageIdentityTests(unittest.TestCase):
         script = """
 import sys
 import multi_search_mcp.cli
-import multi_search_mcp.tools
+import multi_search_mcp.src.service
 
 assert "multi_search_mcp.src.scrape.scrape_planner" not in sys.modules
 """
@@ -18,13 +18,13 @@ assert "multi_search_mcp.src.scrape.scrape_planner" not in sys.modules
         )
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
-    def test_tools_load_core_only_through_canonical_package(self):
+    def test_cli_loads_core_only_through_canonical_package(self):
         script = """
 import sys
-import multi_search_mcp.tools as tools
+import multi_search_mcp.cli as cli
 from multi_search_mcp.src import service
 
-assert tools.MultiSearchRequest is service.MultiSearchRequest
+assert cli is not service
 assert not any(name == "src" or name.startswith("src.") for name in sys.modules)
 """
         completed = subprocess.run(

@@ -4,7 +4,7 @@ import unittest
 from contextlib import ExitStack
 from unittest import mock
 
-from multi_search_mcp import cli, tools
+from multi_search_mcp import cli
 from multi_search_mcp.src import service
 
 
@@ -65,33 +65,27 @@ class FullContentInterfaceTests(unittest.TestCase):
                 self.assertIn(BODY, stdout.getvalue())
                 self.assertEqual(stdout.getvalue().count(MARKER), 1)
 
-    def test_fetch_tool_preserves_positional_arguments_and_false_default(self):
+    def test_service_fetch_source_preserves_full_content_default_and_max_chars(self):
+        # tools.fetch_source_tool used to translate positional args into a
+        # FetchSourceRequest. Now that the adapter is removed, callers build
+        # the request directly and pass it to service.run_fetch_source.
         cases = (
-            (("source_1", None, ["jina"], 1200, 5, False), False),
-            (("source_1", None, ["jina"], 1200, 5, False, False), False),
-            (("source_1", None, ["jina"], 1200, 5, False, True), True),
+            ({"max_chars": 1200, "timeout": 5, "use_state": False}, False, 1200),
+            ({"max_chars": 1200, "timeout": 5, "use_state": False, "full_content": False}, False, 1200),
+            ({"max_chars": 1200, "timeout": 5, "use_state": False, "full_content": True}, True, None),
         )
-        for arguments, full_content in cases:
-            with self.subTest(arguments=arguments):
-                expected = {"body": "fixture body"}
-                with mock.patch.object(tools, "run_fetch_source", return_value=expected) as run:
-                    result = tools.fetch_source_tool(*arguments)
-                self.assertEqual(result, expected)
-                request = run.call_args.args[0]
-                self.assertEqual(request.source_id, "source_1")
-                self.assertEqual(request.backends, ["jina"])
-                self.assertEqual(request.max_chars, 1200)
+        for kwargs, full_content, max_chars in cases:
+            with self.subTest(kwargs=kwargs):
+                request = service.FetchSourceRequest(
+                    source_id="source_1", backends=["jina"], **kwargs
+                )
+                self.assertIs(request.full_content, full_content)
+                self.assertEqual(request.max_chars, max_chars if max_chars is not None else 1200)
                 self.assertEqual(request.timeout, 5)
                 self.assertIs(request.use_state, False)
-                self.assertIs(request.full_content, full_content)
+                self.assertEqual(request.backends, ["jina"])
 
     def test_adapter_preserves_limits_unless_full_content_is_true(self):
-        def fetch_fixture(request):
-            return service.run_fetch_source(
-                request, keys={}, config={}, prefetched_body=BODY,
-                url_resolver=lambda _host: ["93.184.216.34"],
-            )
-
         cases = (
             ({}, 20_000),
             ({"full_content": False, "max_chars": 1200}, 1200),
@@ -99,8 +93,11 @@ class FullContentInterfaceTests(unittest.TestCase):
         )
         for options, expected_length in cases:
             with self.subTest(options=options):
-                with mock.patch.object(tools, "run_fetch_source", side_effect=fetch_fixture):
-                    payload = tools.fetch_source_tool(url=URL, use_state=False, **options)
+                request = service.FetchSourceRequest(url=URL, use_state=False, **options)
+                payload = service.run_fetch_source(
+                    request, keys={}, config={}, prefetched_body=BODY,
+                    url_resolver=lambda _host: ["93.184.216.34"],
+                )
                 self.assertEqual(json.dumps(payload).count(MARKER), 1)
                 self.assertEqual(payload["body"], BODY[:expected_length])
                 self.assertEqual(payload["content_length"], len(BODY))

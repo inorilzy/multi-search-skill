@@ -5,7 +5,6 @@ import unittest
 from unittest import mock
 
 from multi_search_mcp import cli
-from multi_search_mcp import tools
 from multi_search_mcp.src import service
 from multi_search_mcp.src.search import registry
 from multi_search_mcp.src.search.search_runner import ProviderSpec
@@ -24,33 +23,33 @@ class ExpandSemanticsTests(unittest.TestCase):
             "expand": ["configured extra"],
             "expand_queries": ["configured alias"],
         }
-        kwargs = {"sources": ["hackernews"], "use_state": False}
+        request = {"query": "primary", "sources": ["hackernews"], "use_state": False}
         if expand is not mock.sentinel.omitted:
-            kwargs["expand"] = expand
+            request["expand"] = expand
         with mock.patch.object(service, "_load_config_safe", return_value=config), \
                 mock.patch.object(registry, "build_provider_registry", return_value={
                     "hackernews": ProviderSpec("hackernews", "hackernews", provider),
                 }):
-            result = entrypoint("primary", **kwargs)
+            result = entrypoint(request)
 
         self.assertNotIn("error", result)
         return calls, result
 
     def test_omitted_expand_inherits_config_for_both_tool_entries(self):
-        for entrypoint in (tools.search_web_tool, tools.multi_search_tool):
+        for entrypoint in (service.run_search_web, service.run_multi_search):
             with self.subTest(entrypoint=entrypoint.__name__):
                 calls, _result = self.invoke(entrypoint)
                 self.assertCountEqual(calls, ["primary", "configured extra"])
 
     def test_explicit_empty_expand_disables_config_for_both_tool_entries(self):
-        for entrypoint in (tools.search_web_tool, tools.multi_search_tool):
+        for entrypoint in (service.run_search_web, service.run_multi_search):
             with self.subTest(entrypoint=entrypoint.__name__):
                 calls, result = self.invoke(entrypoint, expand=[])
                 self.assertEqual(calls, ["primary"])
                 self.assertEqual(result["diagnostics"]["queries"], ["primary"])
 
     def test_nonempty_expand_replaces_config_for_both_tool_entries(self):
-        for entrypoint in (tools.search_web_tool, tools.multi_search_tool):
+        for entrypoint in (service.run_search_web, service.run_multi_search):
             with self.subTest(entrypoint=entrypoint.__name__):
                 calls, _result = self.invoke(entrypoint, expand=["request extra"])
                 self.assertCountEqual(calls, ["primary", "request extra"])

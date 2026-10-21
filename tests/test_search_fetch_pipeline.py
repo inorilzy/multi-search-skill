@@ -384,9 +384,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
                     self.assertNotIn("hidden tail beyond preview", output.getvalue())
                     self.assertIn("truncated", output.getvalue())
 
-    def test_mcp_tools_return_fetched_body_without_reordering(self):
-        from multi_search_mcp import tools
-
+    def test_public_service_entrypoints_return_fetched_body_without_reordering(self):
         rows = [_row("brave", "first"), _row("brave", "second")]
         providers = {"brave": _provider("brave", {"primary": rows})}
         with (
@@ -396,9 +394,17 @@ class SearchFetchPipelineTests(unittest.TestCase):
             }),
             mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
         ):
-            for call in (tools.search_web_tool, tools.multi_search_tool):
-                with self.subTest(tool=call.__name__):
-                    response = call(query="primary", sources=["brave"], use_state=False)
+            calls = [
+                ("run_search_web", lambda: service.run_search_web(
+                    service.SearchWebRequest(query="primary", sources=["brave"], use_state=False),
+                )),
+                ("run_multi_search", lambda: service.run_multi_search(
+                    service.MultiSearchRequest(query="primary", sources=["brave"], use_state=False),
+                )),
+            ]
+            for name, call in calls:
+                with self.subTest(tool=name):
+                    response = call()
                     self.assertEqual(response["errors"], [])
                     self.assertEqual([hit["url"] for hit in response["results"]], [row["url"] for row in rows])
                     self.assertTrue(all("body" not in hit for hit in response["results"]))
