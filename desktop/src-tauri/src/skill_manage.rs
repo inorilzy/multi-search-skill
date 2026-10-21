@@ -9,10 +9,12 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use ts_rs::TS;
 
 /// What is currently at the skill target.
-#[derive(Clone, Serialize, PartialEq, Debug)]
+#[derive(Clone, Serialize, PartialEq, Debug, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "types.d.ts")]
 pub enum InstallState {
     /// Nothing at the target.
     Absent,
@@ -26,7 +28,8 @@ pub enum InstallState {
     Unknown,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct SkillStatus {
     pub host: String,
     pub scope: String,
@@ -47,8 +50,10 @@ pub struct SkillStatus {
     pub reason: String,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct UpdatePlan {
+    /// absent | current | unknown | ready | needs_confirmation, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub reason: String,
     pub state: InstallState,
@@ -58,8 +63,10 @@ pub struct UpdatePlan {
     pub can_update: bool,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct RemovePlan {
+    /// ready | nothing_to_remove, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub reason: String,
     /// Exactly what would be deleted: our marker plus managed files, nothing else.
@@ -69,18 +76,20 @@ pub struct RemovePlan {
     pub can_remove: bool,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct UpdateOutcome {
-    /// updated | blocked | failed
+    /// updated | blocked | failed, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub verified: bool,
     pub backup: Option<String>,
     pub reason: String,
 }
 
-#[derive(Clone, Serialize, Debug)]
+#[derive(Clone, Serialize, Debug, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct RemoveOutcome {
-    /// removed | blocked | failed
+    /// removed | blocked | failed, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub deleted: Vec<String>,
     pub kept: Vec<String>,

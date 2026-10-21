@@ -11,6 +11,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
+use ts_rs::TS;
 
 pub(crate) static STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -80,21 +81,23 @@ fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requiremen
     Ok(required)
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct SkillPlan {
     pub host: String,
     pub scope: String,
     pub target: Option<String>,
-    /// ready | exists | invalid_scope | cli_missing | cli_incompatible
+    /// ready | exists | invalid_scope | cli_missing | cli_incompatible, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub reason: String,
     pub files: Vec<String>,
     pub can_install: bool,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct SkillInstall {
-    /// installed | blocked | failed
+    /// installed | blocked | failed, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub target: Option<String>,
     pub verified: bool,

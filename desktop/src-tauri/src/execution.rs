@@ -11,8 +11,10 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use ts_rs::TS;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct SearchOptions {
     pub query: String,
     pub route: String,
@@ -27,9 +29,11 @@ pub(crate) fn is_allowed_source(name: &str) -> bool {
     provider::is_allowed_source(name)
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct ExecutionStatus {
     pub id: u64,
+    /// One of `running`, `success`, `empty`, `partial`, `failed`, `cancelled`, `timed_out`, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub exit_code: Option<i32>,
     pub payload: Option<Value>,

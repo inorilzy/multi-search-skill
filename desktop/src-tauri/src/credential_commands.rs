@@ -7,6 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use ts_rs::TS;
 
 /// Source-side view of a provider manifest row, used by credential commands and
 /// tests that address sources by `cli_source` (the `--source` / UI spelling).
@@ -60,10 +61,12 @@ pub(crate) fn resolve_source(name: &str) -> Result<SourceEntry, String> {
 pub(crate) fn resolve_test_source(name: &str) -> Result<SourceEntry, String> {
     find_source(name, false)
 }
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct CredentialOverview {
     pub source: String,
     pub store: CredentialStatus,
+    /// sqlite | none | unavailable, or a new value added later; UI must fall back to a raw string.
     pub effective_source: String,
     pub key_application_available: bool,
 }
@@ -90,7 +93,8 @@ pub(crate) fn overview(
         key_application_available: application_url(entry.source).is_some(),
     }
 }
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct CredentialValue {
     pub value: String,
 }
@@ -235,8 +239,10 @@ fn open_browser(_: &str) -> Result<(), String> {
     Err("系统浏览器入口仅支持 Windows".into())
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct TestOutcome {
+    /// success | auth_failed | quota | rate_limited | network | timeout | missing_key | cli_failed | error, or a new value added later; UI must fall back to a raw string.
     pub result: String,
     pub message: String,
 }

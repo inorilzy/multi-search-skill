@@ -2,6 +2,7 @@
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 use serde_json::Value;
+use ts_rs::TS;
 
 pub(crate) const MAX_KEY_LENGTH: usize = 1024;
 #[allow(dead_code)]
@@ -237,8 +238,10 @@ pub(crate) fn crypt(_: &[u8], _: bool) -> Result<Vec<u8>, CredentialError> {
     ))
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct CredentialStatus {
+    /// present | absent | unreadable | unavailable, or a new value added later; UI must fall back to a raw string.
     pub state: String,
     pub saved_at: Option<f64>,
     pub error: String,

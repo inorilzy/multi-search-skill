@@ -6,8 +6,10 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+use ts_rs::TS;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct PathValue {
     pub text: String,
     pub kind: u32,
@@ -22,7 +24,8 @@ impl PathValue {
         }
     }
 }
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct PathReceipt {
     before: PathValue,
     after: PathValue,
@@ -74,8 +77,10 @@ impl PathStore for MemoryPathStore {
         Ok(())
     }
 }
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct PathPlan {
+    /// owned | existing | absent | added | removed | unchanged | blocked | failed, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub directory: String,
     pub reason: String,
