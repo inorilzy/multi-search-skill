@@ -1,6 +1,7 @@
 //! 桌面搜索设置只保存在 config.sqlite 的 settings JSON 中；旧 JSON/env/dev 文件不参与日常读取。
 //! 保存前完整校验动态路由，并在 Immediate 事务内保留所有未知字段。
 
+use crate::provider;
 use crate::RuntimeEnvironment;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -11,27 +12,15 @@ use std::{
 };
 
 pub const CONFIG_ENV: &str = crate::config_db::DB_ENV;
-pub const SOURCES: &[&str] = &[
-    "baidu",
-    "brave",
-    "exa",
-    "firecrawl",
-    "github_repos",
-    "hackernews",
-    "parallel",
-    "serpapi",
-    "sov2ex",
-    "stackoverflow",
-    "tavily",
-    "twitter",
-];
-const ALIASES: &[(&str, &str)] = &[
-    ("baidu-ai-search", "baidu"),
-    ("qianfan", "baidu"),
-    ("github", "github_repos"),
-    ("github-repos", "github_repos"),
-    ("v2ex", "sov2ex"),
-];
+
+/// Canonical source name lookup; routes and disabled_sources are stored under
+/// the underscore form (`github_repos`, `sov2ex`). Aliases accepted on save
+/// are owned by `provider::PROVIDERS` — adding an alias only requires editing
+/// that table.
+fn source_name(raw: &str) -> Result<&'static str, String> {
+    provider::resolve(raw).map(|entry| entry.source)
+}
+
 const MAX_PATH_BYTES: usize = 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -148,20 +137,6 @@ pub struct SettingsView {
 
 pub fn config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
     crate::config_db::path(&environment.variables)
-}
-
-fn source_name(raw: &str) -> Result<&'static str, String> {
-    let trimmed = raw.trim();
-    let mapped = ALIASES
-        .iter()
-        .find(|(alias, _)| *alias == trimmed)
-        .map(|(_, name)| *name)
-        .unwrap_or(trimmed);
-    SOURCES
-        .iter()
-        .copied()
-        .find(|name| *name == mapped)
-        .ok_or_else(|| "不支持的搜索源".to_string())
 }
 
 fn route_id_valid(id: &str) -> bool {

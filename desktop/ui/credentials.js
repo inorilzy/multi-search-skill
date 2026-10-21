@@ -1,29 +1,63 @@
-// Canonical UI search sources. Keys live only in config.sqlite, encrypted with current-user DPAPI.
-export const SOURCES = [
-  { source: 'baidu', label: 'Baidu AI 搜索', keyed: true },
-  { source: 'brave', label: 'Brave 搜索', keyed: true },
-  { source: 'parallel', label: 'Parallel', keyed: true },
-  { source: 'tavily', label: 'Tavily', keyed: true },
-  { source: 'exa', label: 'Exa', keyed: true },
-  { source: 'firecrawl', label: 'Firecrawl', keyed: true },
-  { source: 'serpapi', label: 'SerpAPI', keyed: true },
-  { source: 'github_repos', label: 'GitHub 仓库', keyed: true },
-  { source: 'hackernews', label: 'Hacker News', keyed: false },
-  { source: 'stackoverflow', label: 'Stack Overflow', keyed: false },
-  { source: 'sov2ex', label: 'V2EX', keyed: false },
-  { source: 'twitter', label: 'Twitter / X', keyed: false, cookie: true },
-];
+// Canonical UI search source list is provided by the desktop at runtime via
+// `api.providerList()`. The list below is populated by `initProviders` the first
+// time a page mounts; module-level `SOURCES` is a live binding that consumers
+// should treat as "resolved only after an `await initProviders(api)` call".
+// This keeps the desktop `provider::PROVIDERS` table as the single source of truth.
+
+let SOURCES = [];
+export { SOURCES };
+let providerLoad = null;
+
+/// Fetch the provider manifest from Rust once per page mount. Subsequent calls
+/// reuse the in-flight promise so multiple pages share a single round trip.
+/// `SOURCES` is replaced atomically; readers see either the previous list or
+/// the new list, never a partial row.
+export function initProviders(api) {
+  if (!providerLoad) {
+    providerLoad = Promise.resolve()
+      .then(() => api.providerList())
+      .then(rows => {
+        // Internally the UI uses the canonical `source` (underscore form, e.g.
+        // `github_repos`). The Rust resolver accepts both spellings, so IPC
+        // calls below pass `source` directly.
+        SOURCES = rows.map(row => ({
+          source: row.source,
+          label: row.label,
+          keyed: row.keyed,
+          cookie: row.cookie,
+          aliases: row.aliases || [],
+        }));
+        return SOURCES;
+      })
+      .catch(error => {
+        // Keep the failure visible: leave SOURCES empty so downstream rows never
+        // render, and rethrow so callers can show the minimal error state.
+        SOURCES = [];
+        throw error;
+      });
+  }
+  return providerLoad;
+}
+
+/// Sync access for code paths that run after `initProviders` has resolved.
+/// Returns the same array; callers must not mutate it.
+export function providerList() {
+  return SOURCES;
+}
+
 const DEFAULT_SOURCE = 'tavily';
 const storeLabels = { present: '已保存', absent: '未保存', unavailable: '数据库不可用', unreadable: '已保存条目无法读取' };
-const sourceEntry = source => SOURCES.find(item => item.source === source) || SOURCES.find(item => item.source === DEFAULT_SOURCE);
+const sourceEntry = source => SOURCES.find(item => item.source === source || item.cliSource === source) || SOURCES.find(item => item.source === DEFAULT_SOURCE) || { source, label: source, keyed: true };
 const provenance = value => JSON.stringify([value.effective_source, value.store?.state, value.store?.saved_at]);
 export async function mountCredentials(root, api, options = {}) {
+  await initProviders(api);
   const entry = sourceEntry(options.source);
   root.innerHTML = `<section class="heading"><p class="eyebrow">CREDENTIALS / ${entry.source}</p><h1>${entry.label} 凭据。</h1><p>Key 在编辑区直接可见，以 Windows 当前用户 DPAPI 加密保存在 SQLite。旧来源不会自动生效。</p></section>`;
   const holder = root.ownerDocument.createElement('div'); root.append(holder);
   return mountCredentialBody(holder, api, options);
 }
 export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest } = {}) {
+  await initProviders(api);
   const { label } = sourceEntry(source);
   root.innerHTML = `<div class="credential-editor"><div class="credential-fields"><form data-save-form>
     <label>${label} API Key（多 Key 一行一个）<span class="key-input"><textarea data-field="key" autocomplete="off" spellcheck="false" rows="2" placeholder="输入 Key，多 Key 一行一个"></textarea></span></label>

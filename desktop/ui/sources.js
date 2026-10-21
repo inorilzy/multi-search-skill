@@ -1,4 +1,4 @@
-import { SOURCES, mountCredentialBody } from './credentials.js';
+import { initProviders, mountCredentialBody, providerList } from './credentials.js';
 
 const DESCRIPTIONS = {
   baidu: '强大的中文搜索能力，适合中文内容检索。',
@@ -16,7 +16,6 @@ const DESCRIPTIONS = {
 };
 const MARKS = { baidu: 'du', brave: 'B', parallel: 'P', tavily: 't', exa: 'X', firecrawl: 'f', serpapi: 'S', github_repos: 'GH', hackernews: 'Y', stackoverflow: '≋', sov2ex: 'V₂', twitter: '𝕏' };
 const FILTERS = [['all', '全部'], ['enabled', '已启用'], ['unconfigured', '未配置']];
-const TOTAL = SOURCES.length;
 const IDLE = { kind: 'idle', title: '尚未测试', message: '' };
 const icon = name => {
   const paths = {
@@ -31,16 +30,27 @@ const icon = name => {
   };
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 };
-function statCard(key, label, symbol) {
-  return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${TOTAL}</small></strong></div></div>`;
+function statCard(key, label, symbol, total) {
+  return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${total}</small></strong></div></div>`;
 }
 
 export async function mountSources(root, api) {
+  // Provider list is owned by the Rust `provider::PROVIDERS` table; load it
+  // before any row is built. Failure leaves the page with an explicit error
+  // state rather than a silently empty list.
+  let SOURCES;
+  try {
+    SOURCES = await initProviders(api);
+  } catch (error) {
+    root.innerHTML = `<section class="heading"><p class="eyebrow">SOURCES</p><h1>搜索源与凭据</h1><p>无法读取搜索源清单：${typeof error === 'string' ? error : '请重试或重启桌面应用。'}</p></section>`;
+    return { dispose() { root.classList.remove('sources-page'); } };
+  }
+  const TOTAL = SOURCES.length;
   const doc = root.ownerDocument;
   root.classList.add('sources-page');
   root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">SOURCES</p><h1>搜索源与凭据</h1><p>管理各搜索源的 API Key 和启用状态，并可快速测试连接，确保服务可用。</p></div>
     <aside class="key-hint"><span>${icon('lock')}</span><div><strong>SQLite / DPAPI 本地存储</strong><p>展开可查看完整 Key；旧来源仅在显式导入后生效。</p></div></aside></section>
-    <div class="sources-overview"><section class="stats" aria-label="搜索源概览">${statCard('enabled', '已启用', 'toggle')}${statCard('configured', '已配置', 'key')}${statCard('error', '异常', 'alert')}${statCard('absent', '未配置', 'box')}</section>
+    <div class="sources-overview"><section class="stats" aria-label="搜索源概览">${statCard('enabled', '已启用', 'toggle', TOTAL)}${statCard('configured', '已配置', 'key', TOTAL)}${statCard('error', '异常', 'alert', TOTAL)}${statCard('absent', '未配置', 'box', TOTAL)}</section>
     <div class="toolbar"><label class="source-search">${icon('search')}<input type="search" data-search aria-label="搜索搜索源" placeholder="搜索搜索源名称、描述…"><kbd>Ctrl K</kbd></label><div class="filters" role="group" aria-label="筛选">${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === 'all'}">${label}</button>`).join('')}</div></div></div>
     <p class="source-test-warning">测试会向对应服务发送外部请求，可能消耗额度。已配置不代表连接已验证；无需凭据的服务不计入已配置数量。</p>
     <p class="row-error" data-list-error role="alert"></p><div class="source-list" data-source-list aria-label="搜索源列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;

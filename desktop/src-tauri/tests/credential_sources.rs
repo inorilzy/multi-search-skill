@@ -75,13 +75,18 @@ fn github_repos_maps_to_github_provider_and_unknown_names_are_rejected() {
         fixture::resolve("github_repos").unwrap(),
         ("github-repos", "github")
     );
+    // `github` is a documented CLI alias; the desktop resolver accepts it and
+    // routes it to the `github` credential provider like the CLI does.
+    assert_eq!(
+        fixture::resolve("github").unwrap(),
+        ("github-repos", "github")
+    );
     assert_eq!(fixture::resolve("tavily").unwrap(), ("tavily", "tavily"));
     for bad in [
         "",
         "  ",
         "../tavily",
         "tavily/../brave",
-        "github",
         "jina",
         "ns-src/tavily",
         "TAVILY",

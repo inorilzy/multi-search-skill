@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
+import { withProviders } from './providers.js';
 import { mountSettings, SETTINGS_SOURCES } from '../ui/settings.js';
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -75,7 +76,7 @@ function chooseSource(editor, source, checked = true) {
 
 test('the CLI source list uses canonical underscore names', async () => {
   const { window, root } = setup();
-  await mountSettings(root, { settingsView: async () => view() });
+  await mountSettings(root, withProviders({ settingsView: async () => view() }));
   const names = SETTINGS_SOURCES.map(source => source.source);
   assert.equal(names.length, 12);
   assert.ok(names.every(name => !name.includes('-')));
@@ -87,10 +88,10 @@ test('the CLI source list uses canonical underscore names', async () => {
 test('saving submits the complete route draft and preserves global disabled sources', async () => {
   const { window, root } = setup();
   let sent = null;
-  await mountSettings(root, {
+  await mountSettings(root, withProviders({
     settingsView: async () => view({ disabled_sources: ['exa'] }),
     settingsSave: async input => { sent = input; return savedView(input); },
-  });
+  }));
   root.querySelector('[data-field="route"]').value = 'fast';
   root.querySelector('[data-field="route"]').dispatchEvent(new window.Event('change'));
   root.querySelector('[data-field="timeout"]').value = '30';
@@ -108,7 +109,7 @@ test('saving submits the complete route draft and preserves global disabled sour
 
 test('dynamic list supports create edit copy and delete after switching current route', async () => {
   const { window, root } = setup();
-  await mountSettings(root, { settingsView: async () => view() });
+  await mountSettings(root, withProviders({ settingsView: async () => view() }));
   let editor = await openNew(root);
   editor.querySelector('[data-edit="id"]').value = 'research';
   editor.querySelector('[data-edit="label"]').value = '研究组';
@@ -149,7 +150,7 @@ test('dynamic list supports create edit copy and delete after switching current 
 
 test('route validation covers id label source timeout and duplicate ids', async () => {
   const { window, root } = setup();
-  await mountSettings(root, { settingsView: async () => view() });
+  await mountSettings(root, withProviders({ settingsView: async () => view() }));
   const editor = await openNew(root);
   const apply = editor.querySelector('[data-action="apply-route"]');
   editor.querySelector('[data-edit="id"]').value = 'web';
@@ -176,10 +177,10 @@ test('route validation covers id label source timeout and duplicate ids', async 
 test('globally disabled route members are gray but remain selectable and are not removed', async () => {
   const { window, root } = setup();
   let sent;
-  await mountSettings(root, {
+  await mountSettings(root, withProviders({
     settingsView: async () => view({ route: 'fast', disabled_sources: ['exa'] }),
     settingsSave: async input => { sent = input; return savedView(input); },
-  });
+  }));
   assert.match(row(root, 'fast').textContent, /Exa全局停用/);
   rowButton(root, 'fast', '编辑').click();
   const exa = chooseSource(root.querySelector('.route-editor'), 'exa');
@@ -199,7 +200,7 @@ test('restore confirmation resets only five factory ids and keeps custom groups'
   routes.fast = { label: '改过的快速', sources: ['twitter'], timeout: 9 };
   delete routes.social;
   routes.custom = { label: '自定义', sources: ['sov2ex'], timeout: null };
-  await mountSettings(root, { settingsView: async () => view({ routes }) });
+  await mountSettings(root, withProviders({ settingsView: async () => view({ routes }) }));
   root.querySelector('[data-action="restore"]').click();
   assert.match(root.querySelector('[data-restore-confirm]').textContent, /自定义分组不会改变/);
   root.querySelector('[data-action="confirm-restore"]').click();
@@ -215,10 +216,10 @@ test('save failure keeps draft and repeated submit is ignored while saving', asy
   const { window, root } = setup();
   let calls = 0;
   let rejectSave;
-  await mountSettings(root, {
+  await mountSettings(root, withProviders({
     settingsView: async () => view(),
     settingsSave: () => { calls += 1; return new Promise((_, reject) => { rejectSave = reject; }); },
-  });
+  }));
   root.querySelector('[data-field="timeout"]').value = '29';
   root.querySelector('[data-field="timeout"]').dispatchEvent(new window.Event('input'));
   const form = root.querySelector('[data-settings-form]');
@@ -236,10 +237,10 @@ test('save failure keeps draft and repeated submit is ignored while saving', asy
 test('late save response never overwrites edits made while the request is in flight', async () => {
   const { window, root } = setup();
   let resolveSave;
-  await mountSettings(root, {
+  await mountSettings(root, withProviders({
     settingsView: async () => view(),
     settingsSave: input => new Promise(resolve => { resolveSave = () => resolve(savedView(input)); }),
-  });
+  }));
   const timeout = root.querySelector('[data-field="timeout"]');
   timeout.value = '20'; timeout.dispatchEvent(new window.Event('input'));
   root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
@@ -253,7 +254,7 @@ test('late save response never overwrites edits made while the request is in fli
 test('refresh requires inline confirmation when a draft would be lost', async () => {
   const { window, root } = setup();
   let reads = 0;
-  await mountSettings(root, { settingsView: async () => { reads += 1; return view({ timeout: reads === 1 ? 60 : 18 }); } });
+  await mountSettings(root, withProviders({ settingsView: async () => { reads += 1; return view({ timeout: reads === 1 ? 60 : 18 }); } }));
   const timeout = root.querySelector('[data-field="timeout"]');
   timeout.value = '25'; timeout.dispatchEvent(new window.Event('input'));
   root.querySelector('[data-action="refresh"]').click();
@@ -272,14 +273,14 @@ test('late refresh response cannot overwrite edits or race a save', async () => 
   let reads = 0;
   let resolveRefresh;
   let saves = 0;
-  await mountSettings(root, {
+  await mountSettings(root, withProviders({
     settingsView: async () => {
       reads += 1;
       if (reads === 1) return view();
       return new Promise(resolve => { resolveRefresh = resolve; });
     },
     settingsSave: async input => { saves += 1; return savedView(input); },
-  });
+  }));
   root.querySelector('[data-action="refresh"]').click();
   await flush();
   const timeout = root.querySelector('[data-field="timeout"]');
@@ -297,13 +298,13 @@ test('rejected refresh preserves edits made while it was pending', async () => {
   const { window, root } = setup();
   let reads = 0;
   let rejectRefresh;
-  await mountSettings(root, {
+  await mountSettings(root, withProviders({
     settingsView: async () => {
       reads += 1;
       if (reads === 1) return view();
       return new Promise((_, reject) => { rejectRefresh = reject; });
     },
-  });
+  }));
   root.querySelector('[data-action="refresh"]').click();
   await flush();
   const timeout = root.querySelector('[data-field="timeout"]');
@@ -319,7 +320,7 @@ test('rejected refresh preserves edits made while it was pending', async () => {
 
 test('first settings load failure leaves an empty disabled view', async () => {
   const { window, root } = setup();
-  await mountSettings(root, { settingsView: async () => { throw new Error('offline'); } });
+  await mountSettings(root, withProviders({ settingsView: async () => { throw new Error('offline'); } }));
   assert.equal(root.querySelectorAll('[data-route-row]').length, 0);
   assert.equal(root.querySelector('[data-action="save"]').disabled, true);
   assert.equal(root.querySelector('[data-field="route"]').disabled, true);
@@ -330,7 +331,7 @@ test('first settings load failure leaves an empty disabled view', async () => {
 test('unapplied editor input blocks save and requires confirmation before discard', async () => {
   const { window, root } = setup();
   let saves = 0;
-  const mounted = await mountSettings(root, { settingsView: async () => view(), settingsSave: async input => { saves += 1; return savedView(input); } });
+  const mounted = await mountSettings(root, withProviders({ settingsView: async () => view(), settingsSave: async input => { saves += 1; return savedView(input); } }));
   const editor = await openNew(root);
   const id = editor.querySelector('[data-edit="id"]');
   id.value = 'draft_only'; id.dispatchEvent(new window.Event('input'));
@@ -355,7 +356,7 @@ test('unapplied editor input blocks save and requires confirmation before discar
 
 test('unreadable settings do not fake defaults and disable editing', async () => {
   const { window, root } = setup();
-  await mountSettings(root, { settingsView: async () => view({ route: '', routes: {}, status: 'config_unreadable', message: '坏 routes' }) });
+  await mountSettings(root, withProviders({ settingsView: async () => view({ route: '', routes: {}, status: 'config_unreadable', message: '坏 routes' }) }));
   assert.equal(root.querySelectorAll('[data-route-row]').length, 0);
   assert.equal(root.querySelector('[data-action="save"]').disabled, true);
   assert.match(root.querySelector('[data-info="error"]').textContent, /坏 routes/);
@@ -365,7 +366,7 @@ test('unreadable settings do not fake defaults and disable editing', async () =>
 test('route names are rendered as text and __proto__ remains an own JSON route id', async () => {
   const { window, root } = setup();
   let sent;
-  await mountSettings(root, { settingsView: async () => view(), settingsSave: async input => { sent = input; return savedView(input); } });
+  await mountSettings(root, withProviders({ settingsView: async () => view(), settingsSave: async input => { sent = input; return savedView(input); } }));
   const editor = await openNew(root);
   editor.querySelector('[data-edit="id"]').value = '__proto__';
   editor.querySelector('[data-edit="label"]').value = '<img src=x onerror=attack()>';
@@ -382,7 +383,7 @@ test('route names are rendered as text and __proto__ remains an own JSON route i
 
 test('summary shows backend effective timeout when no global timeout exists yet', async () => {
   const { window, root } = setup();
-  await mountSettings(root, { settingsView: async () => view({ route: 'fast', timeout: 60, timeout_configured: false, effective_timeout: 45, effective_timeouts: { default: 60, fast: 45, all: 90, social: 60, dev: 60 } }) });
+  await mountSettings(root, withProviders({ settingsView: async () => view({ route: 'fast', timeout: 60, timeout_configured: false, effective_timeout: 45, effective_timeouts: { default: 60, fast: 45, all: 90, social: 60, dev: 60 } }) }));
   assert.equal(root.querySelector('[data-summary="effective-timeout"]').textContent, '45');
   assert.match(root.querySelector('[data-summary="timeout-kind"]').textContent, /CLI 内置值/);
   assert.match(row(root, 'fast').textContent, /当前配置 · 45 秒/);
@@ -391,7 +392,7 @@ test('summary shows backend effective timeout when no global timeout exists yet'
 
 test('SQLite is the only displayed configuration source and old sources are not promised an import path', async () => {
   const { window, root } = setup();
-  await mountSettings(root, { settingsView: async () => view({ config_path: 'D:/env/config.sqlite', path_source: 'env', read_source: 'sqlite', twitter_cookies_path: 'C:/cookies.json' }) });
+  await mountSettings(root, withProviders({ settingsView: async () => view({ config_path: 'D:/env/config.sqlite', path_source: 'env', read_source: 'sqlite', twitter_cookies_path: 'C:/cookies.json' }) }));
   const info = root.querySelector('[data-info="env"]').textContent;
   assert.match(root.querySelector('[data-status="path-source"]').textContent, /MULTI_SEARCH_CONFIG_DB/);
   assert.match(info, /SQLite 是唯一生效配置来源/);

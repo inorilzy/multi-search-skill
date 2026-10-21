@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
+import { withProviders } from './providers.js';
 import { mountCredentials, SOURCES } from '../ui/credentials.js';
 import { managementApi } from '../ui/api.js';
 const KEY = 'synthetic-ui-key-0001';
@@ -8,7 +9,7 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'sqlite' : 'none', key_application_available: false, ...extra });
 function setup() { const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root); return { window, root }; }
 const submit = ({ window, root }) => root.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
-function api(overrides = {}) { return { credentialStatus: async () => status(), credentialRead: async () => ({ value: '' }), ...overrides }; }
+function api(overrides = {}) { return withProviders({ credentialStatus: async () => status(), credentialRead: async () => ({ value: '' }), ...overrides }); }
 
 test('expanded editor fetches saved values through single-source command and is visible without reveal', async () => {
   const ctx = setup(); const seen = [];

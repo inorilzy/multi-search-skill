@@ -2,107 +2,63 @@
 //! only when its editor is expanded. All native persistence is SQLite/DPAPI, never legacy fallback.
 #![cfg_attr(not(feature = "native-window"), allow(dead_code))]
 use crate::credential::{self, CredentialBackend, CredentialStatus};
+use crate::provider::{self, ProviderEntry};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Source-side view of a provider manifest row, used by credential commands and
+/// tests that address sources by `cli_source` (the `--source` / UI spelling).
+/// Aliases are resolved by `provider::resolve` before reaching this type, so
+/// `source` here is always the canonical `cli_source` form.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SourceEntry {
+    /// `cli_source` spelling used in IPC and CLI arguments.
     pub source: &'static str,
+    /// Credential store target. `None` for non-keyed sources; `resolve_source`
+    /// filters those out so `provider` is always `Some` for keyed entries.
     pub provider: &'static str,
-    pub aliases: &'static [&'static str],
+    /// Settings-side canonical name (underscore form). Used where callers care
+    /// about route/disabled_sources semantics rather than CLI spelling.
+    pub canonical: &'static str,
     pub label: &'static str,
 }
-pub(crate) const SOURCES: &[SourceEntry] = &[
+
+fn as_source_entry(entry: &'static ProviderEntry) -> SourceEntry {
     SourceEntry {
-        source: "baidu",
-        provider: "baidu",
-        aliases: &[],
-        label: "Baidu AI 搜索",
-    },
-    SourceEntry {
-        source: "brave",
-        provider: "brave",
-        aliases: &[],
-        label: "Brave 搜索",
-    },
-    SourceEntry {
-        source: "parallel",
-        provider: "parallel",
-        aliases: &[],
-        label: "Parallel",
-    },
-    SourceEntry {
-        source: "tavily",
-        provider: "tavily",
-        aliases: &[],
-        label: "Tavily",
-    },
-    SourceEntry {
-        source: "exa",
-        provider: "exa",
-        aliases: &[],
-        label: "Exa",
-    },
-    SourceEntry {
-        source: "firecrawl",
-        provider: "firecrawl",
-        aliases: &[],
-        label: "Firecrawl",
-    },
-    SourceEntry {
-        source: "serpapi",
-        provider: "serpapi",
-        aliases: &[],
-        label: "SerpAPI",
-    },
-    SourceEntry {
-        source: "github-repos",
-        provider: "github",
-        aliases: &["github_repos"],
-        label: "GitHub 仓库",
-    },
-];
-pub(crate) fn resolve_source(name: &str) -> Result<&'static SourceEntry, String> {
-    SOURCES
-        .iter()
-        .find(|e| e.source == name.trim() || e.aliases.contains(&name.trim()))
-        .ok_or_else(|| "不支持的搜索源".into())
+        source: entry.cli_source,
+        provider: entry.provider.unwrap_or(""),
+        canonical: entry.source,
+        label: entry.label,
+    }
 }
-const NON_KEY_SOURCES: &[SourceEntry] = &[
-    SourceEntry {
-        source: "hackernews",
-        provider: "hackernews",
-        aliases: &[],
-        label: "Hacker News",
-    },
-    SourceEntry {
-        source: "stackoverflow",
-        provider: "stackoverflow",
-        aliases: &[],
-        label: "Stack Overflow",
-    },
-    SourceEntry {
-        source: "sov2ex",
-        provider: "sov2ex",
-        aliases: &[],
-        label: "V2EX",
-    },
-    SourceEntry {
-        source: "twitter",
-        provider: "twitter",
-        aliases: &[],
-        label: "Twitter",
-    },
-];
-pub(crate) fn resolve_test_source(name: &str) -> Result<&'static SourceEntry, String> {
-    resolve_source(name).or_else(|_| {
-        NON_KEY_SOURCES
-            .iter()
-            .find(|e| e.source == name)
-            .ok_or_else(|| "不支持的搜索源".into())
-    })
+
+/// Resolve a UI/CLI source name or alias to its SourceEntry. Only keyed
+/// providers resolve through `resolve_source`; non-keyed sources must go
+/// through `resolve_test_source`. The returned entry borrows the static
+/// PROVIDERS row, so there is no per-call allocation.
+fn find_source(name: &str, keyed_only: bool) -> Result<SourceEntry, String> {
+    let trimmed = name.trim();
+    let entry = provider::PROVIDERS
+        .iter()
+        .find(|entry| {
+            entry.cli_source == trimmed
+                || entry.source == trimmed
+                || entry.aliases.contains(&trimmed)
+        })
+        .ok_or_else(|| "不支持的搜索源".to_string())?;
+    if keyed_only && !entry.keyed {
+        return Err("不支持的搜索源".into());
+    }
+    Ok(as_source_entry(entry))
+}
+
+pub(crate) fn resolve_source(name: &str) -> Result<SourceEntry, String> {
+    find_source(name, true)
+}
+pub(crate) fn resolve_test_source(name: &str) -> Result<SourceEntry, String> {
+    find_source(name, false)
 }
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct CredentialOverview {

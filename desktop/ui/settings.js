@@ -1,10 +1,13 @@
 // 搜索默认设置与可编辑路由分组。Rust SettingsView 是路由定义的唯一来源；
 // 本页面不复制内置表，并始终保存完整草稿。
 
-import { SOURCES } from './credentials.js';
+import { initProviders, providerList } from './credentials.js';
 
-export const SETTINGS_SOURCES = SOURCES.map(({ source, label }) => ({ source, label }));
-const SOURCE_LABELS = new Map(SETTINGS_SOURCES.map(entry => [entry.source, entry.label]));
+// Provider catalog is resolved at mount time. SETTINGS_SOURCES is filled in by
+// `mountSettings` after `initProviders(api)` resolves, then remains stable for
+// the life of the page. Never mutate it.
+export let SETTINGS_SOURCES = [];
+let SOURCE_LABELS = new Map();
 const ID_PATTERN = /^[a-z0-9_-]{1,64}$/;
 
 const cloneRoute = route => ({
@@ -31,6 +34,16 @@ function validateRoute(id, route, routes, originalId = null) {
 export async function mountSettings(root, api) {
   const doc = root.ownerDocument;
   root.classList.add('settings-page');
+  // Provider manifest drives the source pickers; fail closed if it cannot load
+  // so an empty list never looks like a saved configuration.
+  try {
+    const rows = await initProviders(api);
+    SETTINGS_SOURCES = rows.map(({ source, label }) => ({ source, label }));
+    SOURCE_LABELS = new Map(SETTINGS_SOURCES.map(entry => [entry.source, entry.label]));
+  } catch (error) {
+    root.innerHTML = `<section class="heading"><p class="eyebrow">SETTINGS</p><h1>搜索设置</h1><p>无法读取搜索源清单：${typeof error === 'string' ? error : '请重试或重启桌面应用。'}</p></section>`;
+    return { dispose() { root.classList.remove('settings-page'); } };
+  }
   root.innerHTML = `<section class="heading settings-head"><div><p class="eyebrow">SETTINGS / ROUTES</p><h1>搜索设置</h1><p>配置默认分组、全局超时和每组搜索源。设置保存在 SQLite；搜索仍由独立 CLI 按需执行。</p></div><button type="button" data-action="refresh">刷新</button></section>
     <form data-settings-form>
       <section class="settings-summary" aria-label="当前搜索设置摘要">
