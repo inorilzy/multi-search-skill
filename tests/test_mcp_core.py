@@ -613,14 +613,15 @@ class KeyTests(unittest.TestCase):
         self.assertEqual(keys["exa"], ["e1", "e2"])
 
     def test_load_keys_ignores_non_object_json_file(self):
+        # The explicit legacy file input is migration-only; a non-object document
+        # yields no keys, and env vars are never a runtime source either.
         with tempfile.TemporaryDirectory() as tmp:
             keys_path = Path(tmp) / ".search-keys.json"
             keys_path.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
-            with mock.patch("pathlib.Path.home", return_value=Path(tmp)):
-                with mock.patch.dict(os.environ, {"EXA_API_KEY": "env-exa"}, clear=False):
-                    keys = load_keys()
+            with mock.patch.dict(os.environ, {"EXA_API_KEY": "env-exa"}, clear=False):
+                keys = load_keys(keys_file=keys_path)
 
-        self.assertNotIn("exa", keys)
+        self.assertEqual(keys, {})
 
     def test_load_keys_raises_on_corrupt_json_without_leaking_content(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -650,11 +651,15 @@ class KeyTests(unittest.TestCase):
         self.assertNotIn("twitter", keys)
         self.assertNotIn("twitter_cookies", keys)
 
-    def test_jina_env_key_is_loaded(self):
+    def test_jina_env_key_is_not_a_runtime_source(self):
+        # SQLite is the only runtime source: an isolated (absent) config DB yields
+        # no keys even when a provider env var is present.
         with tempfile.TemporaryDirectory() as tmpdir:
-            with mock.patch("pathlib.Path.home", return_value=Path(tmpdir)):
-                with mock.patch.dict(os.environ, {"JINA_API_KEY": "jina-env-key"}, clear=False):
-                    keys = load_keys()
+            with mock.patch.dict(os.environ, {
+                "JINA_API_KEY": "jina-env-key",
+                "MULTI_SEARCH_CONFIG_DB": str(Path(tmpdir) / "config.sqlite"),
+            }, clear=False):
+                keys = load_keys()
 
         self.assertNotIn("jina", keys)
 
