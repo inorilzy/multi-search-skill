@@ -508,8 +508,8 @@ class SourceContentServiceTests(unittest.TestCase):
 
         captured = {}
 
-        def fake_scraper(url, **kwargs):
-            captured["kwargs"] = kwargs
+        def fake_scraper(url, ctx=None, **kwargs):
+            captured["ctx"] = ctx
             return {"url": url, "markdown": "body", "via": "fake"}
 
         with TemporaryDirectory() as tmp:
@@ -523,7 +523,8 @@ class SourceContentServiceTests(unittest.TestCase):
 
         self.assertEqual(response["body"], "body")
         # Default timeout is used (60s); no explicit timeout was passed in the request.
-        self.assertGreater(captured["kwargs"]["timeout"], 0)
+        self.assertIsNotNone(captured["ctx"])
+        self.assertGreater(captured["ctx"].timeout, 0)
 
     def test_fetch_and_read_share_the_same_core_state(self):
         from multi_search_mcp.src import service
