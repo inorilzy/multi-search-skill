@@ -1,113 +1,56 @@
+use crate::windows_util;
 use crate::RuntimeEnvironment;
-use std::{collections::BTreeMap, path::PathBuf};
-#[cfg(windows)]
-fn registry_string(
-    root: windows_sys::Win32::System::Registry::HKEY,
-    subkey: &str,
-    name: &str,
-) -> Option<String> {
-    use windows_sys::Win32::System::Registry::{RegGetValueW, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ};
-    let sub: Vec<u16> = subkey.encode_utf16().chain(Some(0)).collect();
-    let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-    let mut bytes = 0;
-    unsafe {
-        if RegGetValueW(
-            root,
-            sub.as_ptr(),
-            name.as_ptr(),
-            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &mut bytes,
-        ) != 0
-        {
-            return None;
-        }
-        let mut value = vec![0u16; bytes as usize / 2];
-        if RegGetValueW(
-            root,
-            sub.as_ptr(),
-            name.as_ptr(),
-            RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
-            std::ptr::null_mut(),
-            value.as_mut_ptr() as _,
-            &mut bytes,
-        ) != 0
-        {
-            return None;
-        }
-        // 读取原始值后统一用 expand 展开，避免 API 自动展开留下缓冲区内嵌 NUL。
-        value.truncate(bytes as usize / 2);
-        while value.last() == Some(&0) {
-            value.pop();
-        }
-        Some(String::from_utf16_lossy(&value))
-    }
-}
-#[cfg(all(test, windows))]
-mod tests {
-    #[test]
-    fn machine_registry_path_has_no_embedded_nul_before_building_child_environment() {
-        let path = super::registry_string(
-            windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE,
-            "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
-            "Path",
-        ).expect("机器 PATH 应可只读查询");
-        assert!(!path.contains('\0'), "注册表读取生成了含 NUL 的子进程 PATH");
-    }
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+/// `%VAR%` expansion now lives in `windows_util`; kept as a forwarding alias
+/// for callers that already import it from here.
+pub(crate) fn expand(value: &str, variables: &BTreeMap<String, String>) -> String {
+    windows_util::expand(value, variables)
 }
 
-pub(crate) fn expand(value: &str, variables: &BTreeMap<String, String>) -> String {
-    let mut output = value.to_string();
-    for _ in 0..4 {
-        let prior = output.clone();
-        let mut expanded = String::new();
-        let mut rest = output.as_str();
-        while let Some(start) = rest.find('%') {
-            expanded.push_str(&rest[..start]);
-            let after = &rest[start + 1..];
-            let Some(end) = after.find('%') else { expanded.push_str(&rest[start..]); rest = ""; break; };
-            let name = &after[..end];
-            if let Some((_, replacement)) = variables.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)) {
-                expanded.push_str(replacement);
-            } else {
-                expanded.push_str(&rest[start..start + end + 2]);
-            }
-            rest = &after[end + 1..];
-        }
-        expanded.push_str(rest);
-        output = expanded;
-        if output == prior {
-            break;
-        }
-    }
-    output
-}
 impl RuntimeEnvironment {
     /// Base search path for a manager with a live user registry store.
     #[cfg(all(windows, feature = "native-window"))]
     pub(crate) fn machine_paths(&self) -> Vec<PathBuf> {
         use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
-        let value = registry_string(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment", "Path").unwrap_or_default();
-        std::env::split_paths(&expand(&value, &self.variables)).collect()
+        let value = windows_util::registry_string(
+            HKEY_LOCAL_MACHINE,
+            "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+            "Path",
+        )
+        .unwrap_or_default();
+        std::env::split_paths(&windows_util::expand(
+            &value,
+            &self.variables,
+        ))
+        .collect()
     }
     pub fn system() -> Self {
         let mut variables: BTreeMap<String, String> = std::env::vars().collect();
-        let app_path =
-            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+        let app_path = if let Some(path) = variables.get("PATH") {
+            std::env::split_paths(path).collect()
+        } else {
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect()
+        };
         #[cfg(windows)]
         #[allow(unused_mut)]
         let mut user_path = {
             use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
-            let machine = registry_string(
+            let machine = windows_util::registry_string(
                 HKEY_LOCAL_MACHINE,
                 "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
                 "Path",
             )
             .unwrap_or_default();
             let user =
-                registry_string(HKEY_CURRENT_USER, "Environment", "Path").unwrap_or_default();
-            std::env::split_paths(&expand(&format!("{machine};{user}"), &variables)).collect()
+                windows_util::registry_string(HKEY_CURRENT_USER, "Environment", "Path")
+                    .unwrap_or_default();
+            std::env::split_paths(&windows_util::expand(
+                &format!("{machine};{user}"),
+                &variables,
+            ))
+            .collect()
         };
         #[cfg(not(windows))]
         let mut user_path = Vec::new();

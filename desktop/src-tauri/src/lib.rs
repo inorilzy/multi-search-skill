@@ -11,8 +11,10 @@ pub mod provider;
 mod redaction;
 pub(crate) mod settings;
 mod skill;
+mod skill_common;
 mod skill_manage;
 pub mod user_path;
+mod windows_util;
 #[cfg(feature = "native-window")]
 mod window;
 pub use diagnostics::{CliStatus, DesktopManager, Discovery, RuntimeEnvironment};
