@@ -82,7 +82,7 @@ fn missing_state_database_reports_unavailable_and_writes_nothing() {
     assert!(!pinned.available);
     assert!(!s.db().exists(), "pin must not create state.sqlite");
 
-    let reset = scrape_memory::reset(&s.env(), None).unwrap();
+    let reset = scrape_memory::reset(&s.env(), Some("example.com")).unwrap();
     assert!(!reset.available);
     assert!(!s.db().exists());
 }
@@ -222,7 +222,7 @@ fn concurrent_pins_get_distinct_priorities_without_lost_writes() {
 }
 
 #[test]
-fn reset_clears_one_site_or_all_rows() {
+fn reset_requires_one_site_and_preserves_other_rows() {
     let s = Sandbox::new("reset");
     s.create();
     s.insert("a.example", "jina", 1, 0, None);
@@ -247,10 +247,11 @@ fn reset_clears_one_site_or_all_rows() {
     );
     assert_eq!(s.count("SELECT count(*) FROM scrape_attempts"), 1);
 
-    let after_all = scrape_memory::reset(&s.env(), None).unwrap();
-    assert!(after_all.rows.is_empty());
-    assert_eq!(s.count("SELECT count(*) FROM site_scraper_stats"), 0);
-    assert_eq!(s.count("SELECT count(*) FROM scrape_attempts"), 0);
+    for site in [None, Some(""), Some("  ")] {
+        assert!(scrape_memory::reset(&s.env(), site).is_err());
+        assert_eq!(s.count("SELECT count(*) FROM site_scraper_stats"), 1);
+        assert_eq!(s.count("SELECT count(*) FROM scrape_attempts"), 1);
+    }
 }
 
 #[test]

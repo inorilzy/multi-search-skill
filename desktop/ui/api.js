@@ -99,8 +99,11 @@ export function managementApi(invoke) {
     scrapeMemoryView: async site => expect('ScrapeMemoryView', await invoke('scrape_memory_view', { site })),
     /** @param {string} site @param {string} scraper @returns {Promise<ScrapeMemoryView>} */
     scrapeMemoryPin: async (site, scraper) => expect('ScrapeMemoryView', await invoke('scrape_memory_pin', { site, scraper })),
-    /** @param {string|null} site @returns {Promise<ScrapeMemoryView>} */
-    scrapeMemoryReset: async site => expect('ScrapeMemoryView', await invoke('scrape_memory_reset', { site })),
+    /** @param {string} site @returns {Promise<ScrapeMemoryView>} */
+    scrapeMemoryReset: async site => {
+      if (typeof site !== 'string' || !site.trim()) throw new TypeError('memory reset requires a site');
+      return expect('ScrapeMemoryView', await invoke('scrape_memory_reset', { site }));
+    },
     /** @returns {Promise<ProviderInfo[]>} */
     providerList: async () => {
       const rows = await invoke('provider_list');

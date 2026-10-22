@@ -2,8 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 import { mountScrape } from '../ui/scrape.js';
+import { managementApi } from '../ui/api.js';
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+
+test('memory reset requires an explicit site before invoking IPC', async () => {
+  const calls = [];
+  const client = managementApi(async (command, args) => {
+    calls.push([command, args]);
+    return memoryView();
+  });
+  for (const site of [undefined, null, '', '  ']) {
+    await assert.rejects(client.scrapeMemoryReset(site), /site/);
+  }
+  assert.equal(calls.length, 0);
+  await client.scrapeMemoryReset('example.com');
+  assert.deepEqual(calls, [['scrape_memory_reset', { site: 'example.com' }]]);
+});
 const BUILTIN = ['jina', 'exa', 'tavily', 'firecrawl'];
 const OPTIONS = [
   { name: 'jina', label: 'Jina Reader' },

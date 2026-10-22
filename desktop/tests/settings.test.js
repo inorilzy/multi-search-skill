@@ -107,6 +107,20 @@ test('saving submits the complete route draft and preserves global disabled sour
   window.close();
 });
 
+test('normal search-settings save leaves the custom scrape chain untouched', async () => {
+  const { window, root } = setup();
+  let sent = null;
+  await mountSettings(root, withProviders({
+    settingsView: async () => view({ scrape_backends: ['firecrawl', 'jina'] }),
+    settingsSave: async input => { sent = input; return savedView(input); },
+  }));
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.ok(sent);
+  assert.equal(Object.hasOwn(sent, 'scrape_backends'), false);
+  window.close();
+});
+
 test('dynamic list supports create edit copy and delete after switching current route', async () => {
   const { window, root } = setup();
   await mountSettings(root, withProviders({ settingsView: async () => view() }));

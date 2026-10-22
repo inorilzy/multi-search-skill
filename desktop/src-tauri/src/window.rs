@@ -268,9 +268,9 @@ fn scrape_memory_pin(
 #[tauri::command]
 fn scrape_memory_reset(
     manager: tauri::State<'_, Arc<DesktopManager>>,
-    site: Option<String>,
+    site: String,
 ) -> Result<crate::scrape_memory::ScrapeMemoryView, String> {
-    crate::scrape_memory::reset(&manager.inner().environment, site.as_deref())
+    crate::scrape_memory::reset(&manager.inner().environment, Some(&site))
 }
 
 /// Provider manifest for the sources/settings pages. Returns the same rows the

@@ -375,8 +375,9 @@ pub fn pin(
     Ok(view(environment, None))
 }
 
-/// 删除站点记忆；无 site 时清空两张表。文件/表不存在时返回空视图。
+/// 删除指定站点记忆；缺少站点时拒绝写入，不提供全库清空入口。
 pub fn reset(environment: &RuntimeEnvironment, site: Option<&str>) -> Result<ScrapeMemoryView, String> {
+    let site = site.filter(|site| !site.trim().is_empty()).ok_or("必须指定要清除的站点")?;
     let path = state_path(environment).ok_or("无法定位抓取状态数据库")?;
     if !path.is_file() {
         return Ok(missing(Some(path)));
@@ -399,27 +400,13 @@ pub fn reset(environment: &RuntimeEnvironment, site: Option<&str>) -> Result<Scr
     let transaction = connection
         .unchecked_transaction()
         .map_err(|_| "抓取状态数据库无法写入".to_string())?;
-    match site {
-        Some(site) => {
-            transaction
-                .execute("DELETE FROM site_scraper_stats WHERE site = ?1", [site])
-                .map_err(|_| "抓取状态数据库无法写入".to_string())?;
-            if attempts_present {
-                transaction
-                    .execute("DELETE FROM scrape_attempts WHERE site = ?1", [site])
-                    .map_err(|_| "抓取状态数据库无法写入".to_string())?;
-            }
-        }
-        None => {
-            transaction
-                .execute("DELETE FROM site_scraper_stats", [])
-                .map_err(|_| "抓取状态数据库无法写入".to_string())?;
-            if attempts_present {
-                transaction
-                    .execute("DELETE FROM scrape_attempts", [])
-                    .map_err(|_| "抓取状态数据库无法写入".to_string())?;
-            }
-        }
+    transaction
+        .execute("DELETE FROM site_scraper_stats WHERE site = ?1", [site])
+        .map_err(|_| "抓取状态数据库无法写入".to_string())?;
+    if attempts_present {
+        transaction
+            .execute("DELETE FROM scrape_attempts WHERE site = ?1", [site])
+            .map_err(|_| "抓取状态数据库无法写入".to_string())?;
     }
     transaction
         .commit()
