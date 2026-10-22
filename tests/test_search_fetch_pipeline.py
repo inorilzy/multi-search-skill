@@ -76,7 +76,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         }
         fetched_urls = []
 
-        def scraper(url, **kwargs):
+        def scraper(url, *, ctx=None, **kwargs):
             fetched_urls.append(url)
             return {"url": url, "markdown": f"Body for {url}", "via": "fake"}
 
@@ -100,7 +100,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         })
         fetched_urls = []
 
-        def scraper(url, **kwargs):
+        def scraper(url, *, ctx=None, **kwargs):
             fetched_urls.append(url)
             return {"url": url, "markdown": "body", "via": "fake"}
 
@@ -124,7 +124,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             "brave": _provider("brave", {"primary": [first, second]}),
             "tavily": _provider("tavily", {"primary": [duplicate]}),
         }
-        scraper = mock.Mock(side_effect=lambda url, **kwargs: {
+        scraper = mock.Mock(side_effect=lambda url, ctx=None, **kwargs: {
             "url": url, "markdown": "Fetched body", "via": "fake",
         })
         response = self._search(providers, scraper)
@@ -149,8 +149,8 @@ class SearchFetchPipelineTests(unittest.TestCase):
                 self.assertEqual(response["errors"], [])
                 self.assertEqual(response["scrapes"][0]["title"], row["title"])
                 self.assertEqual(response["results"][0]["title"], row["title"])
-                self.assertGreater(scraper.call_args.kwargs["timeout"], 0)
-                self.assertLessEqual(scraper.call_args.kwargs["timeout"], 7)
+                self.assertGreater(scraper.call_args.kwargs["ctx"].timeout, 0)
+                self.assertLessEqual(scraper.call_args.kwargs["ctx"].timeout, 7)
 
     def test_provider_answer_does_not_skip_its_url_or_video_results(self):
         rows = [
@@ -158,7 +158,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             _row("tavily", "article"),
             {**_row("tavily", "video"), "url": "https://youtube.com/watch?v=fixture"},
         ]
-        scraper = mock.Mock(side_effect=lambda url, **kwargs: {
+        scraper = mock.Mock(side_effect=lambda url, ctx=None, **kwargs: {
             "url": url, "markdown": "Fetched body", "via": "fake",
         })
         response = self._search({"tavily": _provider("tavily", {"primary": rows})}, scraper)
@@ -200,7 +200,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         rows = [_row("brave", name) for name in ("first", "broken", "third")]
         provider = _provider("brave", {"primary": rows})
 
-        def scraper(url, **kwargs):
+        def scraper(url, *, ctx=None, **kwargs):
             if url.endswith("/broken"):
                 return {"url": url, "error": "backend refused this URL"}
             return {"url": url, "markdown": f"Body for {url}", "via": "fake"}
@@ -226,7 +226,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         second_finished = threading.Event()
         completed = []
 
-        def scraper(url, **kwargs):
+        def scraper(url, *, ctx=None, **kwargs):
             if url.endswith("/short-first"):
                 if not second_finished.wait(timeout=2):
                     raise AssertionError("second fetch did not run concurrently")
@@ -251,7 +251,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
     def test_search_body_cache_keeps_full_text_beyond_preview(self):
         provider = _provider("brave", {"primary": [_row("brave", "long-document")]})
         body = "preview text " * 1000 + "NEEDLE beyond preview and still cached"
-        scraper = mock.Mock(side_effect=lambda url, **kwargs: {
+        scraper = mock.Mock(side_effect=lambda url, ctx=None, **kwargs: {
             "url": url, "markdown": body, "via": "fake",
         })
         response = self._search({"brave": provider}, scraper, use_state=True, scrape_chars=32)
@@ -260,7 +260,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         self.assertEqual(response["scrapes"][0]["markdown"], body[:32])
         self.assertTrue(hit["body_truncated"])
         self.assertEqual(scraper.call_count, 1)
-        self.assertGreater(scraper.call_args.kwargs["scrape_chars"], len(body))
+        self.assertGreater(scraper.call_args.kwargs["ctx"].scrape_chars, len(body))
         store = StateStore(self.state_path)
         self.assertEqual(SourceRegistry(store).get(hit["source_id"])["url"], hit["url"])
         excerpt = service.run_read_source(
@@ -282,7 +282,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             source: _provider(source, {"primary": _late_shared_rows(source, source)})
             for source in ("brave", "tavily")
         }
-        scraper = mock.Mock(side_effect=lambda url, **kwargs: {
+        scraper = mock.Mock(side_effect=lambda url, ctx=None, **kwargs: {
             "url": url, "markdown": "body " + url, "via": "fake",
         })
         current = self._search(providers, scraper)
@@ -314,7 +314,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         self.assertIn("legacy_scrape_limits", legacy["diagnostics"])
 
     def test_direct_url_fetch_never_invokes_search(self):
-        scraper = mock.Mock(side_effect=lambda url, **kwargs: {
+        scraper = mock.Mock(side_effect=lambda url, ctx=None, **kwargs: {
             "url": url, "markdown": "Direct body", "via": "fake",
         })
         with (
@@ -339,7 +339,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         rows = [_row("brave", "good"), _row("brave", "broken")]
         providers = {"brave": _provider("brave", {"primary": rows})}
 
-        def scraper(url, **kwargs):
+        def scraper(url, *, ctx=None, **kwargs):
             if url.endswith("/broken"):
                 return {"url": url, "error": "BODY_FETCH_FAILED"}
             return {"url": url, "markdown": "FETCHED_BODY_MARKER", "via": "fake"}
@@ -384,9 +384,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
                     self.assertNotIn("hidden tail beyond preview", output.getvalue())
                     self.assertIn("truncated", output.getvalue())
 
-    def test_mcp_tools_return_fetched_body_without_reordering(self):
-        from multi_search_mcp import tools
-
+    def test_public_service_entrypoints_return_fetched_body_without_reordering(self):
         rows = [_row("brave", "first"), _row("brave", "second")]
         providers = {"brave": _provider("brave", {"primary": rows})}
         with (
@@ -396,9 +394,17 @@ class SearchFetchPipelineTests(unittest.TestCase):
             }),
             mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
         ):
-            for call in (tools.search_web_tool, tools.multi_search_tool):
-                with self.subTest(tool=call.__name__):
-                    response = call(query="primary", sources=["brave"], use_state=False)
+            calls = [
+                ("run_search_web", lambda: service.run_search_web(
+                    service.SearchWebRequest(query="primary", sources=["brave"], use_state=False),
+                )),
+                ("run_multi_search", lambda: service.run_multi_search(
+                    service.MultiSearchRequest(query="primary", sources=["brave"], use_state=False),
+                )),
+            ]
+            for name, call in calls:
+                with self.subTest(tool=name):
+                    response = call()
                     self.assertEqual(response["errors"], [])
                     self.assertEqual([hit["url"] for hit in response["results"]], [row["url"] for row in rows])
                     self.assertTrue(all("body" not in hit for hit in response["results"]))
@@ -424,9 +430,10 @@ class SearchFetchPipelineTests(unittest.TestCase):
 
         def real_scraper(url, **kwargs):
             nonlocal batch_deadline
-            batch_deadline = kwargs["deadline"]
+            ctx = kwargs.get("ctx")
+            batch_deadline = ctx.deadline if ctx is not None else kwargs["deadline"]
             try:
-                return scrape.scrape_url_smart(url, **kwargs)
+                return scrape.scrape_url_smart(url, kwargs.get("ctx"))
             finally:
                 finished.set()
 
@@ -464,7 +471,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             "brave": _provider("brave", {"primary": [_row("brave", "shared")]}),
             "tavily": _provider("tavily", {"primary": [prefetched]}),
         }
-        scraper = mock.Mock(side_effect=lambda url, **kwargs: {
+        scraper = mock.Mock(side_effect=lambda url, ctx=None, **kwargs: {
             "url": url, "markdown": "fresh body for this response", "via": "fake",
         })
         with mock.patch.dict(capabilities.PROVIDER_CAPABILITIES, {"brave": restricted}):

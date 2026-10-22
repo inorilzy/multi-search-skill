@@ -43,8 +43,8 @@ class PreviewDefaultTests(unittest.TestCase):
                 "description": "Search excerpt", "content_kind": "excerpt",
             }],
         )}
-        self.scraper = mock.Mock(side_effect=lambda url, **kwargs: {
-            "url": url, "markdown": BODY[:kwargs["scrape_chars"]], "via": "fixture",
+        self.scraper = mock.Mock(side_effect=lambda url, ctx=None, **kwargs: {
+            "url": url, "markdown": BODY[:ctx.scrape_chars if ctx is not None else kwargs["scrape_chars"]], "via": "fixture",
         })
 
     def test_empty_and_repo_config_use_1200_character_default(self):
@@ -79,7 +79,7 @@ class PreviewDefaultTests(unittest.TestCase):
         self.assertGreater(len(page["markdown"].encode("utf-8")), 1200)
         self.assertEqual(page["length"], len(BODY))
         self.assertTrue(page["truncated"])
-        self.assertEqual(self.scraper.call_args.kwargs["scrape_chars"], DEFAULT_MAX_OBJECT_BYTES)
+        self.assertEqual(self.scraper.call_args.kwargs["ctx"].scrape_chars, DEFAULT_MAX_OBJECT_BYTES)
 
         continuation = service.run_read_source(
             service.ReadSourceRequest(source_id=page["source_id"], offset=1400, limit=80),

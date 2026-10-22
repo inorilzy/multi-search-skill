@@ -10,6 +10,76 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+# Provider error classification. ``kind`` is the single credential-health signal;
+# ``origin`` distinguishes provider-key failures from target-page failures.
+# Emitters SHOULD set ``kind`` explicitly; keyword substring matching on the
+# error text lives in ``key_state.classify_error`` and acts only as a fallback
+# when ``kind`` is absent.
+ERROR_KIND_INVALID = "invalid"
+ERROR_KIND_QUOTA_EXHAUSTED = "quota_exhausted"
+ERROR_KIND_RATE_LIMIT = "rate_limit"
+ERROR_KIND_TIMEOUT = "timeout"
+ERROR_KIND_NETWORK = "network"
+ERROR_KIND_TARGET = "target"
+ERROR_KIND_PROVIDER = "provider"
+ERROR_KIND_INTERNAL = "internal"
+# Generic fallback used when an emitter cannot or does not classify further.
+ERROR_KIND_ERROR = "error"
+
+ERROR_KINDS = frozenset({
+    ERROR_KIND_INVALID,
+    ERROR_KIND_QUOTA_EXHAUSTED,
+    ERROR_KIND_RATE_LIMIT,
+    ERROR_KIND_TIMEOUT,
+    ERROR_KIND_NETWORK,
+    ERROR_KIND_TARGET,
+    ERROR_KIND_PROVIDER,
+    ERROR_KIND_INTERNAL,
+    ERROR_KIND_ERROR,
+})
+
+# Kinds that mean "this credential may be unhealthy; try the next key".
+# Sorted by priority so callers can pick the strongest signal when several
+# rows report different kinds.
+KEYED_ERROR_KINDS = (
+    ERROR_KIND_INVALID,
+    ERROR_KIND_QUOTA_EXHAUSTED,
+    ERROR_KIND_RATE_LIMIT,
+)
+
+ERROR_ORIGIN_PROVIDER = "provider"
+ERROR_ORIGIN_TARGET = "target"
+
+
+def normalize_error_kind(kind: Any, default: str = ERROR_KIND_ERROR) -> str:
+    value = str(kind or "").strip().lower()
+    return value if value in ERROR_KINDS else default
+
+
+def error_row(
+    source: str,
+    message: Any,
+    *,
+    kind: str | None = None,
+    origin: str | None = None,
+    **extra: Any,
+) -> dict:
+    """Build a structured provider error row.
+
+    ``kind`` comes from :data:`ERROR_KINDS`; ``origin`` is typically
+    ``"provider"`` or ``"target"``. Both are optional so emitters that cannot
+    classify further (e.g. an unexpected local exception) still produce a
+    minimal row whose ``kind`` the caller may infer from the message.
+    """
+    row: dict[str, Any] = {"source": source, "error": str(message)}
+    if kind is not None:
+        row["kind"] = normalize_error_kind(kind)
+    if origin is not None:
+        row["origin"] = str(origin)
+    row.update(extra)
+    return row
+
+
 CONTENT_KIND_METADATA = "metadata"
 CONTENT_KIND_CONTENT = "content"
 CONTENT_KIND_EXCERPT = "excerpt"
@@ -229,7 +299,7 @@ def normalize_scrape_result(data: Any, *, url: str = "", via: str = "") -> dict:
         error = "invalid scrape response: expected non-empty markdown"
     if error:
         metadata = {
-            key: row[key] for key in ("error_origin", "error_type")
+            key: row[key] for key in ("origin", "kind")
             if isinstance(row.get(key), str) and row[key]
         }
         return ScrapeResult(

@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from multi_search_mcp import cli, tools
+from multi_search_mcp import cli
 from multi_search_mcp.src import service
 from multi_search_mcp.src.search.resolve import COUNT_CAPS, build_counts, resolve_search_plan
 from multi_search_mcp.src.search.search_runner import ProviderSpec
@@ -90,15 +90,14 @@ class ExplicitConfigValidationTests(unittest.TestCase):
                             self.assertIn(field, stderr.getvalue())
                         self.provider.assert_not_called()
 
-    def test_mcp_returns_invalid_request_and_doctor_error(self):
+    def test_service_raises_and_doctor_reports_error(self):
         for field, value in BAD_CONFIGS:
             with self.subTest(field=field):
                 self.write_config({field: value})
-                for entrypoint in (tools.search_web_tool, tools.multi_search_tool):
-                    data = entrypoint("test", sources=["hackernews"])
-                    self.assertEqual(data.get("error_type"), "invalid_request")
-                    self.assertIn(field, data["error"])
-                data = tools.doctor_tool(include_keys=False)
+                for entrypoint in (service.run_search_web, service.run_multi_search):
+                    with self.assertRaisesRegex(config.ConfigError, field):
+                        entrypoint({"query": "test", "sources": ["hackernews"]})
+                data = service.doctor_data(include_keys=False)
                 self.assertEqual(data["config_status"], "error")
                 self.assertIn(field, data["config_error"])
                 self.provider.assert_not_called()
@@ -177,18 +176,19 @@ class ExplicitConfigValidationTests(unittest.TestCase):
                       "scrape_timeout", "scrape_url_timeout", "scrape_concurrency", "count"):
             with self.subTest(field=field):
                 self.write_config({field: secret})
-                data = tools.multi_search_tool("test", sources=["hackernews"])
-                self.assertEqual(data["error_type"], "invalid_request")
-                self.assertIn(field, data["error"])
-                self.assertNotIn(secret, data["error"])
+                with self.assertRaises(config.ConfigError) as ctx:
+                    service.run_multi_search({"query": "test", "sources": ["hackernews"]})
+                self.assertIn(field, str(ctx.exception))
+                self.assertNotIn(secret, str(ctx.exception))
                 diagnostic = service.doctor_data(include_keys=False)
                 self.assertIn(field, diagnostic["config_error"])
                 self.assertNotIn(secret, diagnostic["config_error"])
                 self.provider.assert_not_called()
         self.write_config({"counts": {"hackernews": secret}})
-        data = tools.search_web_tool("test", sources=["hackernews"])
-        self.assertIn("counts.hackernews", data["error"])
-        self.assertNotIn(secret, data["error"])
+        with self.assertRaises(config.ConfigError) as ctx:
+            service.run_search_web({"query": "test", "sources": ["hackernews"]})
+        self.assertIn("counts.hackernews", str(ctx.exception))
+        self.assertNotIn(secret, str(ctx.exception))
 
     def test_valid_request_overrides_bad_defaults_through_both_search_stages(self):
         for field in ("timeout", "scrape_chars", "scrape_per_source", "scrape_timeout", "scrape_concurrency", "count"):
@@ -242,9 +242,9 @@ class ExplicitConfigValidationTests(unittest.TestCase):
             runner_config = self.provider.call_args.args[1]
             self.assertEqual((runner_config.timeout, runner_config.counts["hackernews"]), (8, 2))
             self.assertEqual(cli.main(["doctor", "--no-keys", "--format", output_format], stdout=io.StringIO(), stderr=io.StringIO()), 0)
-        self.assertNotIn("error", tools.search_web_tool("test", sources=["hackernews"]))
-        self.assertNotIn("error", tools.multi_search_tool("test", sources=["hackernews"]))
-        self.assertEqual(tools.doctor_tool(include_keys=False)["config_status"], "ok")
+        self.assertNotIn("error", service.run_search_web({"query": "test", "sources": ["hackernews"], "use_state": False}))
+        self.assertNotIn("error", service.run_multi_search({"query": "test", "sources": ["hackernews"], "use_state": False}))
+        self.assertEqual(service.doctor_data(include_keys=False)["config_status"], "ok")
 
 
 if __name__ == "__main__":

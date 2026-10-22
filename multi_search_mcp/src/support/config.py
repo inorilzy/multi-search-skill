@@ -6,9 +6,6 @@ from typing import Any
 
 
 CONFIG_ENV_VAR = "MULTI_SEARCH_CONFIG"
-USER_CONFIG_PATH = Path.home() / ".multi-search" / "multi-search-config.json"
-# Development fallback: the config file shipped next to the MCP source tree.
-DEV_CONFIG_PATH = Path(__file__).resolve().parents[3] / "multi-search-config.json"
 
 
 def resolve_config_path() -> Path:

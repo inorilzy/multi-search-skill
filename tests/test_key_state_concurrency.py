@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from multi_search_mcp import tools
 from multi_search_mcp.src.state.key_state import (
     ACTIVE, COOLDOWN, INVALID, QUOTA_EXHAUSTED, TRANSIENT_INVALID,
     KeyCandidate, KeyOutcome, SQLiteKeyManager, key_fingerprint, key_id_for,
@@ -55,7 +54,7 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                 with mock.patch(
                     "multi_search_mcp.src.state.state_store.DEFAULT_STATE_PATH", path
                 ):
-                    row = tools.get_key_status_tool("exa")["key_status"][0]
+                    row = SQLiteKeyManager(StateStore(path)).status_rows("exa")[0]
                 self.assertEqual(
                     (row["failure_count"], row["invalid_strikes"], row["status"]),
                     (3, 3, INVALID),

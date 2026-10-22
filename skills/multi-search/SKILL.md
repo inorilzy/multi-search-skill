@@ -11,17 +11,17 @@ CLI help defines parameters. Before retrieval, read
 
 ## Choose execution
 
-- **Assigned search executor:** follow [search.md](references/search.md)
+- **Assigned search executor:** follow [executor.md](references/executor.md)
   directly. This branch takes precedence; never delegate again.
 - **Known URL or cached source:** fetch/read directly using
   [verification.md](references/verification.md); no search or delegation needed.
 - **Direct mode:** only if the user requests it or the host has no subagent
-  capability. Disclose this mode and follow [search.md](references/search.md).
+  capability. Disclose this mode and follow [executor.md](references/executor.md).
   Missing setup or failed dispatch is an explicit error; do not silently switch
   models or rerun the search in the main Agent.
 - **Otherwise, new search:** before retrieving candidates, use one host subagent
   with a configured or explicitly available lightweight model. Read
-  [subagents.md](references/subagents.md) for dispatch and handoff.
+  [executor.md](references/executor.md) for dispatch and handoff.
   The user need not request delegation each time; model choice belongs to the host.
 
 ## Complete the request

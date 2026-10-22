@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
 
-from multi_search_mcp import cli, tools
+from multi_search_mcp import cli
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape.scrapers import exa as exa_scraper
 from multi_search_mcp.src.search.searchers import exa as exa_searcher
@@ -54,8 +54,8 @@ class ExaTargetErrorTests(unittest.TestCase):
             result = self.scrape()
         self.assertIn("SOURCE_NOT_AVAILABLE (403)", result["error"])
         self.assertEqual(fetch.call_count, 1)
-        self.assertEqual(result["error_origin"], "target")
-        self.assertEqual(result["error_type"], "target")
+        self.assertEqual(result["origin"], "target")
+        self.assertEqual(result["kind"], "target")
         self.assertEqual(result["markdown"], "")
         self.assertEqual(result["length"], 0)
         self.assertEqual(result["via"], "exa")
@@ -70,7 +70,7 @@ class ExaTargetErrorTests(unittest.TestCase):
 
     def test_target_failure_cannot_overwrite_in_flight_key_health(self):
         candidate = self.manager.candidates("exa", KEYS)[0]
-        for status, error_type, repeats in (
+        for status, error_kind, repeats in (
             (TRANSIENT_INVALID, "invalid", 1),
             (INVALID, "invalid", 3),
             (COOLDOWN, "rate_limit", 1),
@@ -85,7 +85,7 @@ class ExaTargetErrorTests(unittest.TestCase):
                 def fetch(*_args, **_kwargs):
                     for _ in range(repeats):
                         self.manager.record_result("exa", candidate, KeyOutcome(
-                            False, True, error_type, "fixture provider failure",
+                            False, True, error_kind, "fixture provider failure",
                         ))
                     before.extend(self.manager.status_rows("exa"))
                     return response(target_error())
@@ -97,7 +97,7 @@ class ExaTargetErrorTests(unittest.TestCase):
                 self.assertEqual(self.manager.status_rows("exa"), before)
                 row = next(row for row in before if row["key_id"] == candidate.key_id)
                 self.assertEqual(row["status"], status)
-                self.assertEqual(row["invalid_strikes"], repeats if error_type == "invalid" else 0)
+                self.assertEqual(row["invalid_strikes"], repeats if error_kind == "invalid" else 0)
 
     def test_per_url_errors_never_rotate_even_with_auth_or_quota_words(self):
         for code, detail in ((401, "unauthorized"), (403, "forbidden"), (429, "rate limit quota")):
@@ -163,26 +163,26 @@ class ExaTargetErrorTests(unittest.TestCase):
                     "https://api.exa.ai/contents", code, "forbidden 401 quota", {}, None,
                 )):
                     result = exa_scraper.scrape_url_exa(URL, KEYS[0])
-                self.assertEqual(result["error_origin"], "provider")
-                self.assertEqual(result["error_type"], expected)
+                self.assertEqual(result["origin"], "provider")
+                self.assertEqual(result["kind"], expected)
                 self.assertEqual(is_key_retryable_error(result), retryable)
                 outcome = self.manager.classify_result("exa", result)
                 self.assertEqual(outcome.error_type, expected)
                 self.assertEqual(outcome.retryable, retryable)
 
     def test_normalization_preserves_only_safe_error_metadata(self):
-        row = {"error": "forbidden 403", "error_origin": "target", "error_type": "target", "raw_provider_dump": "private"}
+        row = {"error": "forbidden 403", "origin": "target", "kind": "target", "raw_provider_dump": "private"}
         normalized = normalize_scrape_result(row, url=URL, via="exa")
-        self.assertEqual(normalized["error_origin"], "target")
-        self.assertEqual(normalized["error_type"], "target")
+        self.assertEqual(normalized["origin"], "target")
+        self.assertEqual(normalized["kind"], "target")
         self.assertNotIn("raw_provider_dump", normalized)
         self.assertEqual(normalize_scrape_result(normalized), normalized)
 
     def test_target_error_does_not_contaminate_other_provider_errors(self):
-        target = {"error": "forbidden 403 quota", "error_origin": "target", "error_type": "target"}
+        target = {"error": "forbidden 403 quota", "origin": "target", "kind": "target"}
         for provider, expected, retryable in (
             ({"error": "timeout"}, "timeout", False),
-            ({"error": "too many requests", "rate_limited": True}, "rate_limit", True),
+            ({"error": "too many requests", "kind": "rate_limit"}, "rate_limit", True),
             ({"error": "invalid key"}, "invalid", True),
         ):
             with self.subTest(provider=provider):
@@ -225,8 +225,7 @@ class ExaTargetErrorTests(unittest.TestCase):
             return response(target_error(403, f"SOURCE_NOT_AVAILABLE {req.get_header('X-api-key')}"))
 
         with mock.patch.object(exa_scraper, "urlopen_retry", side_effect=fetch), \
-                mock.patch.object(cli, "run_fetch_source", side_effect=fetch_source), \
-                mock.patch.object(tools, "run_fetch_source", side_effect=fetch_source):
+                mock.patch.object(cli, "run_fetch_source", side_effect=fetch_source):
             for output_format in cli.OUTPUT_FORMATS:
                 with self.subTest(output_format=output_format):
                     stdout, stderr = io.StringIO(), io.StringIO()
@@ -239,31 +238,31 @@ class ExaTargetErrorTests(unittest.TestCase):
                     self.assertIn("403", output)
                     for key in KEYS:
                         self.assertNotIn(key, output)
-            result = tools.fetch_source_tool(url=URL, backends=["exa"])
-            output = json.dumps(result)
+            # The service raises ValueError on a target scrape failure;
+            # verify the message surfaces the provider detail and that
+            # the keys are still redacted.
+            with self.assertRaises(ValueError) as raised:
+                fetch_source(
+                    service.FetchSourceRequest(url=URL, backends=["exa"])
+                )
+            output = str(raised.exception)
             self.assertIn("SOURCE_NOT_AVAILABLE", output)
             self.assertIn("403", output)
-            self.assertEqual(json.loads(output)["error_type"], "invalid_request")
             for key in KEYS:
                 self.assertNotIn(key, output)
         self.assertEqual(len(self.manager.candidates("exa", KEYS)), 2)
 
     def test_adapter_scrape_preserves_nested_error_metadata_in_all_modes(self):
-        def scrape(request):
-            return service.run_scrape(
-                request, keys=self.keys, config={}, state_store=self.store,
-                url_resolver=lambda _host: ["93.184.216.34"],
-            )
-
-        with mock.patch.object(exa_scraper, "urlopen_retry", side_effect=lambda *_a, **_k: response(target_error())), \
-                mock.patch.object(tools, "run_scrape", side_effect=scrape):
+        with mock.patch.object(exa_scraper, "urlopen_retry", side_effect=lambda *_a, **_k: response(target_error())):
             for mode in ("json", "markdown", "both"):
                 with self.subTest(mode=mode):
-                    result = tools.scrape_url_tool(url=URL, backends=["exa"], output=mode)
-                    output = json.dumps(result)
-                    payload = json.loads(output)
-                    self.assertEqual(payload["result"]["error_origin"], "target")
-                    self.assertEqual(payload["result"]["error_type"], "target")
+                    payload = service.run_scrape(
+                        service.ScrapeRequest(url=URL, backends=["exa"], output=mode),
+                        keys=self.keys, config={}, state_store=self.store,
+                        url_resolver=lambda _host: ["93.184.216.34"],
+                    )
+                    self.assertEqual(payload["result"]["origin"], "target")
+                    self.assertEqual(payload["result"]["kind"], "target")
                     self.assertIn("SOURCE_NOT_AVAILABLE (403)", payload["result"]["error"])
                     if mode != "json":
                         self.assertIn("SOURCE_NOT_AVAILABLE (403)", payload["markdown"])

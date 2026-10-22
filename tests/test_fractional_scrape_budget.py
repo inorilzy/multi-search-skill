@@ -4,6 +4,7 @@ from unittest import mock
 
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape import scrape
+from tests.scrape_ctx import context
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 
 
@@ -73,7 +74,10 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
     def test_runtime_fractional_timeout_is_not_reparsed_as_integer(self):
         observed = {}
 
-        def instant_scraper(url, **kwargs):
+        def instant_scraper(url, ctx=None, **kwargs):
+            if ctx is not None:
+                observed["timeout"] = ctx.timeout
+                observed["deadline"] = ctx.deadline
             observed.update(kwargs)
             return {"url": url, "markdown": BODY, "via": "fixture"}
 
@@ -135,9 +139,9 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
     def test_search_fetch_reuses_one_absolute_batch_deadline(self):
         captured = {}
 
-        def instant_scraper(url, **kwargs):
-            captured["scraper_deadline"] = kwargs["deadline"]
-            captured["scraper_timeout"] = kwargs["timeout"]
+        def instant_scraper(url, ctx=None, **kwargs):
+            captured["scraper_deadline"] = ctx.deadline if ctx is not None else kwargs["deadline"]
+            captured["scraper_timeout"] = ctx.timeout if ctx is not None else kwargs["timeout"]
             return {"url": url, "markdown": BODY, "via": "fixture"}
 
         def fetch_stage(hits, **kwargs):
@@ -170,10 +174,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
         ):
             result = scrape.scrape_url_smart(
                 URL,
-                backends=["jina"],
-                timeout=1,
-                deadline=100.05,
-                url_resolver=_resolver,
+                context(backends=["jina"], timeout=1, deadline=100.05, url_resolver=_resolver),
             )
 
         self.assertNotIn("error", result)
@@ -189,10 +190,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
         ):
             result = scrape.scrape_url_smart(
                 URL,
-                backends=["jina"],
-                timeout=1,
-                deadline=100.0,
-                url_resolver=_resolver,
+                context(backends=["jina"], timeout=1, deadline=100.0, url_resolver=_resolver),
             )
 
         backend.assert_not_called()

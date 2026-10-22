@@ -4,7 +4,7 @@ interface:
   default_prompt: "Use $multi-search to find online content, remove clearly irrelevant candidates, review retained previews, and verify content claims."
 compatibility:
   canonical_format: "agent-skills"
-  adapter_targets: ["codex", "pi"]
+  adapter_targets: ["codex", "pi", "claude-code"]
   activation:
     mode: "semantic"
   execution:
@@ -17,3 +17,4 @@ compatibility:
   degradation:
     codex: "SKILL.md is the entrypoint; delegation requires a usable host subagent and model."
     pi: "SKILL.md is the entrypoint; delegation requires an installed host subagent extension and model."
+    claude-code: "SKILL.md is the entrypoint; delegation uses the built-in Task/subagent tool with an explicitly available lightweight model."

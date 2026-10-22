@@ -40,7 +40,7 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `keys reset`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
 
-边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置。
+边界约定：明文 provider key 与设置统一存放于 `~/.multi-search/config.sqlite`（凭据字段 DPAPI 加密）；非敏感行为配置仍走 `MULTI_SEARCH_CONFIG` / `~/.multi-search/multi-search-config.json` / 仓库开发态的 `multi-search-config.json`，运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置；旧 `~/.search-keys.json` 仅作为一次性迁移来源存在。
 
 当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
 
@@ -156,76 +156,23 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 
 `route` 决定**搜哪些源**。`search_web` 与 `multi_search` 对所有 route 都先按 RRF 排序，最终取前 15 条并获取正文。
 
-### `route`（搜哪些源 / 场景）
-
-| Route | Sources | 适合场景 |
-|---|---|---|
-| `default` / `web` | Brave + Parallel + Tavily + Exa + SerpAPI + Firecrawl + Baidu | 普通事实搜索；默认 route |
-| `fast` | Baidu + Tavily + Firecrawl + Exa | 较小的搜索源集合；排序后同样获取正文 |
-| `social` | Twitter/X | 看社交反馈、口碑、讨论 |
-| `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
-| `all` | default + social + dev + sov2ex（12 源） | 尽可能广的 API 召回 |
-| 指定源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` | 绕过 route，直接指定一个或多个源 |
+可用的 route 与 sources 清单见 [docs/route-capability-table.md](docs/route-capability-table.md)（仓库内唯一 route→sources 矩阵）。`route` 缺省走 `default`；`sources=[...]` 显式指定源并绕过 route 组合。
 
 搜索自动返回正文预览；Agent 选读来源后用 `fetch_source(full_content=True)` 获取已取得全文，`read_source` 用于定向查证缓存片段。已有 URL 无需搜索，直接用 `fetch_source` / `scrape_url`。
 
 > 实际生效的源以响应里的 `diagnostics.active_sources` 为准：`multi-search-config.json`
 > 可通过 `disabled_sources` 全局关闭源；被关闭的源会从 route 中减去，不会执行。
 
-### 搜索阶段的 Route 默认参数
-
-| Route | 每源 count | timeout |
-|---|---:|---:|
-| `default` / `web` | 10 | 60s |
-| `fast` | 10 | 45s |
-| `all` | 10 | 90s |
-| `social` | 10 | 60s |
-| `dev` | 10 | 60s |
-
-缺 key 的源会显示 error row，不会静默消失。`fast` 路由不会跨路由降级；缺 key 时只显示该源的 error row。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
+每源 `count` 与 `timeout` 默认值以 `search_runner.py` 的 `ROUTE_META` 为准。缺 key 的源会显示 error row，不会静默消失。`fast` 路由不会跨路由降级；缺 key 时只显示该源的 error row。GitHub 没 token 时可用 `gh auth login` 后 fallback。Twitter/X 依赖、cookies、认证或限流失败时只影响 Twitter/X，其它源继续输出。
 
 ## Keys
 
-把 key 放到 `~/.search-keys.json`，不要提交到仓库：
+凭据与设置统一由共享 SQLite 数据库 `~/.multi-search/config.sqlite` 提供，敏感字段使用 DPAPI 加密。**它是 CLI 与桌面端唯一运行时来源**——CLI 不读 `~/.search-keys.json`、不读传统 provider 环境变量、也不依赖 `multi-search-config.json` 里的 key 字段。
 
-```json
-{
-  "brave": "BSAxxxx",
-  "parallel": ["parallel-key1", "parallel-key2"],
-  "baidu": "qianfan-or-appbuilder-key",
-  "tavily": ["tvly-key1", "tvly-key2"],
-  "exa": ["exa-key1", "exa-key2"],
-  "jina": [
-    {"key": "jina_xxx_optional_1", "exhausted": false}
-  ],
-  "firecrawl": "fc-xxxx",
-  "serpapi": "xxxx",
-  "github": "ghp_xxxx",
-  "twitter": {"auth_token": "...", "ct0": "..."}
-}
-```
-
-环境变量会覆盖同名配置：
-
-```text
-BRAVE_SEARCH_API_KEY / BRAVE_API_KEY
-PARALLEL_API_KEY
-BAIDU_QIANFAN_API_KEY / QIANFAN_API_KEY / APPBUILDER_API_KEY
-TAVILY_API_KEY
-EXA_API_KEY
-JINA_API_KEY / JINA_KEY
-FIRECRAWL_API_KEY
-SERPAPI_API_KEY / SERPAPI_KEY
-GITHUB_TOKEN / GH_TOKEN
-TWITTER_COOKIES_PATH
-```
-
-多数 key 字段支持 string 或 string array。Jina 支持 `{ "key": "...", "exhausted": true|false }`。这里的 `exhausted` 是 `~/.search-keys.json` 中由操作员维护的配置级静态排除标记：设为 `true` 后该 key 不再进入 Jina 轮换；它不是 SQLite 运行态的 `quota_exhausted`，也没有 24 小时自动恢复语义。带 key 的 Jina Reader 请求遇到 HTTP 402 或明确配额/余额错误时，会直接分类为运行态 `quota_exhausted`，无需先调用 wallet/余额接口；该状态在 `exhausted_until` 未到期时跳过该 key，期满后重新允许尝试，不会自动把配置文件的 `exhausted` 写成 `true`。需要手动软删除 Jina key：
-
-```powershell
-# 在仓库根目录或已安装环境中运行
-python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
-```
+- 桌面端 UI 写入并管理 `config.sqlite`；CLI 直接读取同一文件，不需要再把密钥导出到环境变量或单独文件。
+- `MULTI_SEARCH_CONFIG_DB` 仅在显式隔离运行（如测试）时改指其它数据库路径。
+- 旧 `~/.search-keys.json` 只由一次性迁移/标记脚本读取（如 `python -m multi_search_mcp.src.state.mark_exhausted <jina-key>` 用来在迁移前手动软删除 Jina key）。它不参与正常搜索；迁移完成后由操作员自行保管或删除。
+- `TWITTER_COOKIES_PATH` 作为非敏感的 cookie **路径**引用继续存在于设置中，cookie 文件本身与 provider key 不写入命令行。
 
 ## 架构和术语
 
@@ -399,7 +346,7 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-se
 
 ## 安全
 
-- 不要提交 `~/.search-keys.json`、`.env` 或真实 provider key。
+- 不要提交 `config.sqlite`、`.env` 或任何真实 provider key / cookie 文件。
 - provider error 输出前会尽量 scrub 可能出现的 key 值。
 - 第三方抓取正文始终按 untrusted data 处理。
 
@@ -419,7 +366,7 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-se
 
 ### 为什么结果里没有 Twitter/X？
 
-Twitter/X 需要 cookies。确认依赖已安装，并配置 `TWITTER_COOKIES_PATH` 或 `~/.search-keys.json` 中的 `twitter` 字段；源码直接运行时先执行 `python -m pip install -e .`。
+Twitter/X 需要 cookies。确认依赖已安装，并在桌面端 / `config.sqlite` 中配置 `twitter_cookies_path` 指向存有 `auth_token` 与 `ct0` 的 cookies 文件；源码直接运行时先执行 `python -m pip install -e .`。
 
 ### 抓取正文太慢怎么办？
 

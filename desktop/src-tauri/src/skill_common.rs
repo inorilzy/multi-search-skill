@@ -20,17 +20,26 @@ pub(crate) const MARKER_SCHEMA: u32 = 2;
 pub(crate) const MARKER: &str = ".multi-search-install.json";
 pub(crate) const OWNER: &str = "multi-search-desktop";
 
-/// Files shipped with this product release, embedded so the desktop app never
-/// reads a loose copy.
-pub(crate) const FILES: [(&str, &str); 3] = [
-    ("SKILL.md", include_str!("../../skill/multi-search/SKILL.md")),
+/// Files shipped with this product release, embedded at build time from the
+/// canonical `skills/multi-search/` directory at the repository root. The
+/// desktop app never maintains a second, hand-edited copy. `agents/interface.yaml`
+/// is adapter-generation metadata and is not deployed with the installed skill.
+pub(crate) const FILES: [(&str, &str); 4] = [
+    (
+        "SKILL.md",
+        include_str!("../../../skills/multi-search/SKILL.md"),
+    ),
     (
         "references/cli.md",
-        include_str!("../../skill/multi-search/references/cli.md"),
+        include_str!("../../../skills/multi-search/references/cli.md"),
+    ),
+    (
+        "references/executor.md",
+        include_str!("../../../skills/multi-search/references/executor.md"),
     ),
     (
         "references/verification.md",
-        include_str!("../../skill/multi-search/references/verification.md"),
+        include_str!("../../../skills/multi-search/references/verification.md"),
     ),
 ];
 

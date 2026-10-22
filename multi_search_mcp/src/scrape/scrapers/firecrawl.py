@@ -4,6 +4,15 @@ import urllib.error
 import urllib.request
 
 from ...support.http import urlopen_retry
+from ...support.models import (
+    ERROR_KIND_ERROR,
+    ERROR_KIND_INVALID,
+    ERROR_KIND_QUOTA_EXHAUSTED,
+    ERROR_KIND_RATE_LIMIT,
+    ERROR_KIND_TARGET,
+    ERROR_ORIGIN_PROVIDER,
+    ERROR_ORIGIN_TARGET,
+)
 from ...support.secrets import scrub_secrets
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
 
@@ -13,11 +22,11 @@ _FIRECRAWL_ERROR_BODY_LIMIT = 4096
 # Keep this set narrow: broad site/infrastructure codes do not prove that the
 # provider key is healthy, but they also do not prove that the target failed.
 _FIRECRAWL_TARGET_ERROR_CODES = frozenset({"SCRAPE_SSL_ERROR"})
-_FIRECRAWL_HTTP_ERROR_TYPES = {
-    401: "invalid",
-    403: "invalid",
-    402: "quota_exhausted",
-    429: "rate_limit",
+_FIRECRAWL_HTTP_ERROR_KINDS = {
+    401: ERROR_KIND_INVALID,
+    403: ERROR_KIND_INVALID,
+    402: ERROR_KIND_QUOTA_EXHAUSTED,
+    429: ERROR_KIND_RATE_LIMIT,
 }
 
 
@@ -50,12 +59,12 @@ def _error_result(
     if status_code is not None and isinstance(data, dict):
         detail = f"HTTP {status_code}: {detail}"
     result = {"url": url, "error": f"Firecrawl: {scrub_secrets(detail, api_key)}"}
-    if status_code in _FIRECRAWL_HTTP_ERROR_TYPES:
-        result.update(error_origin="provider", error_type=_FIRECRAWL_HTTP_ERROR_TYPES[status_code])
+    if status_code in _FIRECRAWL_HTTP_ERROR_KINDS:
+        result.update(origin=ERROR_ORIGIN_PROVIDER, kind=_FIRECRAWL_HTTP_ERROR_KINDS[status_code])
     elif code in _FIRECRAWL_TARGET_ERROR_CODES:
-        result.update(error_origin="target", error_type="target")
+        result.update(origin=ERROR_ORIGIN_TARGET, kind=ERROR_KIND_TARGET)
     elif status_code is not None:
-        result.update(error_origin="provider", error_type="error")
+        result.update(origin=ERROR_ORIGIN_PROVIDER, kind=ERROR_KIND_ERROR)
     return result
 
 

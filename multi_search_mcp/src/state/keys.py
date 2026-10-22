@@ -116,7 +116,7 @@ CREDENTIAL_STORE_PROVIDERS = (
     "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github", "jina",
 )
 def load_keys(
-    keys_file: str | Path | None = None,
+    keys_file: str | Path | None = None,  # legacy migration only; not a runtime override
     environ: Mapping[str, str] | None = None,
     credential_store=None,
     *,

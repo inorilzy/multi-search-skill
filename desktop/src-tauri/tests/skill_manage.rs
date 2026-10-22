@@ -25,10 +25,11 @@ fn release_06_marker_without_hashes_remains_managed() {
     let profile = common::Profile::new();
     install_global(&profile);
     let target = skill_dir(&profile.root);
-    fs::write(target.join(".multi-search-install.json"), r#"{"managed_by":"multi-search-desktop","skill":"multi-search","skill_version":"1","files":["SKILL.md","references/cli.md","references/verification.md"]}"#).unwrap();
-    // A marker without hashes cannot prove the on-disk files were not edited,
-    // so it is reported as Outdated rather than Current. It is still managed
-    // (not Unknown), so update remains available.
+    // Pre-schema marker for the current (four-file) release: no hashes, no
+    // marker_schema. It cannot prove the on-disk files were not edited, so it
+    // is reported as Outdated rather than Current. It is still managed (not
+    // Unknown), so update remains available.
+    fs::write(target.join(".multi-search-install.json"), r#"{"managed_by":"multi-search-desktop","skill":"multi-search","skill_version":"1","files":["SKILL.md","references/cli.md","references/executor.md","references/verification.md"]}"#).unwrap();
     assert_eq!(
         manager(&profile)
             .skill_status("global", None)
@@ -86,16 +87,16 @@ fn outdated_skill_updates_without_confirmation_when_unmodified() {
     assert!(update.backup.is_none());
     // The updated skill still tells Claude to call the CLI.
     let installed = read(&skill_dir(&profile.root).join("SKILL.md"));
-    assert!(installed.contains("multi-search search"));
+    assert!(installed.contains("multi-search CLI"));
     assert!(!installed.contains("MCP"));
-    assert_eq!(installed, include_str!("../../skill/multi-search/SKILL.md"));
+    assert_eq!(installed, include_str!("../../../skills/multi-search/SKILL.md"));
     assert_eq!(
         read(&skill_dir(&profile.root).join("references/cli.md")),
-        include_str!("../../skill/multi-search/references/cli.md")
+        include_str!("../../../skills/multi-search/references/cli.md")
     );
     assert_eq!(
         read(&skill_dir(&profile.root).join("references/verification.md")),
-        include_str!("../../skill/multi-search/references/verification.md")
+        include_str!("../../../skills/multi-search/references/verification.md")
     );
 }
 
@@ -251,7 +252,7 @@ fn failed_update_keeps_the_old_usable_skill() {
     assert_eq!(blocked.status, "blocked");
     assert!(blocked.reason.contains("--expand"), "{}", blocked.reason);
     // Old skill is still in place and still usable.
-    assert!(read(&target.join("SKILL.md")).contains("multi-search search"));
+    assert!(read(&target.join("SKILL.md")).contains("multi-search CLI"));
     let leftovers: Vec<_> = fs::read_dir(profile.root.join(".claude/skills"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())

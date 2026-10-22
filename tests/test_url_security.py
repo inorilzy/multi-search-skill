@@ -6,6 +6,7 @@ import urllib.response
 from unittest import mock
 
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
+from tests.scrape_ctx import context
 from multi_search_mcp.src.support.http import urlopen_retry
 from multi_search_mcp.src.support.url_security import (
     UrlSecurityError,
@@ -175,8 +176,7 @@ class UrlSecurityTests(unittest.TestCase):
         with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl") as backend:
             result = scrape_url_smart(
                 "http://127.0.0.1/admin",
-                primary="firecrawl",
-                backends=("firecrawl",),
+                context(primary="firecrawl", backends=("firecrawl",)),
             )
 
         self.assertIn("unsafe scrape URL", result["error"])
@@ -191,9 +191,7 @@ class UrlSecurityTests(unittest.TestCase):
         with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", side_effect=fake_jina) as backend:
             result = scrape_url_smart(
                 "https://github.com/openai/example",
-                primary="jina",
-                backends=("jina",),
-                url_resolver=resolver,
+                context(primary="jina", backends=("jina",), url_resolver=resolver),
             )
 
         self.assertEqual(result["via"], "jina")

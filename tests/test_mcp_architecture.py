@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
+from tests.scrape_ctx import context
 from multi_search_mcp.src.search.search_runner import (
     ROUTE_PROFILES,
     resolve_route,
@@ -27,7 +28,6 @@ from multi_search_mcp.src.state.key_state import (
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.state.site_memory import ScrapeAttempt, SiteScraperMemory
 from multi_search_mcp.src.support.format import format_results
-from multi_search_mcp import tools
 from multi_search_mcp.src.support import config as config_module
 from multi_search_mcp.src.support.dedup import _norm_url, rank_results
 from multi_search_mcp.src import service as service_module
@@ -141,11 +141,13 @@ class PluginKeyStateTests(unittest.TestCase):
             with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_exa", side_effect=fake_exa):
                 result = scrape_url_smart(
                     "https://example.com",
-                    primary="exa",
-                    backends=("exa",),
-                    exa_keys=["bad", "good"],
-                    key_manager=manager,
-                    url_resolver=lambda _host: ["93.184.216.34"],
+                    context(
+                        primary="exa",
+                        backends=("exa",),
+                        keys={"exa": ["bad", "good"]},
+                        key_manager=manager,
+                        url_resolver=lambda _host: ["93.184.216.34"],
+                    ),
                 )
 
             self.assertNotIn("error", result)
@@ -255,10 +257,10 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
     def test_unknown_and_missing_key_backends_error_eagerly(self):
         # P2-I: forcing an unknown or unconfigured keyed backend yields a clear
         # structured error instead of a generic "no backend available".
-        unknown = scrape_url_smart("https://example.com", backends=("does-not-exist",))
+        unknown = scrape_url_smart("https://example.com", context(backends=("does-not-exist",)))
         self.assertEqual(unknown["error"], "unknown scrape backend: does-not-exist")
 
-        missing = scrape_url_smart("https://example.com", backends=("exa",))
+        missing = scrape_url_smart("https://example.com", context(backends=("exa",)))
         self.assertEqual(missing["error"], "missing key for backend: exa")
 
     def test_firecrawl_backend_allows_anonymous_scrape(self):
@@ -271,9 +273,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
         with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl", side_effect=fake_firecrawl):
             result = scrape_url_smart(
                 "https://example.com",
-                primary="firecrawl",
-                backends=("firecrawl",),
-                url_resolver=lambda _host: ["93.184.216.34"],
+                context(primary="firecrawl", backends=("firecrawl",), url_resolver=lambda _host: ["93.184.216.34"]),
             )
 
         self.assertEqual(result["via"], "firecrawl")
@@ -316,11 +316,10 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
         with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_exa", side_effect=fake_exa):
             result = scrape_url_smart(
                 "https://example.com",
-                primary="exa",
-                backends=("exa",),
-                exa_keys=["ek"],
-                scrape_chars=2048,
-                url_resolver=lambda _host: ["93.184.216.34"],
+                context(
+                    primary="exa", backends=("exa",), keys={"exa": ["ek"]},
+                    scrape_chars=2048, url_resolver=lambda _host: ["93.184.216.34"],
+                ),
             )
 
         self.assertEqual(result["via"], "exa")
@@ -369,12 +368,11 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", side_effect=fake_jina):
                 result = scrape_url_smart(
                     "https://example.com",
-                    primary="jina",
-                    backends=("jina",),
-                    jina_keys=["jk1", "jk2"],
-                    jina_prefer_keyed=True,
-                    key_manager=manager,
-                    url_resolver=lambda _host: ["93.184.216.34"],
+                    context(
+                        primary="jina", backends=("jina",), keys={"jina": ["jk1", "jk2"]},
+                        jina_prefer_keyed=True, key_manager=manager,
+                        url_resolver=lambda _host: ["93.184.216.34"],
+                    ),
                 )
 
             self.assertNotIn("error", result)
@@ -440,11 +438,10 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                  mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_tavily", side_effect=fake_tavily):
                 result = scrape_url_smart(
                     url,
-                    primary="jina",
-                    backends=("jina", "tavily"),
-                    tavily_keys=["tk"],
-                    site_memory=memory,
-                    url_resolver=lambda _host: ["93.184.216.34"],
+                    context(
+                        primary="jina", backends=("jina", "tavily"), keys={"tavily": ["tk"]},
+                        site_memory=memory, url_resolver=lambda _host: ["93.184.216.34"],
+                    ),
                 )
 
             self.assertEqual(result["via"], "tavily")
@@ -492,10 +489,10 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_tavily", side_effect=fake_tavily):
             result = scrape_url_smart(
                 "https://example.com/article",
-                primary="tavily",
-                backends=("jina", "tavily"),
-                tavily_keys=["tk"],
-                url_resolver=lambda _host: ["93.184.216.34"],
+                context(
+                    primary="tavily", backends=("jina", "tavily"), keys={"tavily": ["tk"]},
+                    url_resolver=lambda _host: ["93.184.216.34"],
+                ),
             )
 
         self.assertEqual(result["via"], "tavily")
@@ -522,11 +519,10 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                  mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_tavily", side_effect=fake_tavily):
                 result = scrape_url_smart(
                     "https://cold-example.com/article",
-                    primary="tavily",
-                    backends=("jina", "tavily"),
-                    tavily_keys=["tk"],
-                    site_memory=memory,
-                    url_resolver=lambda _host: ["93.184.216.34"],
+                    context(
+                        primary="tavily", backends=("jina", "tavily"), keys={"tavily": ["tk"]},
+                        site_memory=memory, url_resolver=lambda _host: ["93.184.216.34"],
+                    ),
                 )
 
             self.assertEqual(result["via"], "tavily")
@@ -1052,7 +1048,8 @@ class PluginServiceConfigTests(unittest.TestCase):
     def test_direct_scrape_passes_configured_jina_keys(self):
         captured = {}
 
-        def fake_scrape(url, **kwargs):
+        def fake_scrape(url, ctx=None, **kwargs):
+            captured["ctx"] = ctx
             captured.update(kwargs)
             return {"url": url, "markdown": "ok", "via": "jina"}
 
@@ -1061,7 +1058,8 @@ class PluginServiceConfigTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.scrape_url_smart", side_effect=fake_scrape):
             run_scrape(ScrapeRequest(url="https://example.com", use_state=False))
 
-        self.assertEqual(captured["jina_keys"], ["j1"])
+        jina_keys = [candidate.key for candidate in captured["ctx"].keys_by_backend["jina"]]
+        self.assertEqual(jina_keys, ["j1"])
 
     def test_direct_scrape_json_result_respects_scrape_chars(self):
         body = "x" * 100
@@ -1171,9 +1169,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
     def test_explicit_source_fully_disabled_returns_structured_error(self):
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"disabled_sources": ["brave"]}), \
              mock.patch("multi_search_mcp.src.service.load_keys", return_value={}):
-            result = tools.multi_search_tool("q", sources=["brave"], use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("all selected sources are disabled", result["error"])
+            with self.assertRaisesRegex(ValueError, "all selected sources are disabled"):
+                run_multi_search(MultiSearchRequest(query="q", sources=["brave"], use_state=False))
 
     def test_disabled_source_alias_is_normalized(self):
         captured = {}
@@ -1196,9 +1193,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
     def test_unknown_disabled_source_is_invalid_request(self):
         with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"disabled_sources": ["not-a-source"]}), \
              mock.patch("multi_search_mcp.src.service.load_keys", return_value={}):
-            result = tools.multi_search_tool("q", use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("unknown disabled source", result["error"])
+            with self.assertRaisesRegex(ValueError, "unknown disabled source"):
+                run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
     def test_disabled_sources_non_list_is_invalid_request(self):
         # Exercise the real config_list ConfigError -> ValueError -> invalid_request path.
@@ -1257,10 +1253,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
 
 class PluginEntryLayerTests(unittest.TestCase):
     def test_multi_search_unknown_route_returns_structured_error(self):
-        result = tools.multi_search_tool("q", route="discussion", use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("valid routes", result["error"])
-        self.assertNotIn("markdown", result)
+        with self.assertRaisesRegex(ValueError, "valid routes"):
+            run_multi_search(MultiSearchRequest(query="q", route="discussion", use_state=False))
 
     def test_multi_search_web_route_uses_default_profile(self):
         captured = {}
@@ -1277,7 +1271,7 @@ class PluginEntryLayerTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=_fake_ranked_fetch_stage):
-            result = tools.multi_search_tool("q", route="web", use_state=False)
+            result = run_multi_search(MultiSearchRequest(query="q", route="web", use_state=False))
 
         self.assertNotIn("error", result)
         self.assertEqual(captured["route"], "default")
@@ -1302,26 +1296,27 @@ class PluginEntryLayerTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
-            result = tools.multi_search_tool("q", timeout=None, scrape_timeout=None, use_state=False)
+            result = run_multi_search(MultiSearchRequest(query="q", timeout=None, scrape_timeout=None, use_state=False))
 
         self.assertNotIn("error", result)
         self.assertEqual(captured["timeout"], 60)
         self.assertEqual(captured["scrape_timeout"], 60)
 
     def test_multi_search_empty_query_returns_structured_error(self):
-        result = tools.multi_search_tool("", use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertEqual(result["error"], "query is required")
+        with self.assertRaisesRegex(ValueError, "query is required"):
+            run_multi_search(MultiSearchRequest(query="", use_state=False))
 
-    def test_invalid_output_mode_is_rejected_at_tool_boundary(self):
-        result = tools.multi_search_tool("q", output="markdwon", use_state=False)
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("both", result["valid_output"])
+    def test_invalid_output_mode_is_rejected_at_service_boundary(self):
+        with self.assertRaisesRegex(ValueError, "invalid output mode"):
+            run_multi_search(MultiSearchRequest(query="q", output="markdwon", use_state=False))
 
-    def test_set_site_scraper_preference_rejects_unknown_backend(self):
-        result = tools.set_site_scraper_preference_tool("example.com", "not-a-backend")
-        self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("jina", result["valid_scrapers"])
+    def test_invalid_scrape_output_mode_is_rejected_at_service_boundary(self):
+        with self.assertRaisesRegex(ValueError, "invalid output mode"):
+            service_module.run_scrape(
+                service_module.ScrapeRequest(
+                    url="https://example.com", output="markdwon", use_state=False,
+                )
+            )
 
     def test_multi_search_use_state_false_skips_state_store(self):
         captured = {}
@@ -1341,7 +1336,7 @@ class PluginEntryLayerTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
-            tools.multi_search_tool("q", use_state=False)
+            run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
         self.assertEqual(captured["key_manager"], "BasicKeyManager")
 
