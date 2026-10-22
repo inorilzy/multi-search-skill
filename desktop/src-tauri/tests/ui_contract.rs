@@ -26,6 +26,10 @@ use multi_search_desktop::contract;
 use std::{collections::BTreeMap, path::PathBuf};
 use ts_rs::TS;
 
+// ts-rs rewrites the shared output once per type; readers must not see a
+// partially emitted file when this test binary runs with its default parallelism.
+static CONTRACT_FILE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn ui_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -68,6 +72,9 @@ macro_rules! for_each_contract_type {
             contract::TestOutcome,
             contract::ProviderInfo,
             contract::RouteConfig,
+            contract::ScrapeBackendOption,
+            contract::ScrapeMemoryRow,
+            contract::ScrapeMemoryView,
             contract::SettingsInput,
             contract::SettingsView,
         );
@@ -92,6 +99,7 @@ fn generated_declarations() -> BTreeMap<String, String> {
 /// Write `desktop/ui/types.d.ts`. Run when the Rust contract changes.
 #[test]
 fn emit_types_d_ts() {
+    let _guard = CONTRACT_FILE.lock().unwrap();
     let out_dir = ui_dir();
     std::fs::create_dir_all(&out_dir).unwrap();
     let cfg = config().with_out_dir(&out_dir);
@@ -116,6 +124,7 @@ fn emit_types_d_ts() {
 /// that forgot to regenerate `types.d.ts` fails here.
 #[test]
 fn types_d_ts_is_up_to_date() {
+    let _guard = CONTRACT_FILE.lock().unwrap();
     let committed = std::fs::read_to_string(ui_dir().join("types.d.ts"))
         .expect("desktop/ui/types.d.ts must be committed");
 
@@ -241,6 +250,7 @@ fn normalise_js_tag(tag: &str) -> String {
         "sn" => "s|null".into(),
         "nn" => "n|null".into(),
         "sa" => "sa".into(),
+        "san" => "sa|null".into(),
         "a" => "a".into(),
         "o" => "o".into(),
         "x" => "x".into(),
@@ -295,6 +305,7 @@ fn is_union_type(decl: &str) -> bool {
 /// the Rust payload serialises, with matching primitive kind and nullability.
 #[test]
 fn payloads_js_matches_rust_field_types() {
+    let _guard = CONTRACT_FILE.lock().unwrap();
     let payloads = std::fs::read_to_string(ui_dir().join("payloads.js"))
         .expect("desktop/ui/payloads.js must be committed");
     let js_schemas = parse_payloads_js(&payloads);

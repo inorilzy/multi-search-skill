@@ -246,6 +246,33 @@ fn settings_save(
     crate::settings::save(&manager.inner().environment, &input)
 }
 
+/// 只读站点抓取记忆；state.sqlite 缺失或损坏时返回 available=false 的视图。
+#[tauri::command]
+fn scrape_memory_view(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    site: Option<String>,
+) -> Result<crate::scrape_memory::ScrapeMemoryView, String> {
+    Ok(crate::scrape_memory::view(
+        &manager.inner().environment,
+        site.as_deref(),
+    ))
+}
+#[tauri::command]
+fn scrape_memory_pin(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    site: String,
+    scraper: String,
+) -> Result<crate::scrape_memory::ScrapeMemoryView, String> {
+    crate::scrape_memory::pin(&manager.inner().environment, &site, &scraper)
+}
+#[tauri::command]
+fn scrape_memory_reset(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    site: Option<String>,
+) -> Result<crate::scrape_memory::ScrapeMemoryView, String> {
+    crate::scrape_memory::reset(&manager.inner().environment, site.as_deref())
+}
+
 /// Provider manifest for the sources/settings pages. Returns the same rows the
 /// desktop uses internally; the UI keeps no copy of this table.
 #[tauri::command]
@@ -371,7 +398,10 @@ pub fn run() {
             credential_test,
             settings_view,
             settings_save,
-            provider_list
+            provider_list,
+            scrape_memory_view,
+            scrape_memory_pin,
+            scrape_memory_reset
         ])
         .on_window_event(|window, event| {
             if matches!(

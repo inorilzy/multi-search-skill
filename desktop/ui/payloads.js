@@ -13,6 +13,7 @@
 //   'sn' = string | null
 //   'nn' = number | null
 //   'sa' = Array<string>
+//   'san' = Array<string> | null
 //   'a'  = Array<unknown>     (any array, contents untyped)
 //   'o'  = plain object
 //   'x'  = any non-undefined value (e.g. JsonValue payloads)
@@ -79,19 +80,30 @@ export const schemas = {
   TestOutcome: schema({ result: 's', message: 's' }),
   ProviderInfo: schema({
     source: 's', cliSource: 's', provider: 'sn', label: 's',
-    keyed: 'b', cookie: 'b', aliases: 'sa',
+    keyed: 'b', search: 'b', cookie: 'b', aliases: 'sa',
   }),
   RouteConfig: schema({ label: 's', sources: 'sa', timeout: 'nn' }),
+  ScrapeBackendOption: schema({ name: 's', label: 's' }),
+  ScrapeMemoryRow: schema({
+    site: 's', scraper: 's', success_count: 'n', failure_count: 'n',
+    blocked_count: 'n', timeout_count: 'n', avg_content_length: 'nn',
+    last_success_at: 'sn', last_failure_at: 'sn', last_error_type: 'sn',
+    last_error_message: 'sn', cooldown_until: 'sn', sample_url: 'sn',
+    manually_pinned: 'b', manual_priority: 'nn', in_cooldown: 'b',
+  }),
+  ScrapeMemoryView: schema({ available: 'b', path: 'sn', reason: 's', rows: 'ScrapeMemoryRow[]' }),
   SettingsInput: schema({
     route: 's', timeout: 'n', disabled_sources: 'sa', routes: 'RouteMapN',
-    twitter_cookies_path: 'sn',
+    twitter_cookies_path: 'sn', scrape_backends: 'san',
   }),
   SettingsView: schema({
     config_path: 'sn', path_source: 's', file_present: 'b', read_source: 's',
     route: 's', timeout: 'n', timeout_configured: 'b', effective_timeout: 'n',
     effective_timeouts: 'NumMap', routes: 'RouteMap', builtin_routes: 'RouteMap',
-    disabled_sources: 'sa', twitter_cookies_path: 'sn', active_sources: 'sa',
-    status: 's', message: 's',
+    disabled_sources: 'sa', twitter_cookies_path: 'sn', scrape_backends: 'sa',
+    scrape_backends_invalid: 'b',
+    builtin_scrape_backends: 'sa', scrape_backend_options: 'ScrapeBackendOption[]',
+    active_sources: 'sa', status: 's', message: 's',
   }),
 };
 
@@ -105,6 +117,7 @@ function typeOk(tag, value) {
   if (tag === 'sn') return value === null || typeof value === 'string';
   if (tag === 'nn') return value === null || (typeof value === 'number' && Number.isFinite(value));
   if (tag === 'sa') return Array.isArray(value) && value.every(v => typeof v === 'string');
+  if (tag === 'san') return value === null || typeOk('sa', value);
   if (tag === 'a') return Array.isArray(value);
   if (tag === 'o') return isRecord(value);
   if (tag === 'x') return value !== undefined;

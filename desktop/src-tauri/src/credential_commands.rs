@@ -49,7 +49,7 @@ fn find_source(name: &str, keyed_only: bool) -> Result<SourceEntry, String> {
                 || entry.aliases.contains(&trimmed)
         })
         .ok_or_else(|| "不支持的搜索源".to_string())?;
-    if keyed_only && !entry.keyed {
+    if (keyed_only && !entry.keyed) || (!keyed_only && !entry.search) {
         return Err("不支持的搜索源".into());
     }
     Ok(as_source_entry(entry))
@@ -110,10 +110,14 @@ pub(crate) fn read(
         Some((Value::String(s), _)) => s,
         Some((Value::Array(a), _)) => a
             .iter()
-            .filter_map(Value::as_str)
+            .filter_map(|item| item.as_str().or_else(|| {
+                (entry.provider == "jina").then(|| item.get("key").and_then(Value::as_str)).flatten()
+            }))
             .collect::<Vec<_>>()
             .join("\n"),
-        Some(_) => return Err("此凭据结构不能作为搜索 API Key 编辑".into()),
+        Some((Value::Object(map), _)) if entry.provider == "jina" => map
+            .get("key").and_then(Value::as_str).unwrap_or_default().to_string(),
+        Some(_) => return Err("此凭据结构不能作为 API Key 编辑".into()),
     };
     Ok(CredentialValue { value })
 }

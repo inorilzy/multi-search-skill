@@ -28,12 +28,15 @@ pub(crate) struct ProviderEntry {
     pub label: &'static str,
     /// `true` if a credential can be saved for this source.
     pub keyed: bool,
+    /// Whether this provider is a search source (false for scraper-only providers).
+    pub search: bool,
     /// `true` if the source uses a local Cookie file instead of an API key
     /// (Twitter). Mutually exclusive with `keyed` in the UI editor.
     pub cookie: bool,
 }
 
-/// All search sources the desktop knows about. Ordering defines UI listing
+/// All providers the desktop knows about, including scraper-only credentials.
+/// Search consumers must filter by `search`. Ordering defines UI listing
 /// order; keep it stable so the sources page is deterministic.
 ///
 /// To add a source: append one entry here, register the provider in
@@ -48,6 +51,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &["baidu-ai-search", "qianfan"],
         label: "Baidu AI 搜索",
         keyed: true,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -57,6 +61,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &[],
         label: "Brave 搜索",
         keyed: true,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -66,6 +71,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &[],
         label: "Parallel",
         keyed: true,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -75,6 +81,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &[],
         label: "Tavily",
         keyed: true,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -84,6 +91,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &[],
         label: "Exa",
         keyed: true,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -93,6 +101,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &[],
         label: "Firecrawl",
         keyed: true,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -102,6 +111,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &[],
         label: "SerpAPI",
         keyed: true,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -111,6 +121,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &["github", "github-repos"],
         label: "GitHub 仓库",
         keyed: true,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -120,6 +131,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &[],
         label: "Hacker News",
         keyed: false,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -129,6 +141,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &[],
         label: "Stack Overflow",
         keyed: false,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -138,6 +151,7 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &["v2ex"],
         label: "V2EX",
         keyed: false,
+        search: true,
         cookie: false,
     },
     ProviderEntry {
@@ -147,7 +161,18 @@ pub(crate) const PROVIDERS: &[ProviderEntry] = &[
         aliases: &[],
         label: "Twitter",
         keyed: false,
+        search: true,
         cookie: true,
+    },
+    ProviderEntry {
+        source: "jina",
+        cli_source: "jina",
+        provider: Some("jina"),
+        aliases: &[],
+        label: "Jina Reader",
+        keyed: true,
+        search: false,
+        cookie: false,
     },
 ];
 
@@ -160,9 +185,9 @@ pub(crate) fn resolve(raw: &str) -> Result<&'static ProviderEntry, String> {
     PROVIDERS
         .iter()
         .find(|entry| {
-            entry.source == trimmed
+            entry.search && (entry.source == trimmed
                 || entry.cli_source == trimmed
-                || entry.aliases.contains(&trimmed)
+                || entry.aliases.contains(&trimmed))
         })
         .ok_or_else(|| "不支持的搜索源".into())
 }
@@ -178,7 +203,7 @@ pub fn resolve_canonical(raw: &str) -> Option<&'static str> {
 /// All names (canonical + aliases + cli_source) the CLI `--source` flag accepts.
 /// Used by `execution.rs::is_allowed_source` to gate the start_search path.
 pub(crate) fn allowed_source_names() -> impl Iterator<Item = &'static str> + 'static {
-    PROVIDERS.iter().flat_map(|entry| {
+    PROVIDERS.iter().filter(|entry| entry.search).flat_map(|entry| {
         std::iter::once(entry.source)
             .chain(std::iter::once(entry.cli_source))
             .chain(entry.aliases.iter().copied())
@@ -204,6 +229,8 @@ pub struct ProviderInfo {
     pub provider: Option<&'static str>,
     pub label: &'static str,
     pub keyed: bool,
+    /// Whether this provider is a search source (false for scraper-only providers).
+    pub search: bool,
     pub cookie: bool,
     pub aliases: &'static [&'static str],
 }
@@ -220,6 +247,7 @@ pub fn list() -> Vec<ProviderInfo> {
             provider: entry.provider,
             label: entry.label,
             keyed: entry.keyed,
+            search: entry.search,
             cookie: entry.cookie,
             aliases: entry.aliases,
         })

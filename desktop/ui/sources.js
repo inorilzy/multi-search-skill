@@ -1,4 +1,4 @@
-import { initProviders, mountCredentialBody, providerList } from './credentials.js';
+import { initProviders, mountCredentialBody, scrapeCredentialProviders } from './credentials.js';
 
 const DESCRIPTIONS = {
   baidu: '强大的中文搜索能力，适合中文内容检索。',
@@ -280,6 +280,25 @@ export async function mountSources(root, api) {
     return { dispose() { stale = true; } };
   }
 
+  const scrapeMounts = [];
+  for (const entry of scrapeCredentialProviders()) {
+    const section = doc.createElement('details');
+    section.className = 'panel';
+    section.setAttribute('data-scrape-credential', entry.source);
+    const summary = doc.createElement('summary');
+    summary.textContent = `${entry.label} · 仅抓取凭据`;
+    const body = doc.createElement('div');
+    section.append(summary, body);
+    root.append(section);
+    let mounting = false;
+    section.addEventListener('toggle', async () => {
+      if (!section.open || mounting || disposed) return;
+      mounting = true;
+      const mounted = await mountCredentialBody(body, api, { source: entry.source });
+      if (disposed) mounted.dispose(); else scrapeMounts.push(mounted);
+    });
+  }
+
   for (const entry of SOURCES) buildRow(entry);
   for (const button of root.querySelectorAll('[data-filter]')) button.addEventListener('click', () => {
     filter = button.dataset.filter;
@@ -293,5 +312,5 @@ export async function mountSources(root, api) {
   await Promise.all(loads);
   await toggleRow(SOURCES[0].source);
   refreshStats();
-  return { dispose() { disposed = true; activeTicket += 1; detailMount?.dispose(); doc.removeEventListener('keydown', onKey); root.classList.remove('sources-page'); } };
+  return { dispose() { disposed = true; activeTicket += 1; detailMount?.dispose(); for (const mounted of scrapeMounts) mounted.dispose(); doc.removeEventListener('keydown', onKey); root.classList.remove('sources-page'); } };
 }

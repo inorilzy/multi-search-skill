@@ -72,19 +72,17 @@ class SiteScraperMemory:
         def rank(scraper: str) -> tuple:
             row = by_scraper.get(scraper)
             original_index = original.index(scraper)
-            if not row:
-                return (2, 0, 0, original_index)
-            cooldown = _parse_iso(row.get("cooldown_until"))
-            in_cooldown = bool(cooldown and cooldown > now)
-            manual_priority = row.get("manual_priority")
-            priority = int(manual_priority) if manual_priority is not None else 100
-            successes = int(row.get("success_count") or 0)
-            failures = int(row.get("failure_count") or 0) + int(row.get("blocked_count") or 0) + int(row.get("timeout_count") or 0)
-            score = successes - failures
-            # Manual preferences stay authoritative. Automatic cooldowns put a
-            # failed backend after untried ones, whose first rank component is 2.
-            category = 0 if row.get("manually_pinned") else 3 if in_cooldown else 1
-            return (category, priority, -score, original_index)
+            # The user-configured chain is the baseline order. Site memory only
+            # lifts manual pins and demotes cooling backends; success/failure
+            # counts still accumulate but never reorder the chain.
+            if row and row.get("manually_pinned"):
+                manual_priority = row.get("manual_priority")
+                priority = int(manual_priority) if manual_priority is not None else 0
+                return (0, priority, original_index)
+            cooling = bool(
+                row and (cooldown := _parse_iso(row.get("cooldown_until"))) and cooldown > now
+            )
+            return (2 if cooling else 1, original_index)
 
         return sorted(original, key=rank)
 

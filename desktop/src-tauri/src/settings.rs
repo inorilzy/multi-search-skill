@@ -24,6 +24,76 @@ fn source_name(raw: &str) -> Result<&'static str, String> {
 
 const MAX_PATH_BYTES: usize = 1024;
 
+/// 通用网页抓取后端的出厂 fallback 链；顺序即默认尝试顺序。
+pub const SCRAPE_BACKENDS: &[&str] = &["jina", "exa", "tavily", "firecrawl"];
+
+pub fn scrape_backend_label(name: &str) -> &'static str {
+    match name {
+        "jina" => "Jina Reader",
+        "exa" => "Exa",
+        "tavily" => "Tavily",
+        "firecrawl" => "Firecrawl",
+        _ => "",
+    }
+}
+
+fn default_scrape_backends() -> Vec<String> {
+    SCRAPE_BACKENDS.iter().map(|name| (*name).into()).collect()
+}
+
+fn scrape_backend_options() -> Vec<ScrapeBackendOption> {
+    SCRAPE_BACKENDS
+        .iter()
+        .map(|name| ScrapeBackendOption {
+            name: (*name).into(),
+            label: scrape_backend_label(name).into(),
+        })
+        .collect()
+}
+
+/// 宽容读取已保存的链：忽略未知/重复项；全部无效或缺失时回落出厂默认。
+/// 第二个返回值标记“已保存值非法”，供 UI 显示警示，而不是假装是有效设置。
+fn scrape_chain(object: &Map<String, Value>) -> (Vec<String>, bool) {
+    let value = match object.get("scrape_backends") {
+        None | Some(Value::Null) => return (default_scrape_backends(), false),
+        Some(value) => value,
+    };
+    let Value::Array(items) = value else {
+        return (default_scrape_backends(), true);
+    };
+    let mut chain = Vec::new();
+    let mut invalid = false;
+    for item in items {
+        let Some(raw) = item.as_str() else {
+            invalid = true;
+            continue;
+        };
+        let name = raw.trim();
+        if !SCRAPE_BACKENDS.contains(&name) {
+            invalid = true;
+            continue;
+        }
+        if !chain.iter().any(|saved| saved == name) {
+            chain.push(name.to_string());
+        }
+    }
+    if items.is_empty() {
+        invalid = true;
+    }
+    if chain.is_empty() {
+        (default_scrape_backends(), invalid)
+    } else {
+        (chain, invalid)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
+pub struct ScrapeBackendOption {
+    pub name: String,
+    pub label: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export_to = "types.d.ts")]
@@ -107,6 +177,9 @@ pub struct SettingsInput {
     pub routes: Option<RouteMap>,
     #[serde(default)]
     pub twitter_cookies_path: Option<String>,
+    /// `None` 表示本次保存不动该键；`Some(vec)` 才写入。
+    #[serde(default)]
+    pub scrape_backends: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -116,6 +189,7 @@ pub struct Validated {
     pub disabled_sources: Vec<String>,
     pub routes: Option<RouteMap>,
     pub twitter_cookies_path: Option<String>,
+    pub scrape_backends: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -134,6 +208,13 @@ pub struct SettingsView {
     pub builtin_routes: RouteMap,
     pub disabled_sources: Vec<String>,
     pub twitter_cookies_path: Option<String>,
+    /// 当前生效的抓取 fallback 链（settings 缺失/非法时回退出厂默认）。
+    pub scrape_backends: Vec<String>,
+    /// 已保存的 `scrape_backends` 非法（空数组、非数组、含非字符串或未知后端）；
+    /// 此时 `scrape_backends` 是回退值，CLI 会报配置错误，UI 必须提示。
+    pub scrape_backends_invalid: bool,
+    pub builtin_scrape_backends: Vec<String>,
+    pub scrape_backend_options: Vec<ScrapeBackendOption>,
     pub active_sources: Vec<String>,
     /// ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
     pub status: String,
@@ -267,12 +348,32 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
             Some(path.to_string())
         }
     };
+    let scrape_backends = match &input.scrape_backends {
+        None => None,
+        Some(items) => {
+            let mut chain: Vec<String> = Vec::new();
+            for raw in items {
+                let name = raw.trim();
+                if !SCRAPE_BACKENDS.contains(&name) {
+                    return Err(format!("不支持的抓取后端：{name}"));
+                }
+                if !chain.iter().any(|saved| saved == name) {
+                    chain.push(name.to_string());
+                }
+            }
+            if chain.is_empty() {
+                return Err("抓取顺序至少要保留一个后端".into());
+            }
+            Some(chain)
+        }
+    };
     Ok(Validated {
         route,
         timeout: input.timeout,
         disabled_sources: disabled,
         routes,
         twitter_cookies_path: twitter,
+        scrape_backends,
     })
 }
 
@@ -307,6 +408,9 @@ fn merge(mut map: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
         map.insert("twitter_cookies_path".into(), Value::String(path.clone()));
     } else {
         map.remove("twitter_cookies_path");
+    }
+    if let Some(chain) = &valid.scrape_backends {
+        map.insert("scrape_backends".into(), serde_json::json!(chain));
     }
     map
 }
@@ -379,6 +483,10 @@ fn unreadable_view(path: Option<PathBuf>, environment: &RuntimeEnvironment) -> S
         builtin_routes: builtin_routes(),
         disabled_sources: vec![],
         twitter_cookies_path: None,
+        scrape_backends: default_scrape_backends(),
+        scrape_backends_invalid: false,
+        builtin_scrape_backends: default_scrape_backends(),
+        scrape_backend_options: scrape_backend_options(),
         active_sources: vec![],
         status: "config_unreadable".into(),
         message: "配置数据库无法读取，或 routes/type 不是有效配置；保存已被阻止。".into(),
@@ -452,6 +560,7 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
     } else {
         ("ok", String::new())
     };
+    let (scrape_backends, scrape_backends_invalid) = scrape_chain(&object);
     SettingsView {
         config_path: path.map(|path| path.to_string_lossy().into_owned()),
         path_source: if environment
@@ -479,6 +588,10 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
             .and_then(Value::as_str)
             .filter(|path| !path.trim().is_empty())
             .map(str::to_string),
+        scrape_backends,
+        scrape_backends_invalid,
+        builtin_scrape_backends: default_scrape_backends(),
+        scrape_backend_options: scrape_backend_options(),
         active_sources,
         status: status.into(),
         message,

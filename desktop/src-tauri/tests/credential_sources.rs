@@ -87,13 +87,114 @@ fn github_repos_maps_to_github_provider_and_unknown_names_are_rejected() {
         "  ",
         "../tavily",
         "tavily/../brave",
-        "jina",
         "ns-src/tavily",
         "TAVILY",
     ] {
         let error = fixture::resolve(bad).unwrap_err();
         assert_eq!(error, "不支持的搜索源", "input {bad:?}");
     }
+}
+
+#[test]
+fn jina_credentials_round_trip_without_becoming_a_search_source() {
+    let backend = Memory::default();
+    let vars = BTreeMap::new();
+    assert_eq!(fixture::resolve("jina").unwrap(), ("jina", "jina"));
+    let row = fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a\nsynthetic-jina-b", 42.0).unwrap();
+    assert_eq!(row.source, "jina");
+    assert_eq!(row.store.state, "present");
+    assert_eq!(row.effective_source, "sqlite");
+    assert_eq!(fixture::read_for(&backend, &vars, "jina").unwrap(), "synthetic-jina-a\nsynthetic-jina-b");
+    assert_eq!(backend.0.lock().unwrap().keys().cloned().collect::<Vec<_>>(), vec!["jina"]);
+    assert!(fixture::source_test("jina", &serde_json::json!({})).is_err());
+    assert!(multi_search_desktop::provider::resolve_canonical("jina").is_none());
+    let info = multi_search_desktop::provider::list().into_iter().find(|row| row.source == "jina").unwrap();
+    assert!(info.keyed);
+    assert!(!info.search);
+}
+
+#[test]
+fn jina_structured_keys_are_visible_in_editor_without_silent_omission() {
+    let backend = Memory::default();
+    for value in [
+        serde_json::json!({"key":"synthetic-jina-a", "exhausted":true}),
+        serde_json::json!([{"key":"synthetic-jina-a", "exhausted":true}, "synthetic-jina-b"]),
+    ] {
+        let expected = if value.is_array() { "synthetic-jina-a\nsynthetic-jina-b" } else { "synthetic-jina-a" };
+        backend.0.lock().unwrap().insert("jina".into(), serde_json::to_vec(&serde_json::json!({"v":1,"key":value,"saved_at":1.0})).unwrap());
+        assert_eq!(fixture::read_for(&backend, &BTreeMap::new(), "jina").unwrap(), expected);
+    }
+}
+
+#[test]
+fn jina_editor_save_preserves_metadata_of_unchanged_lines() {
+    let backend = Memory::default();
+    let vars = BTreeMap::new();
+    let stored = serde_json::json!([
+        {"key":"synthetic-jina-a","exhausted":true,"note":"legacy"},
+        "synthetic-jina-b",
+        {"key":"synthetic-jina-c","exhausted":false}
+    ]);
+    let seed = |value: &serde_json::Value| {
+        backend.0.lock().unwrap().insert("jina".into(), serde_json::to_vec(&serde_json::json!({"v":1,"key":value,"saved_at":1.0})).unwrap());
+    };
+    let saved = || -> serde_json::Value {
+        let blob: serde_json::Value = serde_json::from_slice(&backend.0.lock().unwrap()["jina"]).unwrap();
+        blob["key"].clone()
+    };
+    seed(&stored);
+    // Round-trip of unchanged editor text keeps every entry verbatim.
+    let text = fixture::read_for(&backend, &vars, "jina").unwrap();
+    assert_eq!(text, "synthetic-jina-a\nsynthetic-jina-b\nsynthetic-jina-c");
+    fixture::save_for(&backend, &vars, "jina", &text, 2.0).unwrap();
+    assert_eq!(saved(), stored);
+    // Reorder + remove c + add d: a keeps metadata, d is a plain new key, c is dropped.
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-d\nsynthetic-jina-a", 3.0).unwrap();
+    assert_eq!(saved(), serde_json::json!(["synthetic-jina-d", {"key":"synthetic-jina-a","exhausted":true,"note":"legacy"}]));
+    // Editing a key's text is a new key: old metadata does not carry over.
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a2", 4.0).unwrap();
+    assert_eq!(saved(), serde_json::json!("synthetic-jina-a2"));
+    // A single structured entry stays an object.
+    seed(&serde_json::json!({"key":"synthetic-jina-a","exhausted":true}));
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a", 5.0).unwrap();
+    assert_eq!(saved(), serde_json::json!({"key":"synthetic-jina-a","exhausted":true}));
+    // Duplicate lines do not clone one entry's metadata.
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a\nsynthetic-jina-a", 6.0).unwrap();
+    assert_eq!(saved(), serde_json::json!([{"key":"synthetic-jina-a","exhausted":true}, "synthetic-jina-a"]));
+    let duplicate = serde_json::json!(["synthetic-jina-a", {"key":"synthetic-jina-a","exhausted":true}]);
+    seed(&duplicate);
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a\nsynthetic-jina-a", 7.0).unwrap();
+    assert_eq!(saved(), duplicate);
+    // Unreadable existing state must not silently erase metadata.
+    backend.0.lock().unwrap().insert("jina".into(), b"broken blob".to_vec());
+    assert!(fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a", 8.0).is_err());
+    assert_eq!(backend.0.lock().unwrap()["jina"], b"broken blob");
+}
+
+#[test]
+fn jina_editor_roundtrip_preserves_metadata_for_padded_stored_keys() {
+    let backend = Memory::default();
+    let vars = BTreeMap::new();
+    let stored = serde_json::json!([
+        {"key":" synthetic-jina-a ","exhausted":true,"note":{"legacy":true}},
+        {"key":"synthetic-jina-b","exhausted":false}
+    ]);
+    backend.0.lock().unwrap().insert("jina".into(), serde_json::to_vec(
+        &serde_json::json!({"v":1,"key":stored,"saved_at":1.0})
+    ).unwrap());
+    let text = fixture::read_for(&backend, &vars, "jina").unwrap();
+    fixture::save_for(&backend, &vars, "jina", &text, 2.0).unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&backend.0.lock().unwrap()["jina"]).unwrap();
+    assert_eq!(saved["key"], stored);
+}
+
+#[test]
+fn non_jina_save_ignores_structured_merge() {
+    let backend = Memory::default();
+    let vars = BTreeMap::new();
+    fixture::save_for(&backend, &vars, "tavily", "synthetic-t-a\nsynthetic-t-b", 1.0).unwrap();
+    let blob: serde_json::Value = serde_json::from_slice(&backend.0.lock().unwrap()["tavily"]).unwrap();
+    assert_eq!(blob["key"], serde_json::json!(["synthetic-t-a", "synthetic-t-b"]));
 }
 
 #[test]

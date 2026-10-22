@@ -40,6 +40,38 @@ print('product implementation roundtrip passed')
     assert_eq!(fixture::native_read(&s.db(),"brave").unwrap(),Some(serde_json::json!(["synthetic-python-product-0001","synthetic-python-product-0002"])));
     assert_eq!(fixture::native_read(&s.db(),"jina").unwrap(),Some(serde_json::json!({"key":"synthetic-python-jina-product","exhausted":false})));
 }
+#[test]
+fn rust_editor_roundtrip_keeps_jina_exhausted_keys_out_of_python_rotation() {
+    let s = Sandbox::new("jina-editor-cross");
+    let original = serde_json::json!([
+        {"key":"synthetic-jina-disabled","exhausted":true,"note":{"owner":"test"}},
+        {"key":"synthetic-jina-active","exhausted":false},
+        "synthetic-jina-plain",
+        {"key":" synthetic-jina-padded ","exhausted":true,"note":[1,"kept"]}
+    ]);
+    fixture::native_write(&s.db(), "jina", &original, 1.0).unwrap();
+    // This is the text shown by the editor, saved unchanged through production merge logic.
+    fixture::native_editor_save(&s.db(), "jina", "synthetic-jina-disabled\nsynthetic-jina-active\nsynthetic-jina-plain\n synthetic-jina-padded ", 2.0).unwrap();
+    assert_eq!(fixture::native_read(&s.db(), "jina").unwrap(), Some(original));
+    let script = r#"
+import sys
+from multi_search_mcp.src.support.credential_store import CredentialStore, SQLiteCredentialBackend
+from multi_search_mcp.src.state.keys import jina_config_keys
+store = CredentialStore(SQLiteCredentialBackend(sys.argv[1]))
+value = store.get('jina')
+assert value[0] == {'key':'synthetic-jina-disabled', 'exhausted':True, 'note':{'owner':'test'}}
+assert jina_config_keys(value) == ['synthetic-jina-active', 'synthetic-jina-plain']
+assert 'synthetic-jina-disabled' not in jina_config_keys(value)
+assert value[3] == {'key':'synthetic-jina-padded', 'exhausted':True, 'note':[1,'kept']}
+print('Jina editor -> DPAPI SQLite -> Python rotation passed')
+"#;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = std::process::Command::new("python").args(["-B", "-c", script]).arg(s.db())
+        .env("PYTHONPATH", root).env("HOME", &s.0).env("USERPROFILE", &s.0)
+        .env("MULTI_SEARCH_CONFIG_DB", s.db()).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Jina editor -> DPAPI SQLite -> Python rotation passed"));
+}
 #[test]fn invalid_jina_and_non_jina_objects_fail_before_persistence(){let s=Sandbox::new("invalid-jina");for value in [serde_json::json!({"keys":["invalid-shape"]}),serde_json::json!({"key":"synthetic","exhausted":"yes"}),serde_json::json!([{"key":"synthetic"},123])]{assert!(fixture::native_write(&s.db(),"jina",&value,1.0).is_err());}assert!(fixture::native_write(&s.db(),"tavily",&serde_json::json!({"key":"synthetic"}),1.0).is_err());assert!(!s.db().exists());}
 #[test]fn rust_python_native_encryption_protocol_in_both_directions(){
     let s=Sandbox::new("cross-language");let key=serde_json::json!(["synthetic-cross-0001","synthetic-cross-0002"]);fixture::native_write(&s.db(),"tavily",&key,1700000001.5).unwrap();

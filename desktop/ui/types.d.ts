@@ -75,7 +75,11 @@ export type PathValue = { text: string, kind: number, exists: boolean, };
  * internally. Serialized as `source`/`cliSource`/`provider`/`label`/`keyed`/
  * `cookie`/`aliases` so the UI does not hardcode a copy.
  */
-export type ProviderInfo = { source: string, cliSource: string, provider: string | null, label: string, keyed: boolean, cookie: boolean, aliases: Array<string>, };
+export type ProviderInfo = { source: string, cliSource: string, provider: string | null, label: string, keyed: boolean, 
+/**
+ * Whether this provider is a search source (false for scraper-only providers).
+ */
+search: boolean, cookie: boolean, aliases: Array<string>, };
 
 export type RemoveOutcome = { 
 /**
@@ -99,11 +103,42 @@ will_keep: Array<string>, can_remove: boolean, };
 
 export type RouteConfig = { label: string, sources: Array<string>, timeout: number | null, };
 
+export type ScrapeBackendOption = { name: string, label: string, };
+
+export type ScrapeMemoryRow = { site: string, scraper: string, success_count: number, failure_count: number, blocked_count: number, timeout_count: number, avg_content_length: number | null, last_success_at: string | null, last_failure_at: string | null, last_error_type: string | null, last_error_message: string | null, cooldown_until: string | null, sample_url: string | null, manually_pinned: boolean, manual_priority: number | null, 
+/**
+ * 由 cooldown_until 与当前时间比较得出；解析失败时为 false。
+ */
+in_cooldown: boolean, };
+
+export type ScrapeMemoryView = { 
+/**
+ * state.sqlite 是否可读（存在且含记忆表）。
+ */
+available: boolean, path: string | null, 
+/**
+ * 不可读时的中文说明，可读时为空串。
+ */
+reason: string, rows: Array<ScrapeMemoryRow>, };
+
 export type SearchOptions = { query: string, route: string, sources: Array<string>, timeout: number, };
 
-export type SettingsInput = { route: string, timeout: number, disabled_sources: Array<string>, routes: { [key in string]: RouteConfig } | null, twitter_cookies_path: string | null, };
+export type SettingsInput = { route: string, timeout: number, disabled_sources: Array<string>, routes: { [key in string]: RouteConfig } | null, twitter_cookies_path: string | null, 
+/**
+ * `None` 表示本次保存不动该键；`Some(vec)` 才写入。
+ */
+scrape_backends: Array<string> | null, };
 
-export type SettingsView = { config_path: string | null, path_source: string, file_present: boolean, read_source: string, route: string, timeout: number, timeout_configured: boolean, effective_timeout: number, effective_timeouts: { [key in string]: number }, routes: { [key in string]: RouteConfig }, builtin_routes: { [key in string]: RouteConfig }, disabled_sources: Array<string>, twitter_cookies_path: string | null, active_sources: Array<string>, 
+export type SettingsView = { config_path: string | null, path_source: string, file_present: boolean, read_source: string, route: string, timeout: number, timeout_configured: boolean, effective_timeout: number, effective_timeouts: { [key in string]: number }, routes: { [key in string]: RouteConfig }, builtin_routes: { [key in string]: RouteConfig }, disabled_sources: Array<string>, twitter_cookies_path: string | null, 
+/**
+ * 当前生效的抓取 fallback 链（settings 缺失/非法时回退出厂默认）。
+ */
+scrape_backends: Array<string>, 
+/**
+ * 已保存的 `scrape_backends` 非法（空数组、非数组、含非字符串或未知后端）；
+ * 此时 `scrape_backends` 是回退值，CLI 会报配置错误，UI 必须提示。
+ */
+scrape_backends_invalid: boolean, builtin_scrape_backends: Array<string>, scrape_backend_options: Array<ScrapeBackendOption>, active_sources: Array<string>, 
 /**
  * ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
  */

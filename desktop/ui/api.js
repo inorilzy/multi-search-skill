@@ -28,6 +28,7 @@ import { expect } from './payloads.js';
 /** @typedef {import('./types').ProviderInfo} ProviderInfo */
 /** @typedef {import('./types').SettingsInput} SettingsInput */
 /** @typedef {import('./types').SettingsView} SettingsView */
+/** @typedef {import('./types').ScrapeMemoryView} ScrapeMemoryView */
 /** @typedef {import('./types').SearchOptions} SearchOptions */
 
 /** @typedef {(cmd: string, args?: Record<string, unknown>) => Promise<unknown>} InvokeFn */
@@ -94,6 +95,12 @@ export function managementApi(invoke) {
     settingsView: async () => (expect('SettingsView', await invoke('settings_view'))),
     /** @param {SettingsInput} input @returns {Promise<SettingsView>} */
     settingsSave: async input => (expect('SettingsView', await invoke('settings_save', { input }))),
+    /** @param {string|null} site @returns {Promise<ScrapeMemoryView>} */
+    scrapeMemoryView: async site => expect('ScrapeMemoryView', await invoke('scrape_memory_view', { site })),
+    /** @param {string} site @param {string} scraper @returns {Promise<ScrapeMemoryView>} */
+    scrapeMemoryPin: async (site, scraper) => expect('ScrapeMemoryView', await invoke('scrape_memory_pin', { site, scraper })),
+    /** @param {string|null} site @returns {Promise<ScrapeMemoryView>} */
+    scrapeMemoryReset: async site => expect('ScrapeMemoryView', await invoke('scrape_memory_reset', { site })),
     /** @returns {Promise<ProviderInfo[]>} */
     providerList: async () => {
       const rows = await invoke('provider_list');

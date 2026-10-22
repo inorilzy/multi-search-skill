@@ -153,6 +153,18 @@ retention limits. It does not prove the original page or discussion is complete.
 paging. If content expired, fetch the source again. If the source reference
 itself expired, fetch its previously observed URL and use the new source ID.
 
+The generic scrape backend chain is configured once per settings record in the
+top-level `scrape_backends` array (siblings: `scrape_chars`, `scrape_timeout`).
+Its order is the fallback priority: when a backend cannot fetch the page, the
+next one is tried. Allowed values are `jina`, `exa`, `tavily`, and `firecrawl`;
+duplicates are ignored after their first position. Omitted or `null` keeps the
+default order `["jina", "exa", "tavily", "firecrawl"]`. An explicit empty array
+or an unknown name is a configuration error. Key-requiring backends (Exa and
+Tavily) without a configured key are skipped at runtime; Jina and Firecrawl
+allow anonymous scraping, so the default chain still starts with anonymous Jina.
+`--backend` only overrides the chain for that single `fetch` call and is not
+saved to settings; a key-requiring backend named there must have a key.
+
 Exit codes: `0` for success (including zero matches or partial search coverage),
 `1` for all search providers failing or another execution/diagnostic failure,
 `2` for invalid CLI usage. JSON remains machine-readable on stdout, including

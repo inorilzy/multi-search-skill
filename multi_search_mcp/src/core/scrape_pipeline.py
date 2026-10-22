@@ -5,7 +5,7 @@ import time
 
 from ..scrape.scrape import ScrapeContext, scrape_url_smart
 from ..scrape.scrapers.twitter import is_twitter_url
-from ..search.resolve import _resolve_int, _resolve_nonnegative
+from ..search.resolve import _resolve_int, _resolve_nonnegative, resolve_scrape_backends
 from ..state.site_memory import SiteScraperMemory
 from ..support.format import format_scrapes
 from ..support.models import normalize_scrape_result
@@ -73,6 +73,7 @@ def run_scrape_raw(
     key_manager = runtime.key_manager_for(store)
     site_memory = SiteScraperMemory(store) if store else None
     scraper_fn = scraper or scrape_url_smart
+    explicit_backends = tuple(request.backends) if request.backends else None
     ctx = ScrapeContext(
         keys_by_backend={
             "jina": key_manager.candidates("jina", jina_config_keys(runtime_keys.get("jina"))),
@@ -86,7 +87,8 @@ def run_scrape_raw(
         url_resolver=url_resolver,
         scrape_chars=scrape_chars,
         timeout=timeout,
-        backends=tuple(request.backends) if request.backends else None,
+        backends=explicit_backends or tuple(resolve_scrape_backends(resolved_config)),
+        strict_backends=explicit_backends is not None,
         **({"twitter_cookies": runtime_keys.get("twitter") or runtime_keys.get("twitter_cookies", "")}
            if is_twitter_url(request.url) else {}),
     )

@@ -10,3 +10,5 @@ import { mountSources } from './sources.js';
 pages.push({ id: 'sources', label: '搜索源与凭据', number: '04', mount: mountSources });
 import { mountSettings } from './settings.js';
 pages.push({ id: 'settings', label: '搜索设置', number: '05', mount: mountSettings });
+import { mountScrape } from './scrape.js';
+pages.push({ id: 'scrape', label: '抓取设置', number: '06', mount: mountScrape });

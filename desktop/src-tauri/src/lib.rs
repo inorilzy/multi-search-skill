@@ -12,6 +12,7 @@ mod manifest;
 mod process;
 pub mod provider;
 mod redaction;
+pub mod scrape_memory;
 pub mod settings;
 pub mod skill;
 mod skill_common;
@@ -40,7 +41,10 @@ pub mod contract {
     pub use crate::execution::{ExecutionStatus, SearchOptions};
     pub use crate::install::{InstallOutcome, InstallPlan, InstallStep};
     pub use crate::provider::ProviderInfo;
-    pub use crate::settings::{RouteConfig, SettingsInput, SettingsView};
+    pub use crate::scrape_memory::{ScrapeMemoryRow, ScrapeMemoryView};
+    pub use crate::settings::{
+        RouteConfig, ScrapeBackendOption, SettingsInput, SettingsView,
+    };
     pub use crate::skill::{SkillInstall, SkillPlan};
     pub use crate::skill_manage::{
         InstallState, RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome, UpdatePlan,
@@ -205,6 +209,27 @@ pub mod credential_fixture {
             path: path.to_path_buf(),
         }
         .write(provider, &credential::encode_blob(key, now))
+        .map_err(|e| e.to_string())
+    }
+    /// Isolated native editor-save seam: same merge semantics as the desktop editor.
+    pub fn native_editor_save(
+        path: &std::path::Path,
+        provider: &str,
+        text: &str,
+        now: f64,
+    ) -> Result<(), String> {
+        use crate::credential;
+        if !credential::STORE_PROVIDERS.contains(&provider) {
+            return Err("unsupported provider".into());
+        }
+        credential::save(
+            &credential::SqliteCredentialBackend { path: path.to_path_buf() },
+            "",
+            provider,
+            text,
+            now,
+        )
+        .map(|_| ())
         .map_err(|e| e.to_string())
     }
     pub fn native_read(path: &std::path::Path, provider: &str) -> Result<Option<Value>, String> {

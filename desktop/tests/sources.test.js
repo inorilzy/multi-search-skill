@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 import { mountSources } from '../ui/sources.js';
 import { withProviders } from './providers.js';
+import { providerList } from '../ui/credentials.js';
 
 const ALL = ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter'];
 const KEYED = ALL.slice(0, 8);
@@ -50,7 +51,40 @@ test('sources page lists every allowlisted source once and mounts only the selec
     assert.equal(detail.querySelector('[data-field="key"]'), null, `${name} needs no key field`);
     assert.match(detail.textContent, name === 'twitter' ? /Cookie.*路径/ : /无需 API Key/);
   }
-  assert.ok(!root.textContent.includes('Jina'), 'Jina is out of scope for the sources page');
+  assert.ok(root.querySelector('[data-scrape-credential="jina"]'), 'Jina has a separate scraper credential entry');
+  assert.equal(root.querySelector('[data-source-row="jina"]'), null);
+  mounted.dispose();
+  window.close();
+});
+
+test('Jina scraper credentials save and refresh without search controls', async () => {
+  const { window, root } = setup();
+  let key = 'synthetic-jina-original';
+  const saved = [];
+  const mounted = await mountSources(root, withProviders({
+    settingsView: async () => settings(),
+    credentialStatus: async () => absent,
+    credentialRead: async source => ({ value: source === 'jina' ? key : '' }),
+    credentialSave: async (source, value) => { saved.push(source); key = value; return absent; },
+    credentialTest: async () => { assert.fail('Jina must never run search tests'); },
+  }));
+  assert.ok(!providerList().some(row => row.source === 'jina'), 'route pickers receive search providers only');
+  const section = root.querySelector('[data-scrape-credential="jina"]');
+  section.open = true;
+  section.dispatchEvent(new window.Event('toggle'));
+  await flush();
+  assert.match(section.textContent, /Jina Reader API Key/);
+  const field = section.querySelector('[data-field="key"]');
+  assert.equal(field.value, key);
+  field.value = 'synthetic-jina-replacement';
+  section.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(saved, ['jina']);
+  assert.equal(field.value, 'synthetic-jina-replacement');
+  assert.equal(section.querySelector('[data-action="test"]').disabled, true);
+  assert.equal(section.querySelector('[data-action="test"]').hidden, true);
+  assert.equal(root.querySelector('[data-toggle="jina"]'), null);
+  assert.equal(root.querySelector('[data-source-row="jina"]'), null);
   mounted.dispose();
   window.close();
 });

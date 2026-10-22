@@ -56,6 +56,10 @@ name = "settings"
 path = "tests/settings.rs"
 
 [[test]]
+name = "scrape_memory"
+path = "tests/scrape_memory.rs"
+
+[[test]]
 name = "provider_parity"
 path = "tests/provider_parity.rs"
 

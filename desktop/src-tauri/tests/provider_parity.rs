@@ -49,6 +49,7 @@ fn rust_provider_manifest_matches_python_registries() {
     // subset: jina is a scraper-only provider with no search surface.
     let rust_canonical: BTreeSet<String> = multi_search_desktop::provider::list()
         .into_iter()
+        .filter(|row| row.search)
         .map(|row| row.source.to_string())
         .collect();
     let python_sources: BTreeSet<String> = metadata["all_sources"]
@@ -77,13 +78,8 @@ fn rust_provider_manifest_matches_python_registries() {
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
-    // jina is a Python-only credential provider (scraper); subtract it before
-    // comparing with the desktop's keyed set.
-    let expected_keyed: BTreeSet<String> = python_providers
-        .into_iter()
-        .filter(|name| name != "jina")
-        .collect();
-    assert_eq!(rust_keyed, expected_keyed, "keyed provider drift");
+    // Scraper-only providers also need desktop credential management.
+    assert_eq!(rust_keyed, python_providers, "keyed provider drift");
 
     // Every Python source alias must resolve to the same canonical row in
     // Rust. The inverse is also true: Rust must not accept an alias that

@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ..scrape.scrape import KNOWN_BACKENDS
 from ..support.config import ConfigError, config_bool, config_int, config_list
 from .capabilities import PROVIDER_CAPABILITIES
 from .search_runner import (
@@ -35,6 +36,8 @@ DEFAULT_COUNTS = {cap.count_key: DEFAULT_SOURCE_COUNT for cap in _COUNT_PROVIDER
 
 _ROUTE_ID_PATTERN = re.compile(r"[a-z0-9_-]{1,64}\Z", re.ASCII)
 
+DEFAULT_SCRAPE_BACKENDS = ("jina", "exa", "tavily", "firecrawl")
+
 
 @dataclass(frozen=True)
 class RouteDefinition:
@@ -59,6 +62,7 @@ class ResolvedSearchPlan:
     scrape_timeout: int
     scrape_url_timeout: int
     scrape_concurrency: int
+    scrape_backends: list[str]
     output_mode: str
     title_url_only: bool
     want_content: bool
@@ -103,6 +107,7 @@ def resolve_search_plan(request: Any, config: dict) -> ResolvedSearchPlan:
         scrape_timeout=scrape_timeout,
         scrape_url_timeout=_resolve_nonnegative(None, config, "scrape_url_timeout", scrape_timeout),
         scrape_concurrency=max(1, _resolve_int(request.scrape_concurrency, config, "scrape_concurrency", 5)),
+        scrape_backends=resolve_scrape_backends(config),
         output_mode=request.output if request.output in {"json", "markdown", "both"} else "both",
         title_url_only=bool(request.title_url_only or meta.get("title_url_only")),
         want_content=bool(meta.get("want_content", False)),
@@ -263,6 +268,33 @@ def _resolve_sources(
     raise ValueError(
         f"unknown route: {route}; valid routes: {', '.join(sorted(known_routes))}"
     )
+
+
+def resolve_scrape_backends(config: dict) -> list[str]:
+    """Resolve the ordered fallback chain for generic scrape backends.
+
+    ``null``/absent keeps the historical jina → exa → tavily → firecrawl
+    order; an explicit empty list is a configuration error rather than a
+    silent default. Duplicates keep their first position.
+    """
+    if "scrape_backends" not in config or config.get("scrape_backends") is None:
+        return list(DEFAULT_SCRAPE_BACKENDS)
+    raw_backends = config_list(config, "scrape_backends")
+    if not raw_backends:
+        raise ConfigError("scrape_backends requires at least one backend")
+    backends: list[str] = []
+    seen: set[str] = set()
+    for backend in raw_backends:
+        if backend not in seen:
+            backends.append(backend)
+            seen.add(backend)
+    unknown = seen - set(KNOWN_BACKENDS)
+    if unknown:
+        raise ConfigError(
+            f"unknown scrape backend(s): {', '.join(sorted(unknown))}; "
+            f"valid backends: {', '.join(sorted(KNOWN_BACKENDS))}"
+        )
+    return backends
 
 
 def resolve_disabled_sources(config: dict) -> set[str]:

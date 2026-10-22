@@ -261,7 +261,9 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
         unknown = scrape_url_smart("https://example.com", context(backends=("does-not-exist",)))
         self.assertEqual(unknown["error"], "unknown scrape backend: does-not-exist")
 
-        missing = scrape_url_smart("https://example.com", context(backends=("exa",)))
+        missing = scrape_url_smart(
+            "https://example.com", context(backends=("exa",), strict_backends=True),
+        )
         self.assertEqual(missing["error"], "missing key for backend: exa")
 
     def test_firecrawl_backend_allows_anonymous_scrape(self):

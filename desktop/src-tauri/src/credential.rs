@@ -22,6 +22,7 @@ pub(crate) const STORE_PROVIDERS: &[&str] = &[
 pub(crate) enum CredentialError {
     Unavailable(String),
     Unreadable,
+    DecryptionFailed(u32),
     Invalid(&'static str),
 }
 impl std::fmt::Display for CredentialError {
@@ -29,6 +30,7 @@ impl std::fmt::Display for CredentialError {
         match self {
             Self::Unavailable(message) => f.write_str(message),
             Self::Unreadable => f.write_str("stored credential is unreadable"),
+            Self::DecryptionFailed(code) => write!(f, "DPAPI decryption failed (Windows error {code})"),
             Self::Invalid(message) => f.write_str(message),
         }
     }
@@ -107,6 +109,46 @@ pub(crate) fn load(
         .map(|blob| decode_blob(provider, &blob))
         .transpose()
 }
+/// Jina editor semantics: the editor shows one key per line. A line whose key
+/// matches a stored structured entry keeps that entry verbatim (including
+/// `exhausted` and any extra metadata); a new/changed line is saved as a plain
+/// key string; a removed line drops its entry. Other providers are unaffected.
+fn merge_jina_metadata(edited: Value, previous: Option<&Value>) -> Value {
+    let Some(previous) = previous else { return edited };
+    let mut stored: Vec<&Value> = match previous {
+        Value::Array(items) => items.iter().collect(),
+        _ => vec![previous],
+    };
+    let lines: Vec<String> = match &edited {
+        Value::String(s) => vec![s.clone()],
+        Value::Array(items) => items.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+        _ => Vec::new(),
+    };
+    if lines.is_empty() {
+        return edited;
+    }
+    let merged: Vec<Value> = lines
+        .into_iter()
+        .map(|line| {
+            match stored.iter().position(|item| {
+                // The editor trims input; compare the same normalized key without
+                // rewriting the original entry or its metadata.
+                item.as_str()
+                    .or_else(|| item.get("key").and_then(Value::as_str))
+                    .map(str::trim) == Some(line.as_str())
+            }) {
+                // Consume matches in stored order, preserving duplicate entries independently.
+                Some(index) => stored.remove(index).clone(),
+                None => Value::String(line),
+            }
+        })
+        .collect();
+    if merged.len() == 1 {
+        merged.into_iter().next().unwrap()
+    } else {
+        Value::Array(merged)
+    }
+}
 pub(crate) fn save(
     backend: &dyn CredentialBackend,
     namespace: &str,
@@ -114,7 +156,12 @@ pub(crate) fn save(
     key: &str,
     saved_at: f64,
 ) -> Result<f64, CredentialError> {
-    let value = editor_value(key)?;
+    let mut value = editor_value(key)?;
+    if provider == "jina" {
+        // Fail closed if existing metadata cannot be read; never silently clear it.
+        let previous = load(backend, namespace, provider)?.map(|(v, _)| v);
+        value = merge_jina_metadata(value, previous.as_ref());
+    }
     backend.write(&target(namespace, provider), &encode_blob(&value, saved_at))?;
     Ok(saved_at)
 }
@@ -184,7 +231,7 @@ impl CredentialBackend for SqliteCredentialBackend {
 #[cfg(windows)]
 pub(crate) fn crypt(bytes: &[u8], encrypt: bool) -> Result<Vec<u8>, CredentialError> {
     use windows_sys::Win32::{
-        Foundation::{GetLastError, LocalFree},
+        Foundation::{GetLastError, LocalFree, ERROR_INVALID_DATA, ERROR_INVALID_PARAMETER},
         Security::Cryptography::{
             CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
         },
@@ -220,10 +267,16 @@ pub(crate) fn crypt(bytes: &[u8], encrypt: bool) -> Result<Vec<u8>, CredentialEr
             )
         };
         if ok == 0 {
+            let code = GetLastError();
+            // All API parameters are fixed here except the stored blob. A
+            // truncated blob can produce INVALID_PARAMETER rather than INVALID_DATA.
+            if !encrypt && matches!(code, ERROR_INVALID_DATA | ERROR_INVALID_PARAMETER) {
+                return Err(CredentialError::DecryptionFailed(code));
+            }
             return Err(CredentialError::Unavailable(format!(
                 "DPAPI {}失败 (Windows error {})",
                 if encrypt { "加密" } else { "解密" },
-                GetLastError()
+                code
             )));
         }
         let value = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
@@ -259,7 +312,7 @@ pub(crate) fn status_of(result: Result<Option<(Value, f64)>, CredentialError>) -
             error: String::new(),
         },
         Err(error) => CredentialStatus {
-            state: if error == CredentialError::Unreadable {
+            state: if matches!(error, CredentialError::Unreadable | CredentialError::DecryptionFailed(_)) {
                 "unreadable"
             } else {
                 "unavailable"
@@ -268,5 +321,21 @@ pub(crate) fn status_of(result: Result<Option<(Value, f64)>, CredentialError>) -
             saved_at: None,
             error: error.to_string(),
         },
+    }
+}
+
+#[cfg(all(test, windows))]
+mod decryption_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_dpapi_payload_reports_unreadable_not_unknown_availability() {
+        let error = crypt(b"not a DPAPI payload", false).unwrap_err();
+        assert!(error.to_string().contains("DPAPI"));
+        assert_eq!(status_of(Err(error.clone())).state, "unreadable", "{error:?}");
+        assert_eq!(
+            status_of(Err(CredentialError::Unavailable("database unavailable".into()))).state,
+            "unavailable"
+        );
     }
 }

@@ -32,6 +32,9 @@ export interface ContractMap {
   TestOutcome: T.TestOutcome;
   ProviderInfo: T.ProviderInfo;
   RouteConfig: T.RouteConfig;
+  ScrapeBackendOption: T.ScrapeBackendOption;
+  ScrapeMemoryRow: T.ScrapeMemoryRow;
+  ScrapeMemoryView: T.ScrapeMemoryView;
   SettingsInput: T.SettingsInput;
   SettingsView: T.SettingsView;
 }

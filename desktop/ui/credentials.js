@@ -5,6 +5,8 @@
 // This keeps the desktop `provider::PROVIDERS` table as the single source of truth.
 
 let SOURCES = [];
+let PROVIDERS = [];
+export const scrapeCredentialProviders = () => PROVIDERS.filter(row => row.search === false && row.keyed);
 export { SOURCES };
 let providerLoad = null;
 
@@ -20,19 +22,23 @@ export function initProviders(api) {
         // Internally the UI uses the canonical `source` (underscore form, e.g.
         // `github_repos`). The Rust resolver accepts both spellings, so IPC
         // calls below pass `source` directly.
-        SOURCES = rows.map(row => ({
+        PROVIDERS = rows.map(row => ({
+          search: row.search,
+          cliSource: row.cliSource,
           source: row.source,
           label: row.label,
           keyed: row.keyed,
           cookie: row.cookie,
           aliases: row.aliases || [],
         }));
+        SOURCES = PROVIDERS.filter(row => row.search !== false);
         return SOURCES;
       })
       .catch(error => {
         // Keep the failure visible: leave SOURCES empty so downstream rows never
         // render, and rethrow so callers can show the minimal error state.
         SOURCES = [];
+        PROVIDERS = [];
         throw error;
       });
   }
@@ -47,7 +53,7 @@ export function providerList() {
 
 const DEFAULT_SOURCE = 'tavily';
 const storeLabels = { present: '已保存', absent: '未保存', unavailable: '数据库不可用', unreadable: '已保存条目无法读取' };
-const sourceEntry = source => SOURCES.find(item => item.source === source || item.cliSource === source) || SOURCES.find(item => item.source === DEFAULT_SOURCE) || { source, label: source, keyed: true };
+const sourceEntry = source => PROVIDERS.find(item => item.source === source || item.cliSource === source) || SOURCES.find(item => item.source === DEFAULT_SOURCE) || { source, label: source, keyed: true };
 const provenance = value => JSON.stringify([value.effective_source, value.store?.state, value.store?.saved_at]);
 export async function mountCredentials(root, api, options = {}) {
   await initProviders(api);
@@ -58,7 +64,8 @@ export async function mountCredentials(root, api, options = {}) {
 }
 export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest } = {}) {
   await initProviders(api);
-  const { label } = sourceEntry(source);
+  const { label, search } = sourceEntry(source);
+  const searchTest = search !== false;
   root.innerHTML = `<div class="credential-editor"><div class="credential-fields"><form data-save-form>
     <label>${label} API Key（多 Key 一行一个）<span class="key-input"><textarea data-field="key" autocomplete="off" spellcheck="false" rows="2" placeholder="输入 Key，多 Key 一行一个"></textarea></span></label>
     <button type="submit" class="primary" data-action="save">保存 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
@@ -68,7 +75,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     <p data-info="override" class="note" role="status"></p><p data-info="error" role="alert"></p>
     <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button><div data-delete-slot><button type="button" data-action="delete">删除已保存的 key</button></div></div></div>
     <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
-    <p class="credential-note">测试会向 ${label} 发送外部搜索请求，可能消耗额度。测试使用已保存的值；编辑后请先保存。</p></div></div>`;
+    <p class="credential-note">${searchTest ? `测试会向 ${label} 发送外部搜索请求，可能消耗额度。测试使用已保存的值；编辑后请先保存。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。未修改的 Key 保留 exhausted 等已有元数据；修改 Key 视为新条目，删除一行即移除该条目。'}</p></div></div>`;
   const q = selector => root.querySelector(selector);
   const text = (selector, value) => { q(selector).textContent = value; };
   const field = q('[data-field="key"]');
@@ -85,6 +92,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     for (const button of root.querySelectorAll('button')) button.disabled = value;
     field.disabled = value;
     q('[data-action="application"]').disabled = value || !current.key_application_available;
+    q('[data-action="test"]').disabled = value || !searchTest;
+    q('[data-action="test"]').hidden = !searchTest;
   }
   function render(view) {
     if (disposed) return;
@@ -134,6 +143,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     catch (error) { if (!disposed) text('[data-info="error"]', typeof error === 'string' ? error : '无法打开系统浏览器。'); }
   });
   q('[data-action="test"]').addEventListener('click', async () => {
+    if (!searchTest) return;
     setBusy(true); const testedGeneration = ++generation; reportTest('running', '正在测试');
     try { const outcome = await api.credentialTest(source, null); if (testedGeneration === generation && !disposed) reportTest(outcome.result === 'success' ? 'success' : 'error', outcome.result === 'success' ? '测试成功' : '测试失败', outcome.message || ''); }
     catch (error) { if (testedGeneration === generation && !disposed) reportTest('error', '测试失败', typeof error === 'string' ? error : '请检查 CLI 后重试。'); }

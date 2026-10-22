@@ -54,6 +54,7 @@ fn input(route: &str, timeout: u32, disabled: &[&str]) -> SettingsInput {
         disabled_sources: disabled.iter().map(|s| s.to_string()).collect(),
         routes: None,
         twitter_cookies_path: None,
+        scrape_backends: None,
     }
 }
 #[test]
@@ -329,6 +330,171 @@ fn empty_userprofile_falls_back_to_home() {
 }
 
 #[test]
+fn scrape_backends_save_trims_dedupes_and_keeps_order() {
+    let s = Sandbox::new("scrape-save");
+    let e = s.env(&[]);
+    let mut request = input("default", 60, &[]);
+    request.scrape_backends = Some(vec![
+        " firecrawl ".into(),
+        "jina".into(),
+        "firecrawl".into(),
+        " exa ".into(),
+    ]);
+    let view = fixture::save(&e, &request).unwrap();
+    assert_eq!(
+        s.object()["scrape_backends"],
+        serde_json::json!(["firecrawl", "jina", "exa"])
+    );
+    assert_eq!(view.scrape_backends, ["firecrawl", "jina", "exa"]);
+}
+
+#[test]
+fn scrape_backends_reject_unknown_and_empty_lists_without_writing() {
+    let s = Sandbox::new("scrape-invalid");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    let before = std::fs::read(s.db()).unwrap();
+    for bad in [
+        vec!["jina".to_string(), "bing".to_string()],
+        vec!["".to_string()],
+        vec![],
+    ] {
+        let mut request = input("default", 60, &[]);
+        request.scrape_backends = Some(bad);
+        assert!(fixture::save(&e, &request).is_err());
+        assert_eq!(std::fs::read(s.db()).unwrap(), before);
+    }
+    let mut unknown = input("default", 60, &[]);
+    unknown.scrape_backends = Some(vec!["bing".into()]);
+    assert!(fixture::save(&e, &unknown)
+        .unwrap_err()
+        .contains("不支持的抓取后端：bing"));
+    let mut empty = input("default", 60, &[]);
+    empty.scrape_backends = Some(vec![]);
+    assert!(fixture::save(&e, &empty)
+        .unwrap_err()
+        .contains("至少要保留一个后端"));
+}
+
+#[test]
+fn omitted_scrape_backends_preserve_existing_key() {
+    let s = Sandbox::new("scrape-preserve");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(
+        r#"{"type":"default","scrape_backends":["tavily","jina"],"future_field":1}"#,
+    );
+    // None（旧调用方）不改动，也不删除该键。
+    fixture::save(&e, &input("default", 30, &[])).unwrap();
+    assert_eq!(
+        s.object()["scrape_backends"],
+        serde_json::json!(["tavily", "jina"])
+    );
+    assert_eq!(s.object()["future_field"], 1);
+}
+
+#[test]
+fn missing_scrape_backends_view_uses_factory_chain_and_options() {
+    let s = Sandbox::new("scrape-defaults");
+    let view = fixture::view(&s.env(&[]));
+    assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+    assert_eq!(view.builtin_scrape_backends, view.scrape_backends);
+    assert_eq!(
+        view.scrape_backend_options
+            .iter()
+            .map(|option| (option.name.as_str(), option.label.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("jina", "Jina Reader"),
+            ("exa", "Exa"),
+            ("tavily", "Tavily"),
+            ("firecrawl", "Firecrawl"),
+        ]
+    );
+}
+
+#[test]
+fn dirty_scrape_backends_read_tolerantly_and_fall_back_when_useless() {
+    let s = Sandbox::new("scrape-tolerant");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(r#"{"type":"default","scrape_backends":["bing"," tavily ","tavily",7,"exa"]}"#);
+    let view = fixture::view(&e);
+    assert_eq!(view.status, "ok");
+    assert_eq!(view.scrape_backends, ["tavily", "exa"]);
+    assert!(view.scrape_backends_invalid, "unknown/non-string entries are invalid saved data");
+
+    for (index, body) in [
+        r#"{"type":"default","scrape_backends":["bing"]}"#,
+        r#"{"type":"default","scrape_backends":[]}"#,
+        r#"{"type":"default","scrape_backends":"jina"}"#,
+        r#"{"type":"default","scrape_backends":null}"#,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let s = Sandbox::new(&format!("scrape-fallback-{index}"));
+        let e = s.env(&[]);
+        fixture::save(&e, &input("default", 60, &[])).unwrap();
+        s.replace(body);
+        let view = fixture::view(&e);
+        assert_eq!(view.status, "ok");
+        assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+        // null 与缺失等价（历史默认）；其余三种是用户明确写入的非法值。
+        assert_eq!(
+            view.scrape_backends_invalid,
+            !body.contains(":null"),
+            "{body} must be reported as invalid saved data"
+        );
+    }
+}
+
+#[test]
+fn missing_or_absent_scrape_backends_is_not_reported_invalid() {
+    let s = Sandbox::new("scrape-absent");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(r#"{"type":"default"}"#);
+    let view = fixture::view(&e);
+    assert!(!view.scrape_backends_invalid);
+    assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+}
+
+#[test]
+fn invalid_saved_scrape_backends_can_be_overwritten_by_save() {
+    let s = Sandbox::new("scrape-overwrite");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(r#"{"type":"default","scrape_backends":[]}"#);
+    let before = fixture::view(&e);
+    assert!(before.scrape_backends_invalid);
+    assert_eq!(before.status, "ok");
+
+    let mut request = input("default", 60, &[]);
+    request.scrape_backends = Some(vec!["jina".into(), "tavily".into()]);
+    let saved = fixture::save(&e, &request).unwrap();
+    assert!(!saved.scrape_backends_invalid);
+    assert_eq!(saved.scrape_backends, ["jina", "tavily"]);
+    assert_eq!(
+        s.object()["scrape_backends"],
+        serde_json::json!(["jina", "tavily"])
+    );
+}
+
+#[test]
+fn unreadable_view_still_exposes_default_scrape_chain() {
+    let s = Sandbox::new("scrape-unreadable");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace("{ not json");
+    let view = fixture::view(&e);
+    assert_eq!(view.status, "config_unreadable");
+    assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+    assert!(!view.scrape_backends_invalid);
+    assert_eq!(view.scrape_backend_options.len(), 4);
+}
+
+#[test]
 fn independent_cli_handoff_database() {
     let Some(target) = std::env::var_os("MS_SETTINGS_HANDOFF") else {
         return;
@@ -357,14 +523,18 @@ fn independent_cli_handoff_database() {
 fn python_cli_reads_desktop_written_settings_and_rejects_future_versions() {
     let s = Sandbox::new("python-interop");
     let e = s.env(&[]);
-    let view = fixture::save(&e, &input("fast", 30, &["exa"])).unwrap();
+    let mut request = input("fast", 30, &["exa"]);
+    request.scrape_backends = Some(vec!["firecrawl".into(), "jina".into()]);
+    let view = fixture::save(&e, &request).unwrap();
     assert_eq!(view.route, "fast");
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let read_script = r#"
 import json, sys
 from multi_search_mcp.src.support.credential_store import ConfigDatabase
+from multi_search_mcp.src.search.resolve import resolve_scrape_backends
 data = ConfigDatabase(sys.argv[1]).read_settings()
+assert resolve_scrape_backends(data) == ['firecrawl', 'jina']
 print(json.dumps({"type": data.get("type"), "timeout": data.get("timeout"), "disabled_sources": data.get("disabled_sources")}))
 "#;
     let output = std::process::Command::new("python")

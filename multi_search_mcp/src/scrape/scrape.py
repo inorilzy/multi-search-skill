@@ -163,6 +163,9 @@ class ScrapeContext:
     twitter_cookies: Any = ""
     primary: str | None = None
     backends: tuple[str, ...] | list[str] | None = None
+    # True only for caller-forced backend lists (``--backend``): configuration
+    # chains skip keyless backends at runtime instead of failing eagerly.
+    strict_backends: bool = False
 
     def keys_for(self, backend: str) -> list[KeyCandidate]:
         return list(self.keys_by_backend.get(backend) or [])
@@ -406,7 +409,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
     # When a caller forces an explicit backend list, surface configuration
     # mistakes eagerly instead of letting them collapse into the generic
     # "no scrape backend available" at the end.
-    if backends is not None:
+    if backends is not None and ctx.strict_backends:
         for backend in backends:
             spec = _BACKEND_BY_NAME[backend]
             if spec.key_required and not ctx.keys_for(backend):
