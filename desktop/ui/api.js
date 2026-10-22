@@ -41,53 +41,59 @@ import { expect } from './payloads.js';
 export function managementApi(invoke) {
   return {
     /** @param {string|null} path @returns {Promise<CliStatus>} */
-    detect: async path => /** @type {CliStatus} */ (expect('CliStatus', await invoke('detect_cli', { path }))),
+    detect: async path => (expect('CliStatus', await invoke('detect_cli', { path }))),
     /** @param {string|null} path @param {SearchOptions} options @returns {Promise<number>} */
-    start: async (path, options) => /** @type {number} */ (await invoke('start_test_search', { path, options })),
+    start: async (path, options) => {
+      const id = await invoke('start_test_search', { path, options });
+      if (typeof id !== 'number' || !Number.isFinite(id)) {
+        throw new TypeError('IPC payload for start_test_search expected a numeric execution id');
+      }
+      return id;
+    },
     /** @param {number} id @returns {Promise<ExecutionStatus>} */
-    poll: async id => /** @type {ExecutionStatus} */ (expect('ExecutionStatus', await invoke('poll_execution', { id }))),
+    poll: async id => (expect('ExecutionStatus', await invoke('poll_execution', { id }))),
     /** @param {number} id @returns {Promise<ExecutionStatus>} */
-    cancel: async id => /** @type {ExecutionStatus} */ (expect('ExecutionStatus', await invoke('cancel_test_search', { id }))),
+    cancel: async id => (expect('ExecutionStatus', await invoke('cancel_test_search', { id }))),
     /** @param {string} scope @param {string|null} project @returns {Promise<SkillPlan>} */
-    skillPlan: async (scope, project) => /** @type {SkillPlan} */ (expect('SkillPlan', await invoke('skill_plan', { scope, project }))),
+    skillPlan: async (scope, project) => (expect('SkillPlan', await invoke('skill_plan', { scope, project }))),
     /** @param {string} scope @param {string|null} project @returns {Promise<SkillInstall>} */
-    skillInstall: async (scope, project) => /** @type {SkillInstall} */ (expect('SkillInstall', await invoke('skill_install', { scope, project }))),
+    skillInstall: async (scope, project) => (expect('SkillInstall', await invoke('skill_install', { scope, project }))),
     /** @param {string} scope @param {string|null} project @returns {Promise<SkillStatus>} */
-    skillStatus: async (scope, project) => /** @type {SkillStatus} */ (expect('SkillStatus', await invoke('skill_status', { scope, project }))),
+    skillStatus: async (scope, project) => (expect('SkillStatus', await invoke('skill_status', { scope, project }))),
     /** @param {string} scope @param {string|null} project @param {boolean} confirmOverwrite @returns {Promise<UpdateOutcome>} */
-    skillUpdate: async (scope, project, confirmOverwrite) => /** @type {UpdateOutcome} */ (expect('UpdateOutcome', await invoke('skill_update', { scope, project, confirmOverwrite }))),
+    skillUpdate: async (scope, project, confirmOverwrite) => (expect('UpdateOutcome', await invoke('skill_update', { scope, project, confirmOverwrite }))),
     /** @param {string} scope @param {string|null} project @returns {Promise<RemovePlan>} */
-    skillRemovePlan: async (scope, project) => /** @type {RemovePlan} */ (expect('RemovePlan', await invoke('skill_remove_plan', { scope, project }))),
+    skillRemovePlan: async (scope, project) => (expect('RemovePlan', await invoke('skill_remove_plan', { scope, project }))),
     /** @param {string} scope @param {string|null} project @param {boolean} confirmed @returns {Promise<RemoveOutcome>} */
-    skillRemove: async (scope, project, confirmed) => /** @type {RemoveOutcome} */ (expect('RemoveOutcome', await invoke('skill_remove', { scope, project, confirmed }))),
+    skillRemove: async (scope, project, confirmed) => (expect('RemoveOutcome', await invoke('skill_remove', { scope, project, confirmed }))),
     /** @returns {Promise<InstallPlan>} */
-    installPlan: async () => /** @type {InstallPlan} */ (expect('InstallPlan', await invoke('install_plan'))),
+    installPlan: async () => (expect('InstallPlan', await invoke('install_plan'))),
     /** @returns {Promise<InstallOutcome>} */
-    install: async () => /** @type {InstallOutcome} */ (expect('InstallOutcome', await invoke('install_cli'))),
+    install: async () => (expect('InstallOutcome', await invoke('install_cli'))),
     /** @returns {Promise<InstallOutcome>} */
-    update: async () => /** @type {InstallOutcome} */ (expect('InstallOutcome', await invoke('update_cli'))),
+    update: async () => (expect('InstallOutcome', await invoke('update_cli'))),
     /** @returns {Promise<InstallOutcome>} */
-    uninstall: async () => /** @type {InstallOutcome} */ (expect('InstallOutcome', await invoke('uninstall_cli'))),
+    uninstall: async () => (expect('InstallOutcome', await invoke('uninstall_cli'))),
     /** @returns {Promise<PathPlan>} */
-    userPathPlan: async () => /** @type {PathPlan} */ (expect('PathPlan', await invoke('user_path_plan'))),
+    userPathPlan: async () => (expect('PathPlan', await invoke('user_path_plan'))),
     /** @param {boolean} remove @param {boolean} confirmed @returns {Promise<PathPlan>} */
-    userPathChange: async (remove, confirmed) => /** @type {PathPlan} */ (expect('PathPlan', await invoke('user_path_change', { remove, confirmed }))),
+    userPathChange: async (remove, confirmed) => (expect('PathPlan', await invoke('user_path_change', { remove, confirmed }))),
     /** @param {string} source @returns {Promise<CredentialOverview>} */
-    credentialStatus: async source => /** @type {CredentialOverview} */ (expect('CredentialOverview', await invoke('credential_status', { source }))),
+    credentialStatus: async source => (expect('CredentialOverview', await invoke('credential_status', { source }))),
     /** @param {string} source @returns {Promise<CredentialValue>} */
-    credentialRead: async source => /** @type {CredentialValue} */ (expect('CredentialValue', await invoke('credential_read', { source }))),
+    credentialRead: async source => (expect('CredentialValue', await invoke('credential_read', { source }))),
     /** @param {string} source @returns {Promise<void>} */
     credentialApplicationOpen: async source => /** @type {void} */ (await invoke('credential_application_open', { source })),
     /** @param {string} source @param {string} key @returns {Promise<CredentialOverview>} */
-    credentialSave: async (source, key) => /** @type {CredentialOverview} */ (expect('CredentialOverview', await invoke('credential_save', { source, key }))),
+    credentialSave: async (source, key) => (expect('CredentialOverview', await invoke('credential_save', { source, key }))),
     /** @param {string} source @returns {Promise<CredentialOverview>} */
-    credentialDelete: async source => /** @type {CredentialOverview} */ (expect('CredentialOverview', await invoke('credential_delete', { source }))),
+    credentialDelete: async source => (expect('CredentialOverview', await invoke('credential_delete', { source }))),
     /** @param {string} source @param {string|null} path @returns {Promise<TestOutcome>} */
-    credentialTest: async (source, path) => /** @type {TestOutcome} */ (expect('TestOutcome', await invoke('credential_test', { source, path }))),
+    credentialTest: async (source, path) => (expect('TestOutcome', await invoke('credential_test', { source, path }))),
     /** @returns {Promise<SettingsView>} */
-    settingsView: async () => /** @type {SettingsView} */ (expect('SettingsView', await invoke('settings_view'))),
+    settingsView: async () => (expect('SettingsView', await invoke('settings_view'))),
     /** @param {SettingsInput} input @returns {Promise<SettingsView>} */
-    settingsSave: async input => /** @type {SettingsView} */ (expect('SettingsView', await invoke('settings_save', { input }))),
+    settingsSave: async input => (expect('SettingsView', await invoke('settings_save', { input }))),
     /** @returns {Promise<ProviderInfo[]>} */
     providerList: async () => {
       const rows = await invoke('provider_list');
