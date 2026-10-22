@@ -10,6 +10,7 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
+use ts_rs::TS;
 
 pub const CONFIG_ENV: &str = crate::config_db::DB_ENV;
 
@@ -23,8 +24,9 @@ fn source_name(raw: &str) -> Result<&'static str, String> {
 
 const MAX_PATH_BYTES: usize = 1024;
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(deny_unknown_fields)]
+#[ts(export_to = "types.d.ts")]
 pub struct RouteConfig {
     pub label: String,
     pub sources: Vec<String>,
@@ -94,7 +96,8 @@ pub fn builtin_routes() -> RouteMap {
     ])
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct SettingsInput {
     pub route: String,
     pub timeout: u32,
@@ -115,7 +118,8 @@ pub struct Validated {
     pub twitter_cookies_path: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct SettingsView {
     pub config_path: Option<String>,
     pub path_source: String,
@@ -131,6 +135,7 @@ pub struct SettingsView {
     pub disabled_sources: Vec<String>,
     pub twitter_cookies_path: Option<String>,
     pub active_sources: Vec<String>,
+    /// ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub message: String,
 }

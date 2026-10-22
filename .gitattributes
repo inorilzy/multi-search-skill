@@ -1,0 +1,4 @@
+# ts-rs writes the generated UI contract with LF. Pin it so running
+# `cargo test --test ui_contract` does not leave the worktree dirty on
+# Windows checkouts with core.autocrlf=true.
+desktop/ui/types.d.ts text eol=lf

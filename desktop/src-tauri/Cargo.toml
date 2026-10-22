@@ -67,6 +67,10 @@ path = "tests/process_env.rs"
 name = "sqlite_credentials"
 path = "tests/sqlite_credentials.rs"
 
+[[test]]
+name = "ui_contract"
+path = "tests/ui_contract.rs"
+
 [[bin]]
 name = "multi-search-desktop"
 path = "src/main.rs"
@@ -77,6 +81,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
+# ts-rs exports TypeScript declarations for the UI command contract. The
+# derive is unconditional so payload structs stay consistent; codegen runs in
+# `cargo test export_ui_contract` and is not part of the runtime binary.
+ts-rs = { version = "12", features = ["serde-json-impl"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_UI_Shell", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging"] }

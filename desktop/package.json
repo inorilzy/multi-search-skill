@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
+    "typecheck": "tsc -p ui/jsconfig.json --noEmit",
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build --bundles nsis"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
-    "happy-dom": "^20.0.0"
+    "happy-dom": "^20.0.0",
+    "typescript": "^5.6.0"
   }
 }

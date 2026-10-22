@@ -21,6 +21,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use ts_rs::TS;
 
 const MARKER: &str = "multi-search-install.json";
 const OWNER: &str = "multi-search-desktop";
@@ -37,8 +38,10 @@ struct Marker {
     schema: u32,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct InstallPlan {
+    /// One of `ready`, `installed`, `update_available`, `prerequisite_missing`, `integrity_failed`, `unknown_existing`, `unverified`, `not_installed`, `uninstalled`, `unavailable`, `already_installed`, `failed`, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub root: String,
     pub bin: String,
@@ -47,22 +50,25 @@ pub struct InstallPlan {
     pub current_version: Option<String>,
     /// Bundle directory the target version comes from (the install source).
     pub source: Option<String>,
-    /// Skill compatibility of the target CLI: "compatible", "incompatible" or "unknown".
+    /// Skill compatibility of the target CLI: "compatible", "incompatible", "unverified" or "unknown" (or a new value added later).
     pub compatibility: String,
     pub compatibility_reason: String,
     pub reason: String,
     pub path_hint: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct InstallStep {
     pub name: String,
     pub ok: bool,
     pub detail: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, TS)]
+#[ts(export_to = "types.d.ts")]
 pub struct InstallOutcome {
+    /// Same status vocabulary as `InstallPlan`; UI must fall back to a raw string for unknown values.
     pub status: String,
     pub steps: Vec<InstallStep>,
     pub version: Option<String>,
