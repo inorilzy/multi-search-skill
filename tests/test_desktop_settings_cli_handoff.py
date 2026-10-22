@@ -45,7 +45,7 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
         env = {"MULTI_SEARCH_CONFIG_DB": str(self.config), "TWITTER_COOKIES_PATH": "synthetic-ignored-environment-path"}
         stack.enter_context(mock.patch.dict(os.environ, env))
         stack.enter_context(
-            mock.patch("multi_search_mcp.src.service.StateStore",
+            mock.patch("multi_search_mcp.src.core.runtime.StateStore",
                        lambda *a, **k: StateStore(root / "state.sqlite"))
         )
         # 真实运行时必须从设置所在的同一数据库加载，不能注入字典。

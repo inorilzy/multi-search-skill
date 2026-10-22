@@ -15,7 +15,8 @@ from multi_search_mcp.src.search.search_runner import (
     run_keyed_source,
 )
 from multi_search_mcp.src.search.searchers import serpapi
-from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+from multi_search_mcp.src.core.requests import SearchWebRequest
+from multi_search_mcp.src.core.search_pipeline import run_search_candidates as _run_search_candidates
 from multi_search_mcp.src.state.key_state import BasicKeyManager, SQLiteKeyManager
 from multi_search_mcp.src.state.state_store import StateStore
 

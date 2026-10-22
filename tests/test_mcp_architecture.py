@@ -31,6 +31,7 @@ from multi_search_mcp.src.support.format import format_results
 from multi_search_mcp.src.support import config as config_module
 from multi_search_mcp.src.support.dedup import _norm_url, rank_results
 from multi_search_mcp.src import service as service_module
+from multi_search_mcp.src.core import present as present_module
 
 
 def _fake_ranked_fetch_stage(hits, **kwargs):
@@ -551,11 +552,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured["fetched_urls"] = [hit["url"] for hit in hits]
             return _fake_ranked_fetch_stage(hits, **kwargs)
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False))
 
         self.assertEqual(captured["timeout"], 45)
@@ -573,11 +574,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query, *, deadline=None):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-            mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+            mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False))
 
         self.assertEqual(response["route"], "fast")
@@ -603,11 +604,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured["fetched_urls"] = [hit["url"] for hit in hits]
             return _fake_ranked_fetch_stage(hits, **kwargs)
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", count=25, use_state=False))
 
         self.assertEqual(response["route"], "default")
@@ -625,11 +626,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query, *, deadline=None):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"type": "fast"}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={"type": "fast"}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
         # config-provided route drives both the echoed route and want_content.
@@ -650,11 +651,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured[-1]["fetched_urls"] = [hit["url"] for hit in hits]
             return _fake_ranked_fetch_stage(hits, **kwargs)
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"type": "default", "timeout": 11, "scrape_top": 2, "count": 4}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={"type": "default", "timeout": 11, "scrape_top": 2, "count": 4}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
             default = run_multi_search(MultiSearchRequest(query="q", use_state=False))
             explicit = run_multi_search(MultiSearchRequest(query="q", scrape_top=0, timeout=12, count=6, use_state=False))
 
@@ -698,11 +699,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query, *, deadline=None):
                 return [{"source": "baidu_answer", "answer": "summary"}]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(
                 query="q", sources=["baidu"], route="fast", use_state=False,
             ))
@@ -726,11 +727,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "baidu", "title": "Doc", "url": "https://example.com"},
                 ]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["baidu"], use_state=False))
 
         self.assertEqual(response["summary"], "provider summary")
@@ -753,11 +754,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "exa", "title": "Exa result", "url": "https://exa.example", "scraped_content": "exa highlights"},
                 ]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False))
 
         by_source = {row["source"]: row for row in response["source_briefs"]}
@@ -781,11 +782,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     "scraped_content": "full page body",
                 }]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["exa"], use_state=False))
 
         row = response["results"][0]
@@ -808,11 +809,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "tavily", "error": "boom"},
                 ]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["baidu"], use_state=False))
 
         self.assertEqual(response["display_results"], [{
@@ -823,7 +824,7 @@ class PluginServiceConfigTests(unittest.TestCase):
         }])
 
     def test_display_results_snippet_is_truncated(self):
-        from multi_search_mcp.src.service import DISPLAY_SNIPPET_CHARS
+        from multi_search_mcp.src.core.present import DISPLAY_SNIPPET_CHARS
 
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
@@ -839,11 +840,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     },
                 ]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", sources=["baidu"], use_state=False))
 
         snippet = response["display_results"][0]["snippet"]
@@ -862,11 +863,11 @@ class PluginServiceConfigTests(unittest.TestCase):
         meta_row = {"source": "tavily", "status": "ok", "raw_hits": 0}
 
         with (
-            mock.patch.object(service_module, "_load_config_safe", return_value={}),
-            mock.patch.object(service_module, "load_keys", return_value={}),
+            mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}),
+            mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}),
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}),
-            mock.patch.object(service_module.SearchRunner, "run", return_value=[real_result, meta_row]),
-            mock.patch.object(service_module, "run_ranked_fetch_stage", side_effect=_fake_ranked_fetch_stage),
+            mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner.run", return_value=[real_result, meta_row]),
+            mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=_fake_ranked_fetch_stage),
         ):
             response = run_multi_search(MultiSearchRequest(query="q", sources=["tavily"], use_state=False))
         self.assertEqual(response["diagnostics"]["valid_result_count"], 1)
@@ -876,9 +877,9 @@ class PluginServiceConfigTests(unittest.TestCase):
         # sources must report degradation; adding a real primary result clears it.
         meta = route_meta("social")
         only_meta = [{"source": "twitter", "status": "ok", "raw_hits": 0}]
-        self.assertIsNotNone(service_module._route_degradation("social", only_meta, None, meta))
+        self.assertIsNotNone(present_module._route_degradation("social", only_meta, None, meta))
         with_real = only_meta + [{"source": "twitter", "title": "t", "url": "https://e.com"}]
-        self.assertIsNone(service_module._route_degradation("social", with_real, None, meta))
+        self.assertIsNone(present_module._route_degradation("social", with_real, None, meta))
 
     def test_route_uses_route_count_default(self):
         captured = {}
@@ -890,11 +891,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query, *, deadline=None):
                 return []
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             run_multi_search(MultiSearchRequest(query="q", route="default", use_state=False))
 
         self.assertEqual(captured["counts"]["brave"], 10)
@@ -911,18 +912,17 @@ class PluginServiceConfigTests(unittest.TestCase):
                 captured["sources"] = self.route_resolver("default")
                 return []
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             run_multi_search(MultiSearchRequest(query="q", sources=["github", "baidu-ai-search"], use_state=False))
 
         self.assertEqual(captured["sources"], {"github_repos", "baidu"})
 
-    def test_expand_query_thread_pool_is_capped(self):
-        captured: dict[str, int] = {}
-        original_executor = service_module.concurrent.futures.ThreadPoolExecutor
+    def test_expand_query_fanout_uses_an_isolated_bounded_pool(self):
+        from multi_search_mcp.src.core import search_pipeline
 
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
@@ -931,16 +931,16 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query, *, deadline=None):
                 return [{"source": "brave", "title": query, "url": f"https://example.com/{query}"}]
 
-        def tracking_executor(*args, **kwargs):
-            captured["max_workers"] = kwargs.get("max_workers", args[0] if args else None)
-            return original_executor(*args, **kwargs)
-
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
-             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage), \
-             mock.patch("multi_search_mcp.src.service.concurrent.futures.ThreadPoolExecutor", side_effect=tracking_executor):
+        with (
+            mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}),
+            mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}),
+            mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner),
+            mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}),
+            mock.patch(
+                "multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage",
+                side_effect=self._fake_fetch_stage,
+            ),
+        ):
             run_multi_search(MultiSearchRequest(
                 query="q",
                 route="default",
@@ -948,7 +948,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                 use_state=False,
             ))
 
-        self.assertLessEqual(captured["max_workers"], 5)
+        # Expansion owns an isolated, capped executor instead of a bare pool.
+        self.assertLessEqual(search_pipeline._EXPAND_POOL._max_workers, 5)
+        self.assertEqual(
+            search_pipeline._EXPAND_POOL._thread_name_prefix, "multi-search-expand",
+        )
 
     def test_social_degradation_is_explicit_when_primary_providers_fail(self):
         class FakeRunner:
@@ -961,11 +965,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "twitter", "error": "service unavailable"},
                 ]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="social", use_state=False))
 
         self.assertIn("social primary providers unavailable", response["markdown"])
@@ -983,11 +987,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "exa", "error": "down"},
                 ]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="default", use_state=False))
 
         self.assertIn("default primary providers unavailable", response["markdown"])
@@ -1008,11 +1012,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                     {"source": "github-repos", "title": "ok", "url": "https://x.example/a", "description": "d"},
                 ]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="dev", use_state=False))
 
         self.assertIsNone(response["diagnostics"]["route_degradation"])
@@ -1031,11 +1035,11 @@ class PluginServiceConfigTests(unittest.TestCase):
             fetched.append([hit["url"] for hit in hits])
             return _fake_ranked_fetch_stage(hits, **kwargs)
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"no_scrape": True, "scrape_top": 0}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={"no_scrape": True, "scrape_top": 0}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
             responses = [run_multi_search(MultiSearchRequest(query="q", scrape_top=value, use_state=False))
                          for value in (None, 0, 3)]
 
@@ -1053,9 +1057,9 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured.update(kwargs)
             return {"url": url, "markdown": "ok", "via": "jina"}
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={"jina": ["j1"]}), \
-             mock.patch("multi_search_mcp.src.service.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={"jina": ["j1"]}), \
+             mock.patch("multi_search_mcp.src.core.scrape_pipeline.scrape_url_smart", side_effect=fake_scrape):
             run_scrape(ScrapeRequest(url="https://example.com", use_state=False))
 
         jina_keys = [candidate.key for candidate in captured["ctx"].keys_by_backend["jina"]]
@@ -1067,9 +1071,9 @@ class PluginServiceConfigTests(unittest.TestCase):
         def fake_scrape(url, **kwargs):
             return {"url": url, "title": "Doc", "markdown": body, "length": len(body), "via": "jina"}
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.scrape_url_smart", side_effect=fake_scrape):
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.scrape_pipeline.scrape_url_smart", side_effect=fake_scrape):
             response = run_scrape(ScrapeRequest(
                 url="https://example.com",
                 scrape_chars=12,
@@ -1121,7 +1125,7 @@ class PluginServiceConfigTests(unittest.TestCase):
         from multi_search_mcp.src.state.keys import KeysError
 
         with mock.patch(
-            "multi_search_mcp.src.service.load_keys",
+            "multi_search_mcp.src.core.runtime.load_keys",
             side_effect=KeysError("keys file is not valid JSON: /home/u/.search-keys.json"),
         ):
             data = doctor_data(include_keys=True)
@@ -1135,11 +1139,11 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         return _fake_ranked_fetch_stage(hits, **kwargs)
 
     def _run(self, config, request, runner_cls):
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value=config), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", runner_cls), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value=config), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", runner_cls), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             return run_multi_search(request)
 
     def test_route_default_sources_exclude_disabled(self):
@@ -1167,8 +1171,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         self.assertIn("brave", response["diagnostics"]["route_sources"])
 
     def test_explicit_source_fully_disabled_returns_structured_error(self):
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"disabled_sources": ["brave"]}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}):
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={"disabled_sources": ["brave"]}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}):
             with self.assertRaisesRegex(ValueError, "all selected sources are disabled"):
                 run_multi_search(MultiSearchRequest(query="q", sources=["brave"], use_state=False))
 
@@ -1191,8 +1195,8 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         self.assertNotIn("baidu", captured["sources"])
 
     def test_unknown_disabled_source_is_invalid_request(self):
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"disabled_sources": ["not-a-source"]}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}):
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={"disabled_sources": ["not-a-source"]}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}):
             with self.assertRaisesRegex(ValueError, "unknown disabled source"):
                 run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
@@ -1266,11 +1270,11 @@ class PluginEntryLayerTests(unittest.TestCase):
             def run(self, query, *, deadline=None):
                 return []
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=_fake_ranked_fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=_fake_ranked_fetch_stage):
             result = run_multi_search(MultiSearchRequest(query="q", route="web", use_state=False))
 
         self.assertNotIn("error", result)
@@ -1291,11 +1295,11 @@ class PluginEntryLayerTests(unittest.TestCase):
             captured["scrape_timeout"] = kwargs["timeout"]
             return _fake_ranked_fetch_stage(hits, **kwargs)
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={"timeout": 60, "scrape_timeout": 60}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={"timeout": 60, "scrape_timeout": 60}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
             result = run_multi_search(MultiSearchRequest(query="q", timeout=None, scrape_timeout=None, use_state=False))
 
         self.assertNotIn("error", result)
@@ -1331,11 +1335,11 @@ class PluginEntryLayerTests(unittest.TestCase):
         def fake_scrape_stage(hits, **kwargs):
             return _fake_ranked_fetch_stage(hits, **kwargs)
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
             run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
         self.assertEqual(captured["key_manager"], "BasicKeyManager")
@@ -1411,11 +1415,11 @@ class PluginRankingTests(unittest.TestCase):
         def fake_scrape_stage(hits, **kwargs):
             return _fake_ranked_fetch_stage(hits, **kwargs)
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=fake_scrape_stage):
             response = run_multi_search(MultiSearchRequest(query="q", route="fast", use_state=False, output="both"))
 
         json_urls = [r["url"] for r in response["results"] if r.get("url")]
@@ -1436,11 +1440,11 @@ class PluginRRFSearchContractTests(unittest.TestCase):
             def run(self, query, *, deadline=None):
                 return [dict(row) for row in rows]
 
-        with mock.patch("multi_search_mcp.src.service._load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.SearchRunner", FakeRunner), \
+        with mock.patch("multi_search_mcp.src.core.runtime.load_config_safe", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+             mock.patch("multi_search_mcp.src.core.search_pipeline.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.service.run_ranked_fetch_stage", side_effect=fetch_stage):
+             mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=fetch_stage):
             return (
                 run_search_web(SearchWebRequest(query="q", use_state=False)),
                 run_multi_search(MultiSearchRequest(query="q", use_state=False)),
@@ -1526,7 +1530,7 @@ class PluginRegistryConsistencyTests(unittest.TestCase):
         self.assertEqual(missing, set(), f"routes without ROUTE_META entry: {sorted(missing)}")
 
     def test_count_caps_cover_every_default_count(self):
-        from multi_search_mcp.src.service import COUNT_CAPS, DEFAULT_COUNTS
+        from multi_search_mcp.src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
         missing = set(DEFAULT_COUNTS) - set(COUNT_CAPS)
         self.assertEqual(missing, set(), f"sources missing a COUNT_CAPS entry: {sorted(missing)}")
 

@@ -32,8 +32,8 @@ class PreviewDefaultTests(unittest.TestCase):
         temporary = stack.enter_context(TemporaryDirectory(prefix="preview-defaults-"))
         self.state_path = Path(temporary) / "state.sqlite"
         stack.enter_context(mock.patch.object(state_store, "DEFAULT_STATE_PATH", self.state_path))
-        stack.enter_context(mock.patch.object(service, "load_config", return_value={}))
-        stack.enter_context(mock.patch.object(service, "load_keys", return_value={}))
+        stack.enter_context(mock.patch("multi_search_mcp.src.core.runtime.load_config", return_value={}))
+        stack.enter_context(mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}))
         stack.enter_context(mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")))
         stack.enter_context(mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected connection")))
         self.providers = {"brave": ProviderSpec(
@@ -101,7 +101,7 @@ class PreviewDefaultTests(unittest.TestCase):
         self.assertEqual(expected, BODY[:1200])
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=self.providers),
-            mock.patch.object(service, "scrape_url_smart", self.scraper),
+            mock.patch("multi_search_mcp.src.core.scrape_pipeline.scrape_url_smart", self.scraper),
             mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
         ):
             for mode in ("json", "markdown", "both"):

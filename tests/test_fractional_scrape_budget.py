@@ -1,3 +1,4 @@
+import time
 import unittest
 from contextlib import ExitStack
 from unittest import mock
@@ -87,7 +88,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
             keys={},
             config={},
             url_resolver=_resolver,
-            deadline=service.time.monotonic() + 0.25,
+            deadline=time.monotonic() + 0.25,
             runtime_timeout=0.25,
         )
 
@@ -148,7 +149,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
             captured["stage_deadline"] = kwargs["deadline"]
             return {"results": [kwargs["fetch"](hits[0], 0.25)], "errors": []}
 
-        with mock.patch.object(service, "run_ranked_fetch_stage", side_effect=fetch_stage):
+        with mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", side_effect=fetch_stage):
             response = service.run_search_web(
                 service.SearchWebRequest(
                     query="fixture", sources=["hackernews"], use_state=False,

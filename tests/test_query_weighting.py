@@ -3,7 +3,8 @@ import threading
 from unittest import mock
 
 from multi_search_mcp.src.search.search_runner import ProviderSpec
-from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+from multi_search_mcp.src.core.requests import SearchWebRequest
+from multi_search_mcp.src.core.search_pipeline import run_search_candidates as _run_search_candidates
 
 
 EXPERIMENT = {"mode": "weighted", "primary_weight": 1.0, "variant_budget": 0.9}

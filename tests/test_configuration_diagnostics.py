@@ -22,8 +22,8 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
         self.store = StateStore(Path(self.temp.name) / "state.sqlite")
         for patcher in (
             mock.patch.dict(os.environ, {CONFIG_DB_ENV: str(self.path)}),
-            mock.patch.object(service, "StateStore", return_value=self.store),
-            mock.patch.object(service, "load_keys", return_value={}),
+            mock.patch("multi_search_mcp.src.core.runtime.StateStore", return_value=self.store),
+            mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)

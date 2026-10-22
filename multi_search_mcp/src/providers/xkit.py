@@ -3,7 +3,7 @@ import json
 import os
 import re
 
-from .secrets import scrub_secrets
+from ..support.secrets import scrub_secrets
 
 
 _CRED_RE = re.compile(

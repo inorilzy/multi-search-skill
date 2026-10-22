@@ -103,7 +103,7 @@ class TwitterConfigPathReachesSearchTests(unittest.TestCase):
             return []
 
         for target, replacement in (
-            ("multi_search_mcp.src.service.load_keys", isolated_load_keys),
+            ("multi_search_mcp.src.core.runtime.load_keys", isolated_load_keys),
             ("multi_search_mcp.src.search.registry.search_twitter", fake_search_twitter),
         ):
             patcher = mock.patch(target, replacement)

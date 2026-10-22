@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from multi_search_mcp.src.search.search_runner import ProviderSpec
-from multi_search_mcp.src.service import _run_search_candidates
+from multi_search_mcp.src.core.search_pipeline import run_search_candidates as _run_search_candidates
 
 
 def fixed_providers():

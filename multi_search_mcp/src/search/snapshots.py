@@ -84,13 +84,30 @@ def _proof_digest(snapshot: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
-def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, config=None) -> dict:
+def capture_snapshot(
+    request, *, expand: list[str], providers=None, keys=None, config=None, runner=None,
+    request_types=None, load_keys=None,
+) -> dict:
     """Capture only an explicitly supplied question and explicitly chosen variants.
 
     Provider wrappers count actual attempts (including key retries). The Core
     observer supplies the post-timeout, post-retry rows and original provider ranks.
+
+    ``runner`` is the candidate-execution seam. Callers in the service layer pass
+    ``core.search_pipeline.run_search_candidates`` (plus its request DTOs and key
+    loader) so this module never imports the service layer.
     """
-    from ..service import MultiSearchRequest, SearchWebRequest, _load_runtime_keys, _run_search_candidates
+    # ``core`` sits above ``search`` in the layering, so the default seam must be
+    # resolved lazily. Passing an explicit runner keeps this module usable from
+    # search-layer callers without importing upward.
+    if runner is None:
+        from ..core.requests import MultiSearchRequest, SearchWebRequest
+        from ..core.runtime import load_runtime_keys as _load_runtime_keys
+        from ..core.search_pipeline import run_search_candidates as _run_search_candidates
+    else:
+        MultiSearchRequest, SearchWebRequest = request_types
+        _load_runtime_keys = load_keys
+        _run_search_candidates = runner
     from .registry import build_provider_registry
     from .resolve import resolve_search_plan
 

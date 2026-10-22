@@ -11,7 +11,7 @@ from ...support.models import (
     ERROR_ORIGIN_TARGET,
 )
 from ...support.secrets import scrub_secrets
-from ...support.tavily import tavily_http_error
+from ...providers.tavily import tavily_http_error
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
 
 

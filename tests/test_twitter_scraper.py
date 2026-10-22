@@ -242,7 +242,7 @@ class TwitterScraperTests(unittest.TestCase):
             path.write_text(json.dumps(COOKIES), encoding="utf-8")
             for cookies in (COOKIES, str(path), ""):
                 with self.subTest(cookie_type=type(cookies).__name__), \
-                     mock.patch("multi_search_mcp.src.support.xkit.os.path.expanduser", return_value=str(path)):
+                     mock.patch("multi_search_mcp.src.providers.xkit.os.path.expanduser", return_value=str(path)):
                     result, client, _factory = self.fetch(cookies=cookies)
                     self.assertNotIn("error", result)
                     client.set_cookies.assert_called_once_with(COOKIES)

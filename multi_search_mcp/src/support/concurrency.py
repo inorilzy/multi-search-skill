@@ -4,7 +4,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from concurrent.futures import Future
+from concurrent.futures import FIRST_COMPLETED, Future, wait
 from typing import Any, Callable
 
 
@@ -63,6 +63,60 @@ class BoundedDaemonExecutor:
             self._tasks.put((future, fn, args, kwargs))
             self._start_worker_if_needed()
         return future
+
+    def run_all_before(
+        self,
+        deadline: float,
+        fn: Callable[[Any], Any],
+        items,
+        *,
+        on_admission_failure: Callable[[Any], Any],
+    ) -> dict:
+        """Run ``fn`` for every item, admitting work until ``deadline``.
+
+        Mimics a bounded ``ThreadPoolExecutor.map`` without extending the
+        deadline: items are submitted one at a time (blocking at most until
+        ``deadline`` for a free slot) and completed futures are collected as
+        they finish. An item that cannot be admitted before the deadline gets
+        ``on_admission_failure(item)`` instead of being run.
+
+        Returns ``{id(item): result}``. Exceptions propagate as the item's
+        result so callers can translate them at their own boundary.
+
+        This is a *single-layer* primitive. Nested fan-out must use a separate
+        executor instance per layer: a parent task waiting for children on the
+        same pool can hold every slot and deadlock.
+        """
+        results: dict[int, Any] = {}
+        pending: dict[Future, Any] = {}
+        remaining = list(items)
+        while remaining or pending:
+            while remaining:
+                item = remaining.pop(0)
+                future = self.submit_before(deadline, fn, item)
+                if future is None:
+                    results[id(item)] = on_admission_failure(item)
+                    continue
+                pending[future] = item
+            if not pending:
+                break
+            timeout = max(0.0, deadline - time.monotonic())
+            done, _ = (
+                wait(tuple(pending), timeout=timeout, return_when=FIRST_COMPLETED)
+                if timeout > 0 else (set(), set())
+            )
+            if not done:
+                # Admission is closed at the deadline, but already-running work
+                # is expected to bound itself by the same deadline. Join it so
+                # its result (typically a timeout row) is not silently dropped.
+                done = set(pending)
+            for future in done:
+                item = pending.pop(future)
+                try:
+                    results[id(item)] = future.result()
+                except Exception as exc:  # task boundary
+                    results[id(item)] = exc
+        return results
 
     def shutdown(self, *, wait: bool = True, cancel_futures: bool = False) -> None:
         with self._lock:

@@ -241,7 +241,7 @@ class ConfiguredRouteTests(unittest.TestCase):
             "disabled_sources": ["stackoverflow"],
             "scrape_timeout": 0,
         }
-        with mock.patch.object(service, "_load_runtime_keys", return_value={}):
+        with mock.patch("multi_search_mcp.src.core.runtime.load_runtime_keys", return_value={}):
             response = service.run_search_web(
                 service.SearchWebRequest(query="fixture", use_state=False),
                 config=config,

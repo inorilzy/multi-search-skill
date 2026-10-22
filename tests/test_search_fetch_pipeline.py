@@ -53,8 +53,8 @@ class SearchFetchPipelineTests(unittest.TestCase):
         temp = self.stack.enter_context(TemporaryDirectory(prefix="search-fetch-pipeline-"))
         self.state_path = Path(temp) / "state.sqlite"
         self.stack.enter_context(mock.patch.object(state_store, "DEFAULT_STATE_PATH", self.state_path))
-        self.stack.enter_context(mock.patch.object(service, "load_config", return_value={}))
-        self.stack.enter_context(mock.patch.object(service, "load_keys", return_value={}))
+        self.stack.enter_context(mock.patch("multi_search_mcp.src.core.runtime.load_config", return_value={}))
+        self.stack.enter_context(mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}))
         # A missing fake boundary must fail rather than reach the network.
         self.stack.enter_context(mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")))
         self.stack.enter_context(mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected connection")))
@@ -290,7 +290,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         scraper.reset_mock()
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
-            mock.patch.object(service, "scrape_url_smart", scraper),
+            mock.patch("multi_search_mcp.src.core.scrape_pipeline.scrape_url_smart", scraper),
             mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
         ):
             legacy = service.run_multi_search(service.MultiSearchRequest(
@@ -318,7 +318,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             "url": url, "markdown": "Direct body", "via": "fake",
         })
         with (
-            mock.patch.object(service, "run_search_web", side_effect=AssertionError("unexpected search")) as search,
+            mock.patch("multi_search_mcp.src.core.present.run_search_web", side_effect=AssertionError("unexpected search")) as search,
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry",
                        side_effect=AssertionError("unexpected providers")) as registry,
         ):
@@ -346,7 +346,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
 
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
-            mock.patch.object(service, "scrape_url_smart", side_effect=scraper),
+            mock.patch("multi_search_mcp.src.core.scrape_pipeline.scrape_url_smart", side_effect=scraper),
             mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
         ):
             for output_format in ("human", "markdown"):
@@ -365,9 +365,9 @@ class SearchFetchPipelineTests(unittest.TestCase):
 
         providers = {"brave": _provider("brave", {"primary": [_row("brave", "document")]})}
         with (
-            mock.patch.object(service, "load_config", return_value={"scrape_chars": 8}),
+            mock.patch("multi_search_mcp.src.core.runtime.load_config", return_value={"scrape_chars": 8}),
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
-            mock.patch.object(service, "scrape_url_smart", side_effect=lambda url, **kwargs: {
+            mock.patch("multi_search_mcp.src.core.scrape_pipeline.scrape_url_smart", side_effect=lambda url, **kwargs: {
                 "url": url, "markdown": "VISIBLE hidden tail beyond preview", "via": "fake",
             }),
             mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
@@ -389,7 +389,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         providers = {"brave": _provider("brave", {"primary": rows})}
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
-            mock.patch.object(service, "scrape_url_smart", side_effect=lambda url, **kwargs: {
+            mock.patch("multi_search_mcp.src.core.scrape_pipeline.scrape_url_smart", side_effect=lambda url, **kwargs: {
                 "url": url, "markdown": f"MCP_BODY:{url}", "via": "fake",
             }),
             mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),

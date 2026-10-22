@@ -5,6 +5,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from multi_search_mcp.src import service
+from multi_search_mcp.src.core import search_pipeline
+from multi_search_mcp.src.core.requests import SearchWebRequest
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.content_store import ContentStore, ContentStoreError, DEFAULT_MAX_OBJECT_BYTES
 from multi_search_mcp.src.state.source_registry import SourceRegistry
@@ -24,8 +26,8 @@ class ContentFlowRegressionTests(unittest.TestCase):
     def search(self, row):
         name = row["source"]
         provider = ProviderSpec(name=name, public_name=name, call=lambda *_args: [row])
-        return service._run_search_candidates(
-            service.SearchWebRequest("evidence", sources=[name], count=1),
+        return search_pipeline.run_search_candidates(
+            SearchWebRequest("evidence", sources=[name], count=1),
             providers={name: provider}, keys={}, config={}, state_store=self.store,
         )["results"][0]
 

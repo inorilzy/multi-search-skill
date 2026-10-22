@@ -34,12 +34,11 @@ class SingleMarkdownResponseTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.stack.enter_context(mock.patch.object(service, "load_keys", return_value={}))
-        self.stack.enter_context(mock.patch.object(service, "load_config", return_value={}))
-        self.stack.enter_context(mock.patch.object(
-            service, "_run_search_candidates", side_effect=lambda *a, **k: candidates(),
+        self.stack.enter_context(mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}))
+        self.stack.enter_context(mock.patch("multi_search_mcp.src.core.runtime.load_config", return_value={}))
+        self.stack.enter_context(mock.patch("multi_search_mcp.src.core.search_pipeline.run_search_candidates", side_effect=lambda *a, **k: candidates(),
         ))
-        self.stack.enter_context(mock.patch.object(service, "run_fetch_source", return_value={
+        self.stack.enter_context(mock.patch("multi_search_mcp.src.core.search_pipeline.run_fetch_source", return_value={
             "body": BODY, "content_length": len(BODY), "backend": "fixture",
             "truncated": False,
         }))
@@ -88,7 +87,7 @@ class SingleMarkdownResponseTests(unittest.TestCase):
                 self.assertIn("source_0", output.getvalue())
 
     def test_failed_search_retains_reference_and_error_in_the_same_order(self):
-        with mock.patch.object(service, "run_fetch_source", side_effect=ValueError("unavailable")):
+        with mock.patch("multi_search_mcp.src.core.search_pipeline.run_fetch_source", side_effect=ValueError("unavailable")):
             result = service.run_search_web(
                 service.SearchWebRequest(query="probe", use_state=False), keys={}, config={},
             )
@@ -99,7 +98,7 @@ class SingleMarkdownResponseTests(unittest.TestCase):
         self.assertEqual(page["markdown"], "")
 
     def test_invalid_fetch_body_cannot_be_marked_as_success(self):
-        with mock.patch.object(service, "run_fetch_source", return_value={"body": []}):
+        with mock.patch("multi_search_mcp.src.core.search_pipeline.run_fetch_source", return_value={"body": []}):
             result = service.run_search_web(
                 service.SearchWebRequest(query="probe", use_state=False), keys={}, config={},
             )

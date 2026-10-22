@@ -12,12 +12,9 @@ from multi_search_mcp.src.state.state_store import StateStore
 
 class FetchSourceCoreTests(unittest.TestCase):
     def test_fetch_by_source_id_scrapes_once_then_reuses_cached_body(self):
-        from multi_search_mcp.src.service import (
-            FetchSourceRequest,
-            SearchWebRequest,
-            run_fetch_source,
-            _run_search_candidates,
-        )
+        from multi_search_mcp.src.core.requests import FetchSourceRequest, SearchWebRequest
+        from multi_search_mcp.src.core.search_pipeline import run_search_candidates as _run_search_candidates
+        from multi_search_mcp.src.service import run_fetch_source
 
         provider = ProviderSpec(
             name="brave",
@@ -139,7 +136,7 @@ class FetchSourceCoreTests(unittest.TestCase):
             return {"url": url, "markdown": "configured body", "via": "fake"}
 
         with TemporaryDirectory() as tmp, mock.patch(
-            "multi_search_mcp.src.service.time.monotonic", side_effect=lambda: now[0],
+            "multi_search_mcp.src.core.body_fetch.time.monotonic", side_effect=lambda: now[0],
         ):
             config_path = Path(tmp) / "config.json"
             config_path.write_text('{"scrape_timeout": 7}', encoding="utf-8")
@@ -159,12 +156,9 @@ class FetchSourceCoreTests(unittest.TestCase):
         self.assertEqual(observed["timeout"], 6.75)
 
     def test_prefetched_provider_body_is_reused_without_scraping(self):
-        from multi_search_mcp.src.service import (
-            FetchSourceRequest,
-            SearchWebRequest,
-            run_fetch_source,
-            _run_search_candidates,
-        )
+        from multi_search_mcp.src.core.requests import FetchSourceRequest, SearchWebRequest
+        from multi_search_mcp.src.core.search_pipeline import run_search_candidates as _run_search_candidates
+        from multi_search_mcp.src.service import run_fetch_source
 
         provider = ProviderSpec(
             name="tavily",
@@ -227,8 +221,8 @@ class FetchSourceCoreTests(unittest.TestCase):
         with mock.patch(
             "multi_search_mcp.src.search.registry.build_provider_registry",
             return_value={"tavily": provider},
-        ), mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-                mock.patch("multi_search_mcp.src.service.validate_public_http_url", return_value=None):
+        ), mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}), \
+                mock.patch("multi_search_mcp.src.core.body_fetch.validate_public_http_url", return_value=None):
             response = run_multi_search(
                 MultiSearchRequest(
                     query="prefetched",
@@ -249,14 +243,9 @@ class FetchSourceCoreTests(unittest.TestCase):
             PROVIDER_CAPABILITIES,
             RetentionPolicy,
         )
-        from multi_search_mcp.src.service import (
-            FetchSourceRequest,
-            ReadSourceRequest,
-            SearchWebRequest,
-            run_fetch_source,
-            run_read_source,
-            _run_search_candidates,
-        )
+        from multi_search_mcp.src.core.requests import FetchSourceRequest, ReadSourceRequest, SearchWebRequest
+        from multi_search_mcp.src.core.search_pipeline import run_search_candidates as _run_search_candidates
+        from multi_search_mcp.src.service import run_fetch_source, run_read_source
 
         provider = ProviderSpec(
             name="brave",

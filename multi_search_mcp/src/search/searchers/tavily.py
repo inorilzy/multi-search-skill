@@ -6,7 +6,7 @@ import urllib.request
 from ...support.http import urlopen_retry
 from ...support.models import ERROR_ORIGIN_PROVIDER, error_row
 from ...support.secrets import scrub_secrets
-from ...support.tavily import tavily_http_error
+from ...providers.tavily import tavily_http_error
 
 
 def search_tavily(

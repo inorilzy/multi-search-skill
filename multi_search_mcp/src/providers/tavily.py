@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import urllib.error
 
-from .secrets import scrub_secrets
+from ..support.secrets import scrub_secrets
 
 
 _TAVILY_ERROR_BODY_LIMIT = 4096

@@ -9,6 +9,7 @@ from unittest import mock
 
 from multi_search_mcp import cli
 from multi_search_mcp.src import service
+from multi_search_mcp.src.core import search_pipeline
 from multi_search_mcp.src.search.resolve import COUNT_CAPS, build_counts, resolve_search_plan
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.state_store import StateStore
@@ -37,8 +38,8 @@ class ExplicitConfigValidationTests(unittest.TestCase):
         )}
         for patcher in (
             mock.patch.dict(os.environ, {CONFIG_DB_ENV: str(self.path)}),
-            mock.patch.object(service, "load_keys", return_value={}),
-            mock.patch.object(service, "StateStore", return_value=self.store),
+            mock.patch("multi_search_mcp.src.core.runtime.load_keys", return_value={}),
+            mock.patch("multi_search_mcp.src.core.runtime.StateStore", return_value=self.store),
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
             mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")),
             mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected connection")),
@@ -206,7 +207,7 @@ class ExplicitConfigValidationTests(unittest.TestCase):
         url = "https://example.com/config-regression"
         self.provider.return_value = [{"source": "hackernews", "title": "Config", "url": url}]
         scraper = mock.Mock(return_value={"url": url, "markdown": "body " * 50, "via": "fixture"})
-        with mock.patch.object(service, "run_ranked_fetch_stage", wraps=service.run_ranked_fetch_stage) as stage:
+        with mock.patch("multi_search_mcp.src.core.search_pipeline.run_ranked_fetch_stage", wraps=search_pipeline.run_ranked_fetch_stage) as stage:
             response = service.run_search_web(
                 {"query": "test", "sources": ["hackernews"]}, config=defaults,
                 scrape_timeout=3, scrape_chars=100, scrape_concurrency=2,
