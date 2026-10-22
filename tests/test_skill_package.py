@@ -1,10 +1,11 @@
 """Guardrail: the desktop-packaged skill must mirror `skills/multi-search/`.
 
 Ticket 01 makes `skills/multi-search/` the single authoritative copy. The
-desktop crate embeds the same files via `include_str!` in
-`desktop/src-tauri/src/skill.rs`. This test asserts:
+desktop crate embeds the same files via `include_str!` on the Rust side; ticket
+10 moved that definition from `skill.rs` into `skill_common.rs`, so this test
+locates the FILES table in either module. It asserts:
 
-- Every file `include_str!`'d by `skill.rs` exists under `skills/multi-search/`.
+- Every file `include_str!`'d from `skills/multi-search/` exists there.
 - The deployed file list (entries inside `FILES`) covers every file under
   `skills/multi-search/` that is meant to ship, so a new reference cannot be
   added to the source directory without being exposed to the desktop installer.
@@ -22,7 +23,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = ROOT / "skills" / "multi-search"
-SKILL_RS = ROOT / "desktop" / "src-tauri" / "src" / "skill.rs"
+SRC_DIR = ROOT / "desktop" / "src-tauri" / "src"
+# The FILES table may live in skill.rs (pre-ticket-10) or skill_common.rs
+# (after ticket 10 centralised the shared Skill definition).
+FILES_CANDIDATES = (SRC_DIR / "skill_common.rs", SRC_DIR / "skill.rs")
 
 # Adapter manifests are not deployed to host skill folders; they inform how the
 # skill is wrapped for each agent host (Codex, Pi, Claude Code).
@@ -36,14 +40,27 @@ INCLUDE_RE = re.compile(
 def _files_block(source: str) -> str:
     match = re.search(r"const FILES[^=]*=\s*\[(.*?)\];", source, re.DOTALL)
     if not match:
-        raise AssertionError("skill.rs: cannot locate FILES table")
+        raise AssertionError("cannot locate FILES table in skill_common.rs or skill.rs")
     return match.group(1)
+
+
+def _files_source() -> tuple[Path, str]:
+    """Return the module that currently declares FILES, plus its text."""
+    for path in FILES_CANDIDATES:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"const FILES[^=]*=\s*\[", text):
+            return path, text
+    raise AssertionError("FILES table not found in any known Skill module")
 
 
 class SkillPackagingParityTest(unittest.TestCase):
     def test_every_include_str_resolves_to_a_source_file(self) -> None:
-        text = SKILL_RS.read_text(encoding="utf-8")
-        includes = INCLUDE_RE.findall(text)
+        includes: list[str] = []
+        for path in FILES_CANDIDATES:
+            if path.is_file():
+                includes.extend(INCLUDE_RE.findall(path.read_text(encoding="utf-8")))
         self.assertTrue(includes, "no include_str! entries pointing at skills/multi-search/")
         for rel in includes:
             with self.subTest(path=rel):
@@ -53,11 +70,11 @@ class SkillPackagingParityTest(unittest.TestCase):
                 )
 
     def test_files_table_covers_all_shippable_sources(self) -> None:
-        text = SKILL_RS.read_text(encoding="utf-8")
+        path, text = _files_source()
         body = _files_block(text)
         # Each FILES entry is a ("name", include_str!(...)) tuple.
         names = re.findall(r'\(\s*"([^"]+)"\s*,\s*include_str!', body)
-        self.assertTrue(names, "no FILES entries found in skill.rs")
+        self.assertTrue(names, f"no FILES entries found in {path.name}")
         declared = set(names)
 
         shipped = {
@@ -90,3 +107,4 @@ class SkillPackagingParityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
