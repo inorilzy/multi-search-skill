@@ -195,11 +195,16 @@ class TwitterFetchFlowTests(unittest.TestCase):
 
     def test_initial_detail_timeout_still_reports_fetch_error(self):
         api = XKitFixture()
-        api.detail_delay = 2
+        # The detail request must actually be issued before the deadline. A very
+        # short timeout raced with worker start-up in the shared scrape pool, so
+        # the fetch could be skipped entirely and `detail_ids()` came back empty.
+        # Keep a wide margin on both sides: the timeout is reached deterministically
+        # (delay >> timeout) while still leaving room for the fetch to start.
+        api.detail_delay = 30
         with api.patched():
             result = run_search_web(
                 {"query": "OpenAI", "sources": ["twitter"], "count": 1},
-                **self.options, scrape_timeout=1,
+                **self.options, scrape_timeout=2,
             )
         self.assertEqual(len(result["results"]), 1)
         self.assertFalse(result["results"][0]["body_available"])

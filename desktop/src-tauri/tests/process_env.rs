@@ -3,6 +3,8 @@
 //! The desktop process usually holds provider credentials exported by other
 //! tools (`TAVILY_API_KEY`, `GITHUB_TOKEN`, ...). Those must never reach the
 //! CLI child, which reads credentials from `config.sqlite` + DPAPI instead.
+mod common;
+
 use multi_search_desktop::process_fixture;
 use std::collections::BTreeMap;
 
@@ -132,19 +134,8 @@ fn empty_environment_produces_empty_child_environment() {
 /// own environment. Secrets must be absent; required basics must be present.
 #[test]
 fn real_child_process_does_not_inherit_provider_credentials() {
-    let fixture = env!("CARGO_MANIFEST_DIR").to_string() + "/target/fixture-cli.exe";
-    // Build the fixture CLI on demand (same recipe as tests/common.rs).
-    let output = std::process::Command::new("rustc")
-        .args(["--edition=2021", "tests/fixture_cli.rs", "-o"])
-        .arg(&fixture)
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("rustc must be available to build the fixture CLI");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let fixture = common::fixture_cli();
+    let fixture = fixture.to_string_lossy().into_owned();
 
     let root = std::env::temp_dir().join(format!("ms-env-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
