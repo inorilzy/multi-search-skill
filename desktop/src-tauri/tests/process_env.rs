@@ -78,6 +78,80 @@ fn allowlisted_runtime_and_desktop_configuration_variables_are_forwarded() {
     assert_eq!(child, parent, "every allowlisted entry must pass through");
 }
 
+#[cfg(feature = "install-test-boundary")]
+#[test]
+fn acceptance_pythonpath_selector_is_the_only_pythonpath_boundary() {
+    let parent = env(&[
+        ("PATH", "C:/Windows"),
+        ("PYTHONPATH", "C:/untrusted/injected"),
+        (
+            "MULTI_SEARCH_TEST_PYTHONPATH",
+            "C:/guarded/bootstrap;C:/guarded/scripts",
+        ),
+        ("MULTI_SEARCH_TEST_ISOLATION", "1"),
+    ]);
+    let child = process_fixture::child_environment(&parent);
+    assert_eq!(
+        child.get("PYTHONPATH").map(String::as_str),
+        Some("C:/guarded/bootstrap;C:/guarded/scripts")
+    );
+    // The desktop-owned selector itself is intentionally forwarded like every
+    // existing MULTI_SEARCH_* entry; the protected result is that only its
+    // value may become PYTHONPATH.
+    assert_eq!(
+        child
+            .get("MULTI_SEARCH_TEST_PYTHONPATH")
+            .map(String::as_str),
+        Some("C:/guarded/bootstrap;C:/guarded/scripts")
+    );
+}
+
+#[cfg(feature = "install-test-boundary")]
+#[test]
+fn acceptance_pythonpath_requires_the_isolation_marker() {
+    let parent = env(&[
+        ("PATH", "C:/Windows"),
+        ("PYTHONPATH", "C:/untrusted/injected"),
+        (
+            "MULTI_SEARCH_TEST_PYTHONPATH",
+            "C:/guarded/bootstrap;C:/guarded/scripts",
+        ),
+    ]);
+    let child = process_fixture::child_environment(&parent);
+    assert!(!child.contains_key("PYTHONPATH"));
+    assert_eq!(
+        child
+            .get("MULTI_SEARCH_TEST_PYTHONPATH")
+            .map(String::as_str),
+        Some("C:/guarded/bootstrap;C:/guarded/scripts")
+    );
+}
+
+#[cfg(not(feature = "install-test-boundary"))]
+#[test]
+fn acceptance_pythonpath_selector_does_not_bypass_default_scrub() {
+    let parent = env(&[
+        ("PATH", "C:/Windows"),
+        ("PYTHONPATH", "C:/untrusted/injected"),
+        (
+            "MULTI_SEARCH_TEST_PYTHONPATH",
+            "C:/guarded/bootstrap;C:/guarded/scripts",
+        ),
+        ("MULTI_SEARCH_TEST_ISOLATION", "1"),
+    ]);
+    let child = process_fixture::child_environment(&parent);
+    assert!(!child.contains_key("PYTHONPATH"));
+    // MULTI_SEARCH_* is an existing desktop namespace prefix and still passes
+    // unchanged; the acceptance-only PYTHONPATH translation is what must not
+    // exist in a production/default build.
+    assert_eq!(
+        child
+            .get("MULTI_SEARCH_TEST_PYTHONPATH")
+            .map(String::as_str),
+        Some("C:/guarded/bootstrap;C:/guarded/scripts")
+    );
+}
+
 #[test]
 fn unrelated_environment_entries_are_not_forwarded() {
     let parent = env(&[
@@ -182,6 +256,142 @@ fn real_child_process_does_not_inherit_provider_credentials() {
     assert!(
         !child.contains_key("_"),
         "Windows internal variables are not forwarded"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// End-to-end in a disabled/default build: `MULTI_SEARCH_TEST_ISOLATION=1`
+/// and the desktop-owned selector remain visible, but they cannot become
+/// `PYTHONPATH` inside the child. This protects release/default scrubbing
+/// even when a test runner accidentally exports the acceptance marker.
+#[cfg(not(feature = "install-test-boundary"))]
+#[test]
+fn real_child_process_default_build_never_maps_acceptance_bootstrap() {
+    let fixture = common::fixture_cli();
+    let fixture = fixture.to_string_lossy().into_owned();
+
+    let root = std::env::temp_dir().join(format!("ms-env-t2-off-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let parent = env(&[
+        ("PATH", "C:/Windows"),
+        ("USERPROFILE", root.to_str().unwrap()),
+        ("HOME", root.to_str().unwrap()),
+        ("PYTHONPATH", "C:/must-not-cross"),
+        ("MULTI_SEARCH_TEST_ISOLATION", "1"),
+        (
+            "MULTI_SEARCH_TEST_PYTHONPATH",
+            "C:/acceptance/bootstrap;C:/acceptance/scripts",
+        ),
+    ]);
+    let stdout = process_fixture::run(
+        std::path::Path::new(&fixture),
+        &["env-dump".to_string()],
+        parent,
+        root.clone(),
+    )
+    .expect("fixture env-dump must run");
+    let child: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let child = child.as_object().unwrap();
+
+    assert!(!child.contains_key("PYTHONPATH"));
+    assert_eq!(child["MULTI_SEARCH_TEST_ISOLATION"], "1");
+    assert_eq!(
+        child["MULTI_SEARCH_TEST_PYTHONPATH"],
+        "C:/acceptance/bootstrap;C:/acceptance/scripts"
+    );
+    assert!(
+        !child.values().any(|value| value.as_str() == Some("C:/must-not-cross")),
+        "untrusted PYTHONPATH leaked into the real CLI child"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Feature build without the isolation marker: the selector remains visible,
+/// but a real Rust-spawned child still receives no PYTHONPATH.
+#[cfg(feature = "install-test-boundary")]
+#[test]
+fn real_child_process_boundary_requires_isolation_marker() {
+    let fixture = common::fixture_cli();
+    let fixture = fixture.to_string_lossy().into_owned();
+
+    let root = std::env::temp_dir().join(format!("ms-env-t2-noiso-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let parent = env(&[
+        ("PATH", "C:/Windows"),
+        ("USERPROFILE", root.to_str().unwrap()),
+        ("HOME", root.to_str().unwrap()),
+        ("PYTHONPATH", "C:/must-not-cross"),
+        (
+            "MULTI_SEARCH_TEST_PYTHONPATH",
+            "C:/acceptance/bootstrap;C:/acceptance/scripts",
+        ),
+    ]);
+    let stdout = process_fixture::run(
+        std::path::Path::new(&fixture),
+        &["env-dump".to_string()],
+        parent,
+        root.clone(),
+    )
+    .expect("fixture env-dump must run");
+    let child: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let child = child.as_object().unwrap();
+
+    assert!(!child.contains_key("PYTHONPATH"));
+    assert_eq!(
+        child["MULTI_SEARCH_TEST_PYTHONPATH"],
+        "C:/acceptance/bootstrap;C:/acceptance/scripts"
+    );
+    assert!(
+        !child.values().any(|value| value.as_str() == Some("C:/must-not-cross")),
+        "untrusted PYTHONPATH leaked into the real CLI child"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// End-to-end: the same real child boundary proves the acceptance-only
+/// selector becomes PYTHONPATH inside the CLI process. The parent never sets a
+/// real PYTHONPATH, so this cannot weaken default environment scrubbing.
+#[cfg(feature = "install-test-boundary")]
+#[test]
+fn real_child_process_maps_acceptance_pythonpath_selector_only() {
+    let fixture = common::fixture_cli();
+    let fixture = fixture.to_string_lossy().into_owned();
+
+    let root = std::env::temp_dir().join(format!("ms-env-t2-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let parent = env(&[
+        ("PATH", "C:/Windows"),
+        ("USERPROFILE", root.to_str().unwrap()),
+        ("HOME", root.to_str().unwrap()),
+        ("PYTHONIOENCODING", "utf-8"),
+        ("PYTHONPATH", "C:/must-not-cross"),
+        ("MULTI_SEARCH_TEST_ISOLATION", "1"),
+        (
+            "MULTI_SEARCH_TEST_PYTHONPATH",
+            "C:/acceptance/bootstrap;C:/acceptance/scripts",
+        ),
+    ]);
+    let stdout = process_fixture::run(
+        std::path::Path::new(&fixture),
+        &["env-dump".to_string()],
+        parent,
+        root.clone(),
+    )
+    .expect("fixture env-dump must run");
+    let child: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let child = child.as_object().unwrap();
+
+    assert_eq!(
+        child["PYTHONPATH"],
+        "C:/acceptance/bootstrap;C:/acceptance/scripts"
+    );
+    assert_eq!(
+        child["MULTI_SEARCH_TEST_PYTHONPATH"],
+        "C:/acceptance/bootstrap;C:/acceptance/scripts"
+    );
+    assert!(
+        !child.values().any(|value| value.as_str() == Some("C:/must-not-cross")),
+        "untrusted PYTHONPATH leaked into the real CLI child"
     );
     let _ = std::fs::remove_dir_all(&root);
 }

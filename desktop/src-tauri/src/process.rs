@@ -122,6 +122,13 @@ const TEST_ENV_ALLOWLIST: &[&str] = &[
     "CLI_FIXTURE_KEYLESS",
 ];
 
+/// Installed-CLI acceptance bootstrap path. It is deliberately not named
+/// `PYTHONPATH`, so production can keep blocking arbitrary interpreter-path
+/// injection while this acceptance-only feature passes the guarded test
+/// bootstrap through as the child's real `PYTHONPATH`.
+#[cfg(feature = "install-test-boundary")]
+const TEST_PYTHONPATH_KEY: &str = "MULTI_SEARCH_TEST_PYTHONPATH";
+
 fn is_secret_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
     // The desktop's own namespace is fixed and non-secret; `..._CREDENTIAL_NAMESPACE`
@@ -168,11 +175,30 @@ fn is_allowed_name(name: &str) -> bool {
 /// tests and for the ticket-06 assertion that secrets never cross the process
 /// boundary.
 pub(crate) fn child_environment(variables: &BTreeMap<String, String>) -> BTreeMap<String, String> {
-    variables
-        .iter()
-        .filter(|(name, _)| is_allowed_name(name) && !is_secret_name(name))
-        .map(|(name, value)| (name.clone(), value.clone()))
-        .collect()
+    let filtered = || {
+        variables
+            .iter()
+            .filter(|(name, _)| is_allowed_name(name) && !is_secret_name(name))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect::<BTreeMap<String, String>>()
+    };
+    #[cfg(feature = "install-test-boundary")]
+    {
+        let mut child = filtered();
+        // Acceptance-only boundary: the desktop supplies the bootstrap under a
+        // desktop-owned selector, and this feature build translates exactly that
+        // one value into the interpreter path the CLI child needs.
+        if variables.get("MULTI_SEARCH_TEST_ISOLATION").map(String::as_str) == Some("1") {
+            if let Some(value) = variables.get(TEST_PYTHONPATH_KEY) {
+                child.insert("PYTHONPATH".into(), value.clone());
+            }
+        }
+        child
+    }
+    #[cfg(not(feature = "install-test-boundary"))]
+    {
+        filtered()
+    }
 }
 #[cfg(windows)]
 pub(crate) struct OwnedJob(HANDLE);
