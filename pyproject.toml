@@ -4,7 +4,6 @@ version = "0.4.0"
 description = "On-demand aggregated search CLI and shared Core for the multi-search skill."
 requires-python = ">=3.10"
 dependencies = [
-    "beautifulsoup4>=4.12",
     # PyPI 2.6.3 omits twikit/client; use the complete, pinned upstream source.
     "xkit-py @ git+https://github.com/inorilzy/xkit-py.git@c02ff46efd0264b4bc85968e3f5732561ffdbaf3",
     "curl-cffi>=0.16.3,<0.17",

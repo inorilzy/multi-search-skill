@@ -1,5 +1,7 @@
 # multi-search-skill
 
+历史包名 `multi-search-mcp` / `multi_search_mcp` 仅为安装与导入兼容而保留；当前产品是 CLI + Skill + 共享 Core，不需要 MCP 服务。
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
@@ -34,13 +36,14 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 - `skills/multi-search/SKILL.md`：薄 skill，自然语言触发和使用策略。
 - `multi_search_mcp/cli.py`：唯一产品入口 `multi-search` CLI，直接调用共享 Core。
-- `multi_search_mcp/tools.py`：兼容 Python 请求适配器，无 MCP 依赖或服务。
-- `multi_search_mcp/src/`：自包含搜索、抓取、状态、key 与 service 实现。
+- `multi_search_mcp/src/service.py`：公共 facade，导出 Core 请求与执行入口。
+- `multi_search_mcp/src/core/`：请求模型、搜索/抓取流水线、正文获取、展示与诊断。
+- `multi_search_mcp/src/search/`、`src/scrape/`、`src/state/`、`src/support/`：搜索调度与适配器、抓取链、运行状态与缓存、配置凭据及公共辅助。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
 
 CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `keys reset`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
 
-边界约定：明文 provider key 与设置统一存放于 `~/.multi-search/config.sqlite`（凭据字段 DPAPI 加密）；非敏感行为配置仍走 `MULTI_SEARCH_CONFIG` / `~/.multi-search/multi-search-config.json` / 仓库开发态的 `multi-search-config.json`，运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置；旧 `~/.search-keys.json` 仅作为一次性迁移来源存在。
+边界约定：**SQLite 为唯一凭据/配置权威来源**。provider key 与设置统一存放于 `~/.multi-search/config.sqlite`（敏感凭据字段 DPAPI 加密），运行状态默认保存在 `~/.multi-search/state.sqlite`。`MULTI_SEARCH_CONFIG_DB` 仅用于显式隔离数据库；不隐式读取 `MULTI_SEARCH_CONFIG` 或旧 JSON。显式 `--config` 可读取非敏感 JSON 作为兼容输入；仓库 JSON 是示例，不是自动加载的运行时配置。旧密钥 JSON 仅用于显式迁移。
 
 当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
 
@@ -89,10 +92,11 @@ npm --prefix desktop test
 ```powershell
 git clone https://github.com/inorilzy/multi-search-skill.git
 cd multi-search-skill
+uv tool install --force .
 multi-search --help
 ```
 
-Python 包依赖由 `pyproject.toml` 管理，包含 `beautifulsoup4`、`xkit-py`、`curl-cffi`，不包含 MCP。CLI 安装都会自动安装 [XKit-py](https://github.com/inorilzy/xkit-py)，代码使用 `from xkit import Client`。从源码初始化时，在仓库根目录执行：
+Python 包依赖由 `pyproject.toml` 管理，包含 `xkit-py`、`curl-cffi`，不包含 MCP。CLI 安装都会自动安装 [XKit-py](https://github.com/inorilzy/xkit-py)，代码使用 `from xkit import Client`。从源码初始化时，在仓库根目录执行：
 
 ```powershell
 uv sync --locked
@@ -100,9 +104,9 @@ uv sync --locked
 .\multi_search_mcp\src\support\init.ps1
 ```
 
-初始化不需要单独安装 XKit-py。项目固定安装 GitHub 提交 `c02ff46efd0264b4bc85968e3f5732561ffdbaf3` 的源码：PyPI `xkit-py 2.6.3` 的 wheel 和 sdist 缺少 `twikit/client`，直接安装该发行版会导入失败。**该 GitHub 仓库是私有的，CLI、CI 的安装环境均需 Git 和该仓库的读取权限**；可先用有权限的账号执行 `gh auth login`、`gh auth setup-git`，已有可用 Git 凭据时无需重复配置。未配置权限时安装会明确失败。
+初始化不需要单独安装 XKit-py。项目固定安装 GitHub 提交 `c02ff46efd0264b4bc85968e3f5732561ffdbaf3` 的源码：PyPI `xkit-py 2.6.3` 的 wheel 和 sdist 缺少 `twikit/client`，直接安装该发行版会导入失败。该依赖使用 GitHub URL，安装环境需要 Git 及可达 GitHub 的网络；不要仅凭 URL 推断仓库是否私有。若安装失败，应根据实际网络或鉴权错误处理；本轮离线锁校验不证明在线安装可用。
 
-`uv sync --locked` 会移除旧的 `twikit-ng`；这两个发行包共用 `twikit` 模块目录，不应混装。使用已有 pip 环境升级时，先执行 `python -m pip uninstall twikit-ng`，再执行 `python -m pip install .`。
+`uv sync --locked` 会移除旧的 `twikit-ng`；这两个发行包共用 `twikit` 模块目录，不应混装。使用已有虚拟环境升级时，先执行 `uv pip uninstall twikit-ng`，再执行 `uv pip install .`。
 
 Twitter/X 仍需要 cookies。XKit-py 首次请求会自动从 `x.com` 和 `abs.twimg.com` 获取运行参数，无需额外初始化命令或浏览器安装；网络连接失败、cookies 失效和限流会明确报错。安装依赖本身不代表搜索已通过在线验证。
 
@@ -171,7 +175,7 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 
 - 桌面端 UI 写入并管理 `config.sqlite`；CLI 直接读取同一文件，不需要再把密钥导出到环境变量或单独文件。
 - `MULTI_SEARCH_CONFIG_DB` 仅在显式隔离运行（如测试）时改指其它数据库路径。
-- 旧 `~/.search-keys.json` 只由一次性迁移/标记脚本读取（如 `python -m multi_search_mcp.src.state.mark_exhausted <jina-key>` 用来在迁移前手动软删除 Jina key）。它不参与正常搜索；迁移完成后由操作员自行保管或删除。
+- 旧 `~/.search-keys.json` 仅是显式迁移输入，不参与默认搜索；迁移完成后由操作员自行保管。Jina 静态 exhausted 元数据与运行时 quota_exhausted 不同，前者由桌面凭据管理维护，后者可通过既有 `keys reset` 重置。
 - `TWITTER_COOKIES_PATH` 作为非敏感的 cookie **路径**引用继续存在于设置中，cookie 文件本身与 provider key 不写入命令行。
 
 ## 架构和术语
@@ -200,7 +204,7 @@ flowchart LR
 
 术语固定如下：
 
-- **Service 服务层**：`multi_search_mcp/src/service.py`，是 CLI 直接调用的共享 Core；入口只负责参数适配。
+- **Service 服务层**：`multi_search_mcp/src/service.py`，是 CLI 调用的公共 facade；实现位于 `multi_search_mcp/src/core/`，入口只负责参数适配。
 - **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口，最后取前 15 条；分数相同按 canonical URL 排序。
 - **SourceRegistry / ContentStore**：短期 SQLite 状态。前者把本次响应的 `source_id` 映射到 URL；后者按 TTL、单条/总容量限制保存正文并以内容哈希去重。provider 的 retention policy 可禁止保存结果、摘要或正文。
 
@@ -208,7 +212,7 @@ flowchart LR
 - **Searcher 搜索器**：`multi_search_mcp/src/search/searchers/*`，只负责 query -> `SearchResult`/dict，输出 title、url、description、source、score、raw metadata。
 - **SearchRunner 搜索调度器**：`multi_search_mcp/src/search/search_runner.py`，负责 route、并发、timeout、SQLite key state 和 source status。
 - **统一排序与抓取**：两个公共搜索入口共用 RRF 结果；`run_ranked_fetch_stage` 获取最终列表正文，按输入顺序回填。正文长度、抓取成功与否和 stars 不再改变排名；`support/dedup.py` 中的旧排序辅助函数不参与公共搜索排序。
-- **抓取后端选择**：`service._run_scrape_raw` 从共享 key manager 获取可用 key，`scrape/scrape.py` 维护 backend 顺序和逐次尝试；搜索最终列表不再按每源 quota 二次截取。旧 `run_scrape_stage`、planner 和正文回写链已删除，`multi_search` 仅包装共享流程的展示结果；`support/dedup.py` 保留格式化所需的 `rank_results` / `consensus_weight`。清理依据及公共契约验证见 [旧抓取链清理记录](docs/legacy-scrape-cleanup-2026-09-12.md)。
+- **抓取后端选择**：`core/scrape_pipeline.py` 的 `run_scrape_raw` 从共享 key manager 获取可用 key，`scrape/scrape.py` 维护 backend 顺序和逐次尝试；搜索最终列表不再按每源 quota 二次截取。旧 `run_scrape_stage`、planner 和正文回写链已删除，`multi_search` 仅包装共享流程的展示结果；`support/dedup.py` 保留格式化所需的 `rank_results` / `consensus_weight`。清理依据及公共契约验证见 [旧抓取链清理记录](docs/legacy-scrape-cleanup-2026-09-12.md)。
 - **Scraper 抓取器 backend**：`multi_search_mcp/src/scrape/scrapers/*`，负责 url -> 正文。Jina、Exa、Tavily、Firecrawl 都是 backend。
 - **Scrape orchestration 抓取调度执行器**：`multi_search_mcp/src/scrape/scrape.py`，负责单 URL fallback 链、站点策略和 key 使用结果记录。
 - **Renderer 渲染器**：`multi_search_mcp/src/support/format.py`，负责诊断信息、搜索结果、抓取正文和 untrusted 安全围栏。
@@ -279,7 +283,7 @@ CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <sou
 
 ## 配置和参数
 
-非敏感默认值放在 [multi-search-config.json](multi-search-config.json)，CLI 显式参数优先级更高。
+非敏感默认值由 SQLite settings 提供；[multi-search-config.json](multi-search-config.json) 仅作显式 `--config` 的兼容示例，CLI 显式参数优先级更高。
 
 `search_web` 常用参数：
 
@@ -305,7 +309,7 @@ JSON 配置支持 `disabled_sources`（默认为 `[]`）用来全局关闭某些
 
 `scrape_url` tool 用于单独抓取一个 URL，支持 `backends`、`scrape_chars`、`scrape_timeout`、`use_state` 等参数；默认正文输出上限同为 1200 字符，可通过 `scrape_chars` 覆盖。
 
-五个抓取后端（Jina、Exa、Tavily、Firecrawl、Reddit）在共享入口统一输出：
+四个通用抓取后端（Jina、Exa、Tavily、Firecrawl）及 Reddit、Twitter/X 专用适配器在共享入口统一输出：
 
 | 字段 | 含义 |
 |---|---|
@@ -358,15 +362,15 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-se
 
 ## 开发验证
 
-回归测试统一放在 `tests/`。新增测试也放入该目录；运行单个模块时使用 `python -m unittest tests.test_cli_process -v` 这样的包路径。
+回归测试使用 Python 标准库 **unittest**，统一放在 `tests/`；不要求安装 pytest。推荐使用下面的隔离 runner；新增测试也放入该目录。文档出处检查运行 `uv run --locked python scripts/check_glossary_paths.py`。
 
 `uv run --locked python scripts/run_tests.py` 在测试发现前切换到临时 home、配置、密钥文件和 SQLite，并默认拒绝非 loopback 的 DNS、socket、urllib 代理与 `curl_cffi` 外联；受控 loopback HTTP 和内存 handler 仍可运行。Python 子进程会继承隔离 bootstrap，违规即使被测试捕获也会使 runner 失败。
 
-干净环境先非 editable 安装 `python -m pip install .`，再运行 `python scripts/smoke_install.py`；该 smoke 会把同一组临时环境显式传给 CLI 子进程，并检查仓库外 console/module 入口、安装元数据、无 MCP 依赖以及 doctor。上述检查不等于真实 provider、远程主机或所有平台/运行时矩阵验收；GitHub Actions 对 Windows/Linux、Python 3.10/3.14 执行这两类检查。
+干净环境先非 editable 安装 `uv pip install .`，再运行 `python scripts/smoke_install.py`；该 smoke 会把同一组临时环境显式传给 CLI 子进程，并检查仓库外 console/module 入口、安装元数据、无 MCP 依赖以及 doctor。上述检查不等于真实 provider、远程主机或所有平台/运行时矩阵验收；GitHub Actions 对 Windows/Linux、Python 3.10/3.14 执行这两类检查。
 
 ### 为什么结果里没有 Twitter/X？
 
-Twitter/X 需要 cookies。确认依赖已安装，并在桌面端 / `config.sqlite` 中配置 `twitter_cookies_path` 指向存有 `auth_token` 与 `ct0` 的 cookies 文件；源码直接运行时先执行 `python -m pip install -e .`。
+Twitter/X 需要 cookies。确认依赖已安装，并在桌面端 / `config.sqlite` 中配置 `twitter_cookies_path` 指向存有 `auth_token` 与 `ct0` 的 cookies 文件；源码直接运行时先执行 `uv sync --locked`。
 
 ### 抓取正文太慢怎么办？
 

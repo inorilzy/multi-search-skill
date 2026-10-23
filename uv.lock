@@ -416,14 +416,12 @@ name = "multi-search-mcp"
 version = "0.4.0"
 source = { editable = "." }
 dependencies = [
-    { name = "beautifulsoup4" },
     { name = "curl-cffi" },
     { name = "xkit-py" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "curl-cffi", specifier = ">=0.16.3,<0.17" },
     { name = "xkit-py", git = "https://github.com/inorilzy/xkit-py.git?rev=c02ff46efd0264b4bc85968e3f5732561ffdbaf3" },
 ]

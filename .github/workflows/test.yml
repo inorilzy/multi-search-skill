@@ -26,3 +26,40 @@ jobs:
         run: python scripts/smoke_install.py
       - name: Run regression tests with disposable state
         run: python scripts/run_tests.py
+      - name: Check documentation source paths
+        run: python scripts/check_glossary_paths.py
+
+  locked-regression:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Sync the committed dependency lock
+        run: uv sync --locked
+      - name: Run locked regression tests with disposable state
+        run: uv run --locked python scripts/run_tests.py
+      - name: Check documentation source paths
+        run: uv run --locked python scripts/check_glossary_paths.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install locked frontend development dependencies
+        run: npm --prefix desktop ci
+      - name: Run frontend unit and DOM tests
+        run: npm --prefix desktop test
+      - name: Check frontend types
+        run: npm --prefix desktop run typecheck
