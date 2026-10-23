@@ -1,49 +1,61 @@
+import { pageRoot, el, confirmInline, disposePage } from './dom.js';
+import { toMessage } from './errors.js';
 const reasons = { exists: '目标已存在', invalid_scope: '目标无效', cli_missing: 'CLI 不可发现', cli_incompatible: 'CLI 与 Skill 不兼容', ready: '可安装' };
 export async function mountSkill(root, api) {
-  root.innerHTML = `<section class="heading"><p class="eyebrow">02 / CLAUDE CODE SKILL</p><h1>让 Claude Code 使用本机 CLI。</h1><p>安装仅写入所选目录中的 multi-search 技能文件，不覆盖已有内容，不使用 MCP。</p></section>
+  root = pageRoot(root);
+  root.innerHTML = `<section class="heading"><p class="eyebrow">03 / CLAUDE CODE SKILL</p><h1>让 Claude Code 使用本机 CLI</h1><p>安装仅写入所选目录中的 multi-search 技能文件，不覆盖已有内容，不使用 MCP。</p></section>
     <section class="panel skill-install"><div class="section-title"><h2>安装范围</h2><span class="eyebrow">CLAUDE CODE ONLY</span></div>
       <fieldset><legend>作用范围</legend>
         <label><input type="radio" name="scope" value="global" checked> 全局（当前用户的所有项目）</label>
         <label><input type="radio" name="scope" value="project"> 项目（仅所选项目）</label></fieldset>
       <label class="path-input">项目目录<input data-field="project" placeholder="仅项目范围需要，例如 C:\\…\\my-project" spellcheck="false" disabled></label>
       <div class="run-controls"><button type="button" data-action="preview">预览目标</button><button type="button" data-action="install" class="primary" disabled>安装 Skill</button></div>
-      <p data-info="target"></p><p data-info="status" aria-live="polite"></p><p data-info="error" role="alert"></p></section>
+      <p data-info="target"></p><p data-info="status" aria-live="polite"></p><p data-info="error" class="error-message"></p></section>
     <section class="panel skill-manage"><div class="section-title"><h2>已安装 Skill</h2><span class="eyebrow">UPDATE / REMOVE</span></div>
       <div class="run-controls"><button type="button" data-action="check">检查已安装版本</button></div>
       <p data-info="installed" aria-live="polite"></p><p data-info="managed-target"></p><p data-info="compatibility"></p><p data-info="modified"></p>
       <label class="confirm"><input type="checkbox" data-field="confirm-overwrite"> 我已确认：备份本地修改后再用本版本覆盖</label>
-      <div class="run-controls"><button type="button" data-action="update" disabled>更新 Skill</button><button type="button" data-action="remove-plan" disabled>预览移除</button><button type="button" data-action="remove" class="danger" disabled>确认移除</button></div>
-      <p data-info="manage-plan"></p><p data-info="manage-status" aria-live="polite"></p><p data-info="manage-error" role="alert"></p></section>`;
+      <div class="run-controls"><button type="button" data-action="update" disabled>更新 Skill</button><button type="button" data-action="remove-plan" disabled>预览移除</button><button type="button" data-action="remove" class="danger" hidden disabled>确认移除</button></div>
+      <p data-info="manage-plan"></p><p data-info="manage-status" aria-live="polite"></p><p data-info="manage-error" class="error-message"></p></section>`;
+  const listeners = [];
+  const on = (node, type, handler) => {
+    const guarded = event => { if (!disposed) return handler(event); };
+    node.addEventListener(type, guarded); listeners.push(() => node.removeEventListener(type, guarded));
+  };
   const project = root.querySelector('[data-field="project"]');
   const install = root.querySelector('[data-action="install"]');
   let plannedScope = null, plannedProject = null, ready = false;
   const selectedScope = () => root.querySelector('input[name="scope"]:checked').value;
   const projectValue = () => (selectedScope() === 'project' ? project.value.trim() || null : null);
-  root.querySelectorAll('input[name="scope"]').forEach(input => input.addEventListener('change', () => {
+  root.querySelectorAll('input[name="scope"]').forEach(input => on(input, 'change', () => {
     project.disabled = selectedScope() !== 'project';
     ready = false; install.disabled = true;
     root.querySelector('[data-info="target"]').textContent = ''; root.querySelector('[data-info="status"]').textContent = '';
   }));
-  root.querySelector('[data-action="preview"]').addEventListener('click', async () => {
+  on(root.querySelector('[data-action="preview"]'), 'click', async () => {
     root.querySelector('[data-info="error"]').textContent = '';
     try {
-      const plan = await api.skillPlan(selectedScope(), projectValue());
+      const scope = selectedScope(), target = projectValue(), request = ++generation;
+      const plan = await api.skillPlan(scope, target);
+      if (disposed || request !== generation || scope !== selectedScope() || target !== projectValue()) return;
       plannedScope = plan.scope; plannedProject = projectValue(); ready = plan.can_install;
       root.querySelector('[data-info="target"]').textContent = plan.target ? `目标目录：${plan.target}\n文件：${plan.files.join('、')}` : '';
       root.querySelector('[data-info="status"]').textContent = `${reasons[plan.status] || plan.status}：${plan.reason}`;
       install.disabled = !ready;
-    } catch { ready = false; install.disabled = true; root.querySelector('[data-info="error"]').textContent = '预览失败，请重试。'; }
+    } catch { if (disposed) return; ready = false; install.disabled = true; root.querySelector('[data-info="error"]').textContent = '预览失败，请重试。'; }
   });
-  install.addEventListener('click', async () => {
+  on(install, 'click', async () => {
     if (!ready || plannedScope !== selectedScope() || plannedProject !== projectValue()) { root.querySelector('[data-info="error"]').textContent = '请先预览目标目录。'; return; }
-    install.disabled = true;
+    if (busy || disposed) return;
+    setBusy(true);
     try {
       const result = await api.skillInstall(plannedScope, plannedProject);
+      if (disposed) return;
       root.querySelector('[data-info="target"]').textContent = result.target ? `目标目录：${result.target}` : '';
       root.querySelector('[data-info="status"]').textContent = result.status === 'installed' ? `已安装并校验：${result.reason}` : `未完成安装：${result.reason}`;
       ready = false;
-    } catch { root.querySelector('[data-info="error"]').textContent = '安装失败，未确认写入结果，请重新预览。'; ready = false; }
-    finally { install.disabled = true; }
+    } catch { if (disposed) return; root.querySelector('[data-info="error"]').textContent = '安装失败，未确认写入结果，请重新预览。'; ready = false; }
+    finally { setBusy(false); install.disabled = true; }
   });
   // Manage panel: status, update, and removal. Each destructive step needs its own explicit confirmation.
   const info = name => root.querySelector(`[data-info="${name}"]`);
@@ -51,7 +63,10 @@ export async function mountSkill(root, api) {
   const confirmOverwrite = root.querySelector('[data-field="confirm-overwrite"]');
   let managedScope = null, managedProject = null, removeReady = false, generation = 0, disposed = false, busy = false;
   const setBusy = value => {
+    if (disposed) return;
     busy = value;
+    root.setAttribute('aria-busy', String(value)); root.classList.toggle('is-busy', value);
+    manageButton('preview').disabled = value; install.disabled = value || !ready;
     manageButton('check').disabled = value;
     root.querySelectorAll('input[name="scope"]').forEach(input => { input.disabled = value; });
     project.disabled = value || selectedScope() !== 'project';
@@ -62,18 +77,19 @@ export async function mountSkill(root, api) {
     }
   };
   const invalidateManage = () => {
+    manageButton('remove').hidden = true;
     generation++; managedScope = null; managedProject = null; removeReady = false;
     confirmOverwrite.checked = false;
     ['update', 'remove-plan', 'remove'].forEach(name => { manageButton(name).disabled = true; });
     ['installed', 'managed-target', 'compatibility', 'modified', 'manage-plan'].forEach(name => { info(name).textContent = ''; });
   };
-  root.querySelectorAll('input[name="scope"]').forEach(input => input.addEventListener('change', invalidateManage));
-  project.addEventListener('input', invalidateManage);
+  root.querySelectorAll('input[name="scope"]').forEach(input => on(input, 'change', invalidateManage));
+  on(project, 'input', invalidateManage);
   const manageScope = () => selectedScope();
   const manageProject = () => projectValue();
   const sameTarget = () => managedScope === manageScope() && managedProject === manageProject();
-  const setManageError = text => { info('manage-error').textContent = text; };
-  manageButton('check').addEventListener('click', async () => {
+  const setManageError = text => { if (!disposed) info('manage-error').textContent = text; };
+  on(manageButton('check'), 'click', async () => {
     if (busy || disposed) return;
     setManageError('');
     invalidateManage();
@@ -93,20 +109,21 @@ export async function mountSkill(root, api) {
       confirmOverwrite.checked = false;
     } catch { setManageError('检查失败，请重试。'); }
   });
-  manageButton('update').addEventListener('click', async () => {
+  on(manageButton('update'), 'click', async () => {
     if (!sameTarget()) { setManageError('请先检查当前目标。'); return; }
     setManageError('');
     if (busy || disposed) return;
     setBusy(true);
     try {
       const result = await api.skillUpdate(managedScope, managedProject, confirmOverwrite.checked);
+      if (disposed) return;
       info('manage-status').textContent = result.status === 'updated' && result.verified === true
         ? `已更新并校验：${result.reason}${result.backup ? `；本地修改已备份到 ${result.backup}` : ''}`
         : `未完成更新：${result.reason}${result.backup ? `；备份位置 ${result.backup}` : ''}`;
     } catch { setManageError('更新失败，原 Skill 未被确认改变，请重新检查。'); }
     finally { setBusy(false); if (!disposed) manageButton('check').click(); }
   });
-  manageButton('remove-plan').addEventListener('click', async () => {
+  on(manageButton('remove-plan'), 'click', async () => {
     if (!sameTarget()) { setManageError('请先检查当前目标。'); return; }
     setManageError('');
     removeReady = false; manageButton('remove').disabled = true;
@@ -119,19 +136,22 @@ export async function mountSkill(root, api) {
         ? `将删除：${plan.will_delete.join('、')}；保留：${plan.will_keep.join('、') || '无'}。${plan.reason}`
         : `无可移除内容：${plan.reason}`;
       manageButton('remove').disabled = !removeReady;
+      manageButton('remove').hidden = !removeReady;
+      if (removeReady) manageButton('remove').focus();
     } catch { if (!disposed && request === generation) setManageError('移除预览失败，请重试。'); }
   });
-  manageButton('remove').addEventListener('click', async () => {
+  on(manageButton('remove'), 'click', async () => {
     if (busy || disposed) return;
     if (!removeReady || !sameTarget()) { setManageError('请先预览移除范围。'); return; }
     setBusy(true);
     try {
       const result = await api.skillRemove(managedScope, managedProject, true);
+      if (disposed) return;
       info('manage-status').textContent = result.status === 'removed'
         ? `已移除：${result.deleted.join('、')}。${result.reason}`
         : `未移除：${result.reason}`;
     } catch { setManageError('移除失败，请重新检查目标。'); }
     finally { removeReady = false; setBusy(false); if (!disposed) manageButton('check').click(); }
   });
-  return { dispose() { disposed = true; generation++; } };
+  return { dispose() { disposePage(root); disposed = true; generation++; for (const off of listeners) off(); } };
 }

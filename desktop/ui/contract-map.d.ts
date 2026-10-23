@@ -7,6 +7,12 @@
 // No payload type may be added here without also appearing in schemas.
 import type * as T from './types';
 
+// Dedicated command arguments: scraping never round-trips search settings.
+export interface ScrapeSettingsSaveArgs { backends: string[] }
+export interface CommandContracts {
+  scrape_settings_save: { args: ScrapeSettingsSaveArgs; result: T.SettingsView };
+}
+
 export interface ContractMap {
   Discovery: T.Discovery;
   CliStatus: T.CliStatus;

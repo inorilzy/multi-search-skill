@@ -10,6 +10,8 @@
 // and JS is a type error here, not just a runtime error.
 
 import { expect } from './payloads.js';
+import { ApiError } from './errors.js';
+export { ApiError } from './errors.js';
 /** @typedef {import('./types').CliStatus} CliStatus */
 /** @typedef {import('./types').ExecutionStatus} ExecutionStatus */
 /** @typedef {import('./types').InstallPlan} InstallPlan */
@@ -37,10 +39,12 @@ import { expect } from './payloads.js';
  * Wrap a Tauri `invoke` function so each command's return value is checked
  * against the schema for that payload type before the caller sees it.
  *
- * @param {InvokeFn} invoke
+ * @param {InvokeFn} rawInvoke
  */
-export function managementApi(invoke) {
-  return {
+export function managementApi(rawInvoke) {
+  /** @type {InvokeFn} */
+  const invoke = async (cmd, args) => { try { return await rawInvoke(cmd, args); } catch (cause) { throw new ApiError(cause); } };
+  const api = {
     /** @param {string|null} path @returns {Promise<CliStatus>} */
     detect: async path => (expect('CliStatus', await invoke('detect_cli', { path }))),
     /** @param {string|null} path @param {SearchOptions} options @returns {Promise<number>} */
@@ -82,6 +86,8 @@ export function managementApi(invoke) {
     /** @param {string} source @returns {Promise<CredentialOverview>} */
     credentialStatus: async source => (expect('CredentialOverview', await invoke('credential_status', { source }))),
     /** @param {string} source @returns {Promise<CredentialValue>} */
+    credentialReveal: async source => (expect('CredentialValue', await invoke('credential_reveal', { source }))),
+    /** @param {string} source @returns {Promise<CredentialValue>} */
     credentialRead: async source => (expect('CredentialValue', await invoke('credential_read', { source }))),
     /** @param {string} source @returns {Promise<void>} */
     credentialApplicationOpen: async source => /** @type {void} */ (await invoke('credential_application_open', { source })),
@@ -99,6 +105,11 @@ export function managementApi(invoke) {
     settingsView: async () => (expect('SettingsView', await invoke('settings_view'))),
     /** @param {SettingsInput} input @returns {Promise<SettingsView>} */
     settingsSave: async input => (expect('SettingsView', await invoke('settings_save', { input }))),
+    /** @param {import('./contract-map').ScrapeSettingsSaveArgs['backends']} backends @returns {Promise<SettingsView>} */
+    scrapeSettingsSave: async backends => {
+      if (!Array.isArray(backends) || !backends.length || backends.some(value => typeof value !== 'string' || !value.trim())) throw new TypeError('scrape backends require a non-empty string array');
+      return expect('SettingsView', await invoke('scrape_settings_save', { backends }));
+    },
     /** @param {string|null} site @returns {Promise<ScrapeMemoryView>} */
     scrapeMemoryView: async site => expect('ScrapeMemoryView', await invoke('scrape_memory_view', { site })),
     /** @param {string} site @param {string} scraper @returns {Promise<ScrapeMemoryView>} */
@@ -116,4 +127,12 @@ export function managementApi(invoke) {
       return /** @type {ProviderInfo[]} */ (rows);
     },
   };
+  for (const name of Object.keys(api)) {
+    const call = api[name];
+    api[name] = async (...args) => {
+      try { return await call(...args); }
+      catch (cause) { throw cause instanceof ApiError ? cause : new ApiError(cause, cause instanceof TypeError ? 'INVALID_PAYLOAD' : 'IPC_ERROR'); }
+    };
+  }
+  return api;
 }

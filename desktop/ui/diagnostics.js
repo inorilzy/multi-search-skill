@@ -1,16 +1,19 @@
+import { pageRoot, el, confirmInline, disposePage } from './dom.js';
+import { toMessage } from './errors.js';
 const statusLabels = { ready: '可调用', missing: '未发现', not_executable: '不可执行', version_failed: '版本检查失败', unavailable: '不可用' };
 export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
+  root = pageRoot(root);
   const doc = root.ownerDocument;
-  root.innerHTML = `<section class="heading"><p class="eyebrow">01 / LOCAL RUNTIME</p><h1>搜索，从本机开始。</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
+  root.innerHTML = `<section class="heading"><p class="eyebrow">01 / LOCAL RUNTIME</p><h1>搜索，从本机开始</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
     <section class="runtime panel"><div class="section-title"><h2>CLI 概览</h2><button type="button" data-action="refresh">重新检测</button></div>
       <label class="path-input">指定已安装的 CLI <input data-field="path" placeholder="可选：C:\\…\\multi-search.exe" spellcheck="false"></label>
-      <div class="discovery-grid"><article><span class="eyebrow">APP INVOCATION</span><h3>应用调用</h3><strong data-status="app">检测中</strong><p data-info="app"></p></article><article><span class="eyebrow">FRESH USER ENVIRONMENT</span><h3>用户命令发现</h3><strong data-status="user">检测中</strong><p data-info="user"></p></article></div>
-      <p data-info="restart" class="note"></p><p data-info="error" role="alert"></p></section>
+      <div class="discovery-grid"><article><span class="eyebrow">APP INVOCATION</span><h3>应用调用</h3><strong class="status-text" data-status="app">检测中</strong><p data-info="app"></p></article><article><span class="eyebrow">FRESH USER ENVIRONMENT</span><h3>用户命令发现</h3><strong class="status-text" data-status="user">检测中</strong><p data-info="user"></p></article></div>
+      <p data-info="restart" class="note"></p><p data-info="error" class="error-message"></p></section>
     <section class="panel test-search"><div class="section-title"><h2>一次测试搜索</h2><span class="eyebrow">ON DEMAND / NO SERVICE</span></div>
       <form data-search-form><label>搜索词<input data-field="query" required maxlength="2000" placeholder="例如：Python SQLite 缓存"></label>
-      <div class="search-options"><label>路由<select data-field="route" disabled></select></label><label>搜索源<select data-field="sources"><option value="">按路由配置</option><option value="hackernews">Hacker News（无 key）</option><option value="hackernews,brave">Hacker News + Brave</option><option value="github_repos">GitHub</option><option value="brave">Brave</option><option value="exa">Exa</option><option value="tavily">Tavily</option></select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="90" value="15" disabled></label></div>
-      <p data-info="settings-error" role="alert"></p><div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
-      <p data-execution-error role="alert"></p><pre data-results tabindex="0" aria-label="搜索结果">结果会显示在这里。</pre></section>`;
+      <div class="search-options"><label>路由<select data-field="route" disabled></select></label><label>搜索源<select data-field="sources"><option value="">按路由配置</option></select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="60" value="15" disabled></label></div>
+      <p data-info="settings-error" class="error-message"></p><div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong class="status-text" data-status="execution" aria-live="polite">等待测试</strong></div></form>
+      <p data-execution-error class="error-message"></p><div class="result-groups" data-result-groups></div><details><summary>原始 JSON</summary><pre data-results tabindex="0" aria-label="搜索结果">结果会显示在这里。</pre></details></section>`;
   const path = root.querySelector('[data-field="path"]');
   const routeField = root.querySelector('[data-field="route"]');
   const timeoutField = root.querySelector('[data-field="timeout"]');
@@ -18,6 +21,8 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');
   function controls(running) {
+    root.querySelector('.test-search').setAttribute('aria-busy', String(running));
+    root.querySelector('[data-status="execution"]').classList.toggle('is-busy', running);
     search.disabled = running || !appReady || !settingsReady;
     cancel.disabled = !running;
     path.disabled = running;
@@ -27,10 +32,34 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
     root.querySelector('[data-action="refresh"]').disabled = running;
   }
   function renderExecution(status) {
+    if (disposed) return;
     const labels = { running: '正在执行', success: '搜索成功', empty: '没有结果', partial: '部分来源失败', failed: '执行失败', cancelled: '已取消', timed_out: '执行超时' };
     root.querySelector('[data-status="execution"]').textContent = labels[status.status] || '执行失败';
     root.querySelector('[data-execution-error]').textContent = status.error || '';
-    if (status.payload) root.querySelector('[data-results]').textContent = JSON.stringify(status.payload, null, 2);
+    if (disposed) return;
+    if (status.payload) {
+      root.querySelector('[data-results]').textContent = JSON.stringify(status.payload, null, 2);
+      const groups = root.querySelector('[data-result-groups]'); groups.replaceChildren();
+      const payload = status.payload;
+      const rows = Array.isArray(payload) ? payload : payload.results || payload.items || [];
+      const bySource = new Map();
+      for (const result of Array.isArray(rows) ? rows : []) {
+        const source = String(result.source || result.provider || '其他来源');
+        if (!bySource.has(source)) bySource.set(source, []);
+        bySource.get(source).push(result);
+      }
+      for (const [source, results] of bySource) {
+        const section = el(doc, 'section', { class: 'result-source' }); section.append(el(doc, 'h3', {}, source));
+        for (const result of results) {
+          const item = el(doc, 'article', { class: 'result-item' });
+          item.append(el(doc, 'strong', {}, String(result.title || result.name || '结果')), el(doc, 'p', {}, String(result.snippet || result.description || result.error || '')));
+          if (result.url) { try { const url = new URL(result.url); if (['https:', 'http:'].includes(url.protocol)) item.append(el(doc, 'p', {}, url.href)); } catch {} }
+          section.append(item);
+        }
+        groups.append(section);
+      }
+      if (!bySource.size) groups.append(el(doc, 'p', {}, '没有可展示的条目；可展开原始 JSON 查看详情。'));
+    }
     controls(status.status === 'running');
   }
   async function poll() {
@@ -72,6 +101,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
     root.querySelector('[data-execution-error]').textContent = '';
   }
   function renderSettings(view) {
+    if (disposed) return;
     settingsView = view;
     routeField.replaceChildren();
     const entries = Object.entries(view.routes || {});
@@ -95,6 +125,14 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
   }
   routeField.addEventListener('change', () => { applyRouteTimeout(routeField.value); });
 
+  async function loadProviders() {
+    const select = root.querySelector('[data-field="sources"]');
+    try {
+      const rows = await api.providerList();
+      if (disposed) return;
+      for (const row of rows.filter(row => row.search !== false)) select.append(el(doc, 'option', { value: row.source }, row.label));
+    } catch { root.querySelector('[data-info="settings-error"]').textContent = '无法读取搜索源清单，请重试。'; }
+  }
   async function loadSettings() {
     try { renderSettings(await api.settingsView()); }
     catch {
@@ -110,6 +148,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
     const button = root.querySelector('[data-action="refresh"]'); button.disabled = true;
     try {
       const status = await api.detect(path.value.trim() || null);
+      if (disposed) return;
       appReady = status.app.status === 'ready' || (!path.value.trim() && status.user.status === 'ready'); controls(activeId !== null);
       for (const scope of ['app', 'user']) {
         const row = status[scope];
@@ -132,6 +171,6 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
     finally { button.disabled = false; }
   }
   root.querySelector('[data-action="refresh"]').addEventListener('click', async () => { await Promise.all([detect(), loadSettings()]); });
-  await Promise.all([detect(), loadSettings()]);
-  return { dispose() { disposed = true; clearTimeout(timer); } };
+  await Promise.all([detect(), loadSettings(), loadProviders()]);
+  return { dispose() { disposePage(root); disposed = true; clearTimeout(timer); } };
 }

@@ -1,3 +1,5 @@
+import { pageRoot, el, confirmInline, disposePage } from './dom.js';
+import { toMessage } from './errors.js';
 import { initProviders, mountCredentialBody, scrapeCredentialProviders } from './credentials.js';
 
 const DESCRIPTIONS = {
@@ -35,6 +37,7 @@ function statCard(key, label, symbol, total) {
 }
 
 export async function mountSources(root, api) {
+  root = pageRoot(root);
   // Provider list is owned by the Rust `provider::PROVIDERS` table; load it
   // before any row is built. Failure leaves the page with an explicit error
   // state rather than a silently empty list.
@@ -42,18 +45,21 @@ export async function mountSources(root, api) {
   try {
     SOURCES = await initProviders(api);
   } catch (error) {
-    root.innerHTML = `<section class="heading"><p class="eyebrow">SOURCES</p><h1>搜索源与凭据</h1><p>无法读取搜索源清单：${typeof error === 'string' ? error : '请重试或重启桌面应用。'}</p></section>`;
-    return { dispose() { root.classList.remove('sources-page'); } };
+    root.innerHTML = '<section class="heading"><p class="eyebrow">04 / SOURCES</p><h1>搜索源与凭据</h1><p class="error-message"></p></section>';
+    root.querySelector('.error-message').textContent = `无法读取搜索源清单：${toMessage(error)}`;
+    const retry = el(root.ownerDocument, 'button', { type: 'button' }, '重试');
+    retry.addEventListener('click', () => { void mountSources(root, api); }); root.append(retry);
+    return { dispose() { disposePage(root); root.classList.remove('sources-page'); } };
   }
   const TOTAL = SOURCES.length;
   const doc = root.ownerDocument;
   root.classList.add('sources-page');
-  root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">SOURCES</p><h1>搜索源与凭据</h1><p>管理各搜索源的 API Key 和启用状态，并可快速测试连接，确保服务可用。</p></div>
-    <aside class="key-hint"><span>${icon('lock')}</span><div><strong>SQLite / DPAPI 本地存储</strong><p>展开可查看完整 Key；旧来源仅在显式导入后生效。</p></div></aside></section>
+  root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">04 / SOURCES</p><h1>搜索源与凭据</h1><p>管理各搜索源的 API Key 和启用状态，并可快速测试连接，确保服务可用。</p></div>
+    <aside class="key-hint"><span>${icon('lock')}</span><div><strong>SQLite / DPAPI 本地存储</strong><p>Key 默认掩码，点击显示才解密；旧来源仅在显式导入后生效。</p></div></aside></section>
     <div class="sources-overview"><section class="stats" aria-label="搜索源概览">${statCard('enabled', '已启用', 'toggle', TOTAL)}${statCard('configured', '已配置', 'key', TOTAL)}${statCard('error', '异常', 'alert', TOTAL)}${statCard('absent', '未配置', 'box', TOTAL)}</section>
     <div class="toolbar"><label class="source-search">${icon('search')}<input type="search" data-search aria-label="搜索搜索源" placeholder="搜索搜索源名称、描述…"><kbd>Ctrl K</kbd></label><div class="filters" role="group" aria-label="筛选">${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === 'all'}">${label}</button>`).join('')}</div></div></div>
     <p class="source-test-warning">测试会向对应服务发送外部请求，可能消耗额度。已配置不代表连接已验证；无需凭据的服务不计入已配置数量。</p>
-    <p class="row-error" data-list-error role="alert"></p><div class="source-list" data-source-list aria-label="搜索源列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;
+    <p class="error-message row-error" data-list-error ></p><div class="source-list" data-source-list aria-label="搜索源列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;
 
   const list = root.querySelector('[data-source-list]');
   const search = root.querySelector('[data-search]');
@@ -81,6 +87,12 @@ export async function mountSources(root, api) {
       if (match) visible += 1;
     }
     root.querySelector('[data-empty]').hidden = visible !== 0;
+  }
+  let statsPending = false;
+  function scheduleStats() {
+    if (statsPending) return;
+    statsPending = true;
+    queueMicrotask(() => { statsPending = false; refreshStats(); });
   }
   function refreshStats() {
     if (disposed) return;
@@ -140,7 +152,7 @@ export async function mountSources(root, api) {
       if (!disposed) applySettings(saved);
     } catch (err) {
       if (disposed) return;
-      rec.error.textContent = typeof err === 'string' ? err : '保存失败，开关未更改。';
+      rec.error.textContent = toMessage(err, '保存失败，开关未更改。');
       if (settingsState) applySettings(settingsState);
     }
   }
@@ -150,7 +162,7 @@ export async function mountSources(root, api) {
     rec.state.dataset.kind = kind;
     rec.state.textContent = text;
     rec.summary.textContent = kind === 'configured' ? rec.entry.cookie ? 'Cookie 文件' : '••••••••••••••••••' : rec.entry.cookie ? 'Cookie 路径' : rec.entry.keyed ? '—' : '无需配置';
-    refreshStats();
+    scheduleStats();
   }
   function updateRow(rec, view) {
     const provenance = JSON.stringify([view.effective_source, view.store?.state, view.store?.saved_at]);
@@ -169,20 +181,33 @@ export async function mountSources(root, api) {
     rec.result.querySelector('small').textContent = result.kind === 'success' ? '本次连接已验证' : result.kind === 'error' ? result.title : rec.entry.cookie ? '使用本机 Cookie' : !rec.entry.keyed ? '无需 API Key' : '点击测试验证';
     rec.result.title = [result.title, result.message].filter(Boolean).join('\n');
     rec.testButton.disabled = result.kind === 'running';
-    refreshStats();
+    scheduleStats();
   }
   function buildRow(entry) {
     const row = doc.createElement('article');
     row.className = 'source-row';
     row.dataset.expanded = 'false';
     row.setAttribute('data-source-row', entry.source);
-    row.innerHTML = `<div class="source-line"><span class="source-icon icon-${entry.source}" aria-hidden="true">${MARKS[entry.source]}</span>
-      <button type="button" class="source-pick" data-pick="${entry.source}" aria-expanded="false" aria-controls="detail-${entry.source}"><span class="source-name">${entry.label}</span><small class="source-desc">${DESCRIPTIONS[entry.source]}</small></button>
-      <label class="source-toggle"><input type="checkbox" role="switch" data-toggle="${entry.source}" aria-label="启用 ${entry.label}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>
+    row.innerHTML = `<div class="source-line"><span class="source-icon icon-default" aria-hidden="true"></span>
+      <button type="button" class="source-pick" data-pick aria-expanded="false" ><span class="source-name"></span><small class="source-desc"></small></button>
+      <label class="source-toggle"><input type="checkbox" role="switch" data-toggle aria-label="启用 " disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>
       <div class="source-key" data-key-summary aria-label="凭据摘要">—</div><span class="source-state" data-row-status data-kind="unknown">读取中</span>
       <div class="source-test-state" data-row-result data-kind="idle"><span class="test-state-symbol" aria-hidden="true"></span><div><strong>未测试</strong><small>${entry.cookie ? '需要 Cookie 文件' : entry.keyed ? '点击测试验证' : '无需 API Key'}</small></div></div>
-      <button type="button" class="source-test-button" data-row-test aria-label="测试 ${entry.label}">${icon('play')}<span>测试</span></button><button type="button" class="source-expand" data-expand aria-label="展开 ${entry.label}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
-      <p class="row-error" data-row-error role="alert"></p><div id="detail-${entry.source}" class="source-detail" data-source-detail hidden></div>`;
+      <button type="button" class="source-test-button" data-row-test aria-label="测试 ">${icon('play')}<span>测试</span></button><button type="button" class="source-expand" data-expand aria-label="展开 " aria-expanded="false" >${icon('chevron')}</button></div>
+      <p class="error-message row-error" data-row-error ></p><div  class="source-detail" data-source-detail hidden></div>`;
+    const brand = row.querySelector('.source-icon');
+    brand.textContent = MARKS[entry.source] || Array.from(entry.label || entry.source)[0]?.toUpperCase() || '?';
+    if (Object.hasOwn(MARKS, entry.source)) brand.className = `source-icon icon-${entry.source}`;
+    row.querySelector('.source-name').textContent = entry.label;
+    row.querySelector('.source-desc').textContent = DESCRIPTIONS[entry.source] || '搜索服务';
+    row.querySelector('[data-pick]').setAttribute('data-pick', entry.source);
+    row.querySelector('[data-toggle]').setAttribute('data-toggle', entry.source);
+    row.querySelector('[data-toggle]').setAttribute('aria-label', `启用 ${entry.label}`);
+    row.querySelector('[data-row-test]').setAttribute('aria-label', `测试 ${entry.label}`);
+    row.querySelector('[data-expand]').setAttribute('aria-label', `展开 ${entry.label}`);
+    const detailId = `source-detail-${rows.size}`;
+    row.querySelector('[data-source-detail]').id = detailId;
+    for (const button of row.querySelectorAll('[data-pick], [data-expand]')) button.setAttribute('aria-controls', detailId);
     const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
     rows.set(entry.source, rec);
     list.append(row);
@@ -255,7 +280,7 @@ export async function mountSources(root, api) {
   function mountKeylessDetail(rec) {
     const panel = doc.createElement('section');
     panel.className = 'keyless-detail';
-    panel.innerHTML = `<div><p>${rec.entry.cookie ? '在搜索设置页配置 Cookie 文件路径；此处不读取或显示 Cookie 正文。' : '该服务无需 API Key，可直接测试连接。'}</p><p class="credential-note">测试会发送外部搜索请求，请只在需要时测试。</p><button type="button" data-action="test">测试连接</button></div><div class="test-result" data-kind="idle"><div><strong data-status="test" aria-live="polite"></strong><p data-info="test" role="status"></p></div></div>`;
+    panel.innerHTML = `<div><p>${rec.entry.cookie ? '在搜索设置页配置 Cookie 文件路径；此处不读取或显示 Cookie 正文。' : '该服务无需 API Key，可直接测试连接。'}</p><p class="credential-note">测试会发送外部搜索请求，请只在需要时测试。</p><button type="button" data-action="test">测试连接</button></div><div class="test-result" data-kind="idle"><div><strong class="status-text" data-status="test" aria-live="polite"></strong><p data-info="test" role="status"></p></div></div>`;
     rec.detail.append(panel);
     let stale = false;
     const button = panel.querySelector('button');
@@ -277,7 +302,7 @@ export async function mountSources(root, api) {
       } catch { if (revision === settingsRevision) show({ kind: 'error', title: '测试失败', message: '测试启动失败，请检查 CLI 后重试。' }); }
       finally { if (!stale && !disposed) button.disabled = false; }
     });
-    return { dispose() { stale = true; } };
+    return { dispose() { disposePage(root); stale = true; } };
   }
 
   const scrapeMounts = [];
@@ -310,7 +335,7 @@ export async function mountSources(root, api) {
   try { applySettings(await api.settingsView()); }
   catch { root.querySelector('[data-list-error]').textContent = '无法读取搜索设置，开关状态未知。请重新进入本页重试。'; }
   await Promise.all(loads);
-  await toggleRow(SOURCES[0].source);
+  // Credentials stay collapsed until an explicit user action.
   refreshStats();
-  return { dispose() { disposed = true; activeTicket += 1; detailMount?.dispose(); for (const mounted of scrapeMounts) mounted.dispose(); doc.removeEventListener('keydown', onKey); root.classList.remove('sources-page'); } };
+  return { dispose() { disposePage(root); disposed = true; activeTicket += 1; detailMount?.dispose(); for (const mounted of scrapeMounts) mounted.dispose(); doc.removeEventListener('keydown', onKey); root.classList.remove('sources-page'); } };
 }

@@ -21,7 +21,7 @@ test('saved values render one readonly input per line, never through HTML', asyn
   assert.deepEqual(seen, ['tavily']);
   assert.deepEqual(savedInputs(ctx.root), [KEY, 'second-key']);
   assert.equal(ctx.root.querySelectorAll('[data-saved-list] input')[0].readOnly, true);
-  assert.equal(ctx.root.querySelector('[type="password"]'), null);
+  assert.equal(ctx.root.querySelectorAll('[type="password"]').length, 2);
   assert.ok(!ctx.root.innerHTML.includes(KEY), 'saved values go through .value, not HTML interpolation');
   assert.equal(ctx.root.querySelectorAll('[data-draft-list] input').length, 1, 'one empty draft row initially');
   ctx.window.close();
@@ -73,7 +73,7 @@ test('row delete confirms with row number, cancel writes nothing, confirm remove
   let value = KEY + '\nsecond-key\nthird-key';
   await mountCredentials(ctx.root, api({
     credentialStatus: async () => status(true),
-    credentialRead: async () => ({ value }),
+    credentialRead: async () => ({ value, snapshot: 'opaque-revision' }),
     credentialRemove: async (source, index, expected) => { removed.push([index, expected]); value = value.split('\n').filter((_, i) => i !== index).join('\n'); return status(true); },
   }));
   const buttons = ctx.root.querySelectorAll('[data-action="remove"]');
@@ -87,7 +87,7 @@ test('row delete confirms with row number, cancel writes nothing, confirm remove
   assert.deepEqual(savedInputs(ctx.root), [KEY, 'second-key', 'third-key']);
   ctx.root.querySelectorAll('[data-action="remove"]')[1].click();
   ctx.root.querySelector('[data-action="confirm-remove"]').click(); await flush2();
-  assert.deepEqual(removed, [[1, KEY + '\nsecond-key\nthird-key']]);
+  assert.deepEqual(removed, [[1, 'opaque-revision']]);
   assert.deepEqual(savedInputs(ctx.root), [KEY, 'third-key']);
   ctx.window.close();
 });
@@ -97,7 +97,7 @@ test('deleting the last saved row shows the empty state', async () => {
   let value = KEY;
   await mountCredentials(ctx.root, api({
     credentialStatus: async () => status(true),
-    credentialRead: async () => ({ value }),
+    credentialRead: async () => ({ value, snapshot: 'opaque-revision' }),
     credentialRemove: async () => { value = ''; return status(); },
   }));
   ctx.root.querySelector('[data-action="remove"]').click();
@@ -125,7 +125,7 @@ test('drafts survive refresh and a row delete', async () => {
   const ctx = setup(); let value = KEY;
   await mountCredentials(ctx.root, api({
     credentialStatus: async () => status(true),
-    credentialRead: async () => ({ value }),
+    credentialRead: async () => ({ value, snapshot: 'opaque-revision' }),
     credentialRemove: async () => { value = 'second-key'; return status(true); },
   }));
   draftInputs(ctx.root)[0].value = 'draft-key';
@@ -194,7 +194,7 @@ test('multiline paste into a draft row is refused instead of merged silently', a
   await mountCredentials(ctx.root, api());
   const input = draftInputs(ctx.root)[0];
   input.value = KEY;
-  const event = new ctx.window.Event('paste', { cancelable: true });
+  const event = new ctx.window.Event('paste', { cancelable: true, bubbles: true });
   Object.defineProperty(event, 'clipboardData', { value: { getData: () => 'a\nb' } });
   input.dispatchEvent(event);
   assert.equal(event.defaultPrevented, true);
@@ -209,7 +209,7 @@ test('draft editing invalidates a previous test result', async () => {
   assert.equal(ctx.root.querySelector('[data-test-result]').dataset.kind, 'success');
   const input = draftInputs(ctx.root)[0];
   input.value = 'changed';
-  input.dispatchEvent(new ctx.window.Event('input'));
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
   assert.equal(ctx.root.querySelector('[data-test-result]').dataset.kind, 'idle');
   ctx.window.close();
 });
@@ -234,20 +234,22 @@ test('test outcomes retain provider error messages and external request warning'
 test('typed Tauri adapter sends append and remove contracts and keeps save/delete adapters', async () => {
   const calls = [], client = managementApi(async (cmd, args) => {
     calls.push([cmd, args]);
-    if (cmd === 'credential_read') return { value: '' };
+    if (cmd === 'credential_read' || cmd === 'credential_reveal') return { value: '', snapshot: 'opaque-revision' };
     if (cmd === 'credential_append' || cmd === 'credential_remove' || cmd === 'credential_save' || cmd === 'credential_delete') return { ...status(true), source: args.source };
     return null;
   });
   await client.credentialRead('tavily');
+  await client.credentialReveal('tavily');
   await client.credentialAppend('tavily', ['a', 'b']);
-  await client.credentialRemove('tavily', 1, 'a\nb');
+  await client.credentialRemove('tavily', 1, 'opaque-revision');
   await client.credentialSave('tavily', 'k');
   await client.credentialDelete('tavily');
   await client.credentialApplicationOpen('brave');
   assert.deepEqual(calls, [
     ['credential_read', { source: 'tavily' }],
+    ['credential_reveal', { source: 'tavily' }],
     ['credential_append', { source: 'tavily', keys: ['a', 'b'] }],
-    ['credential_remove', { source: 'tavily', index: 1, expected: 'a\nb' }],
+    ['credential_remove', { source: 'tavily', index: 1, expected: 'opaque-revision' }],
     ['credential_save', { source: 'tavily', key: 'k' }],
     ['credential_delete', { source: 'tavily' }],
     ['credential_application_open', { source: 'brave' }],
@@ -304,4 +306,39 @@ test('remove-draft is disabled while reads are unhealthy', async () => {
   }));
   assert.equal(ctx.root.querySelector('[data-action="remove-draft"]').disabled, true);
   ctx.window.close();
+});
+
+
+test('masked keys reveal only on demand and copy is disabled until revealed', async () => {
+  const ctx = setup(); let reveals = 0;
+  const mounted = await mountCredentials(ctx.root, api({
+    credentialRead: async () => ({ value: '••••••••', snapshot: 'revision-1' }),
+    credentialReveal: async () => { reveals++; return { value: KEY, snapshot: 'revision-1' }; },
+  }));
+  assert.equal(reveals, 0); assert.deepEqual(savedInputs(ctx.root), ['••••••••']);
+  assert.equal(ctx.root.querySelector('[data-action="copy"]').disabled, true);
+  ctx.root.querySelector('[data-action="reveal"]').click(); await flush2();
+  assert.equal(reveals, 1); assert.deepEqual(savedInputs(ctx.root), [KEY]);
+  assert.equal(ctx.root.querySelector('[data-action="copy"]').disabled, false);
+  ctx.root.querySelector('[data-action="reveal"]').click();
+  assert.deepEqual(savedInputs(ctx.root), ['••••••••']);
+  assert.equal(ctx.root.querySelector('[data-action="copy"]').disabled, true);
+  ctx.root.querySelector('[data-action="reveal"]').click(); await flush2();
+  mounted.dispose(); assert.equal(ctx.root.querySelector('[data-saved-input]'), null); ctx.window.close();
+});
+
+test('failed provider load can be retried without restarting', async () => {
+  const { initProviders } = await import('../ui/credentials.js?retry-test');
+  let calls = 0;
+  const api = { providerList: async () => { if (!calls++) throw new Error('offline'); return []; } };
+  await assert.rejects(initProviders(api), /offline/);
+  assert.deepEqual(await initProviders(api), []); assert.equal(calls, 2);
+});
+
+
+test('provider labels render as literal text, never elements', async () => {
+  const { mountCredentials: isolatedMount } = await import('../ui/credentials.js?malicious-label');
+  const ctx = setup();
+  await isolatedMount(ctx.root, { providerList: async () => [{ source: 'tavily', label: '<img src=x onerror=alert(1)>', keyed: true }], credentialStatus: async () => status(), credentialRead: async () => ({ value: '', snapshot: 'empty' }) });
+  assert.equal(ctx.root.querySelector('img'), null); assert.match(ctx.root.textContent, /<img src=x/); ctx.window.close();
 });

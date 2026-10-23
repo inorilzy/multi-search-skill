@@ -69,14 +69,14 @@ export const schemas = {
   PathValue: schema({ text: 's', kind: 'n', exists: 'b' }),
   PathReceipt: schema({ before: 'PathValue', after: 'PathValue', entry: 's' }),
   PathPlan: schema({
-    status: 's', directory: 's', reason: 's', can_add: 'b', can_remove: 'b',
+    status: 's', directory: 's', reason: 's', can_add: 'b', can_remove: 'b', warning: 's',
   }),
   CredentialStatus: schema({ state: 's', saved_at: 'nn', error: 's' }),
   CredentialOverview: schema({
     source: 's', store: 'CredentialStatus', effective_source: 's',
     key_application_available: 'b',
   }),
-  CredentialValue: schema({ value: 's' }),
+  CredentialValue: schema({ value: 's', snapshot: 's' }),
   TestOutcome: schema({ result: 's', message: 's' }),
   ProviderInfo: schema({
     source: 's', cliSource: 's', provider: 'sn', label: 's',

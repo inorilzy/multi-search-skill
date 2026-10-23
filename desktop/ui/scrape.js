@@ -1,3 +1,5 @@
+import { pageRoot, el, confirmInline, disposePage } from './dom.js';
+import { toMessage } from './errors.js';
 // 抓取设置：持久化 fallback 链（settings JSON 的 scrape_backends）与站点记忆只读/写操作。
 // 后端列表由 SettingsView.scrape_backend_options 提供，页面不复制后端表。
 
@@ -7,27 +9,28 @@ const cloneChain = chain => (chain || []).map(String);
 const REQUIRED_KEY_BACKENDS = ['exa', 'tavily'];
 
 export async function mountScrape(root, api) {
+  root = pageRoot(root);
   const doc = root.ownerDocument;
   root.classList.add('settings-page', 'scrape-page');
-  root.innerHTML = `<section class="heading settings-head"><div><p class="eyebrow">SETTINGS / SCRAPE</p><h1>抓取设置</h1><p>配置通用网页抓取的 fallback 顺序，并查看本机站点记忆。设置保存在 SQLite；抓取仍由独立 CLI 按需执行。</p></div><button type="button" data-action="refresh-chain">刷新</button></section>
+  root.innerHTML = `<section class="heading settings-head"><div><p class="eyebrow">06 / SETTINGS / SCRAPE</p><h1>抓取设置</h1><p>配置通用网页抓取的 fallback 顺序，并查看本机站点记忆。设置保存在 SQLite；抓取仍由独立 CLI 按需执行。</p></div><button type="button" data-action="refresh-chain">刷新</button></section>
     <form data-scrape-form>
       <section class="panel scrape-chain-panel"><div class="section-title"><div><p class="eyebrow">SCRAPE CHAIN</p><h2>抓取链路</h2></div><span class="draft-badge" data-dirty hidden>有未保存修改</span></div>
-        <p class="route-help">按顺序尝试，第一个失败才用下一个；最后一个也失败时返回错误。这份顺序只对通用网页抓取生效；Reddit / Twitter 按域名固定使用专用抓取器，不受影响。</p>
-        <p class="settings-warning" data-info="chain-warning" role="alert"></p>
-        <p class="settings-warning" data-info="saved-chain-warning" role="alert"></p>
-        <p data-info="error" role="alert"></p>
+        <details class="config-details"><summary>说明</summary><p class="route-help">按顺序尝试，第一个失败才用下一个；最后一个也失败时返回错误。这份顺序只对通用网页抓取生效；Reddit / Twitter 按域名固定使用专用抓取器，不受影响。</p></details>
+        <p class="error-message settings-warning" data-info="chain-warning" ></p>
+        <p class="error-message settings-warning" data-info="saved-chain-warning" ></p>
+        <p data-info="error" class="error-message"></p>
         <div class="scrape-chain-head"><span>顺序</span><span>后端</span><span>标识</span><span>操作</span></div>
         <div data-chain-list class="route-list" aria-label="抓取后端顺序"></div>
         <div class="scrape-disabled"><p class="route-help">未启用（点击加入链尾）：</p><div class="route-chips" data-chain-inactive></div></div>
         <p class="route-help" data-info="chain-empty" hidden>全部后端已停用，至少保留一个后端才能保存。</p>
         <div class="run-controls scrape-chain-actions"><button type="button" data-action="restore-chain">恢复默认顺序</button><div data-restore-confirm></div></div>
       </section>
-      <div class="settings-savebar"><div><strong data-status="save" aria-live="polite"></strong><small data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存抓取设置</button></div>
+      <div class="settings-savebar"><div><strong class="status-text" data-status="save" aria-live="polite"></strong><small class="status-text" data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存抓取设置</button></div>
     </form>
 
     <section class="panel scrape-memory-panel"><div class="section-title"><div><p class="eyebrow">SITE MEMORY</p><h2>站点记忆</h2></div><div class="route-actions"><button type="button" data-action="refresh-memory">刷新</button></div></div>
       <p class="route-help">记录每个站点上各后端的成功/失败、冷却与手动偏好。手动固定的后端会排到该站点最前；自动冷却只会让失败后端靠后。</p>
-      <p data-info="memory-error" role="alert"></p>
+      <p data-info="memory-error" class="error-message"></p>
       <div class="scrape-memory-toolbar"><label>筛选站点<input data-field="site-filter" type="search" autocomplete="off" spellcheck="false" placeholder="输入域名子串，例如 github"></label></div>
       <div data-memory-table class="scrape-table" aria-label="站点抓取记忆"></div>
       <p class="sources-empty" data-memory-empty hidden>还没有抓取记录，执行几次搜索或抓取后这里会出现数据。</p>
@@ -172,9 +175,9 @@ export async function mountScrape(root, api) {
     return new Map(await Promise.all(REQUIRED_KEY_BACKENDS.map(async name => {
       try {
         const view = await api.credentialStatus(name);
-        return [name, view.store.state];
+        return /** @type {[string, string]} */ ([name, view.store.state]);
       } catch {
-        return [name, 'unknown'];
+        return /** @type {[string, string]} */ ([name, 'unknown']);
       }
     })));
   }
@@ -311,14 +314,7 @@ export async function mountScrape(root, api) {
   async function saveDraft() {
     if (saving || refreshing || !loadedView || loadedView.status === 'config_unreadable') return;
     if (!chain.length) { text('[data-info="error"]', '抓取顺序至少要保留一个后端。'); return; }
-    const payload = {
-      route: loadedView.route,
-      timeout: loadedView.timeout,
-      disabled_sources: [...(loadedView.disabled_sources || [])],
-      routes: null,
-      twitter_cookies_path: loadedView.twitter_cookies_path,
-      scrape_backends: [...chain],
-    };
+    const backends = [...chain];
     saving = true;
     q('[data-restore-confirm]').replaceChildren();
     renderChain();
@@ -333,20 +329,20 @@ export async function mountScrape(root, api) {
       credentialStates = await readCredentialStates();
       if (disposed) return;
       const valid = validateChain();
-      const submitted = chainAvailability(payload.scrape_backends);
+      const submitted = chainAvailability(backends);
       if (!valid || submitted.blocked) {
         text('[data-status="save"]', '未保存。');
         text('[data-info="error"]', submitted.warning || '请修正抓取链后再保存。');
         return;
       }
-      const saved = await api.settingsSave(payload);
+      const saved = await api.scrapeSettingsSave(backends);
       if (disposed) return;
       fillChain(saved);
       text('[data-status="save"]', '已保存。');
     } catch (error) {
       if (!disposed) {
         text('[data-status="save"]', '');
-        text('[data-info="error"]', typeof error === 'string' ? error : error?.message || '保存失败，原配置未改变。');
+        text('[data-info="error"]', toMessage(error, '保存失败，原配置未改变。'));
         validateChain();
       }
     } finally {
@@ -477,7 +473,7 @@ export async function mountScrape(root, api) {
     const actions = doc.createElement('div');
     actions.className = 'run-controls';
     const yes = doc.createElement('button');
-    yes.type = 'button'; yes.className = 'danger';
+    yes.type = 'button'; yes.className = kind === 'reset' ? 'danger' : 'primary';
     yes.textContent = kind === 'pin' ? '确认优先' : '确认清除';
     yes.setAttribute('data-action', 'confirm-memory');
     const no = doc.createElement('button');
@@ -508,7 +504,7 @@ export async function mountScrape(root, api) {
       text('[data-info="memory-error"]', view.available ? '' : view.reason || '尚无抓取状态数据');
     } catch (error) {
       if (!disposed) {
-        memoryError = typeof error === 'string' ? error : error?.message || '操作失败，请重试。';
+        memoryError = toMessage(error, '操作失败，请重试。');
         removeConfirm();
       }
     } finally {
@@ -555,7 +551,7 @@ export async function mountScrape(root, api) {
 
   await Promise.all([refreshChain(true), refreshMemory()]);
   return {
-    dispose() {
+    dispose() { disposePage(root);
       disposed = true;
       refreshTicket += 1;
       root.classList.remove('settings-page', 'scrape-page');

@@ -1,3 +1,5 @@
+import { pageRoot, el, confirmInline, disposePage } from './dom.js';
+import { toMessage } from './errors.js';
 // 搜索默认设置与可编辑路由分组。Rust SettingsView 是路由定义的唯一来源；
 // 本页面不复制内置表，并始终保存完整草稿。
 
@@ -32,6 +34,7 @@ function validateRoute(id, route, routes, originalId = null) {
 }
 
 export async function mountSettings(root, api) {
+  root = pageRoot(root);
   const doc = root.ownerDocument;
   root.classList.add('settings-page');
   // Provider manifest drives the source pickers; fail closed if it cannot load
@@ -41,18 +44,21 @@ export async function mountSettings(root, api) {
     SETTINGS_SOURCES = rows.map(({ source, label }) => ({ source, label }));
     SOURCE_LABELS = new Map(SETTINGS_SOURCES.map(entry => [entry.source, entry.label]));
   } catch (error) {
-    root.innerHTML = `<section class="heading"><p class="eyebrow">SETTINGS</p><h1>搜索设置</h1><p>无法读取搜索源清单：${typeof error === 'string' ? error : '请重试或重启桌面应用。'}</p></section>`;
-    return { dispose() { root.classList.remove('settings-page'); } };
+    root.innerHTML = '<section class="heading"><p class="eyebrow">05 / SETTINGS</p><h1>搜索设置</h1><p class="error-message"></p></section>';
+    root.querySelector('.error-message').textContent = `无法读取搜索源清单：${toMessage(error)}`;
+    const retry = el(root.ownerDocument, 'button', { type: 'button' }, '重试');
+    retry.addEventListener('click', () => { void mountSettings(root, api); }); root.append(retry);
+    return { dispose() { disposePage(root); root.classList.remove('settings-page'); } };
   }
-  root.innerHTML = `<section class="heading settings-head"><div><p class="eyebrow">SETTINGS / ROUTES</p><h1>搜索设置</h1><p>配置默认分组、全局超时和每组搜索源。设置保存在 SQLite；搜索仍由独立 CLI 按需执行。</p></div><button type="button" data-action="refresh">刷新</button></section>
+  root.innerHTML = `<section class="heading settings-head"><div><p class="eyebrow">05 / SETTINGS / ROUTES</p><h1>搜索设置</h1><p>配置默认分组、全局超时和每组搜索源。设置保存在 SQLite；搜索仍由独立 CLI 按需执行。</p></div><button type="button" data-action="refresh">刷新</button></section>
     <form data-settings-form>
       <section class="settings-summary" aria-label="当前搜索设置摘要">
         <article><span>当前默认路由</span><strong data-summary="route">—</strong><small data-summary="route-id">—</small></article>
         <article><span>实际超时</span><strong><b data-summary="effective-timeout">—</b> 秒</strong><small data-summary="timeout-kind">—</small></article>
         <article><span>实际搜索源</span><strong data-summary="active-count">—</strong><small data-summary="active">状态未知</small></article>
       </section>
-      <p class="settings-warning" data-info="active-warning" role="alert"></p>
-      <p data-info="error" role="alert"></p>
+      <p class="error-message settings-warning" data-info="active-warning" ></p>
+      <p data-info="error" class="error-message"></p>
 
       <section class="panel settings-defaults"><div class="section-title"><div><p class="eyebrow">DEFAULTS</p><h2>默认路由与全局超时</h2></div><span class="draft-badge" data-dirty hidden>有未保存修改</span></div>
         <div class="settings-default-grid"><label>默认路由<select data-field="route" disabled></select></label><label>全局超时（秒）<input data-field="timeout" type="number" min="1" max="60" step="1" disabled></label></div>
@@ -65,10 +71,10 @@ export async function mountSettings(root, api) {
 
       <section class="panel settings-other"><div class="section-title"><div><p class="eyebrow">OTHER</p><h2>其他设置</h2></div></div>
         <label>Twitter cookie 文件路径（可选，仅保存路径）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json" disabled></label>
-        <details class="config-details"><summary>配置数据库信息</summary><dl class="cred-status"><dt>配置数据库</dt><dd data-status="path"></dd><dt>路径来源</dt><dd data-status="path-source"></dd></dl><p class="note" data-info="env" role="status"></p></details>
+        <details class="config-details"><summary>配置数据库信息</summary><dl class="cred-status"><dt>配置数据库</dt><dd class="status-text" data-status="path"></dd><dt>路径来源</dt><dd class="status-text" data-status="path-source"></dd></dl><p class="note" data-info="env" role="status"></p></details>
       </section>
 
-      <div class="settings-savebar"><div><strong data-status="save" aria-live="polite"></strong><small data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存全部设置</button></div>
+      <div class="settings-savebar"><div><strong class="status-text" data-status="save" aria-live="polite"></strong><small class="status-text" data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存全部设置</button></div>
     </form>
     <div data-refresh-confirm></div>`;
 
@@ -200,7 +206,7 @@ export async function mountSettings(root, api) {
     panel.innerHTML = `<div class="section-title"><div><p class="eyebrow">${editing ? 'EDIT' : copy ? 'COPY' : 'NEW'}</p><h3>${editing ? '编辑分组' : copy ? '复制为新分组' : '新建分组'}</h3></div><button type="button" data-action="close-editor">取消</button></div>
       <div class="route-editor-grid"><label>标识<input data-edit="id" maxlength="64" spellcheck="false" autocomplete="off"></label><label>名称<input data-edit="label" maxlength="80"></label><label>独立超时（留空继承全局）<input data-edit="timeout" type="number" min="1" max="60" step="1"></label></div>
       <fieldset><legend>搜索源（至少一个）</legend><div class="route-source-grid" data-edit="sources"></div></fieldset>
-      <p class="route-form-error" data-edit-error role="alert"></p><div class="run-controls"><button type="button" class="primary" data-action="apply-route">应用到草稿</button><small>应用后仍需点击“保存全部设置”写入配置。</small></div>`;
+      <p class="error-message route-form-error" data-edit-error ></p><div class="run-controls"><button type="button" class="primary" data-action="apply-route">应用到草稿</button><small>应用后仍需点击“保存全部设置”写入配置。</small></div>`;
     holder.append(panel);
     const idField = panel.querySelector('[data-edit="id"]');
     idField.value = editing ? routeId : '';
@@ -420,7 +426,7 @@ export async function mountSettings(root, api) {
     } catch (error) {
       if (!disposed) {
         text('[data-status="save"]', '');
-        text('[data-info="error"]', typeof error === 'string' ? error : error?.message || '保存失败，原配置未改变。');
+        text('[data-info="error"]', toMessage(error, '保存失败，原配置未改变。'));
       }
     } finally {
       saving = false;
@@ -496,7 +502,7 @@ export async function mountSettings(root, api) {
 
   await refresh(true);
   return {
-    dispose() { disposed = true; refreshTicket += 1; root.classList.remove('settings-page'); },
+    dispose() { disposePage(root); disposed = true; refreshTicket += 1; root.classList.remove('settings-page'); },
     get saved() { return loadedView; },
     get dirty() { return dirty; },
   };

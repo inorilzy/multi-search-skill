@@ -1,3 +1,5 @@
+import { pageRoot, el, confirmInline, disposePage } from './dom.js';
+import { toMessage } from './errors.js';
 const statusLabels = {
   ready: '可安装',
   installed: '已由本工具安装',
@@ -14,12 +16,13 @@ const statusLabels = {
 };
 
 export async function mountInstall(root, api) {
-  root.innerHTML = `<section class="heading"><p class="eyebrow">02 / INSTALL CLI</p><h1>安装命令行工具。</h1><p>从受控来源安装并校验。未知安装不会被覆盖，失败不会改动已有可用版本。</p></section>
+  root = pageRoot(root);
+  root.innerHTML = `<section class="heading"><p class="eyebrow">02 / INSTALL CLI</p><h1>安装命令行工具</h1><p>从受控来源安装并校验。未知安装不会被覆盖，失败不会改动已有可用版本。</p></section>
     <section class="panel install"><div class="section-title"><h2>安装计划</h2><button type="button" data-action="plan">重新检查</button></div>
-      <strong data-status="plan" aria-live="polite">检查中</strong>
+      <strong class="status-text" data-status="plan" aria-live="polite">检查中</strong>
       <dl class="install-plan"><dt>安装目录</dt><dd data-info="root"></dd><dt>可执行文件</dt><dd data-info="bin"></dd><dt>版本</dt><dd data-info="version"></dd><dt>当前版本</dt><dd data-info="current-version"></dd><dt>安装来源</dt><dd data-info="source"></dd><dt>Skill 兼容性</dt><dd data-info="compatibility"></dd></dl>
-      <p data-info="path-hint" class="note"></p><p data-info="reason" role="alert"></p>
-      <div class="run-controls"><button type="button" data-action="install" class="primary" disabled>安装 CLI</button><button type="button" data-action="update" disabled>更新 CLI</button><button type="button" data-action="uninstall" disabled>卸载 CLI</button><strong data-status="result" aria-live="polite"></strong></div>
+      <p data-info="path-hint" class="note"></p><p data-info="reason" class="error-message"></p>
+      <div class="run-controls"><button type="button" data-action="install" class="primary" disabled>安装 CLI</button><button type="button" data-action="update" disabled>更新 CLI</button><button type="button" data-action="uninstall" disabled>卸载 CLI</button><strong class="status-text" data-status="result" aria-live="polite"></strong></div>
       <div class="run-controls" data-confirm hidden><strong>卸载只删除本工具安装的 CLI 文件；配置、凭据和 Skill 会保留。</strong><button type="button" data-action="uninstall-confirm" class="danger">确认卸载</button><button type="button" data-action="uninstall-cancel">取消</button></div>
       <ol data-steps aria-label="安装步骤"></ol></section>
     <section class="panel"><h2>用户 PATH 与宿主发现</h2><p data-path-directory></p><p data-path-reason></p>
@@ -32,9 +35,17 @@ export async function mountInstall(root, api) {
   const uninstall = root.querySelector('[data-action="uninstall"]');
   const confirmBox = root.querySelector('[data-confirm]');
   const plan = root.querySelector('[data-action="plan"]');
-  let busy = false;
+  let busy = false, disposed = false;
+  const listeners = [];
+  const on = (node, type, handler) => {
+    const guarded = event => { if (!disposed) return handler(event); };
+    node.addEventListener(type, guarded); listeners.push(() => node.removeEventListener(type, guarded));
+  };
+  const setBusy = value => { if (disposed) return; busy = value; root.setAttribute('aria-busy', String(value)); root.classList.toggle('is-busy', value); };
+
 
   function renderPlan(status) {
+    if (disposed) return;
     root.querySelector('[data-status="plan"]').textContent = statusLabels[status.status] || status.status;
     root.querySelector('[data-status="plan"]').dataset.kind = status.status;
     root.querySelector('[data-info="root"]').textContent = status.root || '';
@@ -55,6 +66,7 @@ export async function mountInstall(root, api) {
   }
 
   function renderSteps(steps) {
+    if (disposed) return;
     const list = root.querySelector('[data-steps]');
     list.replaceChildren(...steps.map(step => {
       const item = root.ownerDocument.createElement('li');
@@ -69,32 +81,36 @@ export async function mountInstall(root, api) {
   const pathConfirm = root.querySelector('[data-path-confirm]');
   let removePath = false;
   async function refreshPath() {
-    if (!api.userPathPlan) return;
+    if (disposed || !api.userPathPlan) return;
     pathAdd.disabled = true; pathRemove.disabled = true;
     try {
       const state = await api.userPathPlan();
+      if (disposed) return;
       root.querySelector('[data-path-directory]').textContent = state.directory;
-      root.querySelector('[data-path-reason]').textContent = state.reason;
+      root.querySelector('[data-path-reason]').textContent = [state.reason, state.warning].filter(Boolean).join('；');
       pathAdd.disabled = busy || !state.can_add;
       pathRemove.disabled = busy || !state.can_remove;
-    } catch { root.querySelector('[data-path-reason]').textContent = '无法检查用户 PATH，未修改。请重新检查。'; }
+    } catch { if (disposed) return; root.querySelector('[data-path-reason]').textContent = '无法检查用户 PATH，未修改。请重新检查。'; }
   }
-  pathAdd.addEventListener('click', () => { removePath = false; pathConfirm.hidden = false; });
-  pathRemove.addEventListener('click', () => { removePath = true; pathConfirm.hidden = false; });
-  root.querySelector('[data-action="path-cancel"]').addEventListener('click', () => { pathConfirm.hidden = true; });
-  root.querySelector('[data-action="path-confirm"]').addEventListener('click', async () => {
-    if (busy) return;
-    busy = true; pathConfirm.hidden = true; pathAdd.disabled = true; pathRemove.disabled = true;
+  on(pathAdd, 'click', () => { removePath = false; pathConfirm.hidden = false; confirmInline(pathConfirm, () => { pathConfirm.hidden = true; }); });
+  on(pathRemove, 'click', () => { removePath = true; pathConfirm.hidden = false; confirmInline(pathConfirm, () => { pathConfirm.hidden = true; }); });
+  on(root.querySelector('[data-action="path-cancel"]'), 'click', () => { pathConfirm.hidden = true; });
+  on(root.querySelector('[data-action="path-confirm"]'), 'click', async () => {
+    if (busy || disposed) return;
+    setBusy(true); pathConfirm.hidden = true; pathAdd.disabled = true; pathRemove.disabled = true;
     const result = root.querySelector('[data-path-result]');
     try {
       const outcome = await api.userPathChange(removePath, true);
+      if (disposed) return;
       const status = await api.detect(null);
+      if (disposed) return;
       result.textContent = `${outcome.status}；当前应用：${status.app.status}；新用户环境：${status.user.status}。请重启终端或 Agent 宿主。`;
-    } catch (error) { result.textContent = typeof error === 'string' ? error : '用户 PATH 修改未确认，请重新检查；原有或被修改项目会保留。'; }
-    finally { busy = false; await refreshPath(); }
+    } catch (error) { result.textContent = toMessage(error, '用户 PATH 修改未确认，请重新检查；原有或被修改项目会保留。'); }
+    finally { setBusy(false); if (!disposed) await refreshPath(); }
   });
 
   async function refresh() {
+    if (disposed) return;
     plan.disabled = true;
     try { renderPlan(await api.installPlan()); await refreshPath(); }
     catch { renderPlan({ status: 'unavailable', reason: '无法检查安装计划，请重新检查。' }); }
@@ -103,13 +119,14 @@ export async function mountInstall(root, api) {
 
   // Runs one mutating action (install, update or uninstall) and always re-reads the plan afterwards.
   async function run(label, failLabel, call, successWhen, successText, unconfirmed = '请求失败，未确认操作结果，请重新检查。') {
-    if (busy) return;
-    busy = true; install.disabled = true; update.disabled = true; uninstall.disabled = true; plan.disabled = true;
+    if (busy || disposed) return;
+    setBusy(true); install.disabled = true; update.disabled = true; uninstall.disabled = true; plan.disabled = true;
     root.querySelector('[data-status="result"]').textContent = label;
     root.querySelector('[data-info="reason"]').textContent = '';
     renderSteps([]);
     try {
       const outcome = await call();
+      if (disposed) return;
       renderSteps(outcome.steps || []);
       if (successWhen(outcome)) {
         root.querySelector('[data-status="result"]').textContent = successText(outcome);
@@ -119,25 +136,26 @@ export async function mountInstall(root, api) {
         root.querySelector('[data-info="reason"]').textContent = outcome.reason || '操作未完成，已保留原有状态。';
       }
     } catch {
+      if (disposed) return;
       root.querySelector('[data-status="result"]').textContent = failLabel;
       root.querySelector('[data-info="reason"]').textContent = unconfirmed;
     } finally {
-      busy = false; plan.disabled = false;
-      await refresh();
+      setBusy(false); plan.disabled = false;
+      if (!disposed) await refresh();
     }
   }
 
-  install.addEventListener('click', () => run('正在安装', '安装失败', () => api.install(),
+  on(install, 'click', () => run('正在安装', '安装失败', () => api.install(),
     o => o.status === 'installed', o => `安装成功 v${o.version}`, '安装请求失败，未确认安装结果，请重新检查。'));
-  update.addEventListener('click', () => run('正在更新', '更新失败', () => api.update(),
+  on(update, 'click', () => run('正在更新', '更新失败', () => api.update(),
     o => o.status === 'installed', o => `更新成功 v${o.version}`));
-  uninstall.addEventListener('click', () => { confirmBox.hidden = false; });
-  root.querySelector('[data-action="uninstall-cancel"]').addEventListener('click', () => { confirmBox.hidden = true; });
-  root.querySelector('[data-action="uninstall-confirm"]').addEventListener('click', () => {
+  on(uninstall, 'click', () => { confirmBox.hidden = false; confirmInline(confirmBox, () => { confirmBox.hidden = true; }); });
+  on(root.querySelector('[data-action="uninstall-cancel"]'), 'click', () => { confirmBox.hidden = true; });
+  on(root.querySelector('[data-action="uninstall-confirm"]'), 'click', () => {
     confirmBox.hidden = true;
     run('正在卸载', '卸载失败', () => api.uninstall(), o => o.status === 'uninstalled', () => '已卸载 CLI，配置与 Skill 已保留');
   });
-  plan.addEventListener('click', refresh);
+  on(plan, 'click', refresh);
   await refresh();
-  return { dispose() {} };
+  return { dispose() { disposePage(root); disposed = true; for (const off of listeners) off(); } };
 }

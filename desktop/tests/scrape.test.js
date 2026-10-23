@@ -100,7 +100,7 @@ function api(overrides = {}) {
   return {
     credentialStatus: async source => ({ source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: true }),
     settingsView: async () => settingsView(),
-    settingsSave: async input => settingsView({ scrape_backends: input.scrape_backends }),
+    scrapeSettingsSave: async input => settingsView({ scrape_backends: input }),
     scrapeMemoryView: async () => memoryView(),
     scrapeMemoryPin: async () => memoryView(),
     scrapeMemoryReset: async () => memoryView({ rows: [] }),
@@ -135,7 +135,7 @@ test('moving a backend up and down rewrites the draft order', async () => {
 test('disabling every backend warns and blocks save until one returns', async () => {
   const { window, root } = setup();
   let saves = 0;
-  await mountScrape(root, api({ settingsSave: async input => { saves += 1; return settingsView({ scrape_backends: input.scrape_backends }); } }));
+  await mountScrape(root, api({ scrapeSettingsSave: async input => { saves += 1; return settingsView({ scrape_backends: input }); } }));
   for (const name of [...BUILTIN]) chainButton(root, name, '停用').click();
   assert.deepEqual(chainNames(root), []);
   assert.match(root.querySelector('[data-info="chain-warning"]').textContent, /抓取不会运行/);
@@ -157,7 +157,7 @@ test('required-key-only drafts block both save button and form submission', asyn
   for (const names of [['exa'], ['tavily'], ['exa', 'tavily']]) {
     const { window, root } = setup();
     let saves = 0;
-    await mountScrape(root, api({ settingsSave: async () => { saves++; return settingsView(); } }));
+    await mountScrape(root, api({ scrapeSettingsSave: async () => { saves++; return settingsView(); } }));
     for (const name of BUILTIN.filter(name => !names.includes(name))) chainButton(root, name, '停用').click();
     assert.equal(root.querySelector('[data-action="save"]').disabled, true);
     assert.match(root.querySelector('[data-info="chain-warning"]').textContent, /整条链无法运行/);
@@ -178,7 +178,7 @@ test('anonymous-only chains save without reading secrets or optional provider st
       settingsView: async () => settingsView({ scrape_backends: [name] }),
       credentialStatus: async source => { queried.push(source); return { store: { state: 'absent' } }; },
       credentialRead: async () => { assert.fail('must never read secret values'); },
-      settingsSave: async input => { saves++; return settingsView({ scrape_backends: input.scrape_backends }); },
+      scrapeSettingsSave: async input => { saves++; return settingsView({ scrape_backends: input }); },
     }));
     assert.equal(root.querySelector('[data-action="save"]').disabled, false);
     assert.equal(root.querySelector('[data-info="chain-warning"]').textContent, '');
@@ -227,7 +227,7 @@ test('save rechecks credentials removed since mount', async () => {
   await mountScrape(root, api({
     settingsView: async () => settingsView({ scrape_backends: ['tavily'] }),
     credentialStatus: async () => ({ store: { state } }),
-    settingsSave: async () => { saves++; return settingsView(); },
+    scrapeSettingsSave: async () => { saves++; return settingsView(); },
   }));
   state = 'absent';
   root.querySelector('[data-action="save"]').click();
@@ -266,21 +266,16 @@ test('restore default order fills the draft and still requires saving', async ()
   window.close();
 });
 
-test('save submits the full settings payload with the draft chain', async () => {
+test('save submits only the draft chain through the dedicated command', async () => {
   const { window, root } = setup();
   let sent = null;
-  await mountScrape(root, api({ settingsSave: async input => { sent = input; return settingsView({ scrape_backends: input.scrape_backends }); } }));
+  await mountScrape(root, api({ scrapeSettingsSave: async input => { sent = input; return settingsView({ scrape_backends: input }); } }));
   chainButton(root, 'jina', '停用').click();
   root.querySelector('[data-add-backend="jina"]').click();
   chainButton(root, 'jina', '上移').click();
   root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await flush();
-  assert.deepEqual(sent.scrape_backends, ['exa', 'tavily', 'jina', 'firecrawl']);
-  assert.equal(sent.route, 'default');
-  assert.equal(sent.timeout, 60);
-  assert.deepEqual(sent.disabled_sources, []);
-  assert.equal(sent.routes, null);
-  assert.equal(sent.twitter_cookies_path, null);
+  assert.deepEqual(sent, ['exa', 'tavily', 'jina', 'firecrawl']);
   assert.equal(root.querySelector('[data-status="save"]').textContent, '已保存。');
   assert.equal(root.querySelector('[data-dirty]').hidden, true);
   window.close();
@@ -288,7 +283,7 @@ test('save submits the full settings payload with the draft chain', async () => 
 
 test('save failure keeps the draft and shows the error', async () => {
   const { window, root } = setup();
-  await mountScrape(root, api({ settingsSave: async () => { throw new Error('synthetic failure'); } }));
+  await mountScrape(root, api({ scrapeSettingsSave: async () => { throw new Error('synthetic failure'); } }));
   chainButton(root, 'exa', '上移').click();
   root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await flush();
@@ -419,7 +414,7 @@ test('saving locks draft controls until the submitted chain is acknowledged', as
   let finish;
   let submitted;
   await mountScrape(root, api({
-    settingsSave: input => {
+    scrapeSettingsSave: input => {
       submitted = input;
       return new Promise(resolve => { finish = resolve; });
     },
@@ -433,7 +428,7 @@ test('saving locks draft controls until the submitted chain is acknowledged', as
   }
   chainButton(root, 'jina', '下移').click();
   assert.deepEqual(chainNames(root), expected);
-  finish(settingsView({ scrape_backends: submitted.scrape_backends }));
+  finish(settingsView({ scrape_backends: submitted }));
   await flush();
   assert.deepEqual(chainNames(root), expected);
   assert.equal(chainButton(root, 'jina', '下移').disabled, false);
@@ -570,4 +565,30 @@ test('refresh with an unsaved draft asks before discarding it', async () => {
   assert.equal(reads, 2);
   assert.deepEqual(chainNames(root), ['firecrawl', 'jina']);
   window.close();
+});
+
+
+test('scrape save never round-trips search fields or rereads settings before writing', async () => {
+  const { window, root } = setup(); let current = settingsView(), submitted, reads = 0;
+  await mountScrape(root, api({
+    settingsView: async () => { reads++; return current; },
+    settingsSave: async () => assert.fail('must not write general settings'),
+    scrapeSettingsSave: async backends => { submitted = backends; current = { ...current, scrape_backends: backends }; return current; },
+  }));
+  chainButton(root, 'jina', '下移').click();
+  current = settingsView({ route: 'other', timeout: 23, disabled_sources: ['brave'], twitter_cookies_path: 'new-cookies.json', future_field: 'kept' });
+  root.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true })); await flush(); await flush();
+  assert.equal(reads, 1); assert.deepEqual(submitted, ['exa', 'jina', 'tavily', 'firecrawl']);
+  assert.equal(current.route, 'other'); assert.equal(current.timeout, 23); assert.deepEqual(current.disabled_sources, ['brave']); assert.equal(current.twitter_cookies_path, 'new-cookies.json'); assert.equal(current.future_field, 'kept'); window.close();
+});
+
+test('scrape transaction adapter validates arguments and SettingsView return', async () => {
+  const calls = [];
+  const client = managementApi(async (command, args) => { calls.push([command, args]); return settingsView(); });
+  for (const invalid of [undefined, null, [], [''], ['  '], [1], 'jina']) await assert.rejects(client.scrapeSettingsSave(invalid), /backends/);
+  assert.equal(calls.length, 0);
+  await client.scrapeSettingsSave(['jina', 'firecrawl']);
+  assert.deepEqual(calls, [['scrape_settings_save', { backends: ['jina', 'firecrawl'] }]]);
+  const malformed = managementApi(async () => ({ status: 'ok' }));
+  await assert.rejects(malformed.scrapeSettingsSave(['jina']), error => error.code === 'INVALID_PAYLOAD');
 });

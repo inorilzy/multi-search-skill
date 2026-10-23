@@ -23,18 +23,20 @@ const detailOf = root => root.querySelector('[data-source-row][data-expanded="tr
 
 test('sources page lists every allowlisted source once and mounts only the selected detail', async () => {
   const { window, root } = setup();
-  const seen = [];
+  const seen = []; let reads = 0;
   const api = {
     settingsView: async () => settings(),
-    credentialRead: async () => ({ value: '' }),
+    credentialRead: async () => { reads++; return { value: '', snapshot: 'empty' }; },
+    credentialReveal: async () => { assert.fail('must not reveal automatically'); },
     credentialStatus: async source => { seen.push(source); return absent; },
     credentialTest: async () => ({ result: 'success', message: '' }),
   };
   const mounted = await mountSources(root, withProviders(api));
 
+  assert.equal(reads, 0, 'opening sources must not read or decrypt credential values');
   const rows = [...root.querySelectorAll('[data-source-row]')].map(node => node.getAttribute('data-source-row'));
   assert.deepEqual(rows, ALL, 'all twelve sources appear as list rows in a stable order');
-  assert.equal(root.querySelectorAll('[data-source-detail] [data-field="key"]').length, 1, 'only one source detail is mounted at a time');
+  assert.equal(root.querySelectorAll('[data-source-detail] [data-field="key"]').length, 0, 'credentials remain collapsed until explicitly opened');
 
   for (const name of KEYED) {
     await pick(root, name);
@@ -205,7 +207,7 @@ test('overview, search, filters and keyboard shortcut use real source state', as
   assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '10');
   assert.equal(root.querySelector('[data-stat="configured"]').textContent, '1');
   assert.equal(root.querySelector('[data-stat="absent"]').textContent, '8');
-  assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 1);
+  assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0);
   root.querySelector('[data-filter="unconfigured"]').click();
   const visible = () => [...root.querySelectorAll('[data-source-row]')].filter(row => !row.hidden);
   assert.equal(visible().length, 8);

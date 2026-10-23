@@ -1,3 +1,5 @@
+import { pageRoot, el, confirmInline, disposePage } from './dom.js';
+import { toMessage } from './errors.js';
 // Canonical UI search source list is provided by the desktop at runtime via
 // `api.providerList()`. The list below is populated by `initProviders` the first
 // time a page mounts; module-level `SOURCES` is a live binding that consumers
@@ -39,6 +41,7 @@ export function initProviders(api) {
         // render, and rethrow so callers can show the minimal error state.
         SOURCES = [];
         PROVIDERS = [];
+        providerLoad = null;
         throw error;
       });
   }
@@ -56,18 +59,22 @@ const storeLabels = { present: '已保存', absent: '未保存', unavailable: '�
 const sourceEntry = source => PROVIDERS.find(item => item.source === source || item.cliSource === source) || SOURCES.find(item => item.source === DEFAULT_SOURCE) || { source, label: source, keyed: true };
 const provenance = value => JSON.stringify([value.effective_source, value.store?.state, value.store?.saved_at]);
 export async function mountCredentials(root, api, options = {}) {
+  root = pageRoot(root);
   await initProviders(api);
   const entry = sourceEntry(options.source);
-  root.innerHTML = `<section class="heading"><p class="eyebrow">CREDENTIALS / ${entry.source}</p><h1>${entry.label} 凭据。</h1><p>Key 在编辑区直接可见，以 Windows 当前用户 DPAPI 加密保存在 SQLite。旧来源不会自动生效。</p></section>`;
+  root.innerHTML = `<section class="heading"><p class="eyebrow">04 / CREDENTIALS</p><h1>凭据</h1><p>Key 默认掩码显示，以 Windows 当前用户 DPAPI 加密保存在 SQLite。旧来源不会自动生效。</p></section>`;
+  root.querySelector('h1').textContent = `${entry.label} 凭据`;
   const holder = root.ownerDocument.createElement('div'); root.append(holder);
   return mountCredentialBody(holder, api, options);
 }
+/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void}} [options] */
 export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest } = {}) {
+  root = pageRoot(root);
   await initProviders(api);
   const { label, search } = sourceEntry(source);
   const searchTest = search !== false;
   root.innerHTML = `<div class="credential-editor"><div class="credential-fields">
-    <p class="credential-note">${label} API Key：已保存的每行一条；下方逐行输入新增 Key，一次粘贴一行。删除为单行操作。</p>
+    <p class="credential-note">API Key：已保存的每行一条；下方逐行输入新增 Key，一次粘贴一行。删除为单行操作。</p>
     <div data-saved-list class="key-saved-list"></div>
     <p data-saved-empty class="credential-note key-saved-empty" hidden>当前没有已保存的 Key。</p>
     <form data-save-form>
@@ -76,18 +83,20 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <button type="submit" class="primary" data-action="save">提交新增 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
       <span class="credential-note" data-info="application">申请链接待配置</span></div>
     </form>
-    <p class="credential-note">Key 仅保存在本机 SQLite，DPAPI 保护范围为当前 Windows 用户/设备。保存不会发起搜索；环境变量与旧文件不会自动生效，也不作为配置来源。未修改的 Key 保留 exhausted 等已有元数据。</p>
-    <dl class="cred-status"><dt>已保存</dt><dd data-status="store"></dd><dt>生效来源</dt><dd data-status="source"></dd></dl>
-    <p data-info="error" role="alert"></p>
+    <details class="config-details"><summary>说明</summary><p class="credential-note">Key 仅保存在本机 SQLite，DPAPI 保护范围为当前 Windows 用户/设备。保存不会发起搜索；环境变量与旧文件不会自动生效，也不作为配置来源。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
+    <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
+    <p data-info="error" class="error-message"></p>
     <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div></div>
-    <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
-    <p class="credential-note">${searchTest ? `测试会向 ${label} 发送外部搜索请求，可能消耗额度。测试使用已保存的值；新增后请先提交。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></div></div>`;
-  const q = selector => root.querySelector(selector);
+    <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong class="status-text" data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
+    <details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? `测试会向对应服务发送外部搜索请求，可能消耗额度。测试使用已保存的值；新增后请先提交。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details></div></div>`;
+  root.querySelector('.credential-note').prepend(root.ownerDocument.createTextNode(`${label} `));
+  const q = selector => /** @type {any} */ (root.querySelector(selector));
   const text = (selector, value) => { q(selector).textContent = value; };
   let current = { store: { state: 'absent', error: '' }, effective_source: 'none' };
   let generation = 0, disposed = false, busy = false;
   /** @type {string[]} rows last confirmed by credentialRead */
   let savedRows = [];
+  const revealed = new Map();
   /** @type {string|null} snapshot used as remove guard */
   let readSnapshot = null;
   let readHealthy = false;
@@ -101,9 +110,11 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   function invalidateTest() { generation += 1; reportTest('idle', '尚未测试'); }
   function setBusy(value) {
     busy = value;
+    root.setAttribute('aria-busy', String(value)); root.classList.toggle('is-busy', value);
     for (const button of root.querySelectorAll('button')) button.disabled = value;
     for (const input of root.querySelectorAll('[data-draft-list] input')) input.disabled = value || !readHealthy;
     for (const input of root.querySelectorAll('[data-saved-list] input')) input.disabled = value;
+    for (const button of root.querySelectorAll('[data-action="copy"]')) button.disabled = value || !revealed.has(Number(button.dataset.rowIndex));
     q('[data-action="application"]').disabled = value || !current.key_application_available;
     q('[data-action="test"]').disabled = value || !searchTest;
     q('[data-action="test"]').hidden = !searchTest;
@@ -118,7 +129,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     savedRows.forEach((value, index) => {
       const row = root.ownerDocument.createElement('div');
       row.className = 'key-saved-row'; row.dataset.savedIndex = String(index);
-      row.innerHTML = `<label>Key ${index + 1}<input type="text" readonly data-saved-input aria-label="已保存 Key 第 ${index + 1} 行"></label>
+      row.innerHTML = `<label>Key ${index + 1}<input type="password" readonly data-saved-input aria-label="已保存 Key 第 ${index + 1} 行"></label>
+        <button type="button" data-action="reveal" data-row-index="${index}">显示</button><button type="button" data-action="copy" data-row-index="${index}" disabled>复制</button>
         <button type="button" data-action="remove" data-remove-index="${index}" aria-label="删除第 ${index + 1} 行 Key">删除</button>
         <div data-confirm-slot></div>`;
       // Saved value is assigned via .value, never innerHTML, so raw key text
@@ -141,17 +153,6 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
         <button type="button" data-action="remove-draft" aria-label="移除该输入行">×</button>`;
       const input = row.querySelector('input');
       input.value = value;
-      input.addEventListener('input', () => { drafts[index] = input.value; invalidateTest(); });
-      // A pasted newline is refused rather than silently merged into one key.
-      input.addEventListener('paste', event => {
-        const pasted = event.clipboardData?.getData('text') || '';
-        if (/[\r\n]/.test(pasted)) { event.preventDefault(); text('[data-info="error"]', '每行一条 Key：多行内容请拆分后逐行粘贴。'); }
-      });
-      row.querySelector('[data-action="remove-draft"]').addEventListener('click', () => {
-        if (busy || !readHealthy || disposed) return;
-        if (drafts.length === 1) { drafts[0] = ''; } else drafts.splice(index, 1);
-        renderDrafts();
-      });
       list.append(row);
     });
     setBusy(busy);
@@ -168,7 +169,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   async function readBack() {
     const saved = await api.credentialRead(source);
     if (disposed) return;
-    readSnapshot = saved.value;
+    readSnapshot = saved.snapshot;
+    revealed.clear();
     savedRows = saved.value.split('\n').filter(line => line.trim() !== '');
     readHealthy = true;
     renderSaved();
@@ -185,11 +187,50 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
         // Keep the last saved rows visible so the user can still see state; all
         // writes stay disabled until a refresh succeeds again.
         renderSaved();
-        text('[data-info="error"]', typeof error === 'string' ? error : '无法读取已保存凭据，请重试。');
+        text('[data-info="error"]', toMessage(error, '无法读取已保存凭据，请重试。'));
       }
     }
     finally { if (!disposed) setBusy(false); }
   }
+  q('[data-draft-list]').addEventListener('input', event => {
+    const input = event.target.closest('input'); if (!input) return;
+    drafts[Number(input.closest('[data-draft-index]').dataset.draftIndex)] = input.value; invalidateTest();
+  });
+  q('[data-draft-list]').addEventListener('paste', event => {
+    if (/[\r\n]/.test(event.clipboardData?.getData('text') || '')) { event.preventDefault(); text('[data-info="error"]', '每行一条 Key：多行内容请拆分后逐行粘贴。'); }
+  });
+  q('[data-draft-list]').addEventListener('click', event => {
+    const button = event.target.closest('[data-action="remove-draft"]');
+    if (!button || busy || !readHealthy || disposed) return;
+    const index = Number(button.closest('[data-draft-index]').dataset.draftIndex);
+    if (drafts.length === 1) drafts[0] = ''; else drafts.splice(index, 1);
+    renderDrafts();
+  });
+  q('[data-saved-list]').addEventListener('click', async event => {
+    const button = event.target.closest('[data-action="reveal"], [data-action="copy"]');
+    if (!button || busy || disposed) return;
+    const index = Number(button.dataset.rowIndex);
+    const row = button.closest('[data-saved-index]');
+    const input = row.querySelector('input');
+    if (button.dataset.action === 'copy') {
+      try { if (revealed.has(index)) await root.ownerDocument.defaultView.navigator.clipboard.writeText(revealed.get(index)); }
+      catch (error) { text('[data-info="error"]', toMessage(error, '复制失败，请手动复制。')); }
+      return;
+    }
+    if (revealed.has(index)) {
+      revealed.delete(index); input.value = savedRows[index]; input.type = 'password'; button.textContent = '显示'; setBusy(false); return;
+    }
+    setBusy(true);
+    try {
+      const value = await api.credentialReveal(source);
+      if (disposed) return;
+      if (value.snapshot !== readSnapshot) { await readBack(); throw new Error('凭据已变化，请重新显示。'); }
+      const key = value.value.split('\n').filter(line => line.trim() !== '')[index];
+      if (key === undefined) throw new Error('凭据已变化，请刷新。');
+      revealed.set(index, key); input.value = key; input.type = 'text'; button.textContent = '隐藏';
+    } catch (error) { if (!disposed) text('[data-info="error"]', toMessage(error)); }
+    finally { if (!disposed) setBusy(false); }
+  });
   q('[data-save-form]').addEventListener('submit', async event => {
     event.preventDefault();
     if (busy || !readHealthy || disposed) return;
@@ -216,7 +257,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
           text('[data-info="error"]', '已保存，但刷新读取失败；请刷新后再继续编辑。');
         }
       }
-    } catch (error) { if (!disposed) text('[data-info="error"]', typeof error === 'string' ? error : '保存失败，编辑值已保留。'); }
+    } catch (error) { if (!disposed) text('[data-info="error"]', toMessage(error, '保存失败，编辑值已保留。')); }
     finally { if (!disposed) setBusy(false); }
   });
   q('[data-action="add"]').addEventListener('click', () => {
@@ -259,23 +300,23 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
           }
         }
       } catch (error) {
-        if (!disposed) { panel.remove(); text('[data-info="error"]', typeof error === 'string' ? error : '删除失败，已保存值未变。'); }
+        if (!disposed) { panel.remove(); text('[data-info="error"]', toMessage(error, '删除失败，已保存值未变。')); }
       } finally { if (!disposed) setBusy(false); }
     });
   });
   q('[data-action="application"]').addEventListener('click', async () => {
     try { await api.credentialApplicationOpen(source); }
-    catch (error) { if (!disposed) text('[data-info="error"]', typeof error === 'string' ? error : '无法打开系统浏览器。'); }
+    catch (error) { if (!disposed) text('[data-info="error"]', toMessage(error, '无法打开系统浏览器。')); }
   });
   q('[data-action="test"]').addEventListener('click', async () => {
     if (!searchTest) return;
     setBusy(true); const testedGeneration = ++generation; reportTest('running', '正在测试');
     try { const outcome = await api.credentialTest(source, null); if (testedGeneration === generation && !disposed) reportTest(outcome.result === 'success' ? 'success' : 'error', outcome.result === 'success' ? '测试成功' : '测试失败', outcome.message || ''); }
-    catch (error) { if (testedGeneration === generation && !disposed) reportTest('error', '测试失败', typeof error === 'string' ? error : '请检查 CLI 后重试。'); }
+    catch (error) { if (testedGeneration === generation && !disposed) reportTest('error', '测试失败', toMessage(error, '请检查 CLI 后重试。')); }
     finally { if (!disposed) setBusy(false); }
   });
   q('[data-action="refresh"]').addEventListener('click', refresh);
   renderDrafts();
   await refresh();
-  return { dispose() { disposed = true; generation += 1; } };
+  return { dispose() { disposePage(root); disposed = true; generation += 1; revealed.clear(); for (const input of root.querySelectorAll("input")) input.value = ""; root.replaceChildren(); } };
 }
