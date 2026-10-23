@@ -41,6 +41,25 @@ pub(crate) trait CredentialBackend: Send + Sync {
     fn read(&self, provider: &str) -> Result<Option<Vec<u8>>, CredentialError>;
     fn write(&self, provider: &str, blob: &[u8]) -> Result<(), CredentialError>;
     fn delete(&self, provider: &str) -> Result<bool, CredentialError>;
+    /// Per-row append against the CURRENT stored value.
+    fn append(&self, provider: &str, keys: &[String], saved_at: f64) -> Result<(), CredentialError> {
+        // Row mutations must be atomic: only backends that can run a real
+        // read-modify-write unit (SQLite's IMMEDIATE transaction) override
+        // this. Anything else fails explicitly rather than taking a lossy
+        // separate read/write path that could drop concurrent writes.
+        let _ = (provider, keys, saved_at);
+        Err(CredentialError::Unavailable(
+            "per-row credential append is not supported by this backend".into(),
+        ))
+    }
+    /// Per-row removal guarded by the exact editor snapshot.
+    fn remove_row(&self, provider: &str, index: usize, expected: &str, saved_at: f64) -> Result<(), CredentialError> {
+        // Same atomicity rule as `append`: no non-transactional fallback.
+        let _ = (provider, index, expected, saved_at);
+        Err(CredentialError::Unavailable(
+            "per-row credential removal is not supported by this backend".into(),
+        ))
+    }
 }
 pub(crate) fn validate_key(key: &str) -> Result<String, CredentialError> {
     let text = key.trim();
@@ -173,6 +192,105 @@ pub(crate) fn remove(
     backend.delete(&target(namespace, provider))
 }
 
+/// Flatten a stored `key` value into row entries. Strings and Jina objects are
+/// kept verbatim (objects preserve every metadata field); anything else is an
+/// unreadable shape for row operations.
+fn stored_rows(provider: &str, key: &Value) -> Result<Vec<Value>, CredentialError> {
+    let items: &[Value] = match key {
+        Value::Array(items) => items,
+        other => std::slice::from_ref(other),
+    };
+    if !validate_value(provider, key) {
+        return Err(CredentialError::Unreadable);
+    }
+    Ok(items.to_vec())
+}
+fn collapse_rows(rows: Vec<Value>) -> Value {
+    if rows.len() == 1 {
+        rows.into_iter().next().unwrap()
+    } else {
+        Value::Array(rows)
+    }
+}
+/// Editor line for one row. `credential_read` renders every valid entry
+/// (string or Jina object `key`), so any entry without a line is a shape the
+/// row operations cannot address: reject instead of silently hiding it.
+fn row_editor_line(value: &Value) -> Result<String, CredentialError> {
+    value
+        .as_str()
+        .or_else(|| value.get("key").and_then(Value::as_str))
+        .map(str::to_string)
+        .ok_or(CredentialError::Unreadable)
+}
+/// Rows after appending `new_keys` to an already-decoded stored value.
+fn append_rows(provider: &str, stored: Option<&Value>, keys: &[String]) -> Result<Value, CredentialError> {
+    if keys.is_empty() || keys.len() > 256 {
+        return Err(CredentialError::Invalid("provide 1-256 keys"));
+    }
+    let mut new_keys: Vec<String> = Vec::with_capacity(keys.len());
+    for key in keys {
+        new_keys.push(validate_key(key)?);
+    }
+    let mut rows = match stored {
+        Some(key) => stored_rows(provider, key)?,
+        None => Vec::new(),
+    };
+    for row in &rows {
+        row_editor_line(row)?;
+    }
+    if rows.len() + new_keys.len() > 256 {
+        return Err(CredentialError::Invalid("credential rows cannot exceed 256"));
+    }
+    rows.extend(new_keys.into_iter().map(Value::String));
+    Ok(collapse_rows(rows))
+}
+/// Rows after removing stored entry `index` (the editor row number, so
+/// duplicates keep their identity and remove the exact occurrence). `expected`
+/// is the exact `credential_read.value` snapshot the UI saw; a mismatch means
+/// the caller is working from stale rows and nothing is written. `None` means
+/// the last row was removed and the credentials row must be deleted.
+fn remove_row_at(provider: &str, stored: &Value, index: usize, expected: &str) -> Result<Option<Value>, CredentialError> {
+    let mut rows = stored_rows(provider, stored)?;
+    let snapshot = rows
+        .iter()
+        .map(row_editor_line)
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n");
+    if snapshot != expected {
+        return Err(CredentialError::Invalid("credential rows changed; refresh and retry"));
+    }
+    if index >= rows.len() {
+        return Err(CredentialError::Invalid("credential row index out of range"));
+    }
+    rows.remove(index);
+    Ok(if rows.is_empty() { None } else { Some(collapse_rows(rows)) })
+}
+/// Append validated keys to the CURRENT stored rows for `provider`. Existing
+/// scalar/object rows are preserved verbatim; no whole-list replacement and
+/// no Jina metadata reconstruction. Never falls back to whole-editor `save`.
+pub(crate) fn append_keys(
+    backend: &dyn CredentialBackend,
+    namespace: &str,
+    provider: &str,
+    keys: &[String],
+    saved_at: f64,
+) -> Result<f64, CredentialError> {
+    backend.append(&target(namespace, provider), keys, saved_at)?;
+    Ok(saved_at)
+}
+/// Remove one editor row for `provider` (generic backend path), guarded by
+/// the exact `credential_read.value` snapshot.
+pub(crate) fn remove_at(
+    backend: &dyn CredentialBackend,
+    namespace: &str,
+    provider: &str,
+    index: usize,
+    expected: &str,
+    saved_at: f64,
+) -> Result<(), CredentialError> {
+    backend.remove_row(&target(namespace, provider), index, expected, saved_at)
+}
+
 #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
 pub(crate) struct SqliteCredentialBackend {
     pub path: std::path::PathBuf,
@@ -184,7 +302,51 @@ impl SqliteCredentialBackend {
         }
         crate::config_db::open(&self.path).map_err(CredentialError::Unavailable)
     }
+    /// One `IMMEDIATE` transaction per row mutation: decrypt + read rows,
+    /// apply `change`, encrypt, then write or delete before commit. Holding
+    /// the write lock across the whole read-modify-write window keeps two
+    /// concurrent appends (or append racing remove) from losing rows. Any
+    /// error before commit drops the transaction, which rolls back.
+    fn mutate_rows(
+        &self,
+        provider: &str,
+        saved_at: f64,
+        change: impl FnOnce(Option<&Value>) -> Result<Option<Value>, CredentialError>,
+    ) -> Result<(), CredentialError> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|_| CredentialError::Unavailable("配置数据库事务失败".into()))?;
+        let encrypted: Option<Vec<u8>> = transaction
+            .query_row(
+                "SELECT encrypted_value FROM credentials WHERE provider=?1",
+                [provider],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|_| CredentialError::Unavailable("无法读取配置数据库凭据".into()))?;
+        let stored = encrypted.map(|blob| crypt(&blob, false)).transpose()?;
+        let decoded = stored.map(|blob| decode_blob(provider, &blob)).transpose()?;
+        match change(decoded.map(|(key, _)| key).as_ref())? {
+            None => {
+                transaction
+                    .execute("DELETE FROM credentials WHERE provider=?1", [provider])
+                    .map_err(|_| CredentialError::Unavailable("删除凭据失败".into()))?;
+            }
+            Some(key) => {
+                let blob = encode_blob(&key, saved_at);
+                let (_, saved) = decode_blob(provider, &blob)?;
+                let encrypted = crypt(&blob, true)?; // Encrypt before touching the row.
+                transaction.execute("INSERT INTO credentials(provider,encrypted_value,saved_at) VALUES(?1,?2,?3) ON CONFLICT(provider) DO UPDATE SET encrypted_value=excluded.encrypted_value,saved_at=excluded.saved_at", rusqlite::params![provider, encrypted, saved])
+                    .map_err(|_| CredentialError::Unavailable("保存凭据失败，原值未改变".into()))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|_| CredentialError::Unavailable("保存凭据失败，原值未改变".into()))
+    }
 }
+
 impl CredentialBackend for SqliteCredentialBackend {
     fn read(&self, provider: &str) -> Result<Option<Vec<u8>>, CredentialError> {
         if self.path.as_os_str().is_empty() {
@@ -226,6 +388,15 @@ impl CredentialBackend for SqliteCredentialBackend {
             .execute("DELETE FROM credentials WHERE provider=?1", [provider])
             .map(|n| n > 0)
             .map_err(|_| CredentialError::Unavailable("删除凭据失败".into()))
+    }
+    fn append(&self, provider: &str, keys: &[String], saved_at: f64) -> Result<(), CredentialError> {
+        self.mutate_rows(provider, saved_at, |stored| append_rows(provider, stored, keys).map(Some))
+    }
+    fn remove_row(&self, provider: &str, index: usize, expected: &str, saved_at: f64) -> Result<(), CredentialError> {
+        self.mutate_rows(provider, saved_at, |stored| {
+            let stored = stored.ok_or(CredentialError::Invalid("credential rows changed; refresh and retry"))?;
+            remove_row_at(provider, stored, index, expected)
+        })
     }
 }
 #[cfg(windows)]

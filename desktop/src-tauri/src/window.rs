@@ -217,6 +217,47 @@ async fn credential_delete(
     .map_err(|_| "Credential delete worker failed".to_string())?
 }
 #[tauri::command]
+async fn credential_append(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    source: String,
+    keys: Vec<String>,
+) -> Result<crate::credential_commands::CredentialOverview, String> {
+    let entry = crate::credential_commands::resolve_source(&source)?;
+    let variables = manager.inner().environment.variables.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        crate::credential_commands::with_native(&variables, |backend| {
+            crate::credential_commands::append(backend, &variables, &entry, &keys, now)
+        })
+    })
+    .await
+    .map_err(|_| "Credential append worker failed".to_string())?
+}
+#[tauri::command]
+async fn credential_remove(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    source: String,
+    index: usize,
+    expected: String,
+) -> Result<crate::credential_commands::CredentialOverview, String> {
+    let entry = crate::credential_commands::resolve_source(&source)?;
+    let variables = manager.inner().environment.variables.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        crate::credential_commands::with_native(&variables, |backend| {
+            crate::credential_commands::remove_row(backend, &variables, &entry, index, &expected, now)
+        })
+    })
+    .await
+    .map_err(|_| "Credential remove worker failed".to_string())?
+}
+#[tauri::command]
 async fn credential_test(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
@@ -396,6 +437,8 @@ pub fn run() {
             credential_save,
             credential_delete,
             credential_test,
+            credential_append,
+            credential_remove,
             settings_view,
             settings_save,
             provider_list,

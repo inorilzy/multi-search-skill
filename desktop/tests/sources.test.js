@@ -65,7 +65,7 @@ test('Jina scraper credentials save and refresh without search controls', async 
     settingsView: async () => settings(),
     credentialStatus: async () => absent,
     credentialRead: async source => ({ value: source === 'jina' ? key : '' }),
-    credentialSave: async (source, value) => { saved.push(source); key = value; return absent; },
+    credentialAppend: async (source, keys) => { saved.push(source); key = keys.join("\n"); return absent; },
     credentialTest: async () => { assert.fail('Jina must never run search tests'); },
   }));
   assert.ok(!providerList().some(row => row.source === 'jina'), 'route pickers receive search providers only');
@@ -74,13 +74,14 @@ test('Jina scraper credentials save and refresh without search controls', async 
   section.dispatchEvent(new window.Event('toggle'));
   await flush();
   assert.match(section.textContent, /Jina Reader API Key/);
-  const field = section.querySelector('[data-field="key"]');
-  assert.equal(field.value, key);
-  field.value = 'synthetic-jina-replacement';
+  const savedInputs = [...section.querySelectorAll('[data-saved-list] input')].map(input => input.value);
+  assert.deepEqual(savedInputs, [key], 'original Jina key renders as a readonly saved row');
+  const draft = section.querySelector('[data-draft-list] input');
+  draft.value = 'synthetic-jina-added';
   section.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await flush();
   assert.deepEqual(saved, ['jina']);
-  assert.equal(field.value, 'synthetic-jina-replacement');
+  assert.equal(section.querySelector('[data-draft-list] input').value, '', 'submitted draft cleared after append');
   assert.equal(section.querySelector('[data-action="test"]').disabled, true);
   assert.equal(section.querySelector('[data-action="test"]').hidden, true);
   assert.equal(root.querySelector('[data-toggle="jina"]'), null);
@@ -266,7 +267,7 @@ test('row testing sends one request and saving invalidates row success', async (
     credentialRead: async () => ({ value: '' }),
     credentialStatus: async () => stored,
     credentialTest: async () => { calls += 1; return { result: 'success', message: 'synthetic response' }; },
-    credentialSave: async () => ({ ...stored, store: { state: 'present', saved_at: 2 } }),
+    credentialAppend: async () => ({ ...stored, store: { state: 'present', saved_at: 2 } }),
   }));
   const row = root.querySelector('[data-source-row="tavily"]');
   row.querySelector('[data-row-test]').click();

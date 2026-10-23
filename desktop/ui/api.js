@@ -87,6 +87,10 @@ export function managementApi(invoke) {
     credentialApplicationOpen: async source => /** @type {void} */ (await invoke('credential_application_open', { source })),
     /** @param {string} source @param {string} key @returns {Promise<CredentialOverview>} */
     credentialSave: async (source, key) => (expect('CredentialOverview', await invoke('credential_save', { source, key }))),
+    /** @param {string} source @param {string[]} keys @returns {Promise<CredentialOverview>} */
+    credentialAppend: async (source, keys) => (expect('CredentialOverview', await invoke('credential_append', { source, keys }))),
+    /** @param {string} source @param {number} index @param {string} expected @returns {Promise<CredentialOverview>} */
+    credentialRemove: async (source, index, expected) => (expect('CredentialOverview', await invoke('credential_remove', { source, index, expected }))),
     /** @param {string} source @returns {Promise<CredentialOverview>} */
     credentialDelete: async source => (expect('CredentialOverview', await invoke('credential_delete', { source }))),
     /** @param {string} source @param {string|null} path @returns {Promise<TestOutcome>} */

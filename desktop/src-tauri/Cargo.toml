@@ -72,6 +72,10 @@ name = "sqlite_credentials"
 path = "tests/sqlite_credentials.rs"
 
 [[test]]
+name = "credential_rows"
+path = "tests/credential_rows.rs"
+
+[[test]]
 name = "ui_contract"
 path = "tests/ui_contract.rs"
 

@@ -147,6 +147,49 @@ pub(crate) fn delete(
         .map_err(|e| e.to_string())?;
     Ok(overview(backend, variables, entry))
 }
+/// Per-row append for `credential_append`: merges `keys` into the CURRENT
+/// stored rows (never a whole-list replacement), then returns the same
+/// non-secret overview as `credential_save`.
+pub(crate) fn append(
+    backend: &dyn CredentialBackend,
+    variables: &BTreeMap<String, String>,
+    entry: &SourceEntry,
+    keys: &[String],
+    now: f64,
+) -> Result<CredentialOverview, String> {
+    credential::append_keys(
+        backend,
+        &credential::namespace(variables),
+        entry.provider,
+        keys,
+        now,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(overview(backend, variables, entry))
+}
+/// Per-row remove for `credential_remove`: `expected` is the exact
+/// `credential_read.value` snapshot the caller saw, `index` is the 0-based
+/// editor row to delete (duplicate keys remove the exact occurrence, raw Jina
+/// metadata included). Removing the last row deletes the credentials row.
+pub(crate) fn remove_row(
+    backend: &dyn CredentialBackend,
+    variables: &BTreeMap<String, String>,
+    entry: &SourceEntry,
+    index: usize,
+    expected: &str,
+    now: f64,
+) -> Result<CredentialOverview, String> {
+    credential::remove_at(
+        backend,
+        &credential::namespace(variables),
+        entry.provider,
+        index,
+        expected,
+        now,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(overview(backend, variables, entry))
+}
 #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
 pub(crate) fn with_native<T>(
     variables: &BTreeMap<String, String>,

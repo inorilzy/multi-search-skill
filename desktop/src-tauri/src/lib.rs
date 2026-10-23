@@ -258,6 +258,63 @@ pub mod credential_fixture {
         .delete(provider)
         .map_err(|e| e.to_string())
     }
+    /// Isolated native row-mutation seams: same production path the
+    /// `credential_append` / `credential_remove` commands use, on a
+    /// caller-supplied disposable database.
+    pub fn native_append(
+        path: &std::path::Path,
+        provider: &str,
+        keys: &[String],
+        now: f64,
+    ) -> Result<(), String> {
+        use crate::credential::{self, CredentialBackend};
+        if !credential::STORE_PROVIDERS.contains(&provider) {
+            return Err("unsupported provider".into());
+        }
+        credential::SqliteCredentialBackend {
+            path: path.to_path_buf(),
+        }
+        .append(provider, keys, now)
+        .map_err(|e| e.to_string())
+    }
+    /// Writes an arbitrary `key` shape straight into the encrypted store,
+    /// bypassing `validate_value` — the only way to seed shapes the editor
+    /// cannot render, to prove row ops reject rather than silently drop them.
+    pub fn native_write_raw(
+        path: &std::path::Path,
+        provider: &str,
+        key: &Value,
+        now: f64,
+    ) -> Result<(), String> {
+        use crate::credential;
+        if !credential::STORE_PROVIDERS.contains(&provider) {
+            return Err("unsupported provider".into());
+        }
+        let blob = serde_json::json!({"v":1,"key":key,"saved_at":now}).to_string().into_bytes();
+        let encrypted = credential::crypt(&blob, true).map_err(|e| e.to_string())?;
+        let conn = crate::config_db::open(path)?;
+        conn.execute("INSERT INTO credentials(provider,encrypted_value,saved_at) VALUES(?1,?2,?3) ON CONFLICT(provider) DO UPDATE SET encrypted_value=excluded.encrypted_value,saved_at=excluded.saved_at",
+            rusqlite::params![provider, encrypted, now])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    pub fn native_remove_row(
+        path: &std::path::Path,
+        provider: &str,
+        index: usize,
+        expected: &str,
+        now: f64,
+    ) -> Result<(), String> {
+        use crate::credential::{self, CredentialBackend};
+        if !credential::STORE_PROVIDERS.contains(&provider) {
+            return Err("unsupported provider".into());
+        }
+        credential::SqliteCredentialBackend {
+            path: path.to_path_buf(),
+        }
+        .remove_row(provider, index, expected, now)
+        .map_err(|e| e.to_string())
+    }
     pub fn resolve(source: &str) -> Result<(&'static str, &'static str), String> {
         let entry = credential_commands::resolve_source(source)?;
         Ok((entry.source, entry.provider))
