@@ -1,5 +1,14 @@
 # 抓取链功能交接
 
+## 2026-10-22 主分支集成更新（优先于后续历史记录）
+
+- C 主仓库与 D 克隆的 `main` 均已快进到修复提交 `d058f7d`；集成树同一代码版本。没有 push 或同步部署副本。
+- 功能来自 `multi-search-scrape-integration`，不是重新合并两个旧 CLI/desktop 切片。两个旧切片保留原有未提交修改；T2 独立工作树的 5 个文件已审查集成。目录及 DAG 见 `docs/scrape-chain-acceptance-tickets.md`。
+- 独立审查发现并闭合两个验收 runner 阻塞项：同版本 wheel 强制重新安装并逐字节比对；拒绝无所有权目录后不再写入。另修复父解释器 PYTHONHOME 污染，保留运行时 guard。独立 reviewer 已接受；默认 3.12 在同一 evidence 目录连续两次真实 runner PASS，69 个 Python 文件逐字节一致，guard 0 违规。
+- Rust 产品源码自 `39dcba0` 未变：完整默认回归 146 passed、2 ignored；feature suites 49 passed、1 ignored，真实 bundle 独立运行 1 passed。最终 Python 全量 810 tests、0 skipped；前端 113 passed、typecheck 通过。正式类型生成器前后 SHA-256 均为 `BB0374778105B288C09ED7D80B6B388CF39FBA12498844E792118444366C925F`，无 diff。证据 `D:\scrape-final-39dcba0`。
+- T3 真实 bundle 验收已执行。T4 临时配置真实 UI 已验证排序/停用/保存、缺 key 限制、pin 和 Jina 元数据；最终“确认清除”未点击，等待用户动作时确认。外部付费提供商、真实用户配置和部署均不在本轮范围。
+- 当前未宣称全部任务完成。此节和验收台账优先于下方“不合 main / 未执行 UI”等历史记录。
+
 ## 2026-10-22 接手更新（优先于下方历史记录）
 
 - 已用 PowerShell 核实工作树 `C:\Users\zhiyu_liu\multi-search-scrape-integration`、分支 `integration/scrape-chain`、基线 `3fd1aa149d87c991c167a9979b81d9819f1df72e`；接手时暂存区为空。Git 可用，不需要修复或继续重试 Git Bash。
