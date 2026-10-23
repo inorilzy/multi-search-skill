@@ -172,10 +172,12 @@ def install_wheel(wheel: Path, venv: Path, base_python: Path, evidence: Path) ->
     venv = prepare_owned_child(venv, evidence, ".wheel-venv")
     # Never clear a directory wholesale: --clear also removes the ownership
     # marker. A fresh or already-owned venv is safe to populate in place.
+    # -I keeps ambient PYTHONPATH/sitecustomize out of the install step; the
+    # real runtime bootstrap is exercised later in the spawned CLI child.
     python_candidate = venv / ("Scripts" if os.name == "nt" else "bin") / "python.exe"
     if not python_candidate.is_file():
         created = run(
-            [str(base_python), "-m", "venv", str(venv)],
+            [str(base_python), "-I", "-m", "venv", str(venv)],
             cwd=ROOT,
             log=evidence / "venv-create.log",
         )
@@ -185,12 +187,16 @@ def install_wheel(wheel: Path, venv: Path, base_python: Path, evidence: Path) ->
         [
             str(scripts / "python.exe"),
             "-B",
+            "-I",
             "-m",
             "pip",
             "install",
             "--no-input",
             "--no-index",
             "--no-deps",
+            # Same-version wheels are byte-different builds: pip would skip a
+            # reinstall into the reused owned venv without this.
+            "--force-reinstall",
             str(wheel),
         ],
         cwd=ROOT,
@@ -201,6 +207,41 @@ def install_wheel(wheel: Path, venv: Path, base_python: Path, evidence: Path) ->
     if not console.is_file():
         raise RuntimeError(f"installed CLI executable is missing: {console}")
     return console
+
+
+def _site_packages(venv: Path) -> Path:
+    if os.name == "nt":
+        return venv / "Lib" / "site-packages"
+    candidates = sorted((venv / "lib").glob("python*/site-packages"))
+    if not candidates:
+        raise RuntimeError(f"cannot locate site-packages in {venv}")
+    return candidates[0]
+
+
+def prove_wheel_installed(wheel: Path, venv: Path) -> dict[str, object]:
+    """Byte-compare every wheel .py member against the installed copy."""
+    site_packages = _site_packages(venv)
+    compared = 0
+    mismatches: list[str] = []
+    with zipfile.ZipFile(wheel) as archive:
+        for name in archive.namelist():
+            if not name.endswith(".py"):
+                continue
+            installed = site_packages / name
+            if not installed.is_file():
+                mismatches.append(f"{name} (missing)")
+                continue
+            if installed.read_bytes() != archive.read(name):
+                mismatches.append(f"{name} (bytes differ)")
+                continue
+            compared += 1
+    if mismatches:
+        raise RuntimeError(
+            "installed package diverges from built wheel: " + ", ".join(mismatches)
+        )
+    if compared == 0:
+        raise RuntimeError(f"wheel {wheel} contains no .py package files")
+    return {"wheel_py_files": compared, "site_packages": str(site_packages)}
 
 
 def compile_native_test(target_dir: Path, evidence: Path) -> Path:
@@ -250,6 +291,16 @@ def compile_native_test(target_dir: Path, evidence: Path) -> Path:
     return unique[0]
 
 
+def installed_environment() -> dict[str, str]:
+    # A different base Python's PYTHONHOME breaks installed CLI interpreters;
+    # retain PYTHONPATH and all bootstrap/guard variables for runtime checks.
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() != "PYTHONHOME"
+    }
+
+
 def prove_installed_import(venv: Path, isolation, evidence: Path) -> dict[str, str]:
     python = venv / ("Scripts" if os.name == "nt" else "bin") / "python.exe"
     source = """
@@ -268,7 +319,7 @@ print(json.dumps({
     result = run(
         [str(python), "-B", "-c", source],
         cwd=isolation.root,
-        env=dict(os.environ),
+        env=installed_environment(),
         log=evidence / "installed-import.log",
     )
     require_success(result, "installed site-packages import proof")
@@ -420,6 +471,7 @@ def main(argv: list[str] | None = None) -> int:
         console = install_wheel(
             wheel, venv, options.base_python.resolve(), evidence
         )
+        manifest["installed_files_match_wheel"] = prove_wheel_installed(wheel, venv)
         binary = compile_native_test(target_dir, evidence)
         manifest.update(
             {
@@ -448,7 +500,7 @@ def main(argv: list[str] | None = None) -> int:
             runtime = console.parent
             marker = isolation.root / "bootstrap-active.json"
             rust_environment = dict(
-                os.environ,
+                installed_environment(),
                 PATH=str(runtime) + os.pathsep + os.environ.get("PATH", ""),
                 MULTI_SEARCH_ACCEPTANCE_INSTALLED="1",
                 MULTI_SEARCH_DESKTOP_TEST_USER_PATH=str(runtime),
@@ -484,15 +536,13 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:
         manifest["status"] = "FAIL"
         manifest["error"] = str(error)
-        if evidence_path.exists() and evidence_path.is_dir() and not evidence_path.is_symlink():
-            failure_manifest = evidence_path / "acceptance-manifest.json"
-        else:
-            failure_manifest = evidence_path.with_name(
-                evidence_path.name + ".acceptance-manifest.json"
+        # Only runner-owned evidence may receive the failure manifest. An
+        # unaccepted path (junction, outside sibling, or unowned directory)
+        # stays byte-identical and the error goes to stderr alone.
+        if "evidence" in locals():
+            (evidence / "acceptance-manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-        failure_manifest.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
         print(f"T2 installed CLI acceptance FAIL: {error}", file=sys.stderr)
         return 1
 

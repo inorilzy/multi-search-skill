@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -78,13 +79,23 @@ class DesktopNativeAcceptanceRunnerTests(unittest.TestCase):
             base.write_bytes(b"python")
             venv = root / ".wheel-venv"
             scripts = venv / ("Scripts" if os.name == "nt" else "bin")
+            site_packages = (
+                venv / "Lib" / "site-packages"
+                if os.name == "nt"
+                else venv / "lib" / "python3.12" / "site-packages"
+            )
             calls = []
 
             def fake_run(command, *, cwd, env=None, log=None):
                 calls.append(command)
                 if "venv" in command:
                     scripts.mkdir(parents=True, exist_ok=True)
+                    (scripts / "python.exe").write_bytes(b"py")
                     (scripts / ("multi-search.exe" if os.name == "nt" else "multi-search")).write_bytes(b"cli")
+                if "install" in command:
+                    # Second install into the same-version owned venv is the
+                    # regression the runner must survive.
+                    site_packages.mkdir(parents=True, exist_ok=True)
                 return runner.subprocess.CompletedProcess(command, 0, "", "")
 
             with mock.patch.object(runner, "run", side_effect=fake_run):
@@ -94,9 +105,21 @@ class DesktopNativeAcceptanceRunnerTests(unittest.TestCase):
                 )
             self.assertTrue((venv / runner.OWNER_MARKER).is_file())
             install_command = calls[1]
+            self.assertIn("-I", install_command)
             self.assertIn("--no-index", install_command)
             self.assertIn("--no-deps", install_command)
+            self.assertIn("--force-reinstall", install_command)
             self.assertEqual(install_command[-1], str(wheel))
+            venv_command = calls[0]
+            self.assertIn("-I", venv_command)
+
+            # Re-running on the already-owned, already-installed venv must
+            # reuse it (no second creation) and still pass --force-reinstall.
+            calls.clear()
+            with mock.patch.object(runner, "run", side_effect=fake_run):
+                runner.install_wheel(wheel, venv, base, root)
+            self.assertEqual(len(calls), 1)
+            self.assertIn("--force-reinstall", calls[0])
 
 
     def test_nonmatching_filter_is_rejected_even_with_zero_exit(self):
@@ -159,6 +182,106 @@ class DesktopNativeAcceptanceRunnerTests(unittest.TestCase):
                 runner.require_clean_guard(isolation, Path(temp))
             self.assertIn("socket.create_connection", str(error.exception))
 
+    def test_installed_environment_removes_only_pythonhome_case_insensitively(self):
+        environment = {
+            "PythonHome": r"C:\stale\pythonhome",
+            "PYTHONHOME": r"C:\other\pythonhome",
+            "PYTHONPATH": r"C:\bootstrap",
+            "PYTHONHOME2": "kept",
+            "MULTI_SEARCH_TEST_ISOLATION": "1",
+            "MULTI_SEARCH_TEST_GUARD_REPORT": "guard.log",
+        }
+        with mock.patch.object(runner.os, "environ", environment):
+            actual = runner.installed_environment()
+        self.assertEqual(
+            actual,
+            {k: v for k, v in environment.items() if k.upper() != "PYTHONHOME"},
+        )
+        self.assertIn("PythonHome", environment)
+
+    def test_import_proof_strips_pythonhome_but_preserves_pythonpath(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            venv = root / "venv"
+            scripts = venv / ("Scripts" if os.name == "nt" else "bin")
+            scripts.mkdir(parents=True)
+            (scripts / "python.exe").write_bytes(b"py")
+            isolation = mock.Mock()
+            isolation.root = root
+            seen = {}
+
+            def fake_run(command, *, cwd, env=None, log=None):
+                seen["command"] = command
+                seen["env"] = env
+                return runner.subprocess.CompletedProcess(
+                    command,
+                    0,
+                    '{"version":"0.4.0","package":"x","http":"y"}\n',
+                    "",
+                )
+
+            environment = {
+                "PYTHONHOME": r"C:\stale\pythonhome",
+                "pythonHOME2": "kept-not-pythonhome",
+                "PYTHONPATH": r"C:\bootstrap",
+                "MULTI_SEARCH_TEST_ISOLATION": "1",
+                "MULTI_SEARCH_TEST_GUARD_REPORT": "guard.log",
+            }
+            with mock.patch.dict(runner.os.environ, environment, clear=True):
+                with mock.patch.object(runner, "run", side_effect=fake_run):
+                    runner.prove_installed_import(venv, isolation, root)
+            env = seen["env"]
+            self.assertFalse(any(key.upper() == "PYTHONHOME" for key in env))
+            self.assertEqual(env["PYTHONPATH"], r"C:\bootstrap")
+            self.assertEqual(env["MULTI_SEARCH_TEST_ISOLATION"], "1")
+            self.assertEqual(env["MULTI_SEARCH_TEST_GUARD_REPORT"], "guard.log")
+            self.assertEqual(
+                next(v for k, v in env.items() if k.upper() == "PYTHONHOME2"),
+                "kept-not-pythonhome",
+            )
+            self.assertNotIn("-I", seen["command"])
+
+    def test_main_passes_clean_environment_to_rust_test_process(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "bootstrap").mkdir()
+            isolation = mock.Mock(root=root, home=root / "home")
+            context = mock.MagicMock()
+            context.__enter__.return_value = isolation
+            native_test = mock.Mock(side_effect=RuntimeError("stop at test boundary"))
+            environment = {
+                "PythonHome": r"C:\stale\pythonhome",
+                "PYTHONPATH": str(root / "bootstrap"),
+                "MULTI_SEARCH_TEST_ISOLATION": "1",
+                "MULTI_SEARCH_TEST_GUARD_REPORT": str(root / "guard.log"),
+                "PATH": "original-path",
+            }
+            with mock.patch.object(runner.os, "environ", environment):
+                with mock.patch.multiple(
+                    runner,
+                    build_wheel=mock.Mock(return_value=root / "current.whl"),
+                    install_wheel=mock.Mock(return_value=root / "Scripts" / "multi-search.exe"),
+                    prove_wheel_installed=mock.Mock(return_value={}),
+                    compile_native_test=mock.Mock(return_value=root / "native-test.exe"),
+                    sha256=mock.Mock(return_value="wheel-hash"),
+                    isolated_test_environment=mock.Mock(return_value=context),
+                    prove_installed_import=mock.Mock(return_value={}),
+                    execute_native_test=native_test,
+                ):
+                    with mock.patch("sys.stderr", new=io.StringIO()):
+                        self.assertEqual(runner.main([
+                            "--evidence", str(root / "evidence"),
+                            "--cargo-target-dir", str(root / "target"),
+                        ]), 1)
+            native_test.assert_called_once()
+            actual = native_test.call_args.kwargs["environment"]
+            self.assertFalse(any(k.upper() == "PYTHONHOME" for k in actual))
+            for key, value in environment.items():
+                if key not in ("PythonHome", "PATH"):
+                    self.assertEqual(actual[key], value)
+            self.assertEqual(actual["MULTI_SEARCH_TEST_PYTHONPATH"], environment["PYTHONPATH"])
+            self.assertIn("PythonHome", environment)
+
 
     def test_unowned_existing_evidence_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -188,6 +311,89 @@ class DesktopNativeAcceptanceRunnerTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as error:
                 runner.prepare_owned_child(outside, evidence, ".wheel-venv")
             self.assertIn("outside its owned root", str(error.exception))
+
+    def test_prove_wheel_installed_matches_and_rejects_stale_bytes(self):
+        import io
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = "multi_search_mcp/src/support/http.py"
+            fresh = b"# fresh wheel payload\n"
+            wheel = root / "multi_search_mcp-0.4.0-py3-none-any.whl"
+            with zipfile.ZipFile(wheel, "w") as archive:
+                archive.writestr(package, fresh)
+                archive.writestr(
+                    "multi_search_mcp-0.4.0.dist-info/METADATA", "Name: x\n"
+                )
+            venv = root / ".wheel-venv"
+            site_packages = runner._site_packages(venv)
+            installed = site_packages / package
+            installed.parent.mkdir(parents=True, exist_ok=True)
+            installed.write_bytes(fresh)
+            proof = runner.prove_wheel_installed(wheel, venv)
+            self.assertEqual(proof["wheel_py_files"], 1)
+
+            installed.write_bytes(b"# stale same-version build\n")
+            with self.assertRaises(RuntimeError) as error:
+                runner.prove_wheel_installed(wheel, venv)
+            self.assertIn("diverges from built wheel", str(error.exception))
+            self.assertIn(package, str(error.exception))
+
+    def test_main_rejected_evidence_preserves_preexisting_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            evidence = root / "evidence"
+            evidence.mkdir()
+            foreign_manifest = evidence / "acceptance-manifest.json"
+            foreign_bytes = b'{"status":"PASS","foreign":true}\n'
+            foreign_manifest.write_bytes(foreign_bytes)
+            stderr = io.StringIO()
+            argv = [
+                "--evidence",
+                str(evidence),
+                "--cargo-target-dir",
+                str(root / "target"),
+                "--base-python",
+                str(root / "python.exe"),
+            ]
+            with mock.patch.object(runner.os, "name", "nt"):
+                with mock.patch("sys.stderr", stderr):
+                    self.assertEqual(runner.main(argv), 1)
+            self.assertEqual(foreign_manifest.read_bytes(), foreign_bytes)
+            self.assertIn("unowned evidence directory", stderr.getvalue())
+            self.assertEqual(sorted(p.name for p in evidence.iterdir()), ["acceptance-manifest.json"])
+            self.assertFalse(
+                (root / "evidence.acceptance-manifest.json").exists()
+            )
+
+    def test_main_owned_early_failure_writes_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            evidence = root / "evidence"
+            stderr = io.StringIO()
+            argv = [
+                "--evidence",
+                str(evidence),
+                "--cargo-target-dir",
+                str(root / "target"),
+                "--base-python",
+                str(root / "missing-python.exe"),
+            ]
+
+            def fail_build(owned):
+                raise RuntimeError("wheel build failed")
+
+            with mock.patch.object(runner.os, "name", "nt"):
+                with mock.patch.object(runner, "build_wheel", side_effect=fail_build):
+                    with mock.patch("sys.stderr", stderr):
+                        self.assertEqual(runner.main(argv), 1)
+            manifest = evidence / "acceptance-manifest.json"
+            self.assertTrue(manifest.is_file())
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(data["status"], "FAIL")
+            self.assertIn("wheel build failed", data["error"])
+            self.assertIn("wheel build failed", stderr.getvalue())
 
 
 if __name__ == "__main__":
