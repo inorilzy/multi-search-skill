@@ -95,6 +95,10 @@ class SearchWebRequest:
     config_path: str | None = None
     expand: list[str] | None = None
     use_state: bool = True
+    # Candidate-only mode: fuse ranked search hits and stop. No page body is
+    # fetched and no body cache entry is written, so a caller that only needs
+    # provider status (the desktop's "test key") spends exactly one search budget.
+    no_fetch: bool = False
 
 
 @dataclass
@@ -347,6 +351,7 @@ def _run_search_candidates(
     state_store: StateStore | None = None,
     query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,
     prefetched_bodies: dict[str, str] | None = None,
+    persist_bodies: bool = True,
 ) -> dict:
     """Return compact SearchHits and optionally fill the selected-body map."""
     if isinstance(request, dict):
@@ -505,7 +510,7 @@ def _run_search_candidates(
     selected_bodies = {url: candidate[2] for url, candidate in bodies.items()}
     if prefetched_bodies is not None:
         prefetched_bodies.update(selected_bodies)
-    if store is not None:
+    if store is not None and persist_bodies:
         for hit in hits:
             retention = retention_policy_for_sources(list(hit.get("providers") or []))
             if not retention.persist_body:
@@ -635,7 +640,11 @@ def run_search_web(
     scrape_timeout: int | None = None,
     scrape_concurrency: int | None = None,
 ) -> dict:
-    """Fuse all returned candidates, then fetch the final 15 in RRF order."""
+    """Fuse all returned candidates, then fetch the final 15 in RRF order.
+
+    With ``request.no_fetch`` the flow stops after fusion: no body fetch, no
+    body-cache write, and ``diagnostics.body_fetch_mode == "candidates"``.
+    """
     if isinstance(request, dict):
         request = SearchWebRequest(**request)
     resolved_config = _load_config_safe(request.config_path) if config is None else dict(config)
@@ -653,8 +662,22 @@ def run_search_web(
     response = _run_search_candidates(
         request, providers=providers, keys=runtime_keys, config=resolved_config,
         state_store=store, query_runs_observer=query_runs_observer,
-        prefetched_bodies=prefetched,
+        prefetched_bodies=prefetched, persist_bodies=not request.no_fetch,
     )
+    if request.no_fetch:
+        # Candidate-only mode: the response keeps the ranked hits and provider
+        # status, but no body is fetched and no body cache entry is written, so
+        # only the search budget (not the scrape budget) can make it time out.
+        response["scrapes"] = []
+        response["site_scraper_updates"] = []
+        response["diagnostics"].update(
+            result_limit=SEARCH_RESULT_LIMIT,
+            body_fetch_count=0,
+            body_success_count=0,
+            body_failures=[],
+            body_fetch_mode="candidates",
+        )
+        return response
     max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 1200), 20_000))
     body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
     concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))

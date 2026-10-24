@@ -61,6 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--count", type=int, help="per-provider recall count; final output is at most 15")
     search_parser.add_argument("--timeout", type=int)
     search_parser.add_argument("--expand", action="append", default=None)
+    search_parser.add_argument(
+        "--no-fetch", action="store_true",
+        help="candidates only: fuse ranked hits but never fetch page bodies or write the body cache",
+    )
     _add_format_argument(search_parser)
     search_parser.set_defaults(handler=_handle_search)
 
@@ -182,6 +186,7 @@ def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
             sources=list(args.sources or []),
             timeout=args.timeout,
             expand=None if args.expand is None else list(args.expand),
+            no_fetch=bool(args.no_fetch),
         )
     )
     statuses = payload.get("provider_status") or []

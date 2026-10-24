@@ -131,6 +131,8 @@ fn test_args_never_contain_key_material() {
     assert!(args.iter().all(|a| !a.contains(SYNTHETIC_KEY)));
     assert!(args.windows(2).any(|w| w == ["--source", "tavily"]));
     assert!(!args.iter().any(|a| a.contains("key")));
+    // Candidate-only: the test key run must never trigger Core page fetching.
+    assert!(args.iter().any(|a| a.as_str() == "--no-fetch"));
 }
 
 #[test]
