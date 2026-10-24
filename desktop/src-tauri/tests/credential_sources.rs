@@ -219,3 +219,63 @@ fn corrupt_keys_file_counts_as_zero_and_is_not_echoed() {
     assert_eq!(row.effective_source, "none");
     assert!(!format!("{row:?}").contains(FILE_KEY_A));
 }
+
+#[test]
+fn core_source_result_overrides_local_derivation() {
+    // Local state alone would say "file", but Core reports the store entry as
+    // unreadable and fails that provider closed. The desktop must display Core's
+    // answer (never fall back to the plaintext file).
+    let backend = Memory::default();
+    let home = Home::new("core-source");
+    home.write_keys(&format!(r#"{{"github":"{FILE_KEY_A}"}}"#));
+    let doctor = serde_json::json!({
+        "key_sources": {
+            "github": {
+                "effective_source": "unavailable",
+                "env_vars_set": [],
+                "env_overrides_store": false,
+                "credential_store": "unavailable",
+                "file_present": true,
+                "file_key_count": 1,
+                "credential_store_error": "stored credential for github is unreadable"
+            }
+        }
+    });
+    let row = fixture::overview_with_core(&backend, &home.vars(), "github_repos", &doctor).unwrap();
+    assert_eq!(row.effective_source, "unavailable");
+    assert_eq!(row.file_key_count, 1, "Core's count is displayed");
+    assert!(!format!("{row:?}").contains(FILE_KEY_A));
+
+    // Core decides env precedence and which alias is effective.
+    let doctor = serde_json::json!({
+        "key_sources": {
+            "exa": {
+                "effective_source": "env",
+                "env_vars_set": ["EXA_API_KEY"],
+                "env_overrides_store": true,
+                "credential_store": "present",
+                "file_key_count": 0
+            }
+        }
+    });
+    let row = fixture::overview_with_core(&backend, &home.vars(), "exa", &doctor).unwrap();
+    assert_eq!(row.effective_source, "env");
+    assert_eq!(row.env_var, "EXA_API_KEY");
+    assert!(row.env_overrides_store);
+    assert_eq!(row.file_key_count, 0);
+}
+
+#[test]
+fn payload_without_per_provider_rows_keeps_fixture_fallback() {
+    // `doctor --no-keys` has no per-provider section. The production rule is
+    // absent (it always comes from Core), while the test fixture keeps a local
+    // derivation so desktop unit tests need no CLI.
+    let backend = Memory::default();
+    let home = Home::new("no-core");
+    home.write_keys(&format!(r#"{{"github":"{FILE_KEY_A}"}}"#));
+    let doctor = serde_json::json!({"key_sources": {"env": [], "file": "~/.search-keys.json"}});
+    let row = fixture::overview_with_core(&backend, &home.vars(), "github_repos", &doctor).unwrap();
+    // Without a per-provider row nothing is applied; the test fixture keeps the
+    // local derivation so this seam stays usable without a CLI.
+    assert_eq!(row.effective_source, "file");
+}

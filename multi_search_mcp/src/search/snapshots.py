@@ -90,7 +90,9 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
     Provider wrappers count actual attempts (including key retries). The Core
     observer supplies the post-timeout, post-retry rows and original provider ranks.
     """
-    from ..service import MultiSearchRequest, SearchWebRequest, _load_runtime_keys, _run_search_candidates
+    from ..service import (
+        MultiSearchRequest, SearchWebRequest, _load_runtime_key_context, _run_search_candidates,
+    )
     from .registry import build_provider_registry
     from .resolve import resolve_search_plan
 
@@ -99,7 +101,11 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
     request = replace(request, expand=list(logical.variants), use_state=False)
     config = dict(load_config(request.config_path) if config is None else config)
     config.update(expand=[], expand_queries=[])
-    keys = _load_runtime_keys(config) if keys is None else dict(keys)
+    if keys is None:
+        loaded = _load_runtime_key_context(config)
+        keys, key_errors = loaded.keys, loaded.errors
+    else:
+        keys, key_errors = dict(keys), {}
     providers = build_provider_registry() if providers is None else providers
     plan = resolve_search_plan(MultiSearchRequest(
         query=request.query, route=request.route, count=request.count,
@@ -142,7 +148,7 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
     start = time.perf_counter()
     actual = _run_search_candidates(
         request, providers={name: wrap(spec) for name, spec in providers.items()},
-        keys=keys, config=config, query_runs_observer=observe,
+        keys=keys, key_errors=key_errors, config=config, query_runs_observer=observe,
     )
     elapsed = time.perf_counter() - start
     if [query for query, _rows in observed] != list(logical.queries):

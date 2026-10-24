@@ -97,6 +97,20 @@ pub mod credential_fixture {
         let entry = credential_commands::resolve_source(source)?;
         Ok(credential_commands::overview(&Adapter(backend), variables, entry))
     }
+    /// Overview exactly as the production command returns it: local store state plus
+    /// the effective source decided by Core's `doctor --format json` payload.
+    pub fn overview_with_core<B: Backend + Sync + ?Sized>(
+        backend: &B,
+        variables: &BTreeMap<String, String>,
+        source: &str,
+        doctor: &Value,
+    ) -> Result<CredentialOverview, String> {
+        let entry = credential_commands::resolve_source(source)?;
+        let key_sources = credential_commands::core_key_sources(doctor);
+        let mut overview = credential_commands::overview(&Adapter(backend), variables, entry);
+        credential_commands::apply_core_source(&mut overview, key_sources.get(&entry.key_provider));
+        Ok(overview)
+    }
     pub fn resolve(source: &str) -> Result<(&'static str, &'static str), String> {
         let entry = credential_commands::resolve_source(source)?;
         Ok((entry.name.as_str(), entry.key_provider.as_str()))

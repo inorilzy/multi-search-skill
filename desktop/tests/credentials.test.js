@@ -288,6 +288,7 @@ test('test results distinguish success, auth, quota, and network outcomes', asyn
     ['auth_failed', '认证失败：Tavily 拒绝了该 Key。'],
     ['quota', '额度不足：Tavily 额度已用尽。'],
     ['missing_key', '缺少 Key：请先保存。'],
+    ['credential_store', '凭据库错误：无法读取这个来源的 Key，请重新保存。'],
     ['network', '网络错误：无法连接 Tavily。'],
   ];
   for (const [result, label] of cases) {
