@@ -88,7 +88,7 @@ impl Execution {
             }
             _ => {
                 self.state.status = "failed".into();
-                self.state.error = "CLI did not return a valid JSON response".into();
+                self.state.error = "CLI 未返回有效的 JSON 结果".into();
             }
         }
         if !output.stderr.trim().is_empty() {
@@ -99,34 +99,34 @@ impl Execution {
 impl DesktopManager {
     pub fn start_search(&self, options: SearchOptions) -> Result<u64, String> {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-            return Err("Desktop manager is closed".into());
+            return Err("桌面管理器已关闭".into());
         }
         if options.query.trim().is_empty()
             || options.query.len() > 2000
             || options.query.contains('\0')
         {
-            return Err("Enter a query of 1–2000 bytes".into());
+            return Err("请输入 1 到 2000 字节的搜索词".into());
         }
         if crate::source_catalog::catalog().route(&options.route).is_none()
             || !(crate::settings::TIMEOUT_MIN..=crate::settings::TIMEOUT_MAX).contains(&options.timeout)
             || options.sources.len() > 16
             || options.sources.iter().any(|s| !is_allowed_source(s))
         {
-            return Err("Unsupported search options".into());
+            return Err("不支持的搜索选项".into());
         }
         let cli = self.execution_cli()?;
         let mut slot = self
             .execution_slot
             .lock()
-            .map_err(|_| "Execution state unavailable")?;
+            .map_err(|_| "执行状态不可用")?;
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-            return Err("Desktop manager is closed".into());
+            return Err("桌面管理器已关闭".into());
         }
         if slot
             .as_ref()
             .is_some_and(|s| s.lock().unwrap().state.status == "running")
         {
-            return Err("A test search is already running".into());
+            return Err("已有测试搜索正在运行".into());
         }
         let credentials = search_credentials(&options.route, &options.sources);
         let id = self
@@ -154,7 +154,7 @@ impl DesktopManager {
             &self.environment,
             &credentials,
         )
-        .map_err(|_| "Could not start the CLI")?;
+        .map_err(|_| "无法启动 CLI")?;
         let execution = Arc::new(Mutex::new(Execution {
             state: ExecutionStatus {
                 id,
@@ -184,9 +184,9 @@ impl DesktopManager {
                         let _output = run.process.take().unwrap().finish(None, timed_out);
                         run.state.status = if timed_out { "timed_out" } else { "failed" }.into();
                         run.state.error = if timed_out {
-                            "CLI exceeded the test execution deadline"
+                            "CLI 超过测试执行时限"
                         } else {
-                            "CLI process could not be observed"
+                            "无法读取 CLI 进程状态"
                         }
                         .into();
                     }
@@ -200,14 +200,14 @@ impl DesktopManager {
         let slot = self
             .execution_slot
             .lock()
-            .map_err(|_| "Execution state unavailable")?;
+            .map_err(|_| "执行状态不可用")?;
         let mut run = slot
             .as_ref()
-            .ok_or("No execution")?
+            .ok_or("没有正在执行的搜索")?
             .lock()
-            .map_err(|_| "Execution state unavailable")?;
+            .map_err(|_| "执行状态不可用")?;
         if run.state.id != id {
-            return Err("Unknown execution".into());
+            return Err("未知的执行".into());
         }
         if run.state.status == "running" {
             let code = run
@@ -215,7 +215,7 @@ impl DesktopManager {
                 .as_mut()
                 .unwrap()
                 .poll()
-                .map_err(|_| "Cannot observe execution")?;
+                .map_err(|_| "无法读取执行状态")?;
             if let Some(code) = code {
                 run.complete(code);
             } else {
@@ -245,16 +245,16 @@ impl DesktopManager {
         let slot = self
             .execution_slot
             .lock()
-            .map_err(|_| "Execution state unavailable")?;
+            .map_err(|_| "执行状态不可用")?;
         let state = slot
             .as_ref()
-            .ok_or("No execution")?
+            .ok_or("没有正在执行的搜索")?
             .lock()
-            .map_err(|_| "Execution state unavailable")?
+            .map_err(|_| "执行状态不可用")?
             .state
             .clone();
         if state.id != id {
-            return Err("Unknown execution".into());
+            return Err("未知的执行".into());
         }
         Ok(state)
     }

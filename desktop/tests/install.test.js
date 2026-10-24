@@ -29,7 +29,9 @@ test('PATH registration is a separate explicit consent action after CLI installa
   root.querySelector('[data-action="path-confirm"]').click();
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(calls, 1);
-  assert.match(root.querySelector('[data-path-result]').textContent, /ready.*missing|missing.*ready/);
+  const pathResult = root.querySelector('[data-path-result]').textContent;
+  assert.match(pathResult, /已添加.*未发现.*可调用|已添加.*可调用.*未发现/);
+  assert.doesNotMatch(pathResult, /\b(ready|missing|added)\b/);
   window.close();
 });
 

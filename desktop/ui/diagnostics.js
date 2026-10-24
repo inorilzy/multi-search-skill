@@ -1,5 +1,5 @@
 import { ROUTES, SEARCH_SOURCES } from './catalog.js';
-import { errorReason } from './api.js';
+import { normalizeError, showError } from './api.js';
 
 const statusLabels = { ready: '可调用', missing: '未发现', not_executable: '不可执行', version_failed: '版本检查失败', unavailable: '不可用' };
 const routeOptions = ROUTES.map(({ name, label }) => `<option value="${name}">${label} / ${name}</option>`).join('');
@@ -17,18 +17,98 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       <form data-search-form><label>搜索词<input data-field="query" required maxlength="2000" placeholder="例如：Python SQLite 缓存"></label>
       <div class="search-options"><label>路由<select data-field="route">${routeOptions}</select></label><label>搜索源<select data-field="sources">${sourceOptions}</select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="90" value="15"></label></div>
       <div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
-      <p data-execution-error role="alert"></p><pre data-results tabindex="0" role="region" aria-label="搜索结果">结果会显示在这里。</pre></section>`;
+      <p data-execution-error role="alert"></p><div data-results class="search-results" tabindex="0" role="region" aria-label="搜索结果"><p class="search-results-empty">结果会显示在这里。</p></div></section>`;
   let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false;
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');
   const executionError = root.querySelector('[data-execution-error]');
   function controls(running) { search.disabled = running || !appReady || cancelling; cancel.disabled = !running || cancelling; root.querySelector('[data-action="refresh"]').disabled = running; }
   function setExecutionError(message) { executionError.textContent = message; }
+  const statusLabel = (labels, value) => labels[value] || `未知状态（${value ?? '无'}）`;
+  // Results are a readable list. Provider text is set with textContent/createElement only; the
+  // machine payload stays available in a collapsed details block for support.
+  function renderResults(payload) {
+    const container = root.querySelector('[data-results]');
+    container.replaceChildren();
+    if (!payload || typeof payload !== 'object') {
+      const empty = root.ownerDocument.createElement('p');
+      empty.className = 'search-results-empty';
+      empty.textContent = '结果会显示在这里。';
+      container.append(empty);
+      return;
+    }
+    const results = Array.isArray(payload.results) ? payload.results : [];
+    const errors = Array.isArray(payload.errors) ? payload.errors : [];
+    if (!results.length && !errors.length) {
+      const empty = root.ownerDocument.createElement('p');
+      empty.className = 'search-results-empty';
+      empty.textContent = '本次搜索没有结果。';
+      container.append(empty);
+    }
+    if (results.length) {
+      const list = root.ownerDocument.createElement('ol');
+      list.className = 'search-result-list';
+      for (const item of results) {
+        const row = root.ownerDocument.createElement('li');
+        const title = root.ownerDocument.createElement('strong');
+        title.textContent = item?.title || '(无标题)';
+        row.append(title);
+        if (typeof item?.url === 'string' && /^https?:\/\//i.test(item.url)) {
+          const link = root.ownerDocument.createElement('a');
+          link.href = item.url;
+          link.textContent = item.url;
+          link.rel = 'noreferrer noopener';
+          link.target = '_blank';
+          row.append(' ', link);
+        }
+        if (item?.snippet) {
+          const snippet = root.ownerDocument.createElement('p');
+          snippet.textContent = item.snippet;
+          row.append(snippet);
+        }
+        if (item?.source) {
+          const source = root.ownerDocument.createElement('span');
+          source.className = 'search-result-source';
+          source.textContent = item.source;
+          row.append(source);
+        }
+        list.append(row);
+      }
+      container.append(list);
+    }
+    if (errors.length) {
+      const list = root.ownerDocument.createElement('ul');
+      list.className = 'search-error-list';
+      for (const item of errors) {
+        const row = root.ownerDocument.createElement('li');
+        const source = item?.source ? `${item.source}：` : '';
+        row.textContent = `${source}${item?.error || '来源失败'}`;
+        list.append(row);
+      }
+      container.append(list);
+    }
+    if (payload.answer) {
+      const answer = root.ownerDocument.createElement('p');
+      answer.className = 'search-answer';
+      answer.textContent = String(payload.answer);
+      container.append(answer);
+    }
+    {
+      const details = root.ownerDocument.createElement('details');
+      details.className = 'search-raw';
+      const summary = root.ownerDocument.createElement('summary');
+      summary.textContent = '原始 JSON';
+      const pre = root.ownerDocument.createElement('pre');
+      pre.textContent = JSON.stringify(payload, null, 2);
+      details.append(summary, pre);
+      container.append(details);
+    }
+  }
   function renderExecution(status) {
     const labels = { running: '正在执行', success: '搜索成功', empty: '没有结果', partial: '部分来源失败', failed: '执行失败', cancelled: '已取消', timed_out: '执行超时' };
-    root.querySelector('[data-status="execution"]').textContent = labels[status.status] || '执行失败';
+    root.querySelector('[data-status="execution"]').textContent = statusLabel(labels, status.status);
     setExecutionError(status.error || '');
-    if (status.payload) root.querySelector('[data-results]').textContent = JSON.stringify(status.payload, null, 2);
+    if (status.payload) renderResults(status.payload);
     controls(status.status === 'running');
   }
   async function poll() {
@@ -41,7 +121,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       if (state.status === 'running') timer = setTimeout(poll, pollInterval); else activeId = null;
     } catch (error) {
       if (!disposed && activeId === id) {
-        setExecutionError(`无法读取执行状态：${errorReason(error, '请稍后重试或取消本次执行。')}`);
+        showError(executionError, error, '无法读取执行状态，请稍后重试或取消本次执行。');
         cancel.disabled = false;
       }
     }
@@ -64,7 +144,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       if (disposed) return;
       activeId = null;
       root.querySelector('[data-status="execution"]').textContent = '等待测试';
-      setExecutionError(`取消失败：${errorReason(error, '无法取消本次执行。')} 状态已复位，可重新发起测试搜索。`);
+      setExecutionError(`${showError(executionError, error, '取消失败，无法取消本次执行。').message} 状态已复位，可重新发起测试搜索。`);
     } finally {
       if (!disposed) {
         cancelling = false;
@@ -83,7 +163,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
     } catch (error) {
       if (disposed) return;
       activeId = null;
-      renderExecution({ status: 'failed', error: `启动失败：${errorReason(error, '请检查 CLI 与搜索参数后重试。')}` });
+      renderExecution({ status: 'failed', error: `${showError(executionError, error, '启动失败，请检查 CLI 与搜索参数后重试。').message}` });
     } finally { starting = false; }
   });
   cancel.addEventListener('click', () => { void requestCancel(); });
@@ -99,10 +179,10 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       appReady = execution.status === 'ready'; controls(activeId !== null);
       root.querySelector('[data-status="execution-cli"]').textContent = execution.status === 'ready'
         ? (status.managed ? '受管安装的 CLI' : 'PATH 中发现的 CLI')
-        : `无可用 CLI（${statusLabels[execution.status] || execution.status}）`;
+        : `无可用 CLI（${statusLabel(statusLabels, execution.status)}）`;
       root.querySelector('[data-info="execution-cli"]').textContent = execution.path ? `：${execution.path}` : '';
       for (const [scope, row] of [['app', app], ['user', user]]) {
-        root.querySelector(`[data-status="${scope}"]`).textContent = statusLabels[row.status] || row.status;
+        root.querySelector(`[data-status="${scope}"]`).textContent = statusLabel(statusLabels, row.status);
         root.querySelector(`[data-status="${scope}"]`).dataset.kind = row.status;
         root.querySelector(`[data-info="${scope}"]`).textContent = [row.version && `v${row.version}`, row.path, row.reason].filter(Boolean).join('\n');
       }
@@ -120,7 +200,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
     } catch (error) {
       if (disposed) return;
       appReady = false; controls(false);
-      root.querySelector('[data-info="error"]').textContent = `检测失败：${errorReason(error, '请重新检测。')}`;
+      showError(root.querySelector('[data-info="error"]'), error, '检测失败，请重新检测。');
     } finally { if (!disposed) button.disabled = false; }
   }
   root.querySelector('[data-action="refresh"]').addEventListener('click', detect);

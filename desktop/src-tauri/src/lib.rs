@@ -2,6 +2,7 @@
 pub(crate) mod credential;
 pub(crate) mod credential_commands;
 mod diagnostics;
+mod errors;
 mod environment;
 pub(crate) mod settings;
 pub mod source_catalog;

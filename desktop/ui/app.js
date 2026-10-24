@@ -1,5 +1,5 @@
 import { pages } from './pages.js';
-import { managementApi, errorReason } from './api.js';
+import { managementApi, normalizeError } from './api.js';
 
 const RUNTIME_MISSING = '此页面需要在 Multi Search 桌面应用中打开。';
 const MOUNT_FAILED = '页面加载失败';
@@ -49,7 +49,7 @@ export function createNavigation(root, nav, invoke, pageList = pages) {
     const heading = doc.createElement('h2');
     heading.textContent = MOUNT_FAILED;
     const message = doc.createElement('p');
-    message.textContent = `${page.label}无法显示：${errorReason(error, '未知错误')}`;
+    message.textContent = `${page.label}无法显示：${normalizeError(error, '未知错误').message}`;
     const button = doc.createElement('button');
     button.type = 'button';
     button.className = 'primary';

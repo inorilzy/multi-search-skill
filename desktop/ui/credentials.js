@@ -1,4 +1,5 @@
 import { openConfirm } from './confirm.js';
+import { showError } from './api.js';
 
 // Copy: 'API Key' for the credential, 'Cookie' for Twitter, and a space between Chinese and Latin text.
 // Search sources come from the catalog generated from Python core metadata
@@ -48,9 +49,20 @@ function testText(result, label, provenance) {
 /// Full page: heading plus the credential panels. Used when a source owns its own page.
 export async function mountCredentials(root, api, options = {}) {
   const entry = sourceEntry(options.source);
-  root.innerHTML = `<section class="heading"><p class="eyebrow">CREDENTIALS / ${entry.source}</p><h1 tabindex="-1">${entry.label} 凭据。</h1><p>Key 只保存在 Windows 凭据库中，不写入配置文件，也不会再次显示。</p></section>`;
-  const holder = root.ownerDocument.createElement('div');
-  root.append(holder);
+  const doc = root.ownerDocument;
+  const heading = doc.createElement('section');
+  heading.className = 'heading';
+  const eyebrow = doc.createElement('p');
+  eyebrow.className = 'eyebrow';
+  eyebrow.textContent = `CREDENTIALS / ${entry.source}`;
+  const title = doc.createElement('h1');
+  title.tabIndex = -1;
+  title.textContent = `${entry.label} 凭据。`;
+  const note = doc.createElement('p');
+  note.textContent = 'Key 只保存在 Windows 凭据库中，不写入配置文件，也不会再次显示。';
+  heading.append(eyebrow, title, note);
+  const holder = doc.createElement('div');
+  root.replaceChildren(heading, holder);
   return mountCredentialBody(holder, api, options);
 }
 
@@ -71,7 +83,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       </form>
       <p class="credential-note">Key 保存在本机 Windows 凭据库。保存不会发起搜索请求。</p>
       <dl class="cred-status"><dt>已保存</dt><dd data-status="store"></dd><dt>生效来源</dt><dd data-status="source"></dd></dl>
-      <p data-info="override" class="note" role="status"></p><p data-info="error" role="alert"></p>
+      <p data-info="override" class="note" role="status"></p><p data-info="save" role="status"></p><p data-info="error" role="alert"></p>
       <div class="credential-tools"><button type="button" data-action="refresh">刷新状态</button><div data-delete-slot><button type="button" data-action="delete">删除已保存的 Key</button></div></div></div>
       <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
       <p class="credential-note" data-info="warning">测试会向 ${label} 发送一次外部搜索请求，并向对应服务商提供认证凭据，可能消耗额度并计入费用。请只在需要时测试。</p></div>
@@ -118,6 +130,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       note = `文件中的 ${files} 个 Key 已保留，但被凭据库 Key 覆盖，不参与本来源轮换。`;
     }
     text('[data-info="override"]', note);
+    // store.error is a localized backend reason, never a raw enum or key value.
     text('[data-info="error"]', overview.store.error || '');
   }
   function setBusy(busy) { for (const button of buttons()) button.disabled = busy; }
@@ -125,7 +138,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   async function refresh() {
     setBusy(true);
     try { render(await api.credentialStatus(source)); }
-    catch { text('[data-info="error"]', '无法读取凭据状态，请重试。'); }
+    catch (error) { showError(root.querySelector('[data-info="error"]'), error, '无法读取凭据状态，请重试。'); }
     finally { setBusy(false); }
   }
 
@@ -160,8 +173,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   async function doSave(key) {
     invalidateTest();
     setBusy(true);
-    try { render(await api.credentialSave(source, key)); text('[data-info="test"]', '已保存。尚未测试。'); }
-    catch (error) { text('[data-info="error"]', typeof error === 'string' ? error : '保存失败，请检查凭据库访问后重试。'); }
+    try { render(await api.credentialSave(source, key)); text('[data-info="save"]', '已保存。尚未测试。'); }
+    catch (error) { text('[data-info="save"]', ''); showError(root.querySelector('[data-info="error"]'), error, '保存失败，请检查凭据库访问后重试。'); }
     finally { setBusy(false); }
   }
   async function confirmSave() {
@@ -214,10 +227,10 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       if (current.env_var) message += `仍由环境变量 ${current.env_var} 生效。`;
       else if (files > 0) message += `已恢复使用文件中的 ${files} 个 Key。`;
       else message += '当前没有可用的 Key。';
-      text('[data-info="test"]', message);
+      text('[data-info="save"]', message);
     }
     catch (error) {
-      text('[data-info="error"]', typeof error === 'string' ? error : '删除失败，请重试。');
+      showError(root.querySelector('[data-info="error"]'), error, '删除失败，请重试。');
     }
     // Re-enable first so focus can return to the delete button.
     finally { setBusy(false); closeDeleteConfirm(); }
@@ -236,7 +249,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       reportTest(outcome.result === 'success' ? 'success' : 'error', testText(outcome.result, label, testedSource), outcome.message || '');
     } catch (error) {
       if (testedGeneration !== generation) return;
-      reportTest('error', '测试失败', typeof error === 'string' ? error : '测试启动失败，请检查 CLI 后重试。');
+      showError(root.querySelector('[data-info="error"]'), error, '测试启动失败，请检查 CLI 后重试。');
     } finally { if (testedGeneration === generation) setBusy(false); }
   });
 

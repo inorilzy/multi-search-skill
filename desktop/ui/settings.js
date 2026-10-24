@@ -5,6 +5,7 @@
 
 import { SOURCES } from './credentials.js';
 import { ROUTES as CATALOG_ROUTES } from './catalog.js';
+import { showError } from './api.js';
 
 // Both lists come from the catalog generated from Python core metadata; Rust
 // reads the same `desktop/source-catalog.json` at compile time.
@@ -33,7 +34,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     + '<section class="panel"><div class="section-title"><h2>配置文件</h2><button type="button" data-action="refresh">刷新</button></div>'
     + '<dl class="cred-status"><dt>配置文件</dt><dd data-status="path"></dd><dt>路径来源</dt><dd data-status="path-source"></dd>'
     + '<dt>当前路由会运行</dt><dd data-status="active"></dd></dl>'
-    + '<p class="note" data-info="env" role="status"></p><p data-info="active-warning" role="alert"></p><p data-info="error" role="alert"></p></section>'
+    + '<p class="note" data-info="env" role="status"></p><p data-info="active-warning" role="alert"></p><p data-info="error" role="alert"></p><button type="button" data-action="retry" hidden>重试读取</button></section>'
     + '<section class="panel"><div class="section-title"><h2>默认路由与超时</h2></div>'
     + '<form data-settings-form><label>默认路由<select data-field="route">'
     + ROUTES.map(r => `<option value="${r.value}">${r.label}</option>`).join('')
@@ -53,6 +54,8 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   let loadedTimeout = '';
   const saveButton = q('[data-action="save"]');
   const refreshButton = q('[data-action="refresh"]');
+  const retryButton = q('[data-action="retry"]');
+  retryButton.addEventListener('click', () => { void refresh(); });
   function syncControls() {
     // Without a successfully read view there is nothing safe to save: never submit placeholders.
     saveButton.disabled = saving || saved === null || saved.status === 'config_unreadable';
@@ -72,6 +75,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     if (view.save_creates_override) notes.push('保存会创建用户配置文件，之后 CLI 将使用它，不再读取开发目录配置。');
     text('[data-info="env"]', notes.join(' '));
     text('[data-status="active"]', view.active_sources.length ? view.active_sources.join('、') : '无');
+    retryButton.hidden = true;
     text('[data-info="active-warning"]', statusText[view.status] ?? view.message ?? '');
     q('[data-field="route"]').value = view.route;
     const min = view.timeout_min ?? 1;
@@ -101,10 +105,11 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   async function refresh() {
     if (saving) return;
     refreshButton.disabled = true;
-    try { fill(await api.settingsView()); }
+    try { fill(await api.settingsView()); retryButton.hidden = true; }
     catch (error) {
       saved = null;
-      text('[data-info="error"]', `无法读取搜索设置，保存已暂停。请点击“刷新”重试。${typeof error === 'string' ? `（${error}）` : ''}`);
+      showError(q('[data-info="error"]'), error, '无法读取搜索设置，保存已暂停。');
+      retryButton.hidden = false;
     } finally { syncControls(); }
   }
 
@@ -142,7 +147,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       text('[data-status="save"]', '已保存。');
     } catch (error) {
       text('[data-status="save"]', '');
-      text('[data-info="error"]', typeof error === 'string' ? error : '保存失败，原配置未改变。');
+      showError(q('[data-info="error"]'), error, '保存失败，原配置未改变。');
     } finally {
       saving = false;
       syncControls();

@@ -3,6 +3,7 @@
 // It never receives or renders key values: the CLI returns masked previews and provider names only.
 
 import { SEARCH_SOURCES } from './catalog.js';
+import { showError } from './api.js';
 
 const actionLabels = {
   migrate: '可迁移',
@@ -78,7 +79,8 @@ export async function mountMigration(root, api, { number = '06' } = {}) {
       if (!box.checked) continue;
       const source = box.getAttribute('data-approve');
       approved.push(source);
-      const select = root.querySelector(`[data-choice="${source}"]`);
+      // No selector is built from a backend value: look the control up inside this row.
+      const select = box.closest('li')?.querySelector('select[data-choice]');
       if (select && select.value) choices[source] = select.value;
     }
     return { approved, choices };
@@ -91,8 +93,8 @@ export async function mountMigration(root, api, { number = '06' } = {}) {
     try {
       const result = await api.migrationPlan();
       if (!disposed) renderPlan(result);
-    } catch {
-      if (!disposed) text('[data-info="error"]', '无法预览旧文件，请检查 CLI 或文件。');
+    } catch (error) {
+      if (!disposed) showError(root.querySelector('[data-info="error"]'), error, '无法预览旧文件，请检查 CLI 或文件。');
     } finally { if (!disposed) setBusy(false); }
   }
 
@@ -132,8 +134,8 @@ export async function mountMigration(root, api, { number = '06' } = {}) {
       text('[data-info="result"]', message);
       // A plan token is single-use; require a fresh preview before another apply.
       plan = null;
-    } catch {
-      if (!disposed) text('[data-info="result"]', '迁移未完成：旧文件或凭据库可能已变化，请重新预览。');
+    } catch (error) {
+      if (!disposed) showError(root.querySelector('[data-info="result"]'), error, '迁移未完成：旧文件或凭据库可能已变化，请重新预览。');
     } finally { if (!disposed) setBusy(false); }
   }
 

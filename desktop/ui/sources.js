@@ -1,4 +1,8 @@
 import { SOURCES, mountCredentialBody } from './credentials.js';
+import { showError } from './api.js';
+
+// Catalog values are local constants, but escape them anyway: the template below is HTML.
+const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 
 const DESCRIPTIONS = Object.fromEntries(SOURCES.map(({ source, description }) => [source, description]));
 const MARKS = Object.fromEntries(SOURCES.map(({ source, mark }) => [source, mark]));
@@ -36,7 +40,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     <div class="sources-overview"><section class="stats" aria-label="搜索源概览">${statCard('enabled', '已启用', 'toggle')}${statCard('configured', '已配置', 'key')}${statCard('error', '异常', 'alert')}${statCard('absent', '未配置', 'box')}</section>
     <div class="toolbar"><label class="source-search">${icon('search')}<input type="search" data-search aria-label="搜索搜索源" placeholder="搜索搜索源名称、描述…" aria-keyshortcuts="${shortcut === '⌘ K' ? 'Meta+K' : 'Control+K'}"><kbd>${shortcut}</kbd></label><div class="filters" role="group" aria-label="筛选">${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === 'all'}">${label}</button>`).join('')}</div></div></div>
     <p class="source-test-warning">测试会向对应服务发送外部请求，可能消耗额度。已配置不代表连接已验证；无需凭据的服务不计入已配置数量。</p>
-    <p class="row-error" data-list-error role="alert"></p><div class="source-list" data-source-list role="list" aria-label="搜索源列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;
+    <p class="row-error" data-list-error role="alert"></p><button type="button" data-action="retry-settings" hidden>重试读取设置</button><div class="source-list" data-source-list role="list" aria-label="搜索源列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;
 
   const list = root.querySelector('[data-source-list]');
   const search = root.querySelector('[data-search]');
@@ -117,9 +121,9 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
       // timeout: null keeps the stored timeout untouched; a toggle never rewrites it.
       const saved = await api.settingsSave({ route: view.route, timeout: null, disabled_sources: [...disabled], twitter_cookies_path: view.twitter_cookies_path ?? '' });
       if (!disposed) applySettings(saved);
-    } catch (err) {
+    } catch (error) {
       if (disposed) return;
-      rec.error.textContent = typeof err === 'string' ? err : '保存失败，开关未更改。';
+      showError(rec.error, error, '保存失败，开关未更改。');
       if (settingsState) applySettings(settingsState);
     }
   }
@@ -157,13 +161,13 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     row.setAttribute('role', 'listitem');
     row.dataset.expanded = 'false';
     row.setAttribute('data-source-row', entry.source);
-    row.innerHTML = `<div class="source-line"><span class="source-icon icon-${entry.source}" aria-hidden="true">${MARKS[entry.source]}</span>
-      <button type="button" class="source-pick" data-pick="${entry.source}" aria-expanded="false" aria-controls="detail-${entry.source}"><span class="source-name">${entry.label}</span><small class="source-desc">${DESCRIPTIONS[entry.source]}</small></button>
-      <label class="source-toggle"><input type="checkbox" role="switch" data-toggle="${entry.source}" aria-label="启用 ${entry.label}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>
+    row.innerHTML = `<div class="source-line"><span class="source-icon icon-${entry.source}" aria-hidden="true">${esc(MARKS[entry.source])}</span>
+      <button type="button" class="source-pick" data-pick="${esc(entry.source)}" aria-expanded="false" aria-controls="detail-${entry.source}"><span class="source-name">${esc(entry.label)}</span><small class="source-desc">${esc(DESCRIPTIONS[entry.source])}</small></button>
+      <label class="source-toggle"><input type="checkbox" role="switch" data-toggle="${esc(entry.source)}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>
       <div class="source-key"><span data-key-summary aria-hidden="true">—</span><span class="visually-hidden" data-key-summary-text>未配置</span></div><span class="source-state" data-row-status data-kind="unknown">读取中</span>
       <div class="source-test-state" data-row-result data-kind="idle"><span class="test-state-symbol" aria-hidden="true"></span><div><strong>未测试</strong><small>${entry.cookie ? '需要 Cookie 文件' : entry.keyed ? '点击测试验证' : '无需 API Key'}</small></div></div>
-      <button type="button" class="source-test-button" data-row-test aria-label="测试 ${entry.label}">${icon('play')}<span>测试</span></button><button type="button" class="source-expand" data-expand aria-label="展开 ${entry.label}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
-      <p class="row-error" data-row-error role="alert"></p><div id="detail-${entry.source}" class="source-detail" data-source-detail hidden></div>`;
+      <button type="button" class="source-test-button" data-row-test aria-label="测试 ${esc(entry.label)}">${icon('play')}<span>测试</span></button><button type="button" class="source-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
+      <p class="row-error" data-row-error role="alert"></p><div id="detail-${esc(entry.source)}" class="source-detail" data-source-detail hidden></div>`;
     const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), summaryText: row.querySelector('[data-key-summary-text]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
     rows.set(entry.source, rec);
     list.append(row);
@@ -249,7 +253,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
       try {
         const outcome = await api.credentialTest(rec.entry.source);
         show({ kind: outcome.result === 'success' ? 'success' : 'error', title: outcome.result === 'success' ? '测试成功' : '测试失败', message: outcome.message || outcome.result });
-      } catch { show({ kind: 'error', title: '测试失败', message: '测试启动失败，请检查 CLI 后重试。' }); }
+      } catch (error) { show({ kind: 'error', title: '测试失败', message: showError(panel.querySelector('[data-info="test"]'), error, '测试启动失败，请检查 CLI 后重试。').message }); }
       finally { if (!stale && !disposed) button.disabled = false; }
     });
     return { dispose() { stale = true; } };
@@ -262,9 +266,20 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     applyFilter();
   });
   search.addEventListener('input', applyFilter);
-  const loads = SOURCES.filter(entry => entry.keyed).map(entry => api.credentialStatus(entry.source).then(view => updateRow(rows.get(entry.source), view), () => setRow(rows.get(entry.source), 'error', '状态读取失败')));
-  try { applySettings(await api.settingsView()); }
-  catch { root.querySelector('[data-list-error]').textContent = '无法读取搜索设置，开关状态未知。请重新进入本页重试。'; }
+  const loads = SOURCES.filter(entry => entry.keyed).map(entry => api.credentialStatus(entry.source).then(view => updateRow(rows.get(entry.source), view), error => { setRow(rows.get(entry.source), 'error', '状态读取失败'); showError(rows.get(entry.source).error, error, '状态读取失败，请重新进入本页重试。'); }));
+  const retrySettings = root.querySelector('[data-action="retry-settings"]');
+  async function loadSettings() {
+    try {
+      applySettings(await api.settingsView());
+      root.querySelector('[data-list-error]').textContent = '';
+      retrySettings.hidden = true;
+    } catch (error) {
+      retrySettings.hidden = false;
+      showError(root.querySelector('[data-list-error]'), error, '无法读取搜索设置，开关状态未知。');
+    }
+  }
+  retrySettings.addEventListener('click', () => { retrySettings.disabled = true; void loadSettings().finally(() => { retrySettings.disabled = false; }); });
+  await loadSettings();
   await Promise.all(loads);
   // No row is expanded on entry: opening a detail re-reads its status, and the overview above
   // already has every row's status, so an automatic expansion only cost an extra request.

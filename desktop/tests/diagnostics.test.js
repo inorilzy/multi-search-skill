@@ -164,7 +164,9 @@ test('a failed cancel resets the run and allows a new test search', async () => 
 
   root.querySelector('[data-action="cancel"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
-  assert.match(root.querySelector('[data-execution-error]').textContent, /IPC unavailable/);
+  const cancelError = root.querySelector('[data-execution-error]');
+  assert.match(cancelError.textContent, /取消失败，无法取消本次执行。 状态已复位/);
+  assert.equal(cancelError.title, 'IPC unavailable', 'raw reason is kept as a tooltip, not shown as UI text');
   assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待测试');
   assert.equal(root.querySelector('[data-action="search"]').disabled, false, 'state is reset after a failed cancel');
   assert.equal(root.querySelector('[data-action="cancel"]').disabled, true);
@@ -187,7 +189,10 @@ test('the backend reason for a rejected start stays visible and retry is possibl
   root.querySelector('[data-field="query"]').value = 'busy';
   root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
-  assert.match(root.querySelector('[data-execution-error]').textContent, /A test search is already running/);
+  const startError = root.querySelector('[data-execution-error]');
+  assert.doesNotMatch(startError.textContent, /already running/, 'no raw English backend text is shown');
+  assert.match(startError.textContent, /启动失败/);
+  assert.equal(startError.title, 'A test search is already running');
   assert.equal(root.querySelector('[data-action="search"]').disabled, false);
   root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
@@ -208,7 +213,9 @@ test('a failed poll shows its backend reason and still allows cancelling', async
   root.querySelector('[data-field="query"]').value = 'poll failure';
   root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
-  assert.match(root.querySelector('[data-execution-error]').textContent, /Execution state unavailable/);
+  const pollError = root.querySelector('[data-execution-error]');
+  assert.match(pollError.textContent, /无法读取执行状态/);
+  assert.equal(pollError.title, 'Execution state unavailable');
   assert.equal(root.querySelector('[data-action="cancel"]').disabled, false);
   page.dispose();
   window.close();

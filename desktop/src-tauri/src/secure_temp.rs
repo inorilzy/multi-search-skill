@@ -63,7 +63,7 @@ pub(crate) fn create_file(dir: &Path, prefix: &str, suffix: &str, contents: &[u8
         }
         return Ok(path);
     }
-    Err(io::Error::new(io::ErrorKind::AlreadyExists, "could not reserve a unique temporary file"))
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "无法保留唯一的临时文件"))
 }
 
 /// Create a new, empty directory `<parent>/<prefix><token>` that did not exist before.
@@ -76,7 +76,7 @@ pub(crate) fn create_dir(parent: &Path, prefix: &str) -> io::Result<PathBuf> {
             Err(error) => return Err(error),
         }
     }
-    Err(io::Error::new(io::ErrorKind::AlreadyExists, "could not reserve a unique temporary directory"))
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "无法保留唯一的临时目录"))
 }
 
 /// Atomically replace `target` with `contents`: write a fresh, exclusively created sibling temp
