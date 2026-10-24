@@ -1,0 +1,419 @@
+{
+  "credential_store_providers": [
+    "baidu",
+    "brave",
+    "parallel",
+    "tavily",
+    "exa",
+    "firecrawl",
+    "serpapi",
+    "github"
+  ],
+  "env": {
+    "alias_priority": "last_non_empty_wins",
+    "providers": {
+      "baidu": [
+        "BAIDU_QIANFAN_API_KEY",
+        "QIANFAN_API_KEY",
+        "APPBUILDER_API_KEY"
+      ],
+      "brave": [
+        "BRAVE_SEARCH_API_KEY",
+        "BRAVE_API_KEY"
+      ],
+      "exa": [
+        "EXA_API_KEY"
+      ],
+      "firecrawl": [
+        "FIRECRAWL_API_KEY"
+      ],
+      "github": [
+        "GITHUB_TOKEN",
+        "GH_TOKEN"
+      ],
+      "jina": [
+        "JINA_API_KEY",
+        "JINA_KEY"
+      ],
+      "parallel": [
+        "PARALLEL_API_KEY"
+      ],
+      "serpapi": [
+        "SERPAPI_API_KEY",
+        "SERPAPI_KEY"
+      ],
+      "tavily": [
+        "TAVILY_API_KEY"
+      ],
+      "twitter_cookies": [
+        "TWITTER_COOKIES_PATH"
+      ]
+    }
+  },
+  "key_resolution": {
+    "description": "Environment variables override the Windows credential store, which overrides ~/.search-keys.json. Within one provider the env aliases are applied in listed order and the last non-empty value wins.",
+    "env_alias_priority": "last_non_empty_wins",
+    "order": [
+      "env",
+      "credential_store",
+      "keys_file"
+    ]
+  },
+  "routes": [
+    {
+      "aliases": [
+        "web"
+      ],
+      "label": "默认（网页综合）",
+      "name": "default",
+      "sources": [
+        "brave",
+        "parallel",
+        "tavily",
+        "exa",
+        "serpapi",
+        "firecrawl",
+        "baidu"
+      ]
+    },
+    {
+      "aliases": [],
+      "label": "快速",
+      "name": "fast",
+      "sources": [
+        "baidu",
+        "tavily",
+        "firecrawl",
+        "exa"
+      ]
+    },
+    {
+      "aliases": [],
+      "label": "社交（Twitter）",
+      "name": "social",
+      "sources": [
+        "twitter"
+      ]
+    },
+    {
+      "aliases": [],
+      "label": "开发者（Stack Overflow / GitHub / Hacker News）",
+      "name": "dev",
+      "sources": [
+        "stackoverflow",
+        "github_repos",
+        "hackernews"
+      ]
+    },
+    {
+      "aliases": [],
+      "label": "全部",
+      "name": "all",
+      "sources": [
+        "brave",
+        "parallel",
+        "tavily",
+        "exa",
+        "serpapi",
+        "baidu",
+        "firecrawl",
+        "twitter",
+        "stackoverflow",
+        "github_repos",
+        "hackernews",
+        "sov2ex"
+      ]
+    }
+  ],
+  "schema_version": 1,
+  "source_aliases": {
+    "baidu-ai-search": "baidu",
+    "github": "github_repos",
+    "github-repos": "github_repos",
+    "qianfan": "baidu",
+    "v2ex": "sov2ex"
+  },
+  "sources": [
+    {
+      "aliases": [
+        "baidu-ai-search",
+        "qianfan"
+      ],
+      "cookie": false,
+      "description": "强大的中文搜索能力，适合中文内容检索。",
+      "env": [
+        "BAIDU_QIANFAN_API_KEY",
+        "QIANFAN_API_KEY",
+        "APPBUILDER_API_KEY"
+      ],
+      "key_provider": "baidu",
+      "keyed": true,
+      "kind": "answer_searcher",
+      "label": "Baidu AI 搜索",
+      "mark": "du",
+      "max_count": 50,
+      "name": "baidu",
+      "public_name": "baidu",
+      "routes": [
+        "default",
+        "fast",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": false,
+      "description": "注重隐私的搜索引擎，提供独立索引的网络搜索结果。",
+      "env": [
+        "BRAVE_SEARCH_API_KEY",
+        "BRAVE_API_KEY"
+      ],
+      "key_provider": "brave",
+      "keyed": true,
+      "kind": "searcher",
+      "label": "Brave 搜索",
+      "mark": "B",
+      "max_count": 20,
+      "name": "brave",
+      "public_name": "brave",
+      "routes": [
+        "default",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": false,
+      "description": "AI 驱动的搜索，整合多源信息。",
+      "env": [
+        "PARALLEL_API_KEY"
+      ],
+      "key_provider": "parallel",
+      "keyed": true,
+      "kind": "searcher",
+      "label": "Parallel",
+      "mark": "P",
+      "max_count": 20,
+      "name": "parallel",
+      "public_name": "parallel",
+      "routes": [
+        "default",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": false,
+      "description": "面向 LLM 的搜索 API，提供实时网络信息。",
+      "env": [
+        "TAVILY_API_KEY"
+      ],
+      "key_provider": "tavily",
+      "keyed": true,
+      "kind": "content_searcher",
+      "label": "Tavily",
+      "mark": "t",
+      "max_count": 20,
+      "name": "tavily",
+      "public_name": "tavily",
+      "routes": [
+        "default",
+        "fast",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": false,
+      "description": "面向开发者的搜索 API，擅长语义搜索。",
+      "env": [
+        "EXA_API_KEY"
+      ],
+      "key_provider": "exa",
+      "keyed": true,
+      "kind": "content_searcher",
+      "label": "Exa",
+      "mark": "X",
+      "max_count": 100,
+      "name": "exa",
+      "public_name": "exa",
+      "routes": [
+        "default",
+        "fast",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": false,
+      "description": "将网页转为结构化数据，适合内容抓取与分析。",
+      "env": [
+        "FIRECRAWL_API_KEY"
+      ],
+      "key_provider": "firecrawl",
+      "keyed": true,
+      "kind": "searcher",
+      "label": "Firecrawl",
+      "mark": "f",
+      "max_count": 100,
+      "name": "firecrawl",
+      "public_name": "firecrawl",
+      "routes": [
+        "default",
+        "fast",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": false,
+      "description": "聚合多搜索引擎的 API 服务。",
+      "env": [
+        "SERPAPI_API_KEY",
+        "SERPAPI_KEY"
+      ],
+      "key_provider": "serpapi",
+      "keyed": true,
+      "kind": "answer_searcher",
+      "label": "SerpAPI",
+      "mark": "S",
+      "max_count": 100,
+      "name": "serpapi",
+      "public_name": "serpapi",
+      "routes": [
+        "default",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [
+        "github",
+        "github-repos"
+      ],
+      "cookie": false,
+      "description": "搜索 GitHub 上的开源项目、代码和文档。",
+      "env": [
+        "GITHUB_TOKEN",
+        "GH_TOKEN"
+      ],
+      "key_provider": "github",
+      "keyed": true,
+      "kind": "platform_searcher",
+      "label": "GitHub 仓库",
+      "mark": "GH",
+      "max_count": 100,
+      "name": "github_repos",
+      "public_name": "github-repos",
+      "routes": [
+        "dev",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": false,
+      "description": "搜索技术社区 Hacker News 的讨论。",
+      "env": [],
+      "key_provider": "hackernews",
+      "keyed": false,
+      "kind": "platform_searcher",
+      "label": "Hacker News",
+      "mark": "Y",
+      "max_count": 100,
+      "name": "hackernews",
+      "public_name": "hackernews",
+      "routes": [
+        "dev",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": false,
+      "description": "搜索 Stack Overflow 的技术问答。",
+      "env": [],
+      "key_provider": "stackoverflow",
+      "keyed": false,
+      "kind": "platform_searcher",
+      "label": "Stack Overflow",
+      "mark": "≋",
+      "max_count": 100,
+      "name": "stackoverflow",
+      "public_name": "stackoverflow",
+      "routes": [
+        "dev",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [
+        "v2ex"
+      ],
+      "cookie": false,
+      "description": "搜索 V2EX 中文技术社区的讨论。",
+      "env": [],
+      "key_provider": "sov2ex",
+      "keyed": false,
+      "kind": "platform_searcher",
+      "label": "V2EX",
+      "mark": "V₂",
+      "max_count": 50,
+      "name": "sov2ex",
+      "public_name": "sov2ex",
+      "routes": [
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": true,
+      "description": "通过本机 Cookie 文件搜索 Twitter / X。",
+      "env": [
+        "TWITTER_COOKIES_PATH"
+      ],
+      "key_provider": "twitter",
+      "keyed": false,
+      "kind": "platform_searcher",
+      "label": "Twitter / X",
+      "mark": "𝕏",
+      "max_count": 20,
+      "name": "twitter",
+      "public_name": "twitter",
+      "routes": [
+        "social",
+        "all"
+      ],
+      "searchable": true
+    },
+    {
+      "aliases": [],
+      "cookie": false,
+      "description": "额外网页正文抓取后端。",
+      "env": [
+        "JINA_API_KEY",
+        "JINA_KEY"
+      ],
+      "key_provider": "jina",
+      "keyed": false,
+      "kind": "scraper",
+      "label": "Jina Reader",
+      "mark": "J",
+      "max_count": null,
+      "name": "jina",
+      "public_name": "jina",
+      "routes": [],
+      "searchable": false
+    }
+  ]
+}

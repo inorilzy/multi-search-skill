@@ -1,20 +1,7 @@
 import { SOURCES, mountCredentialBody } from './credentials.js';
 
-const DESCRIPTIONS = {
-  baidu: '强大的中文搜索能力，适合中文内容检索。',
-  brave: '注重隐私的搜索引擎，提供独立索引的网络搜索结果。',
-  parallel: 'AI 驱动的搜索，整合多源信息。',
-  tavily: '面向 LLM 的搜索 API，提供实时网络信息。',
-  exa: '面向开发者的搜索 API，擅长语义搜索。',
-  firecrawl: '将网页转为结构化数据，适合内容抓取与分析。',
-  serpapi: '聚合多搜索引擎的 API 服务。',
-  github_repos: '搜索 GitHub 上的开源项目、代码和文档。',
-  hackernews: '搜索技术社区 Hacker News 的讨论。',
-  stackoverflow: '搜索 Stack Overflow 的技术问答。',
-  sov2ex: '搜索 V2EX 中文技术社区的讨论。',
-  twitter: '通过本机 Cookie 文件搜索 Twitter / X。',
-};
-const MARKS = { baidu: 'du', brave: 'B', parallel: 'P', tavily: 't', exa: 'X', firecrawl: 'f', serpapi: 'S', github_repos: 'GH', hackernews: 'Y', stackoverflow: '≋', sov2ex: 'V₂', twitter: '𝕏' };
+const DESCRIPTIONS = Object.fromEntries(SOURCES.map(({ source, description }) => [source, description]));
+const MARKS = Object.fromEntries(SOURCES.map(({ source, mark }) => [source, mark]));
 const FILTERS = [['all', '全部'], ['enabled', '已启用'], ['unconfigured', '未配置']];
 const TOTAL = SOURCES.length;
 const IDLE = { kind: 'idle', title: '尚未测试', message: '' };

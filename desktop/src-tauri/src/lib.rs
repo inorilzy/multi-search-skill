@@ -4,6 +4,7 @@ pub(crate) mod credential_commands;
 mod diagnostics;
 mod environment;
 pub(crate) mod settings;
+pub mod source_catalog;
 mod execution;
 mod install;
 mod process;
@@ -95,7 +96,7 @@ pub mod credential_fixture {
     }
     pub fn resolve(source: &str) -> Result<(&'static str, &'static str), String> {
         let entry = credential_commands::resolve_source(source)?;
-        Ok((entry.source, entry.provider))
+        Ok((entry.name.as_str(), entry.key_provider.as_str()))
     }
     pub fn interpret(payload: &Value) -> TestOutcome {
         credential_commands::interpret_source(payload, tavily())
@@ -108,5 +109,45 @@ pub mod credential_fixture {
         Ok((credential_commands::test_args("synthetic connectivity", entry), credential_commands::interpret_source(payload, entry)))
     }
 }
+/// Test seam for the shared source catalog. Not a supported public API.
+#[doc(hidden)]
+pub mod source_catalog_fixture {
+    pub use crate::source_catalog::catalog;
+
+    /// Settings canonicalization for a catalog name or CLI alias.
+    pub fn settings_source(name: &str) -> Option<&'static str> {
+        crate::settings::source_name(name).ok()
+    }
+
+    /// Canonical route name plus the ordered sources the desktop would run.
+    pub fn route(name: &str) -> Option<(&'static str, &'static [String])> {
+        let entry = catalog().route(name)?;
+        Some((entry.name.as_str(), entry.sources.as_slice()))
+    }
+
+    /// The execution allowlist exactly as `start_search` enforces it.
+    pub fn execution_allows(name: &str) -> bool {
+        crate::execution::is_allowed_source(name)
+    }
+
+    /// Credential UI resolution: (canonical source, key provider, env aliases, label).
+    pub fn credential_source(
+        name: &str,
+    ) -> Result<(&'static str, &'static str, &'static [String], &'static str), String> {
+        let entry = crate::credential_commands::resolve_source(name)?;
+        Ok((
+            entry.name.as_str(),
+            entry.key_provider.as_str(),
+            entry.env.as_slice(),
+            entry.label.as_str(),
+        ))
+    }
+
+    /// Sources with an explicit native credential test path (keyed + keyless search).
+    pub fn credential_test_source(name: &str) -> Result<&'static str, String> {
+        crate::credential_commands::resolve_test_source(name).map(|entry| entry.name.as_str())
+    }
+}
+
 #[cfg(feature = "native-window")]
 pub use window::run;

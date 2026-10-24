@@ -190,7 +190,7 @@ async fn credential_test(
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let cli = manager.execution_cli(path.map(PathBuf::from))?;
-        manager.test_source(cli, entry, &format!("{} connectivity check", entry.source))
+        manager.test_source(cli, entry, &format!("{} connectivity check", entry.name))
     })
     .await
     .map_err(|_| "Credential test worker failed".to_string())?

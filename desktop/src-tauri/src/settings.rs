@@ -21,33 +21,12 @@ use std::{
 pub const CONFIG_ENV: &str = "MULTI_SEARCH_CONFIG";
 pub const TWITTER_ENV: &str = "TWITTER_COOKIES_PATH";
 const USER_CONFIG_RELATIVE: &[&str] = &[".multi-search", "multi-search-config.json"];
-const ROUTES: &[&str] = &["default", "fast", "all", "social", "dev"];
-/// Mirrors `ALL_SOURCE_NAMES` in search_runner.py. Change both together.
-pub const SOURCES: &[&str] = &[
-    "baidu", "brave", "exa", "firecrawl", "github_repos", "hackernews", "parallel", "serpapi",
-    "sov2ex", "stackoverflow", "tavily", "twitter",
-];
-/// Mirrors `SOURCE_ALIASES` in search_runner.py.
-const ALIASES: &[(&str, &str)] = &[
-    ("baidu-ai-search", "baidu"),
-    ("qianfan", "baidu"),
-    ("github", "github_repos"),
-    ("github-repos", "github_repos"),
-    ("v2ex", "sov2ex"),
-];
-/// Mirrors `ROUTE_PROFILES` in search_runner.py.
-fn route_sources(route: &str) -> &'static [&'static str] {
-    match route {
-        "default" => &["brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"],
-        "fast" => &["baidu", "tavily", "firecrawl", "exa"],
-        "social" => &["twitter"],
-        "dev" => &["stackoverflow", "github_repos", "hackernews"],
-        "all" => &[
-            "brave", "parallel", "tavily", "exa", "serpapi", "baidu", "firecrawl", "twitter",
-            "stackoverflow", "github_repos", "hackernews", "sov2ex",
-        ],
-        _ => &[],
-    }
+/// Sources the current route would run, in the shared catalog's documented order.
+pub(crate) fn route_sources(route: &str) -> &'static [String] {
+    crate::source_catalog::catalog()
+        .route(route)
+        .map(|entry| entry.sources.as_slice())
+        .unwrap_or(&[])
 }
 const MAX_PATH_BYTES: usize = 1024;
 
@@ -159,25 +138,25 @@ impl ReadSource {
     }
 }
 
-fn source_name(raw: &str) -> Result<&'static str, String> {
-    let trimmed = raw.trim();
-    let mapped = ALIASES
-        .iter()
-        .find(|(alias, _)| *alias == trimmed)
-        .map(|(_, name)| *name)
-        .unwrap_or(trimmed);
-    SOURCES
-        .iter()
-        .copied()
-        .find(|name| *name == mapped)
+/// Canonical search-source name for a catalog name or CLI alias.
+pub(crate) fn source_name(raw: &str) -> Result<&'static str, String> {
+    crate::source_catalog::catalog()
+        .source(raw)
+        .filter(|source| source.searchable)
+        .map(|source| source.name.as_str())
         .ok_or_else(|| "不支持的搜索源".to_string())
+}
+
+/// Canonical route name for a catalog route or its CLI alias (`web`).
+pub(crate) fn route_name(raw: &str) -> Option<&'static str> {
+    crate::source_catalog::catalog()
+        .route(raw)
+        .map(|route| route.name.as_str())
 }
 
 /// Validate before any file access. Errors never echo the rejected value.
 pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
-    if !ROUTES.contains(&input.route.as_str()) {
-        return Err("不支持的搜索路由".into());
-    }
+    let route = route_name(&input.route).ok_or_else(|| "不支持的搜索路由".to_string())?;
     if !(1..=60).contains(&input.timeout) {
         return Err("超时时间必须在 1 到 60 秒之间".into());
     }
@@ -199,7 +178,7 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
         }
     };
     Ok(Validated {
-        route: input.route.clone(),
+        route: route.to_string(),
         timeout: input.timeout,
         disabled_sources: disabled,
         twitter_cookies_path: twitter,
@@ -337,7 +316,7 @@ pub fn view_with_dev(environment: &RuntimeEnvironment, dev: &Path) -> SettingsVi
     let route = object
         .get("type")
         .and_then(Value::as_str)
-        .filter(|r| ROUTES.contains(r))
+        .and_then(route_name)
         .unwrap_or("default")
         .to_string();
     let timeout = object

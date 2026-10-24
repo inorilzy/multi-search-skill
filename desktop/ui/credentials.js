@@ -1,22 +1,18 @@
-// The single canonical search-source list. Keyed sources store a key in the Windows credential
-// store; their names mirror credential_commands::SOURCES in Rust, which also accepts the
-// hyphenated `github-repos` alias. Keyless sources need no key. `twitter` reads a cookie file
-// path from settings and never a cookie body. settings.js derives its own view from this list,
-// so the allowlist is described in exactly one place.
-export const SOURCES = [
-  { source: 'baidu', label: 'Baidu AI 搜索', keyed: true },
-  { source: 'brave', label: 'Brave 搜索', keyed: true },
-  { source: 'parallel', label: 'Parallel', keyed: true },
-  { source: 'tavily', label: 'Tavily', keyed: true },
-  { source: 'exa', label: 'Exa', keyed: true },
-  { source: 'firecrawl', label: 'Firecrawl', keyed: true },
-  { source: 'serpapi', label: 'SerpAPI', keyed: true },
-  { source: 'github_repos', label: 'GitHub 仓库', keyed: true },
-  { source: 'hackernews', label: 'Hacker News', keyed: false },
-  { source: 'stackoverflow', label: 'Stack Overflow', keyed: false },
-  { source: 'sov2ex', label: 'V2EX', keyed: false },
-  { source: 'twitter', label: 'Twitter / X', keyed: false, cookie: true },
-];
+// Search sources come from the catalog generated from Python core metadata
+// (see ui/catalog.js and scripts/export_source_catalog.py). Keyed sources store
+// a key in the Windows credential store; keyless sources need no key. `twitter`
+// reads a cookie file path from settings and never a cookie body. settings.js
+// derives its own view from this list, so the allowlist lives in one place.
+import { SEARCH_SOURCES } from './catalog.js';
+
+export const SOURCES = SEARCH_SOURCES.map(({ name, label, keyed, cookie, description, mark }) => ({
+  source: name,
+  label,
+  keyed,
+  cookie,
+  description,
+  mark,
+}));
 
 const DEFAULT_SOURCE = 'tavily';
 

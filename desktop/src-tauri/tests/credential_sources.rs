@@ -7,7 +7,7 @@ const SYNTHETIC_KEY: &str = "synthetic-source-key-0101";
 const FILE_KEY_A: &str = "file-github-key-0102";
 const FILE_KEY_B: &str = "file-github-key-0103";
 
-const ALLOWED: &[&str] = &["baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github-repos"];
+const ALLOWED: &[&str] = &["baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github_repos"];
 
 #[derive(Default)]
 struct Memory(Mutex<BTreeMap<String, Vec<u8>>>);
@@ -58,10 +58,10 @@ fn store_blob(key: &str) -> Vec<u8> {
 
 #[test]
 fn github_repos_maps_to_github_provider_and_unknown_names_are_rejected() {
-    assert_eq!(fixture::resolve("github-repos").unwrap(), ("github-repos", "github"));
-    assert_eq!(fixture::resolve("github_repos").unwrap(), ("github-repos", "github"));
+    assert_eq!(fixture::resolve("github-repos").unwrap(), ("github_repos", "github"));
+    assert_eq!(fixture::resolve("github_repos").unwrap(), ("github_repos", "github"));
     assert_eq!(fixture::resolve("tavily").unwrap(), ("tavily", "tavily"));
-    for bad in ["", "  ", "../tavily", "tavily/../brave", "github", "jina", "ns-src/tavily", "TAVILY"] {
+    for bad in ["", "  ", "../tavily", "tavily/../brave", "jina", "v2ex", "ns-src/tavily", "TAVILY"] {
         let error = fixture::resolve(bad).unwrap_err();
         assert_eq!(error, "不支持的搜索源", "input {bad:?}");
     }
@@ -93,7 +93,7 @@ fn every_allowlisted_source_reads_only_its_own_provider_target() {
         assert_eq!(row.source, *source);
         assert_eq!(row.store.state, "present", "{source} must read its own provider entry");
     }
-    // github-repos and github share one provider entry, so 8 sources map to 8 distinct targets
+    // github_repos and github share one provider entry, so 8 sources map to 8 distinct targets
     // (tavily, baidu, brave, parallel, exa, firecrawl, serpapi, github).
     let providers: std::collections::BTreeSet<&str> =
         ALLOWED.iter().map(|s| fixture::resolve(s).unwrap().1).collect();
@@ -106,12 +106,12 @@ fn github_repos_uses_github_entry_and_tavily_entry_does_not_satisfy_it() {
     let backend = Memory::default();
     let home = Home::new("github");
     backend.0.lock().unwrap().insert("ns-src/tavily".into(), store_blob(SYNTHETIC_KEY));
-    let row = fixture::overview_for(&backend, &home.vars(), "github-repos").unwrap();
+    let row = fixture::overview_for(&backend, &home.vars(), "github_repos").unwrap();
     assert_eq!(row.store.state, "absent", "tavily entry must not satisfy github-repos");
     assert_eq!(row.effective_source, "none");
 
     backend.0.lock().unwrap().insert("ns-src/github".into(), store_blob(SYNTHETIC_KEY));
-    let row = fixture::overview_for(&backend, &home.vars(), "github-repos").unwrap();
+    let row = fixture::overview_for(&backend, &home.vars(), "github_repos").unwrap();
     assert_eq!(row.store.state, "present");
     assert_eq!(row.effective_source, "credential_store");
 }
@@ -121,7 +121,7 @@ fn file_list_is_reported_by_count_and_never_by_value() {
     let backend = Memory::default();
     let home = Home::new("filecount");
     home.write_keys(&format!(r#"{{"github":["{FILE_KEY_A}","{FILE_KEY_B}"]}}"#));
-    let row = fixture::overview_for(&backend, &home.vars(), "github-repos").unwrap();
+    let row = fixture::overview_for(&backend, &home.vars(), "github_repos").unwrap();
     assert_eq!(row.effective_source, "file");
     assert_eq!(row.file_key_count, 2);
     let text = format!("{row:?}");
@@ -136,7 +136,7 @@ fn store_overrides_file_list_and_file_is_untouched() {
     let original = format!(r#"{{"github":["{FILE_KEY_A}","{FILE_KEY_B}"]}}"#);
     home.write_keys(&original);
     backend.0.lock().unwrap().insert("ns-src/github".into(), store_blob(SYNTHETIC_KEY));
-    let row = fixture::overview_for(&backend, &home.vars(), "github-repos").unwrap();
+    let row = fixture::overview_for(&backend, &home.vars(), "github_repos").unwrap();
     assert_eq!(row.effective_source, "credential_store");
     assert_eq!(row.file_key_count, 2, "file list stays listed and counted");
     assert!(!format!("{row:?}").contains(SYNTHETIC_KEY));
@@ -199,7 +199,7 @@ print(json.dumps(cases))
     let backend = Memory::default();
     for case in cases.as_array().unwrap() {
         let provider = case["provider"].as_str().unwrap();
-        let source = if provider == "github" { "github-repos" } else { provider };
+        let source = if provider == "github" { "github_repos" } else { provider };
         let mut vars = home.vars();
         for name in case["present"].as_array().unwrap() { vars.insert(name.as_str().unwrap().into(), "synthetic-alias".into()); }
         for name in case["empty"].as_array().unwrap() { vars.insert(name.as_str().unwrap().into(), String::new()); }

@@ -2,6 +2,8 @@
 // collects per-item confirmation and conflict choices, and sends source names back.
 // It never receives or renders key values: the CLI returns masked previews and provider names only.
 
+import { SEARCH_SOURCES } from './catalog.js';
+
 const actionLabels = {
   migrate: '可迁移',
   already_current: '已是最新，无需迁移',
@@ -10,7 +12,8 @@ const actionLabels = {
   blocked: '无法检查，已跳过',
 };
 
-const providerSource = { github: 'github-repos' };
+// The catalog is the only place that knows a key provider's public source name.
+const providerSource = Object.fromEntries(SEARCH_SOURCES.map(source => [source.key_provider, source.name]));
 const sourceOf = provider => providerSource[provider] || provider;
 
 function esc(value) {

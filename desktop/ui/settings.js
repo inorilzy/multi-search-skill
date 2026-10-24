@@ -4,17 +4,13 @@
 // sources the current route would run. It never sends or displays a key, and never reads a cookie.
 
 import { SOURCES } from './credentials.js';
+import { ROUTES as CATALOG_ROUTES } from './catalog.js';
 
-// Mirrors ALL_SOURCE_NAMES in search_runner.py and SOURCES in desktop/src-tauri/src/settings.rs.
+// Both lists come from the catalog generated from Python core metadata; Rust
+// reads the same `desktop/source-catalog.json` at compile time.
 export const SETTINGS_SOURCES = SOURCES.map(({ source, label }) => ({ source, label }));
 
-export const ROUTES = [
-  { value: 'default', label: '默认（网页综合）' },
-  { value: 'fast', label: '快速' },
-  { value: 'all', label: '全部' },
-  { value: 'social', label: '社交（Twitter）' },
-  { value: 'dev', label: '开发者（Stack Overflow / GitHub / Hacker News）' },
-];
+export const ROUTES = CATALOG_ROUTES.map(({ name, label }) => ({ value: name, label }));
 
 const statusText = {
   ok: '',

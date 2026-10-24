@@ -21,51 +21,27 @@ use std::{collections::BTreeMap, path::{Path, PathBuf}};
 const CONFIG_ENV: &str = "MULTI_SEARCH_CONFIG";
 const KEYS_FILE_NAME: &str = ".search-keys.json";
 
-/// One key-based search source the desktop may manage. Mirrors `KEY_ENV_PAIRS` and
-/// `CREDENTIAL_STORE_PROVIDERS` in keys.py; change both together.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SourceEntry {
-    /// Public source name: the UI value and the CLI `--source` value.
-    pub source: &'static str,
-    /// Key provider: store entry `<namespace>/<provider>` and the keys-file key.
-    pub provider: &'static str,
-    /// Environment variables that override the store (names only, never values).
-    pub env: &'static [&'static str],
-    /// Other accepted UI names for the same source. Nothing else is accepted.
-    pub aliases: &'static [&'static str],
-    pub label: &'static str,
-}
+/// One catalog entry the desktop may manage. Names, key providers, env aliases,
+/// and labels all come from the shared generated catalog; this module only maps
+/// the UI name to them.
+pub(crate) use crate::source_catalog::Source as SourceEntry;
 
-pub(crate) const SOURCES: &[SourceEntry] = &[
-    SourceEntry { source: "baidu", provider: "baidu", env: &["BAIDU_QIANFAN_API_KEY", "QIANFAN_API_KEY", "APPBUILDER_API_KEY"], aliases: &[], label: "Baidu AI 搜索" },
-    SourceEntry { source: "brave", provider: "brave", env: &["BRAVE_SEARCH_API_KEY", "BRAVE_API_KEY"], aliases: &[], label: "Brave 搜索" },
-    SourceEntry { source: "parallel", provider: "parallel", env: &["PARALLEL_API_KEY"], aliases: &[], label: "Parallel" },
-    SourceEntry { source: "tavily", provider: "tavily", env: &["TAVILY_API_KEY"], aliases: &[], label: "Tavily" },
-    SourceEntry { source: "exa", provider: "exa", env: &["EXA_API_KEY"], aliases: &[], label: "Exa" },
-    SourceEntry { source: "firecrawl", provider: "firecrawl", env: &["FIRECRAWL_API_KEY"], aliases: &[], label: "Firecrawl" },
-    SourceEntry { source: "serpapi", provider: "serpapi", env: &["SERPAPI_API_KEY", "SERPAPI_KEY"], aliases: &[], label: "SerpAPI" },
-    SourceEntry { source: "github-repos", provider: "github", env: &["GITHUB_TOKEN", "GH_TOKEN"], aliases: &["github_repos"], label: "GitHub 仓库" },
-];
-
-/// Map a UI source name to its allowlisted entry. Unknown names are rejected before any
-/// store access; the error never echoes the input. A missing name is an error, not a default.
+/// Map a keyed UI source name or CLI alias to its catalog entry. Unknown or
+/// keyless names are rejected before any store access; the error never echoes
+/// the input. A missing name is an error, not a default.
 pub(crate) fn resolve_source(name: &str) -> Result<&'static SourceEntry, String> {
-    let name = name.trim();
-    SOURCES
-        .iter()
-        .find(|entry| entry.source == name || entry.aliases.contains(&name))
+    crate::source_catalog::catalog()
+        .source(name)
+        .filter(|entry| entry.keyed)
         .ok_or_else(|| "不支持的搜索源".to_string())
 }
 
-const NON_KEY_SOURCES: &[SourceEntry] = &[
-    SourceEntry { source: "hackernews", provider: "hackernews", env: &[], aliases: &[], label: "Hacker News" },
-    SourceEntry { source: "stackoverflow", provider: "stackoverflow", env: &[], aliases: &[], label: "Stack Overflow" },
-    SourceEntry { source: "sov2ex", provider: "sov2ex", env: &[], aliases: &[], label: "V2EX" },
-    SourceEntry { source: "twitter", provider: "twitter", env: &[], aliases: &[], label: "Twitter" },
-];
-
+/// Keyed sources plus keyless search sources, which have an explicit test path.
 pub(crate) fn resolve_test_source(name: &str) -> Result<&'static SourceEntry, String> {
-    resolve_source(name).or_else(|_| NON_KEY_SOURCES.iter().find(|entry| entry.source == name).ok_or_else(|| "不支持的搜索源".into()))
+    crate::source_catalog::catalog()
+        .source(name)
+        .filter(|entry| entry.searchable)
+        .ok_or_else(|| "不支持的搜索源".to_string())
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -131,18 +107,19 @@ pub(crate) fn overview(
     entry: &SourceEntry,
 ) -> CredentialOverview {
     let namespace = credential::namespace(variables);
-    let store = credential::status_of(credential::load(backend, &namespace, entry.provider));
-    // Python load_keys applies aliases in declaration order, so the last nonempty value wins.
+    let store = credential::status_of(credential::load(backend, &namespace, &entry.key_provider));
+    // The catalog lists env aliases in load_keys application order, so the last
+    // non-empty value wins (mirrors Python and scripts/export_source_catalog.py).
     let env_var = entry
         .env
         .iter()
         .rev()
-        .find(|name| variables.get(**name).is_some_and(|value| !value.is_empty()))
-        .map(|name| name.to_string())
+        .find(|name| variables.get(name.as_str()).is_some_and(|value| !value.is_empty()))
+        .cloned()
         .unwrap_or_default();
-    let file_keys = file_key_count(keys_file_path(variables).as_deref(), entry.provider);
+    let file_keys = file_key_count(keys_file_path(variables).as_deref(), &entry.key_provider);
     CredentialOverview {
-        source: entry.source.into(),
+        source: entry.name.clone(),
         effective_source: effective_source(!env_var.is_empty(), &store, file_keys),
         env_overrides_store: !env_var.is_empty() && store.state == "present",
         env_var,
@@ -160,7 +137,7 @@ pub(crate) fn save(
     now: f64,
 ) -> Result<CredentialOverview, String> {
     let namespace = credential::namespace(variables);
-    credential::save(backend, &namespace, entry.provider, key, now).map_err(|e| e.to_string())?;
+    credential::save(backend, &namespace, &entry.key_provider, key, now).map_err(|e| e.to_string())?;
     Ok(overview(backend, variables, entry))
 }
 
@@ -170,7 +147,7 @@ pub(crate) fn delete(
     entry: &SourceEntry,
 ) -> Result<CredentialOverview, String> {
     let namespace = credential::namespace(variables);
-    credential::remove(backend, &namespace, entry.provider).map_err(|e| e.to_string())?;
+    credential::remove(backend, &namespace, &entry.key_provider).map_err(|e| e.to_string())?;
     Ok(overview(backend, variables, entry))
 }
 
@@ -206,14 +183,14 @@ pub(crate) fn interpret_source(payload: &Value, entry: &SourceEntry) -> TestOutc
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let wanted = entry.source.replace('-', "_");
+    let wanted = entry.name.replace('-', "_");
     let row = rows.iter().find(|row| {
         row.get("source")
             .and_then(|s| s.as_str())
             .is_some_and(|s| s.replace('-', "_") == wanted)
     });
     let Some(row) = row else {
-        return classify("error", entry.label);
+        return classify("error", &entry.label);
     };
     let status = row.get("status").and_then(|s| s.as_str()).unwrap_or("");
     if status == "ok" || status == "partial" {
@@ -229,7 +206,7 @@ pub(crate) fn interpret_source(payload: &Value, entry: &SourceEntry) -> TestOutc
         .and_then(|e| e.get("error_type"))
         .and_then(|t| t.as_str())
         .unwrap_or("error");
-    classify(error_type, entry.label)
+    classify(error_type, &entry.label)
 }
 
 /// Config file content for a test run: no body scraping, so only one search is made.
@@ -246,7 +223,7 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
         "--route".into(),
         "default".into(),
         "--source".into(),
-        entry.source.into(),
+        entry.name.clone(),
         "--timeout".into(),
         "15".into(),
         "--format".into(),
@@ -262,7 +239,7 @@ impl TestConfig {
     pub fn create(dir: &Path, entry: &SourceEntry, environment: &RuntimeEnvironment) -> std::io::Result<Self> {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = dir.join(format!("{}-test-{}-{id}.json", entry.provider, std::process::id()));
+        let path = dir.join(format!("{}-test-{}-{id}.json", entry.key_provider, std::process::id()));
         let view = crate::settings::view(environment);
         if view.status == "config_unreadable" {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "无法读取搜索设置"));
@@ -408,13 +385,13 @@ pub(crate) fn migration_request(
     }
     let mut approved = Vec::new();
     for source in approved_sources {
-        approved.push(resolve_source(source)?.provider.to_string());
+        approved.push(resolve_source(source)?.key_provider.to_string());
     }
     approved.sort();
     approved.dedup();
     let mut choices = BTreeMap::new();
     for (source, choice) in choices_by_source {
-        let provider = resolve_source(source)?.provider.to_string();
+        let provider = resolve_source(source)?.key_provider.to_string();
         if choice != "keep" && choice != "replace" {
             return Err("冲突选择无效，请选择保留或替换".into());
         }
@@ -614,11 +591,11 @@ mod native_store {
         let saved = save(&backend, &vars, entry, "  synthetic-native-key-0007  ", 1700000002.0).unwrap();
         assert_eq!(saved.store.state, "present");
         assert_eq!(saved.effective_source, "credential_store");
-        assert_eq!(credential::load(&backend, &namespace, entry.provider).unwrap().unwrap().0, "synthetic-native-key-0007");
+        assert_eq!(credential::load(&backend, &namespace, &entry.key_provider).unwrap().unwrap().0, "synthetic-native-key-0007");
 
         let replaced = save(&backend, &vars, entry, "synthetic-native-key-0008", 1700000003.0).unwrap();
         assert_eq!(replaced.store.saved_at, Some(1700000003.0));
-        assert_eq!(credential::load(&backend, &namespace, entry.provider).unwrap().unwrap().0, "synthetic-native-key-0008");
+        assert_eq!(credential::load(&backend, &namespace, &entry.key_provider).unwrap().unwrap().0, "synthetic-native-key-0008");
 
         let mut with_env = vars.clone();
         with_env.insert("TAVILY_API_KEY".into(), "synthetic-native-env-0009".into());
@@ -629,6 +606,6 @@ mod native_store {
         let cleared = delete(&backend, &vars, entry).unwrap();
         assert_eq!(cleared.store.state, "absent");
         assert_eq!(cleared.effective_source, "none");
-        assert_eq!(credential::remove(&backend, &namespace, entry.provider), Ok(false));
+        assert_eq!(credential::remove(&backend, &namespace, &entry.key_provider), Ok(false));
     }
 }
