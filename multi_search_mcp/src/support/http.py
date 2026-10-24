@@ -35,6 +35,96 @@ def _origin(url: str) -> tuple[str, str, int | None]:
     return scheme, (parts.hostname or "").lower(), port
 
 
+# One size bound for every provider response body (search and scrape APIs,
+# including HTTP error bodies). Real provider JSON is far smaller; the cap only
+# stops an abnormal or hostile upstream from filling memory inside the deadline.
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+# Error bodies are only used for a short diagnostic message.
+ERROR_BODY_LIMIT = 4096
+
+
+class ResponseTooLargeError(ValueError):
+    """A provider response body (raw or decompressed) exceeded its size bound.
+
+    A ValueError, not an OSError, so the SSL/EOF retry loop never repeats it.
+    The message deliberately avoids words key classification treats as auth,
+    quota, rate-limit, timeout or network failures.
+    """
+
+    def __init__(self, what: str, limit: int):
+        super().__init__(f"{what} is larger than the {limit}-byte size cap")
+        self.limit = limit
+
+
+def _content_length(resp) -> int | None:
+    headers = getattr(resp, "headers", None)
+    if headers is None:
+        return None
+    try:
+        value = headers.get("Content-Length")
+    except Exception:  # noqa: BLE001 - only an optional early check
+        return None
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def read_limited(resp, max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
+    """Read a whole response body, refusing anything over ``max_bytes``.
+
+    A declared oversize Content-Length is rejected before reading; otherwise at
+    most ``max_bytes + 1`` bytes are ever pulled into memory.
+    """
+    declared = _content_length(resp)
+    if declared is not None and declared > max_bytes:
+        raise ResponseTooLargeError("provider response body", max_bytes)
+    body = resp.read(max_bytes + 1)
+    if isinstance(body, str):
+        body = body.encode("utf-8")
+    body = bytes(body or b"")
+    if len(body) > max_bytes:
+        raise ResponseTooLargeError("provider response body", max_bytes)
+    return body
+
+
+def read_error_body(exc, limit: int = ERROR_BODY_LIMIT) -> bytes:
+    """Read at most ``limit`` bytes of an HTTP error body for diagnostics."""
+    body = exc.read(limit)
+    if isinstance(body, str):
+        body = body.encode("utf-8", "replace")
+    return bytes(body or b"")[:limit]
+
+
+def decompress_limited(data: bytes, encoding: str, max_bytes: int = MAX_RESPONSE_BYTES) -> bytes:
+    """Decompress gzip/deflate bounded by the *decompressed* size (no bombs)."""
+    import zlib
+
+    encoding = (encoding or "").strip().lower()
+    if encoding == "gzip":
+        candidates = (16 + zlib.MAX_WBITS,)
+    elif encoding == "deflate":
+        # RFC "deflate" is zlib-wrapped; some servers send raw deflate.
+        candidates = (zlib.MAX_WBITS, -zlib.MAX_WBITS)
+    else:
+        raise ValueError(f"unsupported Content-Encoding: {encoding}")
+    last_error = None
+    for wbits in candidates:
+        decompressor = zlib.decompressobj(wbits)
+        try:
+            output = decompressor.decompress(data, max_bytes + 1)
+        except zlib.error as exc:
+            last_error = exc
+            continue
+        if len(output) > max_bytes or decompressor.unconsumed_tail:
+            raise ResponseTooLargeError("decompressed provider response", max_bytes)
+        if not decompressor.eof:
+            last_error = zlib.error("incomplete compressed response")
+            continue
+        return output
+    raise ValueError(f"invalid {encoding} response: {last_error}")
+
+
 def _remaining(deadline: float) -> float:
     remaining = deadline - time.monotonic()
     if remaining <= 0:

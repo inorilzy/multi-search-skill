@@ -2,7 +2,7 @@
 import json
 import urllib.request
 
-from ...support.http import urlopen_retry
+from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 
 
@@ -40,7 +40,7 @@ def search_exa(
     )
     try:
         with urlopen_retry(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(read_limited(resp))
     except Exception as e:
         return [{"source": "exa", "error": scrub_secrets(e, api_key)}]
     items = []

@@ -5,7 +5,7 @@ import json
 import urllib.request
 from typing import Any
 
-from ...support.http import urlopen_retry
+from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 from ...support.models import empty_result_row
 
@@ -47,7 +47,7 @@ def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float)
     )
     try:
         with urlopen_retry(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            return json.loads(read_limited(resp).decode("utf-8"))
     except Exception as exc:
         return {"error": scrub_secrets(exc, api_key)}
 

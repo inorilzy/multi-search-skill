@@ -4,7 +4,7 @@ import time
 import urllib.error
 import urllib.request
 
-from ...support.http import urlopen_retry
+from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 from ...support.tavily import tavily_http_error
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
@@ -44,7 +44,7 @@ def scrape_url_tavily(
             method="POST",
         )
         with urlopen_retry(req, timeout=call_timeout) as resp:
-            return json.loads(resp.read())
+            return json.loads(read_limited(resp))
 
     def _parse(data: dict, depth: str) -> dict:
         results = data.get("results") or []

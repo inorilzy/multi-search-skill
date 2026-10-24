@@ -1,12 +1,10 @@
 """Stack Overflow question search via the Stack Exchange API."""
-import gzip
 import html
 import json
 import urllib.parse
 import urllib.request
-import zlib
 
-from ...support.http import urlopen_retry
+from ...support.http import decompress_limited, read_limited, urlopen_retry
 
 
 def _content_encoding(resp) -> str:
@@ -22,17 +20,16 @@ def _looks_like_json(body: bytes) -> bool:
 
 
 def _decode_response(resp) -> bytes:
-    body = resp.read()
+    body = read_limited(resp)
     encoding = _content_encoding(resp) or "gzip"
 
     # A proxy may have already decompressed the body, and early API errors are
     # allowed to bypass compression. Keep those JSON bodies intact.
     if _looks_like_json(body):
         return body
-    if encoding == "gzip":
-        return gzip.decompress(body)
-    if encoding == "deflate":
-        return zlib.decompress(body)
+    if encoding in {"gzip", "deflate"}:
+        # Bounded by the decompressed size, so a small bomb cannot expand.
+        return decompress_limited(body, encoding)
     if encoding == "identity":
         return body
     raise ValueError(f"unsupported Content-Encoding: {encoding}")

@@ -20,7 +20,7 @@ class _FakeResponse:
     def __exit__(self, *exc):
         return False
 
-    def read(self):
+    def read(self, size=-1):
         return self._body
 
 

@@ -4,7 +4,7 @@ import re
 import urllib.parse
 import urllib.request
 
-from ...support.http import urlopen_retry
+from ...support.http import read_limited, urlopen_retry
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -37,7 +37,7 @@ def search_hackernews(query: str, count: int = 10, timeout: float = 20) -> list:
     )
     try:
         with urlopen_retry(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(read_limited(resp))
     except Exception as e:
         return [{"source": "hackernews", "error": str(e)[:300]}]
 
