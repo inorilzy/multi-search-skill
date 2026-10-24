@@ -22,7 +22,7 @@ function statCard(key, label, symbol) {
   return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${TOTAL}</small></strong></div></div>`;
 }
 
-export async function mountSources(root, api) {
+export async function mountSources(root, api, { signal } = {}) {
   const doc = root.ownerDocument;
   root.classList.add('sources-page');
   root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">SOURCES</p><h1>搜索源与凭据</h1><p>管理各搜索源的 API Key 和启用状态，并可快速测试连接，确保服务可用。</p></div>
@@ -46,6 +46,16 @@ export async function mountSources(root, api) {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); search.focus(); }
   };
   doc.addEventListener('keydown', onKey);
+  function teardown() {
+    if (disposed) return;
+    disposed = true;
+    activeTicket += 1;
+    detailMount?.dispose();
+    doc.removeEventListener('keydown', onKey);
+    root.classList.remove('sources-page');
+  }
+  // Navigation aborts the signal even if this mount throws before it can return its disposer.
+  signal?.addEventListener('abort', teardown, { once: true });
 
   function applyFilter() {
     const query = search.value.trim().toLowerCase();
@@ -249,5 +259,5 @@ export async function mountSources(root, api) {
   await Promise.all(loads);
   await toggleRow(SOURCES[0].source);
   refreshStats();
-  return { dispose() { disposed = true; activeTicket += 1; detailMount?.dispose(); doc.removeEventListener('keydown', onKey); root.classList.remove('sources-page'); } };
+  return { dispose() { signal?.removeEventListener('abort', teardown); teardown(); } };
 }

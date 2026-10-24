@@ -1,3 +1,17 @@
+// Commands reject with the backend's string reason, an Error, or a structured object. Normalize
+// all three so a page can show why an operation failed instead of a generic retry hint.
+export function errorReason(error, fallback = '未知错误') {
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  if (error && typeof error === 'object') {
+    if (typeof error.message === 'string' && error.message.trim()) return error.message.trim();
+    try {
+      const json = JSON.stringify(error);
+      if (json && json !== '{}') return json;
+    } catch { /* circular or opaque rejection */ }
+  }
+  return fallback;
+}
+
 export function managementApi(invoke) {
   return {
     // No call carries an executable path: the backend always runs the managed CLI (then PATH).
