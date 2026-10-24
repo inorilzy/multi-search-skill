@@ -1,4 +1,5 @@
 use crate::RuntimeEnvironment;
+use std::collections::BTreeMap;
 #[cfg(windows)]
 use std::os::windows::{io::AsRawHandle, process::CommandExt};
 use std::{
@@ -94,6 +95,51 @@ impl Drop for OwnedJob {
     }
 }
 
+/// Non-secret variables a CLI child may inherit: OS/runtime plumbing, the user profile roots the
+/// CLI derives its config/state/keys-file paths from, proxy and CA settings, and the product's own
+/// non-secret selectors. Anything else (API keys, tokens, unrelated secrets) is dropped unless the
+/// caller names it as a credential for this one invocation.
+const BASE_VARIABLES: &[&str] = &[
+    "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "COMSPEC", "TEMP", "TMP", "TMPDIR",
+    "USERPROFILE", "HOME", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    "PROGRAMFILES", "PROGRAMFILES(X86)", "COMMONPROGRAMFILES", "ALLUSERSPROFILE", "PUBLIC",
+    "USERNAME", "USERDOMAIN", "COMPUTERNAME", "OS", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+    "LANG", "LC_ALL", "LC_CTYPE", "PYTHONIOENCODING", "PYTHONUTF8",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "MULTI_SEARCH_CONFIG", "MULTI_SEARCH_CREDENTIAL_NAMESPACE",
+];
+/// Disposable-test plumbing. Only forwarded when the parent itself runs isolated, so a release
+/// launch never hands an injected interpreter path to the CLI.
+const ISOLATION_VARIABLES: &[&str] = &["MULTI_SEARCH_TEST_ISOLATION_REPORT", "PYTHONPATH"];
+
+fn named(list: &[&str], name: &str) -> bool {
+    list.iter().any(|item| item.eq_ignore_ascii_case(name))
+}
+
+/// The environment a CLI child actually receives: the non-secret base plus exactly the
+/// `credentials` (variable names) this invocation needs. Names are matched case-insensitively,
+/// as Windows does.
+pub(crate) fn child_variables(environment: &RuntimeEnvironment, credentials: &[&str]) -> BTreeMap<String, String> {
+    let isolated = environment
+        .variables
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("MULTI_SEARCH_TEST_ISOLATION") && value == "1");
+    environment
+        .variables
+        .iter()
+        .filter(|(name, _)| {
+            named(BASE_VARIABLES, name)
+                || named(credentials, name)
+                || (isolated && (named(ISOLATION_VARIABLES, name) || name.eq_ignore_ascii_case("MULTI_SEARCH_TEST_ISOLATION")))
+                // Debug-only seam for the fixture CLI used by the native tests; never in a release build.
+                || (cfg!(debug_assertions) && name.starts_with("FIXTURE_"))
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
 pub(crate) struct Output {
     pub code: Option<i32>,
     pub stdout: String,
@@ -126,16 +172,19 @@ fn reader(
     })
 }
 impl OwnedProcess {
+    /// Start the CLI with a cleared environment: only the non-secret base and the named
+    /// `credentials` are passed (see [`child_variables`]).
     pub(crate) fn spawn(
         program: &Path,
         args: &[String],
         environment: &RuntimeEnvironment,
+        credentials: &[&str],
     ) -> io::Result<Self> {
         let mut command = Command::new(program);
         command
             .args(args)
             .env_clear()
-            .envs(&environment.variables)
+            .envs(child_variables(environment, credentials))
             .current_dir(&environment.cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -199,13 +248,25 @@ impl Drop for OwnedProcess {
     }
 }
 
+/// Run a credential-free CLI invocation (`--version`, `--help`, migration, …) to completion.
 pub(crate) fn bounded(
     program: &Path,
     args: &[String],
     environment: &RuntimeEnvironment,
     timeout: Duration,
 ) -> io::Result<Output> {
-    let mut process = OwnedProcess::spawn(program, args, environment)?;
+    bounded_with(program, args, environment, &[], timeout)
+}
+
+/// `bounded` with the credential variable names this one invocation may receive.
+pub(crate) fn bounded_with(
+    program: &Path,
+    args: &[String],
+    environment: &RuntimeEnvironment,
+    credentials: &[&str],
+    timeout: Duration,
+) -> io::Result<Output> {
+    let mut process = OwnedProcess::spawn(program, args, environment, credentials)?;
     let started = Instant::now();
     loop {
         if let Some(code) = process.poll()? {
@@ -215,5 +276,49 @@ pub(crate) fn bounded(
             return Ok(process.finish(None, true));
         }
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::child_variables;
+    use crate::RuntimeEnvironment;
+    use std::{collections::BTreeMap, path::PathBuf};
+
+    fn environment(pairs: &[(&str, &str)]) -> RuntimeEnvironment {
+        RuntimeEnvironment {
+            app_path: vec![],
+            user_path: vec![],
+            variables: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>(),
+            cwd: PathBuf::from("."),
+        }
+    }
+
+    #[test]
+    fn only_base_and_named_credentials_reach_the_child() {
+        let env = environment(&[
+            ("Path", "C:\\Windows"),
+            ("USERPROFILE", "C:\\Users\\u"),
+            ("TAVILY_API_KEY", "synthetic-tavily"),
+            ("EXA_API_KEY", "synthetic-exa"),
+            ("AWS_SECRET_ACCESS_KEY", "synthetic-aws"),
+            ("PYTHONPATH", "C:\\inject"),
+        ]);
+        let vars = child_variables(&env, &["TAVILY_API_KEY"]);
+        assert!(vars.contains_key("Path"), "base names match case-insensitively");
+        assert!(vars.contains_key("USERPROFILE"));
+        assert_eq!(vars.get("TAVILY_API_KEY").map(String::as_str), Some("synthetic-tavily"));
+        assert!(!vars.contains_key("EXA_API_KEY"), "unrequested keys are dropped");
+        assert!(!vars.contains_key("AWS_SECRET_ACCESS_KEY"));
+        assert!(!vars.contains_key("PYTHONPATH"), "an injected interpreter path is never forwarded outside isolation");
+        assert!(child_variables(&env, &[]).keys().all(|k| !k.ends_with("_KEY")));
+    }
+
+    #[test]
+    fn isolation_plumbing_is_forwarded_only_when_the_parent_is_isolated() {
+        let env = environment(&[("MULTI_SEARCH_TEST_ISOLATION", "1"), ("PYTHONPATH", "boot")]);
+        let vars = child_variables(&env, &[]);
+        assert_eq!(vars.get("MULTI_SEARCH_TEST_ISOLATION").map(String::as_str), Some("1"));
+        assert!(vars.contains_key("PYTHONPATH"));
     }
 }

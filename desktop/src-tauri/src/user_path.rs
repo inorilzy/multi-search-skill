@@ -154,11 +154,14 @@ impl DesktopManager {
             if !plan.can_add {
                 return Err("请先安装并验证受管 CLI".into());
             }
+            // Prepend: the managed directory must come first in the user PATH so a same-named
+            // `multi-search.exe` in a later user entry cannot shadow the verified install.
             let mut desired = current.clone();
-            if !desired.text.is_empty() {
-                desired.text.push(';');
-            }
-            desired.text.push_str(&plan.directory);
+            desired.text = if current.text.is_empty() {
+                plan.directory.clone()
+            } else {
+                format!("{};{}", plan.directory, current.text)
+            };
             desired.exists = true;
             let receipt = PathReceipt {
                 before: current.clone(),

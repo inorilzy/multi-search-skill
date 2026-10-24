@@ -88,7 +88,7 @@ export async function mountInstall(root, api) {
     const result = root.querySelector('[data-path-result]');
     try {
       const outcome = await api.userPathChange(removePath, true);
-      const status = await api.detect(null);
+      const status = await api.detect();
       result.textContent = `${outcome.status}；当前应用：${status.app.status}；新用户环境：${status.user.status}。请重启终端或 Agent 宿主。`;
     } catch (error) { result.textContent = typeof error === 'string' ? error : '用户 PATH 修改未确认，请重新检查；原有或被修改项目会保留。'; }
     finally { busy = false; await refreshPath(); }

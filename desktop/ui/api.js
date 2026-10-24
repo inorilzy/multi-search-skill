@@ -1,7 +1,8 @@
 export function managementApi(invoke) {
   return {
-    detect: path => invoke('detect_cli', { path }),
-    start: (path, options) => invoke('start_test_search', { path, options }),
+    // No call carries an executable path: the backend always runs the managed CLI (then PATH).
+    detect: () => invoke('detect_cli'),
+    start: options => invoke('start_test_search', { options }),
     poll: id => invoke('poll_execution', { id }),
     cancel: id => invoke('cancel_test_search', { id }),
     skillPlan: (scope, project) => invoke('skill_plan', { scope, project }),
@@ -19,10 +20,10 @@ export function managementApi(invoke) {
     credentialStatus: source => invoke('credential_status', { source }),
     credentialSave: (source, key) => invoke('credential_save', { source, key }),
     credentialDelete: source => invoke('credential_delete', { source }),
-    credentialTest: (source, path) => invoke('credential_test', { source, path }),
+    credentialTest: source => invoke('credential_test', { source }),
     settingsView: () => invoke('settings_view'),
     settingsSave: input => invoke('settings_save', { input }),
-    migrationPlan: path => invoke('migration_plan', { path }),
-    migrationApply: (planToken, approved, choices, path) => invoke('migration_apply', { planToken, approved, choices, path }),
+    migrationPlan: () => invoke('migration_plan'),
+    migrationApply: (planToken, approved, choices) => invoke('migration_apply', { planToken, approved, choices }),
   };
 }

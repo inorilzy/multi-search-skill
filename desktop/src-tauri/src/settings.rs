@@ -36,7 +36,7 @@ const ALIASES: &[(&str, &str)] = &[
     ("v2ex", "sov2ex"),
 ];
 /// Mirrors `ROUTE_PROFILES` in search_runner.py.
-fn route_sources(route: &str) -> &'static [&'static str] {
+pub(crate) fn route_sources(route: &str) -> &'static [&'static str] {
     match route {
         "default" => &["brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"],
         "fast" => &["baidu", "tavily", "firecrawl", "exa"],

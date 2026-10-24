@@ -301,7 +301,9 @@ impl DesktopManager {
         let dir = std::env::temp_dir();
         let config = TestConfig::create(&dir, entry, &self.environment).map_err(|_| "无法准备测试配置".to_string())?;
         let environment = test_environment(&self.environment, &config);
-        let output = crate::process::bounded(&cli, &test_args(query, entry), &environment, TEST_TIMEOUT)
+        // Only this source's own key variables (and the fetch-stage keys) reach the child.
+        let credentials = crate::execution::search_credentials("default", &[entry.source.to_string()]);
+        let output = crate::process::bounded_with(&cli, &test_args(query, entry), &environment, &credentials, TEST_TIMEOUT)
             .map_err(|_| "无法启动 CLI".to_string())?;
         if output.timed_out {
             return Ok(TestOutcome {

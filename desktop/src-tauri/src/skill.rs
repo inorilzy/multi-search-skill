@@ -241,7 +241,7 @@ impl DesktopManager {
                 Some(target_text),
             );
         }
-        let cli = self.detect_cli(None).user;
+        let cli = self.detect_cli().user;
         if cli.status != "ready" {
             let reason = format!(
                 "The CLI is not discoverable from the user environment ({}). Install the CLI first.",

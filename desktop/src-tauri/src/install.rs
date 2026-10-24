@@ -767,6 +767,15 @@ fn perform(
 }
 
 impl DesktopManager {
+    /// The managed CLI, only when this tool installed it and every recorded file still verifies.
+    /// Resolution never consults PATH, so a same-named executable elsewhere cannot stand in for it.
+    pub(crate) fn managed_cli(&self) -> Option<PathBuf> {
+        let lay = layout(&self.environment, None).ok()?;
+        recorded(&lay.root)?;
+        let artifact = lay.root.join("bin").join(ARTIFACT);
+        artifact.is_file().then_some(artifact)
+    }
+
     /// `bundled` is the app's own `cli-bundle` resource directory; `None` means the resource is absent.
     pub(crate) fn install_plan_from(&self, bundled: Option<&Path>) -> InstallPlan {
         let lay = match layout(&self.environment, bundled) {

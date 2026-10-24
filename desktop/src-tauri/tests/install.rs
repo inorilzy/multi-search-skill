@@ -107,19 +107,22 @@ fn explicit_user_path_consent_enables_discovery_and_skill_without_restarting_app
     let store = Arc::new(MemoryPathStore::new(PathValue::expandable("%SystemRoot%\\System32")));
     let manager = DesktopManager::with_user_path_store(environment, store.clone());
     assert_eq!(manager.install().status, "installed");
+    // The verified managed install is executable right away, independent of PATH.
+    assert!(manager.detect_cli().managed);
+    assert_eq!(manager.execution_cli().unwrap(), root.join("bin/multi-search.exe"));
     assert_eq!(manager.skill_plan("global", None).status, "cli_missing");
     assert_eq!(manager.user_path_change(false, false).unwrap().status, "confirmation_required");
     assert_eq!(store.value().text, "%SystemRoot%\\System32");
     assert_eq!(manager.user_path_change(false, true).unwrap().status, "added");
-    assert_eq!(manager.detect_cli(None).user.status, "ready");
-    assert_eq!(manager.detect_cli(None).app.status, "missing");
-    assert_eq!(manager.execution_cli(None).unwrap(), root.join("bin/multi-search.exe"));
-    assert!(manager.detect_cli(None).restart_required);
+    assert_eq!(manager.detect_cli().user.status, "ready");
+    assert_eq!(manager.detect_cli().app.status, "missing");
+    assert_eq!(manager.execution_cli().unwrap(), root.join("bin/multi-search.exe"));
+    assert!(manager.detect_cli().restart_required);
     assert_eq!(manager.skill_plan("global", None).status, "ready");
     assert_eq!(manager.skill_install("global", None).status, "installed");
     assert_eq!(manager.user_path_change(true, true).unwrap().status, "removed");
     assert_eq!(store.value().text, "%SystemRoot%\\System32");
-    assert_eq!(manager.detect_cli(None).user.status, "missing");
+    assert_eq!(manager.detect_cli().user.status, "missing");
 }
 
 #[test]
@@ -142,7 +145,8 @@ fn path_registration_preserves_existing_spelling_type_and_user_changes() {
     store.compare_write(&original, &before, None).unwrap();
     assert_eq!(manager.user_path_change(false, true).unwrap().status, "added");
     assert_eq!(store.value().kind, 1);
-    assert_eq!(store.value().text, format!("{};{}", before.text, root.join("bin").display()));
+    // Prepended, so later user entries cannot shadow the managed CLI.
+    assert_eq!(store.value().text, format!("{};{}", root.join("bin").display(), before.text));
     let owned = store.value();
     let mut changed = owned.clone(); changed.text.push_str(";C:\\UserAdded");
     store.compare_write(&owned, &changed, store.receipt().unwrap().as_ref()).unwrap();
@@ -451,4 +455,31 @@ fn installed_cli_tampered_after_install_is_not_reported_as_installed() {
     bytes[0] ^= 0xff;
     fs::write(root.join("bin").join("multi-search.exe"), &bytes).unwrap();
     assert_ne!(manager.install_plan().status, "installed");
+}
+
+
+#[test]
+fn managed_install_is_preferred_over_a_same_named_cli_earlier_on_path() {
+    let profile = common::Profile::new();
+    let root = profile.root.join("managed-first");
+    let src = source(&profile, "managed-first-source", "0.4.0", None);
+    let mut environment = env(&profile, &root, Some(&src));
+    // A shadowing multi-search.exe sits first on both the app and the user PATH.
+    let shadow = profile.root.join("shadow");
+    fs::create_dir_all(&shadow).unwrap();
+    fs::copy(profile.root.join("multi-search.exe"), shadow.join("multi-search.exe")).unwrap();
+    environment.app_path.insert(0, shadow.clone());
+    environment.user_path.insert(0, shadow.clone());
+    let manager = DesktopManager::new(environment.clone());
+    assert_eq!(manager.execution_cli().unwrap(), shadow.join("multi-search.exe"), "no install yet: PATH is used");
+    assert_eq!(manager.install().status, "installed");
+    let status = manager.detect_cli();
+    assert!(status.managed);
+    assert_eq!(status.execution.status, "ready");
+    assert_eq!(manager.execution_cli().unwrap(), root.join("bin/multi-search.exe"));
+    // A tampered managed artifact no longer verifies and is never executed.
+    fs::write(root.join("bin/multi-search.exe"), b"tampered").unwrap();
+    let status = DesktopManager::new(environment).detect_cli();
+    assert!(!status.managed, "an unverified install is not the managed CLI");
+    assert_ne!(status.execution.path.as_deref(), Some(root.join("bin/multi-search.exe").to_string_lossy().as_ref()));
 }

@@ -1,0 +1,34 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "management",
+  "description": "Main management window: only the app's own typed commands. No core/plugin APIs (fs, shell, dialog, http, opener) are granted.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "allow-detect-cli",
+    "allow-start-test-search",
+    "allow-poll-execution",
+    "allow-cancel-test-search",
+    "allow-skill-plan",
+    "allow-skill-install",
+    "allow-install-plan",
+    "allow-install-cli",
+    "allow-skill-status",
+    "allow-skill-update",
+    "allow-skill-remove-plan",
+    "allow-skill-remove",
+    "allow-update-cli",
+    "allow-uninstall-cli",
+    "allow-user-path-plan",
+    "allow-user-path-change",
+    "allow-credential-status",
+    "allow-credential-save",
+    "allow-credential-delete",
+    "allow-credential-test",
+    "allow-migration-plan",
+    "allow-migration-apply",
+    "allow-settings-view",
+    "allow-settings-save"
+  ]
+}

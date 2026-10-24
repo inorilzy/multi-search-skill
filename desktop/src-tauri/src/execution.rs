@@ -2,7 +2,6 @@ use crate::{process::OwnedProcess, DesktopManager};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    path::PathBuf,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -37,6 +36,46 @@ pub(crate) fn is_allowed_source(name: &str) -> bool {
         "v2ex",
     ]
     .contains(&name)
+}
+
+/// Keys the CLI's body-fetch stage may use for any search (Jina reader plus the scrape backends).
+const FETCH_CREDENTIALS: &[&str] = &[
+    "JINA_API_KEY", "JINA_KEY", "EXA_API_KEY", "FIRECRAWL_API_KEY", "TAVILY_API_KEY",
+];
+
+/// Canonical source name for a `--source` value (CLI aliases map to the same source).
+fn canonical_source(name: &str) -> &str {
+    match name {
+        "github" | "github-repos" => "github_repos",
+        "v2ex" => "sov2ex",
+        other => other,
+    }
+}
+
+/// Credential variable names one test search may receive: the selected sources' own keys (or the
+/// route's sources when none are selected) plus the fetch-stage keys. Every other key stays out of
+/// the child environment. Mirrors `KEY_ENV_PAIRS` in keys.py via `credential_commands::SOURCES`.
+pub(crate) fn search_credentials(route: &str, sources: &[String]) -> Vec<&'static str> {
+    let selected: Vec<&str> = if sources.is_empty() {
+        crate::settings::route_sources(route).to_vec()
+    } else {
+        sources.iter().map(|name| canonical_source(name)).collect()
+    };
+    let mut names: Vec<&'static str> = FETCH_CREDENTIALS.to_vec();
+    for source in selected {
+        if source == "twitter" {
+            names.push("TWITTER_COOKIES_PATH");
+        }
+        if let Some(entry) = crate::credential_commands::SOURCES
+            .iter()
+            .find(|entry| canonical_source(entry.source) == source)
+        {
+            names.extend_from_slice(entry.env);
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 #[derive(Clone, Serialize)]
@@ -84,11 +123,7 @@ impl Execution {
     }
 }
 impl DesktopManager {
-    pub fn start_search(
-        &self,
-        path: Option<PathBuf>,
-        options: SearchOptions,
-    ) -> Result<u64, String> {
+    pub fn start_search(&self, options: SearchOptions) -> Result<u64, String> {
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return Err("Desktop manager is closed".into());
         }
@@ -105,7 +140,7 @@ impl DesktopManager {
         {
             return Err("Unsupported search options".into());
         }
-        let cli = self.execution_cli(path)?;
+        let cli = self.execution_cli()?;
         let mut slot = self
             .execution_slot
             .lock()
@@ -119,6 +154,7 @@ impl DesktopManager {
         {
             return Err("A test search is already running".into());
         }
+        let credentials = search_credentials(&options.route, &options.sources);
         let id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -140,6 +176,7 @@ impl DesktopManager {
             &cli,
             &args,
             &self.environment,
+            &credentials,
         )
         .map_err(|_| "Could not start the CLI")?;
         let execution = Arc::new(Mutex::new(Execution {
@@ -244,5 +281,28 @@ impl DesktopManager {
             return Err("Unknown execution".into());
         }
         Ok(state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::search_credentials;
+
+    #[test]
+    fn selected_sources_get_only_their_own_keys_plus_fetch_keys() {
+        let names = search_credentials("default", &["brave".into()]);
+        assert!(names.contains(&"BRAVE_SEARCH_API_KEY") && names.contains(&"BRAVE_API_KEY"));
+        assert!(names.contains(&"JINA_API_KEY"), "body fetch may use Jina");
+        assert!(!names.contains(&"GITHUB_TOKEN") && !names.contains(&"SERPAPI_API_KEY"));
+        let github = search_credentials("default", &["github".into()]);
+        assert!(github.contains(&"GITHUB_TOKEN") && github.contains(&"GH_TOKEN"), "aliases map to the source");
+    }
+
+    #[test]
+    fn an_empty_source_list_uses_the_route_profile() {
+        let dev = search_credentials("dev", &[]);
+        assert!(dev.contains(&"GITHUB_TOKEN"));
+        assert!(!dev.contains(&"BRAVE_SEARCH_API_KEY"));
+        assert!(search_credentials("social", &[]).contains(&"TWITTER_COOKIES_PATH"));
     }
 }

@@ -10,7 +10,7 @@ fn actual_installed_cli_detection_search_partial_failure_and_cancellation() {
     assert_eq!(std::env::var("MULTI_SEARCH_TEST_ISOLATION").unwrap(), "1");
     let environment = RuntimeEnvironment::system();
     let manager = DesktopManager::new(environment.clone());
-    let detection = manager.detect_cli(None);
+    let detection = manager.detect_cli();
     assert_eq!(detection.app.status, "ready", "{}", detection.app.reason);
     assert_eq!(detection.user.status, "ready", "{}", detection.user.reason);
     assert_eq!(detection.app.version.as_deref(), Some("0.4.0"));
@@ -25,9 +25,7 @@ fn actual_installed_cli_detection_search_partial_failure_and_cancellation() {
         ("failure", vec!["hackernews", "brave"], "failed"),
     ] {
         let id = manager
-            .start_search(
-                None,
-                SearchOptions {
+            .start_search(SearchOptions {
                     query: query.into(),
                     route: "dev".into(),
                     sources: sources.into_iter().map(str::to_string).collect(),
@@ -65,9 +63,7 @@ fn actual_installed_cli_detection_search_partial_failure_and_cancellation() {
         }
     }
     let id = manager
-        .start_search(
-            None,
-            SearchOptions {
+        .start_search(SearchOptions {
                 query: "hang".into(),
                 route: "dev".into(),
                 sources: vec!["hackernews".into()],

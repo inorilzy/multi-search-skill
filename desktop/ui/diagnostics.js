@@ -2,7 +2,7 @@ const statusLabels = { ready: '可调用', missing: '未发现', not_executable:
 export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
   root.innerHTML = `<section class="heading"><p class="eyebrow">01 / LOCAL RUNTIME</p><h1>搜索，从本机开始。</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
     <section class="runtime panel"><div class="section-title"><h2>CLI 概览</h2><button type="button" data-action="refresh">重新检测</button></div>
-      <label class="path-input">指定已安装的 CLI <input data-field="path" placeholder="可选：C:\\…\\multi-search.exe" spellcheck="false"></label>
+      <p class="note">测试搜索使用 <strong data-status="execution-cli">检测中</strong><span data-info="execution-cli"></span></p>
       <div class="discovery-grid"><article><span class="eyebrow">APP INVOCATION</span><h3>应用调用</h3><strong data-status="app">检测中</strong><p data-info="app"></p></article><article><span class="eyebrow">FRESH USER ENVIRONMENT</span><h3>用户命令发现</h3><strong data-status="user">检测中</strong><p data-info="user"></p></article></div>
       <p data-info="restart" class="note"></p><p data-info="error" role="alert"></p></section>
     <section class="panel test-search"><div class="section-title"><h2>一次测试搜索</h2><span class="eyebrow">ON DEMAND / NO SERVICE</span></div>
@@ -10,11 +10,10 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
       <div class="search-options"><label>路由<select data-field="route"><option value="default">通用 / default</option><option value="dev">开发 / dev</option><option value="fast">快速 / fast</option><option value="all">全部 / all</option><option value="social">社交 / social</option></select></label><label>搜索源<select data-field="sources"><option value="">按路由配置</option><option value="hackernews">Hacker News（无 key）</option><option value="hackernews,brave">Hacker News + Brave</option><option value="github_repos">GitHub</option><option value="brave">Brave</option><option value="exa">Exa</option><option value="tavily">Tavily</option></select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="60" value="15"></label></div>
       <div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
       <p data-execution-error role="alert"></p><pre data-results tabindex="0" aria-label="搜索结果">结果会显示在这里。</pre></section>`;
-  const path = root.querySelector('[data-field="path"]');
   let appReady = false, activeId = null, timer = null, disposed = false, starting = false;
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');
-  function controls(running) { search.disabled = running || !appReady; cancel.disabled = !running; path.disabled = running; root.querySelector('[data-action="refresh"]').disabled = running; }
+  function controls(running) { search.disabled = running || !appReady; cancel.disabled = !running; root.querySelector('[data-action="refresh"]').disabled = running; }
   function renderExecution(status) {
     const labels = { running: '正在执行', success: '搜索成功', empty: '没有结果', partial: '部分来源失败', failed: '执行失败', cancelled: '已取消', timed_out: '执行超时' };
     root.querySelector('[data-status="execution"]').textContent = labels[status.status] || '执行失败';
@@ -32,7 +31,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
     event.preventDefault(); if (!appReady || activeId !== null || starting) return;
     starting = true; controls(true); root.querySelector('[data-results]').textContent = '';
     renderExecution({ status: 'running' });
-    try { activeId = await api.start(path.value.trim() || null, { query: root.querySelector('[data-field="query"]').value, route: root.querySelector('[data-field="route"]').value, sources: root.querySelector('[data-field="sources"]').value.split(',').filter(Boolean), timeout: Number(root.querySelector('[data-field="timeout"]').value) }); await poll(); }
+    try { activeId = await api.start({ query: root.querySelector('[data-field="query"]').value, route: root.querySelector('[data-field="route"]').value, sources: root.querySelector('[data-field="sources"]').value.split(',').filter(Boolean), timeout: Number(root.querySelector('[data-field="timeout"]').value) }); await poll(); }
     catch { activeId = null; renderExecution({ status: 'failed', error: '启动失败，请检查 CLI 与搜索参数后重试。' }); }
     finally { starting = false; }
   });
@@ -40,8 +39,14 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
   async function detect() {
     const button = root.querySelector('[data-action="refresh"]'); button.disabled = true;
     try {
-      const status = await api.detect(path.value.trim() || null);
-      appReady = status.app.status === 'ready' || (!path.value.trim() && status.user.status === 'ready'); controls(activeId !== null);
+      const status = await api.detect();
+      // Ready means exactly what the backend will run: the managed install first, then PATH.
+      const execution = status.execution || { status: 'missing' };
+      appReady = execution.status === 'ready'; controls(activeId !== null);
+      root.querySelector('[data-status="execution-cli"]').textContent = execution.status === 'ready'
+        ? (status.managed ? '受管安装的 CLI' : 'PATH 中发现的 CLI')
+        : `无可用 CLI（${statusLabels[execution.status] || execution.status}）`;
+      root.querySelector('[data-info="execution-cli"]').textContent = execution.path ? `：${execution.path}` : '';
       for (const scope of ['app', 'user']) {
         const row = status[scope];
         root.querySelector(`[data-status="${scope}"]`).textContent = statusLabels[row.status] || row.status;
@@ -54,7 +59,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
         : reasons.includes('version_failed')
           ? '已找到 CLI，但版本检测未通过。请更新 CLI 后点击“重新检测”；已有 uv 安装需通过 uv 更新，桌面安装不会覆盖它。'
           : reasons.includes('not_executable') || reasons.includes('unavailable')
-            ? 'CLI 未通过执行检测。请先按上方原因检查文件权限、运行时或指定路径，再重新检测。'
+            ? 'CLI 未通过执行检测。请先按上方原因检查文件权限或运行时，或在“安装”页重新安装受管 CLI，再重新检测。'
             : status.user.status === 'missing'
               ? '用户环境未发现 CLI。请检查用户 PATH；更新后重启终端或 Agent 宿主。'
               : '新终端可以发现 CLI。已打开的终端或 Agent 宿主如仍不可用，请重启后重试。';
