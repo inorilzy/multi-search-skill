@@ -5,7 +5,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 
-from ...support.http import urlopen_retry
+from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 
 
@@ -75,7 +75,7 @@ def search_serpapi(
         url = "https://serpapi.com/search?" + urllib.parse.urlencode(params)
         try:
             with urlopen_retry(url, timeout=min(timeout, remaining)) as resp:
-                data = json.loads(resp.read())
+                data = json.loads(read_limited(resp))
         except Exception as e:
             return _return_error(str(scrub_secrets(e, api_key)))
         if data.get("error"):

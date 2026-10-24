@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ...support.http import urlopen_retry
+from ...support.http import read_error_body, read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 from . import (
     _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
@@ -97,7 +97,7 @@ def _jina_quota_exhausted(status_code: int | None, message: str) -> bool:
 
 def _jina_error_message(exc: urllib.error.HTTPError) -> str:
     try:
-        body = exc.read().decode("utf-8", "replace")
+        body = read_error_body(exc).decode("utf-8", "replace")
     except Exception:
         body = ""
     if body:
@@ -143,7 +143,7 @@ def scrape_url_jina(
                 ),
                 timeout=timeout,
             ) as resp:
-                data = json.loads(resp.read())
+                data = json.loads(read_limited(resp))
             page = data.get("data") if isinstance(data, dict) else data
             if not isinstance(page, dict):
                 return {"url": url, "error": "Jina: invalid response"}

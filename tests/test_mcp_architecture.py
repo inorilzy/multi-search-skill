@@ -289,7 +289,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 return self
             def __exit__(self, *exc):
                 return False
-            def read(self):
+            def read(self, size=-1):
                 import json as _json
                 return _json.dumps({
                     "results": [{"title": "T", "text": "body"}],
@@ -336,7 +336,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 return self
             def __exit__(self, *exc):
                 return False
-            def read(self):
+            def read(self, size=-1):
                 import json as _json
                 return _json.dumps({
                     "success": True,
@@ -399,7 +399,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 return self
             def __exit__(self, *exc):
                 return False
-            def read(self):
+            def read(self, size=-1):
                 import json as _json
                 return _json.dumps(self._payload).encode()
 
@@ -1094,7 +1094,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def __exit__(self, *exc):
                 return False
 
-            def read(self):
+            def read(self, size=-1):
                 return b'{"answer":"fast answer","results":[]}'
 
         def fake_urlopen(req, timeout=0):

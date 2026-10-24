@@ -3,7 +3,7 @@ import json
 import urllib.error
 import urllib.request
 
-from ...support.http import urlopen_retry
+from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
 
@@ -31,7 +31,7 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
     )
     try:
         with urlopen_retry(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(read_limited(resp))
         statuses = data.get("statuses") or []
         if statuses and statuses[0].get("status") != "success":
             status = statuses[0].get("status", "unknown")

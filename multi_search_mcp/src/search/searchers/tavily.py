@@ -3,7 +3,7 @@ import json
 import urllib.error
 import urllib.request
 
-from ...support.http import urlopen_retry
+from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 from ...support.tavily import tavily_http_error
 
@@ -41,7 +41,7 @@ def search_tavily(
     )
     try:
         with urlopen_retry(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(read_limited(resp))
     except urllib.error.HTTPError as e:
         message, error_type = tavily_http_error(e, api_key)
         return [{

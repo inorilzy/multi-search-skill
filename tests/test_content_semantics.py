@@ -30,7 +30,7 @@ class _FakeResponse:
     def __exit__(self, *exc):
         return False
 
-    def read(self):
+    def read(self, size=-1):
         if isinstance(self._payload, bytes):
             return self._payload
         if isinstance(self._payload, str):

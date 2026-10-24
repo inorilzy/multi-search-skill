@@ -7,7 +7,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ...support.http import urlopen_retry
+from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 
 
@@ -206,7 +206,7 @@ def _github_api(
             return -1, "", "timeout"
         try:
             with urlopen_retry(req, timeout=request_timeout) as resp:
-                return 0, resp.read().decode("utf-8", errors="replace"), ""
+                return 0, read_limited(resp).decode("utf-8", errors="replace"), ""
         except urllib.error.HTTPError as e:
             raise _github_http_error(e, token, deadline=deadline) from None
         except Exception as e:

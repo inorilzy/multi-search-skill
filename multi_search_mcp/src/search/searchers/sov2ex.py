@@ -6,7 +6,7 @@ import re
 import urllib.parse
 import urllib.request
 
-from ...support.http import urlopen_retry
+from ...support.http import read_limited, urlopen_retry
 
 
 _HIGHLIGHT_TAG_RE = re.compile(r"</?em\b[^>]*>", re.IGNORECASE)
@@ -90,7 +90,7 @@ def search_sov2ex(query: str, count: int = 10, timeout: float = 20) -> list:
     )
     try:
         with urlopen_retry(req, timeout=timeout) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(read_limited(resp))
         if not isinstance(data, dict):
             raise ValueError("response must be an object")
         if data.get("error"):

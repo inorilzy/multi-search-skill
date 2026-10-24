@@ -373,7 +373,7 @@ class BaiduSearcherTests(unittest.TestCase):
         def __exit__(self, *exc):
             return False
 
-        def read(self):
+        def read(self, size=-1):
             return json.dumps(self.payload).encode("utf-8")
 
     def test_baidu_uses_web_summary_endpoint(self):
@@ -418,7 +418,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
         def __exit__(self, *exc):
             return False
 
-        def read(self):
+        def read(self, size=-1):
             return json.dumps(self.payload).encode("utf-8")
 
     def test_tavily_want_content_maps_to_raw_content(self):
