@@ -43,7 +43,7 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
         temp = self.stack.enter_context(TemporaryDirectory(prefix="prefetched-body-"))
         self.store = StateStore(Path(temp) / "state.sqlite")
         self.scraper = mock.Mock(side_effect=AssertionError("unexpected scrape"))
-        self.stack.enter_context(mock.patch.object(service, "load_keys", side_effect=AssertionError("unexpected keys")))
+        self.stack.enter_context(mock.patch("multi_search_mcp.src.state.runtime.load_keys", side_effect=AssertionError("unexpected keys")))
         self.stack.enter_context(mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")))
         self.stack.enter_context(mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected connection")))
 
@@ -183,7 +183,8 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
             return ContentStore(store, clock=lambda: now, **options)
 
         rows = {"twitter": {"primary": [_row("twitter", "Alpha")]}}
-        with mock.patch.object(service, "ContentStore", side_effect=cache):
+        with mock.patch("multi_search_mcp.src.search.candidates.ContentStore", side_effect=cache), \
+             mock.patch("multi_search_mcp.src.scrape.fetch.ContentStore", side_effect=cache):
             response = self._search(rows, use_state=True)
             source_id = response["results"][0]["source_id"]
             stored = cache(self.store).get(source_id)
@@ -245,9 +246,10 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
         rows = {"twitter": {"primary": [
             _row("twitter", "证据" * 3), _row("twitter", "Alpha"),
         ]}}
-        with mock.patch.object(service, "ContentStore", side_effect=lambda store, **options: ContentStore(
-            store, max_object_bytes=10, **options,
-        )):
+        def cache(store, **options):
+            return ContentStore(store, max_object_bytes=10, **options)
+        with mock.patch("multi_search_mcp.src.search.candidates.ContentStore", side_effect=cache), \
+             mock.patch("multi_search_mcp.src.scrape.fetch.ContentStore", side_effect=cache):
             response = self._search(rows, use_state=True, scrape_chars=1)
         self.assertIn("exceeds max object bytes", response["diagnostics"]["content_store_errors"][0]["error"])
         page = response["scrapes"][0]
@@ -266,9 +268,10 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
             _row("twitter", "Alpha", url=URL + "/first"),
             _row("twitter", "Omega", url=URL + "/second"),
         ]}}
-        with mock.patch.object(service, "ContentStore", side_effect=lambda store, **options: ContentStore(
-            store, max_total_bytes=5, **options,
-        )):
+        def cache(store, **options):
+            return ContentStore(store, max_total_bytes=5, **options)
+        with mock.patch("multi_search_mcp.src.search.candidates.ContentStore", side_effect=cache), \
+             mock.patch("multi_search_mcp.src.scrape.fetch.ContentStore", side_effect=cache):
             response = self._search(rows, use_state=True, scrape_concurrency=1)
         self.assertEqual([page["markdown"] for page in response["scrapes"]], ["Alpha", "Omega"])
         self.assertEqual(len(response["results"]), 2)

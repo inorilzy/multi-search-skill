@@ -7,7 +7,7 @@ from unittest import mock
 import json
 
 from multi_search_mcp.src import service
-from multi_search_mcp.src.search.resolve import resolve_search_plan
+from multi_search_mcp.src.search.resolve import SearchPlanRequest, resolve_search_plan
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state import state_store
 from multi_search_mcp.src.state.content_store import DEFAULT_MAX_OBJECT_BYTES
@@ -32,8 +32,8 @@ class PreviewDefaultTests(unittest.TestCase):
         temporary = stack.enter_context(TemporaryDirectory(prefix="preview-defaults-"))
         self.state_path = Path(temporary) / "state.sqlite"
         stack.enter_context(mock.patch.object(state_store, "DEFAULT_STATE_PATH", self.state_path))
-        stack.enter_context(mock.patch.object(service, "load_config", return_value={}))
-        stack.enter_context(mock.patch.object(service, "load_keys", return_value={}))
+        stack.enter_context(mock.patch("multi_search_mcp.src.state.runtime.load_config", return_value={}))
+        stack.enter_context(mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}))
         stack.enter_context(mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")))
         stack.enter_context(mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected connection")))
         self.providers = {"brave": ProviderSpec(
@@ -50,7 +50,7 @@ class PreviewDefaultTests(unittest.TestCase):
     def test_empty_and_repo_config_use_1200_character_default(self):
         for config in ({}, load_config(str(ROOT_CONFIG_PATH))):
             with self.subTest(configured=bool(config)):
-                plan = resolve_search_plan(service.MultiSearchRequest(query="preview"), config)
+                plan = resolve_search_plan(SearchPlanRequest(query="preview"), config)
                 self.assertEqual(plan.scrape_chars, 1200)
 
     def test_preview_request_overrides_config_and_config_overrides_default(self):
@@ -61,7 +61,7 @@ class PreviewDefaultTests(unittest.TestCase):
         ):
             with self.subTest(requested=requested, config=config):
                 plan = resolve_search_plan(
-                    service.MultiSearchRequest(query="preview", scrape_chars=requested), config,
+                    SearchPlanRequest(query="preview", scrape_chars=requested), config,
                 )
                 self.assertEqual(plan.scrape_chars, expected)
 
@@ -101,7 +101,7 @@ class PreviewDefaultTests(unittest.TestCase):
         self.assertEqual(expected, BODY[:1200])
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=self.providers),
-            mock.patch.object(service, "scrape_url_smart", self.scraper),
+            mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", self.scraper),
             mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
         ):
             for mode in ("json", "markdown", "both"):

@@ -105,8 +105,8 @@ class DoctorConfigPathTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for patcher in (
-            mock.patch.object(service, "StateStore", return_value=StateStore(self.root / "state.sqlite")),
-            mock.patch.object(service, "load_keys", return_value={}),
+            mock.patch("multi_search_mcp.src.diagnostics.StateStore", return_value=StateStore(self.root / "state.sqlite")),
+            mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)

@@ -261,9 +261,8 @@ class KeysFilePermissionTests(unittest.TestCase):
         self.path.write_text('{"tavily": "k"}', encoding="utf-8")
         os.chmod(self.path, 0o644)
         store = StateStore(self.home / "state.sqlite")
-        with mock.patch("pathlib.Path.home", return_value=self.home), mock.patch.object(
-            service, "StateStore", return_value=store
-        ), mock.patch.object(service, "load_keys", return_value={"tavily": "k"}):
+        with mock.patch("pathlib.Path.home", return_value=self.home), mock.patch("multi_search_mcp.src.diagnostics.StateStore", return_value=store
+        ), mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={"tavily": "k"}):
             data = service.doctor_data(include_keys=False)
         self.assertEqual(len(data["keys_file_warnings"]), 1)
         self.assertIn("readable by other users", data["keys_file_warnings"][0])

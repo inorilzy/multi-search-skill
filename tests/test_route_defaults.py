@@ -1,8 +1,6 @@
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-
-from multi_search_mcp.src.search.resolve import resolve_search_plan
+from multi_search_mcp.src.search.resolve import SearchPlanRequest, resolve_search_plan
 from multi_search_mcp.src.support.config import load_config
 
 
@@ -10,20 +8,9 @@ ROOT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "multi-search-config.js
 
 
 def make_request(*, route="default", scrape_top=None):
-    return SimpleNamespace(
-        query="route defaults",
+    return SearchPlanRequest(
         route=route,
-        count=None,
-        sources=None,
         scrape_top=scrape_top,
-        scrape_chars=None,
-        scrape_per_source=None,
-        scrape_timeout=None,
-        scrape_concurrency=None,
-        timeout=None,
-        output="both",
-        title_url_only=False,
-        verbose=False,
     )
 
 

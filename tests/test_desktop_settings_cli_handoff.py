@@ -44,11 +44,11 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
         env.pop("TWITTER_COOKIES_PATH", None)
         stack.enter_context(mock.patch.dict(os.environ, env))
         stack.enter_context(
-            mock.patch("multi_search_mcp.src.service.StateStore",
+            mock.patch("multi_search_mcp.src.search_web.StateStore",
                        lambda *a, **k: StateStore(root / "state.sqlite"))
         )
         stack.enter_context(
-            mock.patch("multi_search_mcp.src.service.load_keys", lambda *a, **k: dict(SYNTHETIC_KEYS))
+            mock.patch("multi_search_mcp.src.state.runtime.load_keys", lambda *a, **k: dict(SYNTHETIC_KEYS))
         )
 
     def _fake(self, name):
@@ -102,7 +102,7 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
                              twitter_cookies_path=twitter_cookies_path)
 
         with mock.patch.object(registry, "search_twitter", fake_twitter), \
-                mock.patch("multi_search_mcp.src.service.load_keys", isolated_load_keys):
+                mock.patch("multi_search_mcp.src.state.runtime.load_keys", isolated_load_keys):
             self.run_cli("--source", "twitter")
         self.assertEqual(seen, ["C:/synthetic/handoff-twitter-cookies.json"])
 

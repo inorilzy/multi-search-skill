@@ -47,6 +47,19 @@ def key_id_for(provider: str, key: str) -> str:
     return f"{provider}:{digest}"
 
 
+def summarize_status_rows(rows: list[dict]) -> list[dict]:
+    """Return the public, non-secret summary rows used by search diagnostics."""
+    return [{
+        "provider": row.get("provider"),
+        "key_id": row.get("key_id"),
+        "fingerprint": row.get("key_fingerprint"),
+        "status": row.get("status"),
+        "last_error_type": row.get("last_error_type"),
+        "cooldown_until": row.get("cooldown_until"),
+        "exhausted_until": row.get("exhausted_until"),
+    } for row in rows]
+
+
 def key_fingerprint(key: str) -> str:
     """Irreversible short display identifier for a key; contains no key characters.
 

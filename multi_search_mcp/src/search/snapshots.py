@@ -15,9 +15,13 @@ from typing import Any
 
 from .candidate import RRF_RANK_CONSTANT, SEARCH_RESULT_LIMIT, fuse_search_results
 from .capabilities import retention_policy_for_sources
+from .candidates import run_search_candidates
 from .query_plan import build_query_plan
+from .resolve import SearchPlanRequest, resolve_search_plan
+from ..state.runtime import load_runtime_key_context
 from ..support.config import load_config
 from ..support.models import ANSWER_SOURCES, as_dicts, search_content
+from ..support.requests import SearchWebRequest
 from ..support.secrets import scrub_secrets
 
 
@@ -90,11 +94,7 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
     Provider wrappers count actual attempts (including key retries). The Core
     observer supplies the post-timeout, post-retry rows and original provider ranks.
     """
-    from ..service import (
-        MultiSearchRequest, SearchWebRequest, _load_runtime_key_context, _run_search_candidates,
-    )
     from .registry import build_provider_registry
-    from .resolve import resolve_search_plan
 
     request = SearchWebRequest(**request) if isinstance(request, dict) else request
     logical = build_query_plan(request.query, expand)
@@ -102,13 +102,13 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
     config = dict(load_config(request.config_path) if config is None else config)
     config.update(expand=[], expand_queries=[])
     if keys is None:
-        loaded = _load_runtime_key_context(config)
+        loaded = load_runtime_key_context(config)
         keys, key_errors = loaded.keys, loaded.errors
     else:
         keys, key_errors = dict(keys), {}
     providers = build_provider_registry() if providers is None else providers
-    plan = resolve_search_plan(MultiSearchRequest(
-        query=request.query, route=request.route, count=request.count,
+    plan = resolve_search_plan(SearchPlanRequest(
+        route=request.route, count=request.count,
         sources=request.sources, timeout=request.timeout, scrape_top=0,
     ), config)
     attempts: list[dict] = []
@@ -146,7 +146,7 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
 
     captured_at = time.time()
     start = time.perf_counter()
-    actual = _run_search_candidates(
+    actual = run_search_candidates(
         request, providers={name: wrap(spec) for name, spec in providers.items()},
         keys=keys, key_errors=key_errors, config=config, query_runs_observer=observe,
     )

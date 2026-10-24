@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from multi_search_mcp.src.search.search_runner import ProviderSpec
-from multi_search_mcp.src.service import _run_search_candidates
+from multi_search_mcp.src.service import run_search_candidates
 
 
 def fixed_providers():
@@ -41,7 +41,7 @@ class SearchSnapshotTests(unittest.TestCase):
         request = {"query": "release", "sources": ["parallel"], "use_state": False}
         with mock.patch.object(parallel, "urlopen_retry", side_effect=lambda *_args, **_kwargs:
                                io.BytesIO(json.dumps(payload).encode())):
-            actual = _run_search_candidates(request, providers=providers, keys={}, config={})
+            actual = run_search_candidates(request, providers=providers, keys={}, config={})
             snapshot = capture_snapshot(request, expand=[], providers=providers, keys={}, config={})
         self.assertEqual(actual["results"][0]["published_at"], "2026-09-09")
         self.assertEqual(snapshot["query_runs"][0]["rows"][0]["published_at"], "2026-09-09")
@@ -175,7 +175,7 @@ class SearchSnapshotTests(unittest.TestCase):
 
         request = {"query": "question", "sources": ["brave"], "count": 3, "use_state": False}
         snapshot = capture_snapshot(request, expand=["variant"], providers=fixed_providers(), keys={}, config={})
-        actual = _run_search_candidates(dict(request, expand=["variant"]), providers=fixed_providers(), keys={}, config={})
+        actual = run_search_candidates(dict(request, expand=["variant"]), providers=fixed_providers(), keys={}, config={})
         with mock.patch.object(socket.socket, "connect", side_effect=AssertionError("offline replay accessed network")):
             first = replay_snapshot(snapshot)
             second = replay_snapshot(snapshot)
@@ -317,7 +317,7 @@ class SearchSnapshotTests(unittest.TestCase):
         policy = QueryFusionPolicy(mode="weighted", primary_weight=1.0, variant_budget=0.9)
         config = {"query_fusion": policy.to_dict()}
         snapshot = capture_snapshot(request, expand=["variant"], providers=fixed_providers(), keys={}, config=config)
-        actual = _run_search_candidates(dict(request, expand=["variant"]), providers=fixed_providers(), keys={}, config=config)
+        actual = run_search_candidates(dict(request, expand=["variant"]), providers=fixed_providers(), keys={}, config=config)
         weighted = replay_snapshot(snapshot, mode="weighted", query_policy=policy)
         self.assertEqual(
             replay_snapshot(snapshot, mode="weighted", query_policy=policy, fidelity="sanitized_content")["results"],

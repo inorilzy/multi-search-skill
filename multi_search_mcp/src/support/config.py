@@ -96,6 +96,23 @@ def load_config(path: str | None = None) -> dict:
     return data
 
 
+def resolve_value(request_value: Any, config: dict, key: str, default: Any) -> Any:
+    """Resolve an explicit request value, then the config value, then the default."""
+    if request_value is not None:
+        return request_value
+    if key in config and config.get(key) is not None:
+        return config.get(key)
+    return default
+
+
+def resolve_int(request_value: Any, config: dict, key: str, default: int) -> int:
+    return config_int(resolve_value(request_value, config, key, default), key)
+
+
+def resolve_nonnegative(request_value: Any, config: dict, key: str, default: int) -> int:
+    return max(0, resolve_int(request_value, config, key, default))
+
+
 def config_bool(config: dict, key: str, default: bool = False) -> bool:
     if key not in config:
         return default

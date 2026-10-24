@@ -9,7 +9,7 @@ from unittest import mock
 
 from multi_search_mcp import cli, tools
 from multi_search_mcp.src import service
-from multi_search_mcp.src.search.resolve import COUNT_CAPS, build_counts, resolve_search_plan
+from multi_search_mcp.src.search.resolve import COUNT_CAPS, SearchPlanRequest, build_counts, resolve_search_plan
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support import config
@@ -35,8 +35,9 @@ class ExplicitConfigValidationTests(unittest.TestCase):
         )}
         for patcher in (
             mock.patch.dict(os.environ, {config.CONFIG_ENV_VAR: str(self.path)}),
-            mock.patch.object(service, "load_keys", return_value={}),
-            mock.patch.object(service, "StateStore", return_value=self.store),
+            mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}),
+            mock.patch("multi_search_mcp.src.search_web.StateStore", return_value=self.store),
+            mock.patch("multi_search_mcp.src.diagnostics.StateStore", return_value=self.store),
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
             mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")),
             mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected connection")),
@@ -99,7 +100,7 @@ class ExplicitConfigValidationTests(unittest.TestCase):
                 self.provider.assert_not_called()
 
     def test_missing_and_null_defaults_are_unchanged(self):
-        request = service.MultiSearchRequest(query="test")
+        request = SearchPlanRequest(query="test")
         default = resolve_search_plan(request, {})
         self.assertEqual(
             (default.timeout, default.scrape_top, default.scrape_chars,
@@ -118,7 +119,7 @@ class ExplicitConfigValidationTests(unittest.TestCase):
             self.assertEqual(service.doctor_data(include_keys=False)["config_status"], "ok")
             service.run_search_web({"query": "test", "sources": ["hackernews"]})
             self.provider.assert_called_once()
-        fast = resolve_search_plan(service.MultiSearchRequest(query="test", route="fast"), {})
+        fast = resolve_search_plan(SearchPlanRequest(query="test", route="fast"), {})
         self.assertEqual((fast.timeout, fast.scrape_top), (45, 0))
 
     def test_int_conversion_and_clamping_remain_compatible(self):
@@ -129,9 +130,9 @@ class ExplicitConfigValidationTests(unittest.TestCase):
         for field, minimum in minimums.items():
             for value, integer in ((" 12 ", 12), ("0", 0), ("-4", -4), (2.9, 2), (False, 0), (True, 1)):
                 with self.subTest(field=field, value=value):
-                    plan = resolve_search_plan(service.MultiSearchRequest(query="test"), {field: value})
+                    plan = resolve_search_plan(SearchPlanRequest(query="test"), {field: value})
                     self.assertEqual(getattr(plan, field), max(minimum, integer))
-        plan = resolve_search_plan(service.MultiSearchRequest(query="test"), {"scrape_timeout": "17"})
+        plan = resolve_search_plan(SearchPlanRequest(query="test"), {"scrape_timeout": "17"})
         self.assertEqual(plan.scrape_url_timeout, 17)
         for value, integer in (("999999", 999999), ("-2", -2), (2.9, 2), (False, 0), (True, 1)):
             self.assertEqual(build_counts({"count": value}), {
@@ -201,7 +202,7 @@ class ExplicitConfigValidationTests(unittest.TestCase):
         url = "https://example.com/config-regression"
         self.provider.return_value = [{"source": "hackernews", "title": "Config", "url": url}]
         scraper = mock.Mock(return_value={"url": url, "markdown": "body " * 50, "via": "fixture"})
-        with mock.patch.object(service, "run_ranked_fetch_stage", wraps=service.run_ranked_fetch_stage) as stage:
+        with mock.patch("multi_search_mcp.src.search_web.run_ranked_fetch_stage", wraps=__import__("multi_search_mcp.src.search_web", fromlist=["run_ranked_fetch_stage"]).run_ranked_fetch_stage) as stage:
             response = service.run_search_web(
                 {"query": "test", "sources": ["hackernews"]}, config=defaults,
                 scrape_timeout=3, scrape_chars=100, scrape_concurrency=2,

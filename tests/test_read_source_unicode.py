@@ -23,8 +23,8 @@ class ReadSourceUnicodeTests(unittest.TestCase):
         self.cache = ContentStore(self.store)
         for target in (
             mock.patch.object(socket.socket, "connect"),
-            mock.patch.object(service, "scrape_url_smart"),
-            mock.patch.object(service, "load_keys"),
+            mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart"),
+            mock.patch("multi_search_mcp.src.state.runtime.load_keys"),
         ):
             blocked = target.start()
             blocked.side_effect = AssertionError("cached reads must not fetch or load keys")
@@ -157,7 +157,7 @@ class ReadSourceUnicodeTests(unittest.TestCase):
     def test_cli_and_mcp_share_unicode_results_across_pages(self):
         body = "İ [TARGET].🙂 后续"
         self.cache.put("src_unicode", body)
-        with mock.patch.object(service, "StateStore", return_value=self.store):
+        with mock.patch("multi_search_mcp.src.read.StateStore", return_value=self.store):
             offset = 0
             for expected in ("[TARGET].", "🙂 后续"):
                 output, errors = io.StringIO(), io.StringIO()

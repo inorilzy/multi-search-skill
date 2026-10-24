@@ -11,7 +11,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from multi_search_mcp.src import service
+from multi_search_mcp.src import diagnostics, service
+from multi_search_mcp.src.state import runtime
 from multi_search_mcp.src.search.search_runner import (
     ProviderSpec,
     SearchRunner,
@@ -183,7 +184,8 @@ class RuntimeIsolationTests(CredentialFixture):
 
     def test_search_keeps_keyless_sources_when_a_key_entry_is_unreadable(self):
         broken = "credential store unavailable for brave: stored credential for brave is unreadable"
-        with mock.patch.object(service, "load_keys", return_value=LoadedKeys({}, {"brave": broken})):
+        # Key loading lives in state.runtime since the service split (fix 22).
+        with mock.patch.object(runtime, "load_keys", return_value=LoadedKeys({}, {"brave": broken})):
             response = service.run_search_web(
                 {"query": "fixture", "sources": ["brave", "hackernews"],
                  "use_state": False, "no_fetch": True},
@@ -221,9 +223,9 @@ class CommandSurfaceTests(CredentialFixture):
 
         # `doctor --format json` is the desktop's source of truth for these rows.
         with tempfile.TemporaryDirectory() as temp, mock.patch.object(
-            service, "StateStore", return_value=StateStore(Path(temp) / "state.sqlite"),
-        ), mock.patch.object(service, "load_keys", return_value={}), \
-                mock.patch.object(service, "key_sources", return_value=report):
+            diagnostics, "StateStore", return_value=StateStore(Path(temp) / "state.sqlite"),
+        ), mock.patch.object(runtime, "load_keys", return_value={}), \
+                mock.patch.object(diagnostics, "key_sources", return_value=report):
             data = service.doctor_data(include_keys=True)
         self.assertEqual(data["key_sources"], report)
         self.assertNotIn(SYNTHETIC_FILE_KEY, json.dumps(data))
