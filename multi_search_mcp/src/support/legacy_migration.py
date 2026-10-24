@@ -127,9 +127,30 @@ def plan_migration(keys_file: Path, store: CredentialStore) -> dict[str, Any]:
         "items": items,
         "migratable": migratable,
         "skipped": skipped,
+        # Advisory only: the migration never changes the source file or its mode.
+        "warnings": _warnings(keys_file),
         "source_digest": _fingerprint(keys),
         "store_digest": _store_digest(store, MIGRATABLE),
     }
+
+
+def _warnings(keys_file: Path) -> list[str]:
+    from ..state.keys import keys_file_permission_warning
+
+    warning = keys_file_permission_warning(keys_file)
+    return [warning] if warning else []
+
+
+def _has_plaintext(keys: dict[str, Any]) -> bool:
+    """Whether the legacy file still contains any secret value after the migration."""
+    for value in keys.values():
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, list) and any(isinstance(item, str) and item.strip() for item in value):
+            return True
+        if isinstance(value, dict) and value.get("key"):
+            return True
+    return False
 
 
 def _store_digest(store: CredentialStore, providers) -> str:
@@ -193,4 +214,9 @@ def apply_migration(
         "failed": failed,
         "not_done": not_done,
         "complete": not failed and not not_done,
+        # The source file is never modified or deleted by this module. Tell the
+        # caller when it still holds plaintext so the UI can prompt for cleanup.
+        "legacy_file": str(keys_file),
+        "legacy_file_has_plaintext": _has_plaintext(keys),
+        "warnings": _warnings(keys_file),
     }

@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 
 DEFAULT_STATE_PATH = Path.home() / ".multi-search" / "state.sqlite"
+# How long a writer waits for another process' lock. WAL makes writer/writer
+# contention the only blocking case, so this is a safety net, not the normal path.
+BUSY_TIMEOUT_SECONDS = 10
 
 
 SCHEMA = (
@@ -139,17 +143,40 @@ SCHEMA = (
 
 
 class StateStore:
-    """Small SQLite helper with lazy schema migration."""
+    """Small SQLite helper with lazy schema migration.
+
+    Connections are opened per outermost ``connect()`` call and reused by nested
+    calls on the same thread, so a composed read-modify-write runs on one
+    connection and inside one transaction. They are closed at the end (WAL keeps
+    the file usable by other processes meanwhile), which matters on Windows where
+    an open handle blocks deleting a temporary database.
+    """
 
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path).expanduser() if path else DEFAULT_STATE_PATH
+        self._local = threading.local()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.migrate()
 
+    def _open(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.path), timeout=BUSY_TIMEOUT_SECONDS)
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout = {int(BUSY_TIMEOUT_SECONDS * 1000)}")
+        return conn
+
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(str(self.path), timeout=10)
-        conn.row_factory = sqlite3.Row
+        """Yield a connection. Nested calls share the outer connection/transaction."""
+        depth = getattr(self._local, "depth", 0)
+        if depth:
+            self._local.depth = depth + 1
+            try:
+                yield self._local.conn
+            finally:
+                self._local.depth -= 1
+            return
+        conn = self._open()
+        self._local.conn, self._local.depth = conn, 1
         try:
             yield conn
             conn.commit()
@@ -157,10 +184,32 @@ class StateStore:
             conn.rollback()
             raise
         finally:
+            self._local.conn, self._local.depth = None, 0
             conn.close()
+
+    @contextmanager
+    def transaction(self, *, immediate: bool = True) -> Iterator[sqlite3.Connection]:
+        """One connection and one explicit transaction, committed or rolled back as a unit.
+
+        ``immediate`` takes the write lock up front, which is what a
+        read-modify-write needs to stay correct across processes.
+        """
+        with self.connect() as conn:
+            own_transaction = not conn.in_transaction
+            if own_transaction:
+                conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            try:
+                yield conn
+            except Exception:
+                if own_transaction and conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
 
     def migrate(self) -> None:
         with self.connect() as conn:
+            # WAL is persistent in the database file: after this, every connection
+            # (including other processes) reads without blocking on a writer.
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("BEGIN IMMEDIATE")
             for statement in SCHEMA:
                 conn.execute(statement)

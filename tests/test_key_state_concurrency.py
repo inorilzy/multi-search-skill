@@ -33,24 +33,18 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                 candidate = manager.candidates("exa", "fixture-key")[0]
                 managers = self.managers_for(manager, sharing, 3)
                 outcome = manager.classify_result("exa", {"error": "HTTP 401 unauthorized"})
-                updates_ready = threading.Barrier(3, timeout=5)
-                execute = StateStore.execute
+                updates_ready = threading.Barrier(3, timeout=10)
 
-                def synchronized_update(store, query, params=()):
-                    if "UPDATE key_state" in query and "failure_count" in query:
-                        # Hold all writers after any pre-update reads, before SQL
-                        # obtains its write lock. The database calls remain real.
-                        updates_ready.wait()
-                    return execute(store, query, params)
+                def record(manager):
+                    # Hold every writer at the same point, then let them race for
+                    # the one write transaction each record_result now opens.
+                    updates_ready.wait()
+                    manager.record_result("exa", candidate, outcome)
 
-                with mock.patch.object(StateStore, "execute", synchronized_update):
-                    with ThreadPoolExecutor(max_workers=3) as pool:
-                        futures = [
-                            pool.submit(worker.record_result, "exa", candidate, outcome)
-                            for worker in managers
-                        ]
-                        for future in futures:
-                            future.result(timeout=10)
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    futures = [pool.submit(record, worker) for worker in managers]
+                    for future in futures:
+                        future.result(timeout=20)
 
                 with mock.patch(
                     "multi_search_mcp.src.state.state_store.DEFAULT_STATE_PATH", path
@@ -86,30 +80,23 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                             for outcome in outcomes:
                                 serial.record_result("exa", candidate, outcome)
                             managers = self.managers_for(manager, sharing, 2)
-                            updates_ready = threading.Barrier(2, timeout=5)
+                            updates_ready = threading.Barrier(2, timeout=10)
                             first_committed = threading.Event()
-                            worker = threading.local()
-                            execute = StateStore.execute
-
-                            def ordered_update(store, query, params=()):
-                                if "UPDATE key_state" not in query:
-                                    return execute(store, query, params)
-                                updates_ready.wait()
-                                if worker.index == 1:
-                                    self.assertTrue(first_committed.wait(5))
-                                execute(store, query, params)
-                                if worker.index == 0:
-                                    first_committed.set()
 
                             def record(index):
-                                worker.index = index
+                                # Both writers start together; index 0 commits first so
+                                # the outcome pair matches the serial reference run.
+                                updates_ready.wait()
+                                if index == 1:
+                                    self.assertTrue(first_committed.wait(10))
                                 managers[index].record_result("exa", candidate, outcomes[index])
+                                if index == 0:
+                                    first_committed.set()
 
-                            with mock.patch.object(StateStore, "execute", ordered_update):
-                                with ThreadPoolExecutor(max_workers=2) as pool:
-                                    futures = [pool.submit(record, index) for index in range(2)]
-                                    for future in futures:
-                                        future.result(timeout=10)
+                            with ThreadPoolExecutor(max_workers=2) as pool:
+                                futures = [pool.submit(record, index) for index in range(2)]
+                                for future in futures:
+                                    future.result(timeout=20)
 
                             row = manager.status_rows("exa")[0]
                             self.assertEqual(row, serial.status_rows("exa")[0])

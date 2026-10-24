@@ -4,6 +4,7 @@ Synthetic keys and a memory backend only. The real keys file, real Credential Ma
 user config are never touched; every path comes from a temp directory.
 """
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -211,6 +212,43 @@ class LegacyMigrationTests(unittest.TestCase):
         self.assertEqual(self.keys_file.read_bytes(), before)
         self.assertTrue(self.keys_file.exists())
 
+    def test_apply_reports_the_plaintext_file_it_never_deletes(self):
+        self.write_keys({"tavily": SYN_TAVILY})
+        os.chmod(self.keys_file, 0o600)
+        plan = self.plan()
+        result = lm.apply_migration(self.keys_file, self.store, plan, approved=["tavily"], choices={})
+        self.assertEqual(result["written"], ["tavily"])
+        self.assertEqual(result["legacy_file"], str(self.keys_file))
+        self.assertTrue(result["legacy_file_has_plaintext"])
+        self.assertEqual(result["warnings"], [])
+        # The source is intentionally left untouched for the operator to remove.
+        self.assertEqual(json.loads(self.keys_file.read_text(encoding="utf-8")), {"tavily": SYN_TAVILY})
+
+    def test_empty_file_has_no_plaintext_reminder(self):
+        self.write_keys({})
+        plan = self.plan()
+        result = lm.apply_migration(self.keys_file, self.store, plan, approved=[], choices={})
+        self.assertFalse(result["legacy_file_has_plaintext"])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes only")
+    def test_permissive_keys_file_is_reported_in_plan_and_apply(self):
+        self.write_keys({"tavily": SYN_TAVILY})
+        os.chmod(self.keys_file, 0o644)
+        try:
+            plan = self.plan()
+            self.assertEqual(len(plan["warnings"]), 1)
+            self.assertIn("readable by other users", plan["warnings"][0])
+            self.assertIn(str(self.keys_file), plan["warnings"][0])
+            result = lm.apply_migration(
+                self.keys_file, self.store, plan, approved=["tavily"], choices={},
+            )
+            self.assertEqual(result["warnings"], plan["warnings"])
+            self.assertNotIn(SYN_TAVILY, json.dumps(result))
+
+            os.chmod(self.keys_file, 0o600)
+            self.assertEqual(self.plan()["warnings"], [])
+        finally:
+            os.chmod(self.keys_file, 0o600)
 
 class LegacyMigrationCliTests(unittest.TestCase):
     """Independent CLI path: plan, then apply with a token. Store is an injected memory backend."""
@@ -261,7 +299,6 @@ class LegacyMigrationCliTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertNotIn(SYN_OTHER, err)
         self.assertIsNone(self.store.get("tavily"))
-
 
 if __name__ == "__main__":
     unittest.main()
