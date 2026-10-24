@@ -15,28 +15,13 @@ pub struct SearchOptions {
     pub sources: Vec<String>,
     pub timeout: u32,
 }
-/// Source names the CLI accepts for `--source`. Includes the settings page's canonical names
-/// (`sov2ex`, `github_repos`) and the CLI aliases (`v2ex`, `github-repos`, `github`), which the
-/// CLI maps to the same source. Mirrors `ALL_SOURCE_NAMES` and `SOURCE_ALIASES` in search_runner.py.
+/// Whether the CLI accepts this `--source` value. Canonical names and every
+/// catalog alias (for example `v2ex`, `github-repos`, `github`) resolve here;
+/// scrape-only providers such as `jina` and unknown names do not.
 pub(crate) fn is_allowed_source(name: &str) -> bool {
-    [
-        "brave",
-        "parallel",
-        "tavily",
-        "exa",
-        "serpapi",
-        "firecrawl",
-        "baidu",
-        "twitter",
-        "stackoverflow",
-        "github_repos",
-        "github-repos",
-        "github",
-        "hackernews",
-        "sov2ex",
-        "v2ex",
-    ]
-    .contains(&name)
+    crate::source_catalog::catalog()
+        .source(name)
+        .is_some_and(|source| source.searchable)
 }
 
 #[derive(Clone, Serialize)]
@@ -98,7 +83,7 @@ impl DesktopManager {
         {
             return Err("Enter a query of 1–2000 bytes".into());
         }
-        if !["default", "fast", "all", "social", "dev"].contains(&options.route.as_str())
+        if crate::source_catalog::catalog().route(&options.route).is_none()
             || !(1..=60).contains(&options.timeout)
             || options.sources.len() > 16
             || options.sources.iter().any(|s| !is_allowed_source(s))

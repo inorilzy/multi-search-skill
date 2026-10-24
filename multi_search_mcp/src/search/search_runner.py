@@ -32,17 +32,21 @@ SOURCE_ALIASES = {
     "v2ex": "sov2ex",
 }
 
-ROUTE_PROFILES = {
-    "default": {"brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"},
-    "fast": {"baidu", "tavily", "firecrawl", "exa"},
-    "social": {"twitter"},
-    "dev": {"stackoverflow", "github_repos", "hackernews"},
-    "all": {
+# Ordered display/contract form of ROUTE_PROFILES. Route membership is defined
+# once here; ``search.catalog`` exports this order to the CLI/desktop so output
+# and documentation stay deterministic.
+ROUTE_SOURCE_ORDER = {
+    "default": ("brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"),
+    "fast": ("baidu", "tavily", "firecrawl", "exa"),
+    "social": ("twitter",),
+    "dev": ("stackoverflow", "github_repos", "hackernews"),
+    "all": (
         "brave", "parallel", "tavily", "exa", "serpapi", "baidu",
         "firecrawl", "twitter", "stackoverflow", "github_repos",
         "hackernews", "sov2ex",
-    },
+    ),
 }
+ROUTE_PROFILES = {route: set(sources) for route, sources in ROUTE_SOURCE_ORDER.items()}
 
 ROUTE_ALIASES = {
     "web": "default",

@@ -100,6 +100,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_format_argument(doctor_parser)
     doctor_parser.set_defaults(handler=_handle_doctor)
 
+    sources_parser = subparsers.add_parser(
+        "sources",
+        help="print the shared source, route, alias, and env catalog (JSON by default)",
+    )
+    _add_format_argument(sources_parser)
+    sources_parser.set_defaults(handler=_handle_sources)
+
     keys_parser = subparsers.add_parser("keys", help="inspect or reset key health state")
     keys_subparsers = keys_parser.add_subparsers(dest="keys_command", required=True)
 
@@ -261,6 +268,13 @@ def _handle_read(args: argparse.Namespace) -> dict[str, Any]:
 
 def _handle_doctor(args: argparse.Namespace) -> dict[str, Any]:
     return doctor_data(include_keys=not args.no_keys, include_network=args.network)
+
+
+def _handle_sources(args: argparse.Namespace) -> dict[str, Any]:
+    # Imported lazily so the light search CLI paths do not grow their import graph.
+    from .src.search.catalog import build_source_catalog
+
+    return build_source_catalog()
 
 
 def _handle_keys_status(args: argparse.Namespace) -> dict[str, Any]:

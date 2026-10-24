@@ -55,6 +55,10 @@ path = "tests/credential_sources.rs"
 name = "settings"
 path = "tests/settings.rs"
 
+[[test]]
+name = "source_catalog"
+path = "tests/source_catalog.rs"
+
 [[bin]]
 name = "multi-search-desktop"
 path = "src/main.rs"

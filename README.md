@@ -126,6 +126,8 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 
 当前注册 12 个搜索源；`all` 路由包含全部 12 个。Jina 仅负责抓取正文，不计入搜索源。
 
+源的名称、路由、别名、展示文案和环境变量名只由 Core 的 `multi_search_mcp/src/search/catalog.py` 维护。`multi-search sources --format json` 输出这份目录；桌面端构建时通过 `scripts/export_source_catalog.py` 生成并读取同一份目录，不再各自手抄。
+
 免费额度来自当前公开页面或常见免费层，可能被服务商调整；以各平台控制台为准。
 
 | 源 | 用途 | 注册地址 | 免费额度 / 说明 | 本地请求上限 |
@@ -201,7 +203,11 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 }
 ```
 
-环境变量会覆盖同名配置：
+环境变量会覆盖同名配置。优先级与 `multi-search sources --format json` 的 `key_resolution`、`env` 字段完全一致：
+
+- 同一 provider 有多个环境变量时，按下面列表从左到右依次读取，**最后一个非空值生效**。例如同时设置 `BRAVE_SEARCH_API_KEY` 和 `BRAVE_API_KEY` 时使用 `BRAVE_API_KEY`；同时设置 `GITHUB_TOKEN` 和 `GH_TOKEN` 时使用 `GH_TOKEN`。
+- 生效顺序：环境变量（`env`）> Windows 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）。
+- `TWITTER_COOKIES_PATH` > 配置中的 `twitter_cookies_path` > keys 文件中的 `twitter` 条目。
 
 ```text
 BRAVE_SEARCH_API_KEY / BRAVE_API_KEY
@@ -210,9 +216,9 @@ BAIDU_QIANFAN_API_KEY / QIANFAN_API_KEY / APPBUILDER_API_KEY
 TAVILY_API_KEY
 EXA_API_KEY
 JINA_API_KEY / JINA_KEY
+GITHUB_TOKEN / GH_TOKEN
 FIRECRAWL_API_KEY
 SERPAPI_API_KEY / SERPAPI_KEY
-GITHUB_TOKEN / GH_TOKEN
 TWITTER_COOKIES_PATH
 ```
 
@@ -324,7 +330,7 @@ search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
 search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `doctor`、`keys status`、`keys reset`。
+CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录）、`doctor`、`keys status`、`keys reset`。
 
 ## 配置和参数
 
