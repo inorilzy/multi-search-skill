@@ -2,6 +2,7 @@
 import copy
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -165,12 +166,22 @@ class RedditContentTests(unittest.TestCase):
 class AnonymousAuthTests(unittest.TestCase):
     def test_concurrent_requests_share_one_token_exchange(self):
         auth = _eddrit.AnonymousAuth()
+        callers = threading.Semaphore(0)
+
         def exchange(*args, **kwargs):
-            time.sleep(0.03)
+            # Hold the first exchange until every caller has started, so all
+            # four overlap with it instead of depending on a sleep.
+            for _ in range(4):
+                self.assertTrue(callers.acquire(timeout=2))
             return token_response()
+
+        def call(_index):
+            callers.release()
+            return auth.headers(session, time.monotonic() + 5, None)
+
         session = mock.Mock(post=mock.Mock(side_effect=exchange))
         with ThreadPoolExecutor(max_workers=4) as pool:
-            values = list(pool.map(lambda _: auth.headers(session, time.monotonic()+2, None), range(4)))
+            values = list(pool.map(call, range(4)))
         self.assertTrue(all(value == values[0] for value in values))
         session.post.assert_called_once()
 

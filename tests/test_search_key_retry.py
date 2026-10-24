@@ -1,8 +1,8 @@
 import json
 import threading
-import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
@@ -158,21 +158,24 @@ class SearchKeyRetryTests(unittest.TestCase):
             "url": "https://example.com/partial",
         }
         calls = []
+        clock = SimpleNamespace(now=100.0)
+        clock.monotonic = lambda: clock.now
 
         def call_with_key(key):
             calls.append(key)
             if key == "fixture-serp-1":
-                time.sleep(0.02)
+                clock.now += 0.02  # the first key call outlives the deadline
                 return [candidate, {"source": "serpapi", "error": "quota exhausted"}]
             return [{"source": "serpapi", "error": "quota exhausted"}]
 
-        rows = run_keyed_source(
-            "serpapi",
-            ["fixture-serp-1", "fixture-serp-2"],
-            call_with_key,
-            deadline=time.monotonic() + 0.005,
-            key_manager=BasicKeyManager(),
-        )
+        with mock.patch.object(search_runner, "time", clock):
+            rows = run_keyed_source(
+                "serpapi",
+                ["fixture-serp-1", "fixture-serp-2"],
+                call_with_key,
+                deadline=clock.now + 0.005,
+                key_manager=BasicKeyManager(),
+            )
 
         self.assertEqual(calls, ["fixture-serp-1"])
         self.assertEqual(
@@ -218,6 +221,7 @@ class SearchKeyRetryTests(unittest.TestCase):
 
     def test_deadline_snapshot_merges_candidates_published_by_each_key(self):
         started = threading.Event()
+        release = threading.Event()
         pool = search_runner.BoundedDaemonExecutor(
             max_workers=1, thread_name_prefix="test-serpapi-key-deadline"
         )
@@ -233,7 +237,7 @@ class SearchKeyRetryTests(unittest.TestCase):
             if start == 0:
                 return _response(_page(10))
             started.set()
-            time.sleep(0.2)
+            release.wait(timeout=5)  # hang past the runner deadline until released
             return _response({"organic_results": []})
 
         runner = self._runner(BasicKeyManager())
@@ -244,6 +248,7 @@ class SearchKeyRetryTests(unittest.TestCase):
                 rows = runner.run("fixture")
                 self.assertTrue(started.is_set())
             finally:
+                release.set()
                 pool.shutdown(wait=True)
 
         hits = [row for row in rows if row.get("url")]

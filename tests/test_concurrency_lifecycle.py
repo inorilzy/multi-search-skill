@@ -193,11 +193,11 @@ class SearchRunnerLifecycleTests(unittest.TestCase):
 
     def test_timed_out_worker_does_not_delay_process_exit(self):
         script = """
-import time
+import threading
 from multi_search_mcp.src.search.search_runner import ProviderSpec, SearchRunner, SearchRunnerConfig
 
 def blocking_provider(*_args):
-    time.sleep(5)
+    threading.Event().wait()  # never released: only process exit ends it
     return []
 
 runner = SearchRunner(
@@ -254,7 +254,7 @@ runner.run("query")
                     self.assertEqual(rows[0]["source"], "blocking")
                     self.assertIn("timeout after 0.05s", rows[0]["error"])
 
-                time.sleep(0.05)
+                # Workers start synchronously at submission, so the bound holds now.
                 self.assertLessEqual(len(_live_threads(prefix)), 2)
         finally:
             unblock.set()
@@ -287,7 +287,7 @@ class RankedFetchStageLifecycleTests(unittest.TestCase):
                     self.assertEqual(result["errors"][0]["source_id"], "src_doc")
                     self.assertIn("fetch timeout after 0.05s", result["errors"][0]["error"])
 
-                time.sleep(0.05)
+                # Workers start synchronously at submission, so the bound holds now.
                 self.assertLessEqual(len(_live_threads(prefix)), 2)
         finally:
             unblock.set()

@@ -10,6 +10,9 @@ fn main() {
     if env::var("PROFILE").as_deref() == Ok("release") && env::var_os("CARGO_FEATURE_INSTALL_TEST_BOUNDARY").is_some() {
         panic!("install-test-boundary is acceptance-only and cannot be packaged in a release build");
     }
+    if env::var("PROFILE").as_deref() == Ok("release") && env::var_os("CARGO_FEATURE_TEST_FIXTURES").is_some() {
+        panic!("test-fixtures exposes test-only seams and cannot be packaged in a release build");
+    }
     println!("cargo:rerun-if-env-changed=MULTI_SEARCH_CLI_BUNDLE_ANCHOR");
     println!("cargo:rerun-if-changed=resources/cli-bundle.anchor");
     let anchor = match env::var("MULTI_SEARCH_CLI_BUNDLE_ANCHOR") {
