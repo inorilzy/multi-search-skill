@@ -19,7 +19,11 @@ import importlib.util
 import json
 from pathlib import Path
 import multi_search_mcp
-from xkit import Client
+
+try:
+    from xkit import Client
+except ImportError:  # xkit-py is optional while the private dependency is disabled
+    Client = None
 
 module_path = Path(multi_search_mcp.__file__).resolve()
 assert "site-packages" in module_path.parts, module_path
@@ -29,18 +33,21 @@ metadata = importlib.metadata.distribution("multi-search-mcp")
 entries = {entry.name: entry.value for entry in metadata.entry_points if entry.group == "console_scripts"}
 assert entries == {"multi-search": "multi_search_mcp.cli:entrypoint"}, entries
 assert not any(requirement.lower().startswith("mcp") for requirement in metadata.requires or [])
-try:
-    importlib.metadata.distribution("twikit-ng")
-except importlib.metadata.PackageNotFoundError:
-    pass
-else:
-    raise AssertionError("twikit-ng and xkit-py must not share the installed twikit namespace")
-client = Client("en-US", timeout=1)
-client.set_cookies({"auth_token": "installation-fixture", "ct0": "installation-fixture"})
-assert callable(client.search_tweet) and callable(client.get_tweet_by_id)
-import asyncio
-asyncio.run(client.http.aclose())
-print(json.dumps({"version": metadata.version, "xkit_version": importlib.metadata.version("xkit-py"),
+xkit_version = None
+if Client is not None:
+    try:
+        importlib.metadata.distribution("twikit-ng")
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    else:
+        raise AssertionError("twikit-ng and xkit-py must not share the installed twikit namespace")
+    client = Client("en-US", timeout=1)
+    client.set_cookies({"auth_token": "installation-fixture", "ct0": "installation-fixture"})
+    assert callable(client.search_tweet) and callable(client.get_tweet_by_id)
+    import asyncio
+    asyncio.run(client.http.aclose())
+    xkit_version = importlib.metadata.version("xkit-py")
+print(json.dumps({"version": metadata.version, "xkit_version": xkit_version,
                   "module_path": str(module_path), "console_scripts": entries, "mcp_installed": False}))
 '''
 

@@ -101,7 +101,11 @@ cd multi-search-skill
 multi-search --help
 ```
 
-Python 包依赖由 `pyproject.toml` 管理，包含 `beautifulsoup4`、`xkit-py`、`curl-cffi`，不包含 MCP。CLI 安装都会自动安装 [XKit-py](https://github.com/inorilzy/xkit-py)，代码使用 `from xkit import Client`。从源码初始化时，在仓库根目录执行：
+Python 包依赖由 `pyproject.toml` 管理，包含 `beautifulsoup4`、`curl-cffi`，不包含 MCP。
+
+> **XKit-py 当前已暂时停用。** `pyproject.toml` 里对 [XKit-py](https://github.com/inorilzy/xkit-py) 的依赖已注释掉，`uv.lock` 也随之重建，安装不再需要该私有仓库的读取权限。代价是 Twitter/X 搜索和推文抓取不可用，调用时会返回明确的「需要安装 xkit」错误，其他来源不受影响。要恢复时取消 `pyproject.toml` 中那行的注释并重新执行 `uv lock`。
+
+从源码初始化时，在仓库根目录执行：
 
 ```powershell
 uv sync --locked
@@ -109,11 +113,11 @@ uv sync --locked
 .\multi_search_mcp\src\support\init.ps1
 ```
 
-初始化不需要单独安装 XKit-py。项目固定安装 GitHub 提交 `c02ff46efd0264b4bc85968e3f5732561ffdbaf3` 的源码：PyPI `xkit-py 2.6.3` 的 wheel 和 sdist 缺少 `twikit/client`，直接安装该发行版会导入失败。**该 GitHub 仓库是私有的，CLI、CI 的安装环境均需 Git 和该仓库的读取权限**；可先用有权限的账号执行 `gh auth login`、`gh auth setup-git`，已有可用 Git 凭据时无需重复配置。未配置权限时安装会明确失败。
+恢复 XKit-py 时：项目固定安装 GitHub 提交 `c02ff46efd0264b4bc85968e3f5732561ffdbaf3` 的源码，因为 PyPI `xkit-py 2.6.3` 的 wheel 和 sdist 缺少 `twikit/client`，直接安装会导入失败。**该 GitHub 仓库是私有的，安装环境需 Git 和读取权限**；可先用有权限的账号执行 `gh auth login`、`gh auth setup-git`。
 
 `uv sync --locked` 会移除旧的 `twikit-ng`；这两个发行包共用 `twikit` 模块目录，不应混装。使用已有 pip 环境升级时，先执行 `python -m pip uninstall twikit-ng`，再执行 `python -m pip install .`。
 
-Twitter/X 仍需要 cookies。XKit-py 首次请求会自动从 `x.com` 和 `abs.twimg.com` 获取运行参数，无需额外初始化命令或浏览器安装；网络连接失败、cookies 失效和限流会明确报错。安装依赖本身不代表搜索已通过在线验证。
+Twitter/X 除 cookies 外还需要 XKit-py（目前停用）。恢复后 XKit-py 首次请求会自动从 `x.com` 和 `abs.twimg.com` 获取运行参数，无需额外初始化命令或浏览器安装；网络连接失败、cookies 失效和限流会明确报错。
 
 X 搜索只取得候选列表，返回 URL、标题、正文摘要和互动数据。统一去重、排序后，仅为最终入选的帖子调用 X 专用 scraper：通过 XKit `get_tweet_by_id()` 的 `.full_text` 读取正文，并加载最多 20 条评论（评论也读取 `.full_text`）。`x.com` / `twitter.com` 帖子链接可直接交给 `fetch_source`，无需先搜索；沿用同一份 Cookie，不切换到通用网页抓取器。正文进入统一缓存，后续短预览和 `read_source` 不会重新请求 X。旧版本的搜索片段缓存会在获取正文时重新抓取。
 

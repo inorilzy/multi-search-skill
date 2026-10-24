@@ -5,8 +5,10 @@ description = "On-demand aggregated search CLI and shared Core for the multi-sea
 requires-python = ">=3.10"
 dependencies = [
     "beautifulsoup4>=4.12",
+    # Temporarily disabled: xkit-py is a private repository and installs need read access.
+    # Twitter/X degrades to an explicit "install xkit" error while this is commented out.
     # PyPI 2.6.3 omits twikit/client; use the complete, pinned upstream source.
-    "xkit-py @ git+https://github.com/inorilzy/xkit-py.git@c02ff46efd0264b4bc85968e3f5732561ffdbaf3",
+    # "xkit-py @ git+https://github.com/inorilzy/xkit-py.git@c02ff46efd0264b4bc85968e3f5732561ffdbaf3",
     "curl-cffi>=0.16.3,<0.17",
 ]
 

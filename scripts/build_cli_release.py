@@ -66,13 +66,18 @@ def _uv_install(args: list[str], site: Path, what: str) -> None:
         raise BundleError(f"offline install of {what} failed: {result.stderr.strip()[-400:]}")
 
 
-def install_runtime(runtime: Path, requirements: Path, wheel: Path, xkit_source: Path) -> None:
-    """Populate the runtime's site-packages offline: pinned hashed deps, the project wheel, pinned xkit-py.
+def install_runtime(runtime: Path, requirements: Path, wheel: Path, xkit_source: Path | None) -> None:
+    """Populate the runtime's site-packages offline: pinned hashed deps, the project wheel, optional xkit-py.
 
     Only site-packages is rebuilt; the verified CPython (python.exe, stdlib) is kept. The wheel's
     hash is checked by the caller before this runs; xkit-py is verified by its author separately.
+    ``xkit_source`` is optional while the xkit dependency is disabled: without it the bundle keeps
+    working everywhere except Twitter/X, which reports its own installation error at runtime.
     """
-    for path, label in ((requirements, "pinned requirements"), (wheel, "project wheel"), (xkit_source, "xkit-py source")):
+    required = ((requirements, "pinned requirements"), (wheel, "project wheel"))
+    if xkit_source is not None:
+        required += ((xkit_source, "xkit-py source"),)
+    for path, label in required:
         if not path.exists():
             raise BundleError(f"{label} missing: {path}")
     site = runtime / "Lib" / "site-packages"
@@ -81,7 +86,8 @@ def install_runtime(runtime: Path, requirements: Path, wheel: Path, xkit_source:
     site.mkdir(parents=True)
     _uv_install(["--require-hashes", "-r", str(requirements)], site, "pinned dependencies")
     _uv_install([str(wheel)], site, "project wheel")
-    _uv_install([str(xkit_source)], site, "xkit-py")
+    if xkit_source is not None:
+        _uv_install([str(xkit_source)], site, "xkit-py")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,8 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wheel", type=Path, required=True, help="built multi_search_mcp wheel")
     parser.add_argument("--wheel-sha256", required=True,
                         help="SHA-256 of --wheel, recorded by the pipeline step that built it")
-    parser.add_argument("--xkit-source", type=Path, required=True,
-                        help="xkit-py checkout at the pinned commit (see scripts/cli-bundle-requirements.txt)")
+    parser.add_argument("--xkit-source", type=Path, default=None,
+                        help="optional xkit-py checkout at the pinned commit; omit while xkit is disabled")
     parser.add_argument("--version", required=True)
     parser.add_argument("--work", type=Path, default=REPO / "dist" / "cli-release-work")
     parser.add_argument("--require-signing", action="store_true",
