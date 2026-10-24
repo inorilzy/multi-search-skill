@@ -232,10 +232,17 @@ async fn migration_apply(
 }
 
 #[tauri::command]
-fn settings_view(
+async fn settings_view(
     manager: tauri::State<'_, Arc<DesktopManager>>,
 ) -> Result<crate::settings::SettingsView, String> {
-    Ok(crate::settings::view(&manager.inner().environment))
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // The CLI's doctor payload is the single source of truth for the displayed config path.
+        let doctor = manager.doctor_config();
+        crate::settings::view_with_doctor(&manager.environment, doctor.as_ref())
+    })
+    .await
+    .map_err(|_| "设置读取失败".to_string())
 }
 #[tauri::command]
 fn settings_save(

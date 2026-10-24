@@ -119,6 +119,41 @@ test('once the user file is read, no override notice is shown', async () => {
   window.close();
 });
 
+test('the displayed config path and source are exactly what the CLI doctor payload reported', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, {
+    settingsView: async () => view({
+      config_path: 'D:/cli/dev/multi-search-config.json',
+      path_source: 'dev_fallback',
+      file_present: true,
+      read_source: 'dev_fallback',
+      save_creates_override: true,
+    }),
+  });
+  assert.equal(root.querySelector('[data-status="path"]').textContent, 'D:/cli/dev/multi-search-config.json');
+  const source = root.querySelector('[data-status="path-source"]').textContent;
+  assert.match(source, /开发目录回退/);
+  assert.match(source, /文件已存在/);
+  assert.match(root.querySelector('[data-info="env"]').textContent, /保存会创建用户配置文件/);
+  window.close();
+});
+
+test('a missing config file is labeled as built-in defaults rather than a user file', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, {
+    settingsView: async () => view({
+      config_path: 'C:/Users/test/.multi-search/multi-search-config.json',
+      path_source: 'defaults',
+      file_present: false,
+      read_source: 'defaults',
+    }),
+  });
+  const source = root.querySelector('[data-status="path-source"]').textContent;
+  assert.match(source, /内置默认值/);
+  assert.match(source, /文件尚未创建/);
+  window.close();
+});
+
 test('a rejected save keeps the form and shows the error without writing a status as saved', async () => {
   const { window, root } = setup();
   const api = {

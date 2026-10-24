@@ -239,7 +239,9 @@ class GitHubKeyPoolTests(unittest.TestCase):
         self.assertEqual(len(expected), 1)
         with mock.patch.object(service, "StateStore", return_value=self.store), \
              mock.patch.object(service, "load_config", return_value={}), \
-             mock.patch.object(service, "resolve_config_path", return_value=self.keys_path.parent / "config.json"), \
+             mock.patch.object(
+                 service, "resolve_config_path_source", return_value=(self.keys_path.parent / "config.json", "user")
+             ), \
              mock.patch.object(tools, "StateStore", return_value=self.store), \
              mock.patch.object(cli, "StateStore", return_value=self.store):
             self.assertEqual(service.doctor_data()["key_status"], expected)

@@ -22,6 +22,15 @@ const statusText = {
   config_unreadable: '现有配置文件无法读取，保存已被阻止。',
 };
 
+// Source labels come from the CLI's `doctor --format json`, so this page shows the path the CLI
+// actually reads instead of re-deriving it.
+const pathSourceText = {
+  env: '环境变量 MULTI_SEARCH_CONFIG',
+  user: '用户配置',
+  dev_fallback: '开发目录回退',
+  defaults: '内置默认值',
+};
+
 export async function mountSettings(root, api) {
   root.innerHTML = '<section class="heading"><p class="eyebrow">SETTINGS</p><h1>搜索默认设置。</h1>'
     + '<p>路由、超时和 Twitter cookie 文件路径保存在 CLI 的配置文件中。key 不写入该文件。</p></section>'
@@ -45,7 +54,8 @@ export async function mountSettings(root, api) {
   function fill(view) {
     saved = view;
     text('[data-status="path"]', view.config_path || '无法确定配置文件位置');
-    text('[data-status="path-source"]', view.path_source === 'env' ? `环境变量 MULTI_SEARCH_CONFIG（${view.file_present ? '文件已存在' : '文件尚未创建'}）` : `用户配置（${view.file_present ? '文件已存在' : '文件尚未创建'}）`);
+    const sourceLabel = pathSourceText[view.path_source] || '未知来源';
+    text('[data-status="path-source"]', `${sourceLabel}（${view.file_present ? '文件已存在' : '文件尚未创建'}）`);
     const notes = [];
     if (view.path_source === 'env') notes.push('检测到 MULTI_SEARCH_CONFIG，保存会写入该路径，而不是用户配置文件。');
     if (view.read_source === 'dev_fallback') notes.push('当前显示的是开发目录中的配置（用户配置尚不存在）。');

@@ -7,7 +7,7 @@
 //! atomically moved over the target, so a failed save leaves the last valid config in place.
 //! Keys and cookie bodies never belong in this file and are never read or returned here.
 
-use crate::RuntimeEnvironment;
+use crate::{DesktopManager, RuntimeEnvironment};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
@@ -116,13 +116,30 @@ fn user_config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
     Some(path)
 }
 
-/// Repo-root development fallback, the same file the CLI's `DEV_CONFIG_PATH` points to.
+/// Repo-root development fallback, the same file the CLI's source checkout uses.
 /// Read-only for this module: it seeds starting values and is never written.
+/// Only debug builds embed the build machine's path; a release binary has no such fallback
+/// at all, so the path cannot be read even if the gated call sites are missed later.
+#[cfg(debug_assertions)]
 fn dev_config_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("multi-search-config.json")
+}
+
+/// Release builds have no dev fallback; this empty path is only passed to call sites that are
+/// already gated by `dev_fallback_supported()` and therefore never touch it.
+#[cfg(not(debug_assertions))]
+fn dev_config_path() -> PathBuf {
+    PathBuf::new()
+}
+
+/// A release binary must never read the build machine's source tree. The dev fallback is a
+/// source-checkout convenience and stays available only in debug builds; tests use the
+/// explicit `allow_dev` seam below instead of relying on the build profile.
+fn dev_fallback_supported() -> bool {
+    cfg!(debug_assertions)
 }
 
 /// Which file the CLI reads now, in its own order: `MULTI_SEARCH_CONFIG`, then the user file
@@ -135,19 +152,6 @@ enum ReadSource {
     Defaults,
 }
 
-fn read_source(environment: &RuntimeEnvironment, dev: &Path) -> (ReadSource, Option<PathBuf>) {
-    if environment.variables.get(CONFIG_ENV).is_some_and(|v| !v.is_empty()) {
-        return (ReadSource::Env, config_path(environment));
-    }
-    if let Some(user) = user_config_path(environment).filter(|p| p.exists()) {
-        return (ReadSource::User, Some(user));
-    }
-    if dev.exists() {
-        return (ReadSource::DevFallback, Some(dev.to_path_buf()));
-    }
-    (ReadSource::Defaults, None)
-}
-
 impl ReadSource {
     fn as_str(self) -> &'static str {
         match self {
@@ -157,6 +161,34 @@ impl ReadSource {
             ReadSource::Defaults => "defaults",
         }
     }
+
+    /// Accept only the labels the CLI's `doctor` payload may report.
+    fn from_label(value: &str) -> Option<Self> {
+        match value {
+            "env" => Some(ReadSource::Env),
+            "user" => Some(ReadSource::User),
+            "dev_fallback" => Some(ReadSource::DevFallback),
+            "defaults" => Some(ReadSource::Defaults),
+            _ => None,
+        }
+    }
+}
+
+fn read_source_with(
+    environment: &RuntimeEnvironment,
+    dev: &Path,
+    allow_dev: bool,
+) -> (ReadSource, Option<PathBuf>) {
+    if environment.variables.get(CONFIG_ENV).is_some_and(|v| !v.is_empty()) {
+        return (ReadSource::Env, config_path(environment));
+    }
+    if let Some(user) = user_config_path(environment).filter(|p| p.exists()) {
+        return (ReadSource::User, Some(user));
+    }
+    if allow_dev && dev.exists() {
+        return (ReadSource::DevFallback, Some(dev.to_path_buf()));
+    }
+    (ReadSource::Defaults, None)
 }
 
 fn source_name(raw: &str) -> Result<&'static str, String> {
@@ -267,8 +299,8 @@ fn write_atomic(path: &Path, object: &Map<String, Value>) -> Result<(), String> 
 /// Validate, merge into the existing file, and atomically replace it. Returns the new view.
 ///
 /// When no user file exists yet, the starting object is what the CLI reads today (the dev
-/// fallback when present), so fields the CLI already honours are kept. The result is written to
-/// the save target only; a dev fallback is never modified.
+/// fallback when enabled and present), so fields the CLI already honours are kept. The result
+/// is written to the save target only; a dev fallback is never modified.
 pub fn save(environment: &RuntimeEnvironment, input: &SettingsInput) -> Result<SettingsView, String> {
     save_with_dev(environment, input, &dev_config_path())
 }
@@ -279,17 +311,28 @@ pub fn save_with_dev(
     input: &SettingsInput,
     dev: &Path,
 ) -> Result<SettingsView, String> {
+    save_with_dev_mode(environment, input, dev, dev_fallback_supported())
+}
+
+/// `save_with_dev` with the build-profile dev decision injected for tests. `allow_dev == false`
+/// is the release behaviour: a dev file is neither read nor merged into the user config.
+pub fn save_with_dev_mode(
+    environment: &RuntimeEnvironment,
+    input: &SettingsInput,
+    dev: &Path,
+    allow_dev: bool,
+) -> Result<SettingsView, String> {
     let valid = validate(input)?;
     let path = config_path(environment).ok_or("无法确定配置文件位置")?;
-    let existing = match read_source(environment, dev) {
+    let existing = match read_source_with(environment, dev, allow_dev) {
         (ReadSource::Env, _) => read_object(&path)?,
         (ReadSource::User, Some(user)) => read_object(&user)?,
-        (ReadSource::DevFallback, Some(dev)) => read_object(&dev)?,
+        (ReadSource::DevFallback, Some(dev)) => read_object(dev)?,
         _ => Map::new(),
     };
     let merged = merge(existing, &valid);
     write_atomic(&path, &merged)?;
-    Ok(view_with_dev(environment, dev))
+    Ok(view_with_dev_mode(environment, dev, allow_dev, None))
 }
 
 /// Current saved settings and the source that will actually run for the current route.
@@ -299,20 +342,65 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
 
 /// `view` with the dev fallback location injected (tests point it at a temp file).
 pub fn view_with_dev(environment: &RuntimeEnvironment, dev: &Path) -> SettingsView {
-    let path = config_path(environment);
-    let path_source = if environment.variables.get(CONFIG_ENV).is_some_and(|v| !v.is_empty()) {
-        "env"
-    } else {
-        "user"
+    view_with_dev_mode(environment, dev, dev_fallback_supported(), None)
+}
+
+/// `view` fed the CLI's own `doctor --format json` payload. The desktop displays the path and
+/// source the CLI reports instead of re-deriving them; without a payload it falls back to the
+/// local rules, which in a release build never include the compiled-in dev path.
+pub fn view_with_doctor(environment: &RuntimeEnvironment, doctor: Option<&Value>) -> SettingsView {
+    view_with_dev_mode(environment, &dev_config_path(), dev_fallback_supported(), doctor)
+}
+
+struct DoctorConfig {
+    path: Option<PathBuf>,
+    source: Option<ReadSource>,
+}
+
+/// Read only the two fields the settings page displays, rejecting anything unrecognised.
+fn parse_doctor_config(payload: &Value) -> Option<DoctorConfig> {
+    if !payload.is_object() {
+        return None;
     }
-    .to_string();
-    let file_present = path.as_ref().is_some_and(|p| p.exists());
+    let path = payload
+        .get("config_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let source = payload
+        .get("config_path_source")
+        .and_then(Value::as_str)
+        .and_then(ReadSource::from_label);
+    if path.is_none() && source.is_none() {
+        return None;
+    }
+    Some(DoctorConfig { path, source })
+}
+
+/// `view` with the build-profile dev decision and the CLI doctor payload injected for tests.
+pub fn view_with_dev_mode(
+    environment: &RuntimeEnvironment,
+    dev: &Path,
+    allow_dev: bool,
+    doctor: Option<&Value>,
+) -> SettingsView {
+    let save_target = config_path(environment);
+    let save_target_is_env = environment.variables.get(CONFIG_ENV).is_some_and(|v| !v.is_empty());
+    let (local_read, local_read_path) = read_source_with(environment, dev, allow_dev);
+    let reported = doctor.and_then(parse_doctor_config);
+    let read = reported.as_ref().and_then(|row| row.source).unwrap_or(local_read);
+    // The CLI is the single source of truth: display and read exactly the path it reports.
+    let actual_path = reported.as_ref().and_then(|row| row.path.clone()).or(local_read_path);
+    let display_path = actual_path.clone().or_else(|| save_target.clone());
+    let file_present = display_path.as_ref().is_some_and(|path| path.exists());
+    let save_target_present = save_target.as_ref().is_some_and(|path| path.exists());
+    let config_path_text = display_path.as_ref().map(|path| path.to_string_lossy().into_owned());
+    let path_source = read.as_str().to_string();
     let twitter_env_overrides = environment.variables.get(TWITTER_ENV).is_some_and(|v| !v.is_empty());
-    let config_path_text = path.as_ref().map(|p| p.to_string_lossy().into_owned());
-    let (read, read_path) = read_source(environment, dev);
     // Saving writes the user file; that overrides a dev fallback the CLI reads today.
-    let save_creates_override = read == ReadSource::DevFallback && path_source == "user" && !file_present;
-    let object = match read_path.as_deref().map(read_object) {
+    let save_creates_override = read == ReadSource::DevFallback && !save_target_is_env && !save_target_present;
+    let object = match actual_path.as_deref().map(read_object) {
         Some(Ok(map)) => Some(map),
         Some(Err(_)) => None,
         None => Some(Map::new()),
@@ -392,5 +480,28 @@ pub fn view_with_dev(environment: &RuntimeEnvironment, dev: &Path) -> SettingsVi
         active_sources,
         status: status.into(),
         message,
+    }
+}
+
+/// Ask the CLI which config file it actually reads. The settings page displays the CLI's own
+/// answer instead of re-deriving path precedence; `None` keeps the local fallback when the CLI
+/// is not installed, times out, or returns something that is not a JSON object.
+impl DesktopManager {
+    pub(crate) fn doctor_config(&self) -> Option<Value> {
+        let cli = self.execution_cli(None).ok()?;
+        let args = ["doctor", "--no-keys", "--format", "json"].map(str::to_string);
+        let output = crate::process::bounded(
+            &cli,
+            &args,
+            &self.environment,
+            std::time::Duration::from_secs(5),
+        )
+        .ok()?;
+        if output.timed_out {
+            return None;
+        }
+        // Doctor exits non-zero for a broken config but still emits the JSON we display.
+        let payload: Value = serde_json::from_str(&output.stdout).ok()?;
+        payload.is_object().then_some(payload)
     }
 }
