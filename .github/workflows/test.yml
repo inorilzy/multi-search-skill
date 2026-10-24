@@ -7,17 +7,21 @@ on:
 permissions:
   contents: read
 
+# Third-party actions are pinned to full commit SHAs (the trailing comment names the release);
+# tests/test_ci_workflow.py rejects any `uses:` that is not pinned this way.
 jobs:
-  test:
+  python:
+    name: Python ${{ matrix.python }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Lowest supported (pyproject requires-python) and newest supported release.
         python: ["3.10", "3.14"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
       - name: Install without the development lock or editable mode
@@ -26,6 +30,49 @@ jobs:
         run: python scripts/smoke_install.py
       - name: Run regression tests with disposable state
         run: python scripts/run_tests.py
-      - name: Run release tooling tests (bundle manifest, locked inputs, signing)
-        working-directory: scripts
-        run: python -m unittest test_bundle_manifest test_build_cli_bundle test_build_inputs
+      - name: Run scripts tests (bundle build, manifest, locked inputs, signing)
+        # Discovery picks up every scripts/test_*.py, so new release-tooling tests run too.
+        run: python -m unittest discover -s scripts -t scripts -p "test_*.py" -v
+
+  desktop-js:
+    name: Desktop JS tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # happy-dom (the DOM test dependency) requires Node 20 or newer.
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install locked dev dependencies (happy-dom, Tauri CLI)
+        run: npm ci
+      - name: Run DOM and UI logic tests
+        run: npm test
+
+  desktop-rust:
+    name: Desktop Rust tests
+    # The desktop app targets Windows: credential store, Job Objects, user PATH and the
+    # pinned x86_64-pc-windows-msvc toolchain (rust-toolchain.toml) only exist there.
+    runs-on: windows-latest
+    env:
+      MANIFEST: desktop/src-tauri/Cargo.toml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the pinned Rust toolchain from rust-toolchain.toml
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+      - name: Native tests with the test-only fixture seams
+        # --no-default-features skips the Tauri window; test-fixtures enables the credential and
+        # settings seams required by the credentials, credential_sources and settings tests.
+        run: cargo test --locked --manifest-path ${{ env.MANIFEST }} --no-default-features --features test-fixtures
+      - name: Install acceptance-boundary tests
+        # install and install_lifecycle need install-test-boundary; install_release_boundary
+        # (run above) asserts the opposite, so the two feature sets are built separately.
+        run: >
+          cargo test --locked --manifest-path ${{ env.MANIFEST }} --no-default-features
+          --features test-fixtures,install-test-boundary --test install --test install_lifecycle
