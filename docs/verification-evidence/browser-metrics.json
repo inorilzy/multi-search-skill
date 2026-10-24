@@ -1,0 +1,169 @@
+{
+  "url": "http://127.0.0.1:52759/",
+  "mockOnly": true,
+  "layouts": [
+    {
+      "width": 760,
+      "page": "sources",
+      "sidebar": 172,
+      "main": 573,
+      "innerWidth": 760,
+      "scrollWidth": 745,
+      "minFont": 12,
+      "styles": {
+        ".sidebar-caption": {
+          "ratio": 1.63,
+          "font": "12px",
+          "text": "本机搜索管理台 · 隔离验收"
+        },
+        ".note": "absent",
+        ".status-text": {
+          "ratio": 6.07,
+          "font": "12px",
+          "text": "已保存"
+        },
+        "h2": "absent",
+        ".eyebrow": {
+          "ratio": 5.68,
+          "font": "12px",
+          "text": "04 / SOURCES"
+        }
+      },
+      "overflow": 0,
+      "active": "H1"
+    },
+    {
+      "width": 760,
+      "page": "settings",
+      "sidebar": 172,
+      "main": 573,
+      "innerWidth": 760,
+      "scrollWidth": 745,
+      "minFont": 12,
+      "styles": {
+        ".sidebar-caption": {
+          "ratio": 1.63,
+          "font": "12px",
+          "text": "本机搜索管理台 · 隔离验收"
+        },
+        ".note": {
+          "ratio": 6.07,
+          "font": "12px",
+          "text": "SQLite 是唯一生效配置来源；旧 JSON、"
+        },
+        ".status-text": {
+          "ratio": 15.38,
+          "font": "12px",
+          "text": "C:/synthetic/config.sqli"
+        },
+        "h2": {
+          "ratio": 15.38,
+          "font": "17px",
+          "text": "默认路由与全局超时"
+        },
+        ".eyebrow": {
+          "ratio": 5.68,
+          "font": "12px",
+          "text": "05 / SETTINGS / ROUTES"
+        }
+      },
+      "overflow": 0,
+      "active": "H1"
+    },
+    {
+      "width": 1080,
+      "page": "sources",
+      "sidebar": 190,
+      "main": 875,
+      "innerWidth": 1080,
+      "scrollWidth": 1065,
+      "minFont": 12,
+      "styles": {
+        ".sidebar-caption": {
+          "ratio": 1.63,
+          "font": "12px",
+          "text": "本机搜索管理台 · 隔离验收"
+        },
+        ".note": "absent",
+        ".status-text": {
+          "ratio": 6.07,
+          "font": "12px",
+          "text": "已保存"
+        },
+        "h2": "absent",
+        ".eyebrow": {
+          "ratio": 5.68,
+          "font": "12px",
+          "text": "04 / SOURCES"
+        }
+      },
+      "overflow": 0,
+      "active": "H1"
+    },
+    {
+      "width": 1080,
+      "page": "settings",
+      "sidebar": 190,
+      "main": 875,
+      "innerWidth": 1080,
+      "scrollWidth": 1065,
+      "minFont": 12,
+      "styles": {
+        ".sidebar-caption": {
+          "ratio": 1.63,
+          "font": "12px",
+          "text": "本机搜索管理台 · 隔离验收"
+        },
+        ".note": {
+          "ratio": 6.07,
+          "font": "12px",
+          "text": "SQLite 是唯一生效配置来源；旧 JSON、"
+        },
+        ".status-text": {
+          "ratio": 15.38,
+          "font": "12px",
+          "text": "C:/synthetic/config.sqli"
+        },
+        "h2": {
+          "ratio": 15.38,
+          "font": "17px",
+          "text": "默认路由与全局超时"
+        },
+        ".eyebrow": {
+          "ratio": 5.68,
+          "font": "12px",
+          "text": "05 / SETTINGS / ROUTES"
+        }
+      },
+      "overflow": 0,
+      "active": "H1"
+    }
+  ],
+  "tabs": [
+    {
+      "tag": "BUTTON",
+      "text": "刷新",
+      "outline": "solid 2px"
+    },
+    {
+      "tag": "SELECT",
+      "text": "默认（网页综合） / default社交（Twi",
+      "outline": "solid 2px"
+    },
+    {
+      "tag": "INPUT",
+      "text": "",
+      "outline": "solid 2px"
+    },
+    {
+      "tag": "BUTTON",
+      "text": "新建分组",
+      "outline": "solid 2px"
+    },
+    {
+      "tag": "BUTTON",
+      "text": "恢复内置五组",
+      "outline": "solid 2px"
+    }
+  ]
+}

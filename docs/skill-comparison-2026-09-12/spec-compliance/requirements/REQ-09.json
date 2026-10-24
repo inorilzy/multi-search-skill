@@ -1,0 +1,39 @@
+{
+  "requirementId": "REQ-09",
+  "title": "有匹配H1时预览偏移指向原正文标题",
+  "document": "README.md",
+  "location": "README.md:L69",
+  "quote": "预览从与结果标题完全匹配的页面一级标题开始",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "medium",
+  "searched": [
+    {
+      "where": "rg -n 'body_preview_start|preview_start|preview_end' multi_search_mcp/src/support/format.py multi_search_mcp/src/service.py",
+      "result": "4 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/support/format.py:34:def body_preview_start(body: str, title: str, max_chars: int, snippet: str = \"\") -> int:",
+        "multi_search_mcp/src/service.py:14:from .support.format import body_preview_start, format_results, format_scrapes",
+        "multi_search_mcp/src/service.py:667:        start = body_preview_start(body, hit[\"title\"], max_chars, hit.get(\"content\") or \"\")",
+        "multi_search_mcp/src/service.py:670:            markdown=body[start:end], preview_start=start, preview_end=end,"
+      ]
+    }
+  ],
+  "reasoning": "正文超过max_chars才定位；扫描跳过围栏code block，识别ATX/Setext及整行链接H1；在service切片并设置原字符偏移、省略前文则truncated。探针位置12且正文不改。实际标题比较会unescape/strip/casefold；文档“完全匹配”未定义大小写归一化，报告不把此实现细节包装为已证bug。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-09.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/support/format.py",
+      "lines": "L34-L80",
+      "quote": "def body_preview_start(body: str, title: str, max_chars: int, snippet: str = \"\") -> int:\n    \"\"\"Locate an exact H1 or quoted snippet without rewriting acquired text.\n\n    Prefer an exact plain/link H1. A sufficiently long verbatim snippet may\n    locate a paragraph when no title matches; only whitespace may differ.\n    \"\"\"\n    if len(body) <= max_chars:\n        return 0\n    expected = unescape(title).strip().casefold()",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L666-L672",
+      "quote": "        body = page[\"markdown\"]\n        start = body_preview_start(body, hit[\"title\"], max_chars, hit.get(\"content\") or \"\")\n        end = min(len(body), start + max_chars)\n        page.update(\n            markdown=body[start:end], preview_start=start, preview_end=end,\n            truncated=page[\"truncated\"] or start > 0 or end < len(body),\n        )",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

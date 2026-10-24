@@ -1,0 +1,114 @@
+[
+  {
+    "name": "explicit_sources_and_disabled",
+    "passed": true,
+    "detail": {
+      "selected": [
+        "github_repos"
+      ],
+      "active_after_disabled": []
+    },
+    "seconds": 0.0
+  },
+  {
+    "name": "rrf_no_intermediate_cut_and_dedup",
+    "passed": true,
+    "detail": {
+      "count": 15,
+      "first": "https://example.com/19",
+      "rank20_survives_intermediate": true
+    },
+    "seconds": 0.0004
+  },
+  {
+    "name": "fetch_preview_full_cache_reuse_refetch_read",
+    "passed": true,
+    "detail": {
+      "full_length": 5510,
+      "distinct_ids": true,
+      "ttl_preserved": true,
+      "refetch_same_id": true,
+      "read_offline": true
+    },
+    "seconds": 0.0321
+  },
+  {
+    "name": "key_lru_target_error_and_transient_invalid",
+    "passed": true,
+    "detail": {
+      "unused_first": true,
+      "target_neutral": true,
+      "first_invalid_state": "transient_invalid"
+    },
+    "seconds": 0.0147
+  },
+  {
+    "name": "jina_402_runtime_exhaustion_not_config_soft_delete",
+    "passed": true,
+    "detail": {
+      "exhausted_flag": true,
+      "runtime_status": "quota_exhausted",
+      "http_calls": 1,
+      "wallet_call": false,
+      "config_file_written": false
+    },
+    "seconds": 0.0077
+  },
+  {
+    "name": "ssrf_input_validation",
+    "passed": true,
+    "detail": {
+      "blocked_cases": 5
+    },
+    "seconds": 0.0001
+  },
+  {
+    "name": "preview_h1_offset",
+    "passed": true,
+    "detail": {
+      "offset": 12,
+      "casefold_also_matches": true
+    },
+    "seconds": 0.0002
+  },
+  {
+    "name": "bounded_pool_cancel_retains_capacity",
+    "passed": true,
+    "detail": {
+      "running_cancel_rejected": true,
+      "capacity_retained": true
+    },
+    "seconds": 0.0012
+  },
+  {
+    "name": "fetch_deadline_preserves_rank_and_partial",
+    "passed": true,
+    "detail": {
+      "partial_preserved": true,
+      "elapsed": 0.04224099998828024
+    },
+    "seconds": 0.0423
+  },
+  {
+    "name": "shared_pipeline_prefetch_snippet_state_off",
+    "passed": true,
+    "detail": {
+      "snippet_separate": true,
+      "preview_length": 1200,
+      "prefetch_without_state": true
+    },
+    "seconds": 0.0015
+  },
+  {
+    "name": "cli_failure_empty_partial_exit_codes",
+    "passed": true,
+    "detail": {
+      "all_failed_zero_partial_exit_codes": [
+        1,
+        0,
+        0
+      ]
+    },
+    "seconds": 0.0092
+  }
+]

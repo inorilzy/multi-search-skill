@@ -1,0 +1,38 @@
+{
+  "verifiedUTC": "2026-09-13T03:52:24.246787+00:00",
+  "head": "eb2d5cdeb222b52060c4509c45a22aff4ce911fa",
+  "productionFilesHashed": 60,
+  "productionFilesChanged": [],
+  "contextRecordsValidated": 10,
+  "specRecordsValidated": 25,
+  "specProbeGroupsPassed": 11,
+  "variantErrorProbeGroups": 13,
+  "variantMcpProbeGroups": 11,
+  "mcpToolsInventoried": 12,
+  "checks": "required record fields, nested fields/enums, artifact existence, source evidence line bounds, per-requirement JSON consistency, production hashes and fixed HEAD; not proof that every assertion is correct",
+  "documentationRefutations": [
+    {
+      "id": "REQ-24",
+      "confirmedAs": "documentation ambiguity/drift",
+      "refutedAs": "code defect or permanent config disablement",
+      "evidence": [
+        "README.md:217",
+        "multi_search_mcp/src/state/keys.py:90",
+        "multi_search_mcp/src/state/mark_exhausted.py:1",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:175",
+        "multi_search_mcp/src/state/key_state.py:219"
+      ]
+    },
+    {
+      "id": "UD-01",
+      "confirmedAs": "P3 glossary omission",
+      "blocking": false,
+      "evidence": [
+        "docs/glossary.md:82",
+        "multi_search_mcp/src/state/key_state.py:198"
+      ]
+    }
+  ],
+  "independenceLimit": "A separate documentation verifier initially saw report snippets in a broad search; final checks used current primary docs/code. Primary agent knew historical audit results.",
+  "implementedScopeWarning": "REQ-23 validates explicitly tagged target results in shared scrape logic, not all adapter normalization; 24 implemented rows are scoped judgments."
+}

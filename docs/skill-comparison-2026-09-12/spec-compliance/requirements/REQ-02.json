@@ -1,0 +1,50 @@
+{
+  "requirementId": "REQ-02",
+  "title": "CLI 全失败、零匹配、部分成功退出语义",
+  "document": "README.md",
+  "location": "README.md:L35",
+  "quote": "搜索全部活动源失败时 CLI 退出 `1`，JSON 仍保留完整错误；正常零匹配和部分成功退出 `0`。",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'provider_status|succeeded|return 1' multi_search_mcp/cli.py multi_search_mcp/src/service.py multi_search_mcp/src/search/search_runner.py",
+      "result": "9 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/service.py:506:        \"provider_status\": _query_provider_status(query_runs),",
+        "multi_search_mcp/src/service.py:533:def _query_provider_status(",
+        "multi_search_mcp/src/service.py:544:        succeeded = False",
+        "multi_search_mcp/src/service.py:553:                    succeeded = True",
+        "multi_search_mcp/src/service.py:556:        status = \"partial\" if succeeded and errors else \"error\" if errors else \"ok\"",
+        "multi_search_mcp/cli.py:118:            statuses = payload.get(\"provider_status\") or []",
+        "multi_search_mcp/cli.py:121:                return 1",
+        "multi_search_mcp/cli.py:127:            return 1",
+        "multi_search_mcp/cli.py:134:        return 1"
+      ]
+    }
+  ],
+  "reasoning": "SearchRunner 空返回生成 empty_result_row；_query_provider_status 将无错误空响应置 ok、成功和错误并存置 partial；CLI 在写完 payload 后仅全 error 返回1。探针实测三个退出码1/0/0。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-02.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/cli.py",
+      "lines": "L115-L128",
+      "quote": "        payload = args.handler(args)\n        _write_payload(payload, args.format, stdout)\n        if args.command == \"search\":\n            statuses = payload.get(\"provider_status\") or []\n            if statuses and all(row.get(\"status\") == \"error\" for row in statuses):\n                stderr.write(\"error: all selected search providers failed\\n\")\n                return 1\n        if args.command == \"doctor\" and (\n            payload.get(\"config_error\") or payload.get(\"keys_error\")",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L533-L563",
+      "quote": "def _query_provider_status(\n    query_runs: list[tuple[str, list[dict]]],\n) -> list[dict]:\n    sources = sorted({\n        str(row.get(\"source\") or \"?\")\n        for _query, rows in query_runs\n        for row in rows\n    })\n    output = []",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/search/search_runner.py",
+      "lines": "L392-L406",
+      "quote": "                    source_results = future.result()\n                except Exception as exc:\n                    with partial_lock:\n                        results.extend(partial_results.get(source, []))\n                    results.append({\"source\": source, \"error\": scrub_secrets(exc, self.config.keys)})\n                else:\n                    if source_results:\n                        results.extend(_attach_provider_ranks(source_results))\n                    else:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

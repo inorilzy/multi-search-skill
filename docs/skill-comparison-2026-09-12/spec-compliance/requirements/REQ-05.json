@@ -1,0 +1,50 @@
+{
+  "requirementId": "REQ-05",
+  "title": "同 query/provider 重复 URL 仅按最佳名次投票",
+  "document": "docs/glossary.md",
+  "location": "docs/glossary.md:L70",
+  "quote": "同一 query、同一 provider 的重复 URL 只按最好名次投一票。",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'grouped|existing|provider_rank' multi_search_mcp/src/search/candidate.py",
+      "result": "15 hits in explicit evidence files",
+      "matches": [
+        "89:    grouped: dict[str, dict[str, dict]] = {}",
+        "94:            int(row[\"provider_rank\"]) if row.get(\"provider_rank\") else float(\"inf\"),",
+        "112:        rank = int(row.get(\"provider_rank\") or inferred_ranks[source])",
+        "118:        row[\"provider_rank\"] = rank",
+        "120:        existing = grouped.setdefault(source, {}).get(canonical_url)",
+        "121:        if existing is None or rank < int(existing[\"provider_rank\"]):",
+        "122:            grouped[source][canonical_url] = row",
+        "123:    return grouped",
+        "137:            int(item[1][\"provider_rank\"]),",
+        "154:                int(item[1][\"provider_rank\"]),",
+        "163:    provider_ranks = []",
+        "171:            \"rank\": int(row[\"provider_rank\"]),",
+        "175:        provider_ranks.append(rank)",
+        "202:        \"provider_ranks\": provider_ranks,",
+        "226:                1.0 / (RRF_RANK_CONSTANT + int(row[\"provider_rank\"]))"
+      ]
+    }
+  ],
+  "reasoning": "_candidate_rows 先规范化URL，再以 provider→canonical URL 保存最小 rank；_fuse_one_query 对每个保留行累加一次。error/answer/无URL/非正rank不会贡献；跨query贡献由第二层保留。探针重复跟踪参数URL仅保留rank20，不让rank80多投票。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-05.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/search/candidate.py",
+      "lines": "L87-L123",
+      "quote": "def _candidate_rows(query: str, rows: list[dict]) -> dict[str, dict[str, dict]]:\n    \"\"\"Return one deterministic row per provider/canonical URL.\"\"\"\n    grouped: dict[str, dict[str, dict]] = {}\n    ordered = sorted(\n        (dict(row) for row in rows),\n        key=lambda row: (\n            str(row.get(\"source\") or \"\"),\n            int(row[\"provider_rank\"]) if row.get(\"provider_rank\") else float(\"inf\"),\n            canonicalize_url(str(row.get(\"url\") or \"\")),",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/search/candidate.py",
+      "lines": "L216-L229",
+      "quote": "def _fuse_one_query(\n    query: str, rows: list[dict]\n) -> tuple[dict[str, list[tuple[str, dict]]], dict[str, float], list[str]]:\n    provider_rows = _candidate_rows(query, rows)\n    by_url: dict[str, list[tuple[str, dict]]] = {}\n    scores: dict[str, float] = {}\n    for provider in sorted(provider_rows):\n        for canonical_url, row in provider_rows[provider].items():\n            by_url.setdefault(canonical_url, []).append((provider, row))",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

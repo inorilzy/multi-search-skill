@@ -1,0 +1,3259 @@
+{
+  "head": "eb2d5cdeb222b52060c4509c45a22aff4ce911fa",
+  "startedUTC": "2026-09-13T03:37:07.771025+00:00",
+  "modules": [
+    {
+      "path": "multi_search_mcp/__init__.py",
+      "lines": 0,
+      "functions": [],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/cli.py",
+      "lines": 347,
+      "functions": [
+        {
+          "name": "_add_format_argument",
+          "line": 37,
+          "endLine": 43,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "build_parser",
+          "line": 46,
+          "endLine": 101,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "main",
+          "line": 104,
+          "endLine": 134,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "entrypoint",
+          "line": 137,
+          "endLine": 142,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_handle_search",
+          "line": 145,
+          "endLine": 155,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_handle_fetch",
+          "line": 158,
+          "endLine": 170,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_handle_read",
+          "line": 173,
+          "endLine": 181,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_handle_doctor",
+          "line": 184,
+          "endLine": 185,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_handle_keys_status",
+          "line": 188,
+          "endLine": 190,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_handle_keys_reset",
+          "line": 193,
+          "endLine": 195,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_write_payload",
+          "line": 198,
+          "endLine": 207,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_render_human",
+          "line": 210,
+          "endLine": 222,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_render_markdown",
+          "line": 225,
+          "endLine": 242,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_render_search",
+          "line": 245,
+          "endLine": 302,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_is_search_payload",
+          "line": 305,
+          "endLine": 310,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_render_key_rows",
+          "line": 313,
+          "endLine": 325,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_render_mapping",
+          "line": 328,
+          "endLine": 337,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_stringify",
+          "line": 340,
+          "endLine": 343,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "error",
+          "line": 33,
+          "endLine": 34,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          104,
+          184
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/server.py",
+      "lines": 217,
+      "functions": [
+        {
+          "name": "_run_tool",
+          "line": 33,
+          "endLine": 40,
+          "kind": "AsyncFunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/01-_run_tool.md"
+        },
+        {
+          "name": "search_web",
+          "line": 53,
+          "endLine": 83,
+          "kind": "AsyncFunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "fetch_source",
+          "line": 87,
+          "endLine": 105,
+          "kind": "AsyncFunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "read_source",
+          "line": 109,
+          "endLine": 117,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "multi_search",
+          "line": 121,
+          "endLine": 149,
+          "kind": "AsyncFunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "scrape_url",
+          "line": 153,
+          "endLine": 165,
+          "kind": "AsyncFunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "list_sources",
+          "line": 169,
+          "endLine": 171,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "doctor",
+          "line": 175,
+          "endLine": 177,
+          "kind": "AsyncFunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "get_key_status",
+          "line": 181,
+          "endLine": 183,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "reset_key_state",
+          "line": 187,
+          "endLine": 189,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "get_site_scraper_stats",
+          "line": 193,
+          "endLine": 195,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "set_site_scraper_preference",
+          "line": 199,
+          "endLine": 202,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "reset_site_scraper_stats",
+          "line": 206,
+          "endLine": 208,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "main",
+          "line": 215,
+          "endLine": 217,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          105
+        ],
+        [
+          109,
+          120
+        ],
+        [
+          148,
+          177
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/__init__.py",
+      "lines": 0,
+      "functions": [],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/__init__.py",
+      "lines": 0,
+      "functions": [],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrape.py",
+      "lines": 362,
+      "functions": [
+        {
+          "name": "_resolve_scrape_policy",
+          "line": 53,
+          "endLine": 83,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_key_candidates",
+          "line": 86,
+          "endLine": 89,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_is_key_retryable_error",
+          "line": 92,
+          "endLine": 93,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_candidate_for",
+          "line": 96,
+          "endLine": 97,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_record_key_result",
+          "line": 100,
+          "endLine": 106,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_scrape_with_key_pool",
+          "line": 109,
+          "endLine": 123,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_scrape_with_optional_key_pool",
+          "line": 126,
+          "endLine": 131,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_prepare_scrape_target",
+          "line": 134,
+          "endLine": 136,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "scrape_url_smart",
+          "line": 139,
+          "endLine": 362,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_remaining_timeout",
+          "line": 158,
+          "endLine": 164,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_call",
+          "line": 210,
+          "endLine": 300,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_scrape_anonymous",
+          "line": 217,
+          "endLine": 227,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_scrape_keyed",
+          "line": 229,
+          "endLine": 236,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_scrape_tavily",
+          "line": 264,
+          "endLine": 274,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          362
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/__init__.py",
+      "lines": 21,
+      "functions": [
+        {
+          "name": "_safe_http_url",
+          "line": 13,
+          "endLine": 21,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          21
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/_eddrit.py",
+      "lines": 165,
+      "functions": [
+        {
+          "name": "remaining",
+          "line": 61,
+          "endLine": 65,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_android_headers",
+          "line": 68,
+          "endLine": 81,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_json_response",
+          "line": 84,
+          "endLine": 92,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "get_post_json",
+          "line": 144,
+          "endLine": 165,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "__init__",
+          "line": 96,
+          "endLine": 100,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "headers",
+          "line": 102,
+          "endLine": 129,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "invalidate",
+          "line": 131,
+          "endLine": 138,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/exa.py",
+      "lines": 73,
+      "functions": [
+        {
+          "name": "scrape_url_exa",
+          "line": 14,
+          "endLine": 73,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          73
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/firecrawl.py",
+      "lines": 54,
+      "functions": [
+        {
+          "name": "scrape_url_firecrawl",
+          "line": 10,
+          "endLine": 54,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/jina.py",
+      "lines": 197,
+      "functions": [
+        {
+          "name": "_jina_anonymous_cooling_down",
+          "line": 23,
+          "endLine": 26,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_record_jina_anonymous_rate_limit",
+          "line": 29,
+          "endLine": 36,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_reset_jina_anonymous_rate_limit",
+          "line": 39,
+          "endLine": 42,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_jina_request",
+          "line": 45,
+          "endLine": 66,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_jina_rate_limited",
+          "line": 69,
+          "endLine": 82,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_jina_quota_exhausted",
+          "line": 85,
+          "endLine": 95,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_jina_error_message",
+          "line": 98,
+          "endLine": 111,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "scrape_url_jina",
+          "line": 114,
+          "endLine": 197,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/reddit.py",
+      "lines": 130,
+      "functions": [
+        {
+          "name": "is_reddit_url",
+          "line": 17,
+          "endLine": 25,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_post_target",
+          "line": 28,
+          "endLine": 47,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_media_links",
+          "line": 50,
+          "endLine": 63,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_render",
+          "line": 66,
+          "endLine": 108,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "scrape_url_reddit",
+          "line": 111,
+          "endLine": 130,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/tavily.py",
+      "lines": 100,
+      "functions": [
+        {
+          "name": "scrape_url_tavily",
+          "line": 13,
+          "endLine": 100,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_call_timeout",
+          "line": 24,
+          "endLine": 27,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_extract",
+          "line": 29,
+          "endLine": 47,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_parse",
+          "line": 49,
+          "endLine": 68,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/stage.py",
+      "lines": 98,
+      "functions": [
+        {
+          "name": "run_ranked_fetch_stage",
+          "line": 18,
+          "endLine": 98,
+          "kind": "FunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/06-run_ranked_fetch_stage.md"
+        },
+        {
+          "name": "error_row",
+          "line": 35,
+          "endLine": 40,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "timeout_row",
+          "line": 42,
+          "endLine": 43,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "fetch_hit",
+          "line": 45,
+          "endLine": 56,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "collect",
+          "line": 58,
+          "endLine": 62,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          98
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/url_classify.py",
+      "lines": 56,
+      "functions": [
+        {
+          "name": "is_zhihu_url",
+          "line": 39,
+          "endLine": 44,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "is_zhihu_blocked_text",
+          "line": 47,
+          "endLine": 56,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/__init__.py",
+      "lines": 0,
+      "functions": [],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/candidate.py",
+      "lines": 288,
+      "functions": [
+        {
+          "name": "canonicalize_url",
+          "line": 18,
+          "endLine": 70,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "make_source_id",
+          "line": 73,
+          "endLine": 77,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_compact",
+          "line": 80,
+          "endLine": 84,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_candidate_rows",
+          "line": 87,
+          "endLine": 123,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_public_hit",
+          "line": 126,
+          "endLine": 213,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_fuse_one_query",
+          "line": 216,
+          "endLine": 229,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "fuse_search_results",
+          "line": 232,
+          "endLine": 288,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          288
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/search/capabilities.py",
+      "lines": 384,
+      "functions": [
+        {
+          "name": "_op",
+          "line": 157,
+          "endLine": 173,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "get_capability",
+          "line": 341,
+          "endLine": 342,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "get_capability_optional",
+          "line": 345,
+          "endLine": 346,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "retention_policy_for_sources",
+          "line": 349,
+          "endLine": 365,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "normalize_provider_name",
+          "line": 368,
+          "endLine": 379,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "capability_table_rows",
+          "line": 382,
+          "endLine": 384,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "uses_api_key_pool",
+          "line": 79,
+          "endLine": 80,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "requires_api_key",
+          "line": 83,
+          "endLine": 84,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "table_row",
+          "line": 121,
+          "endLine": 154,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          341,
+          368
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/search/evaluation.py",
+      "lines": 416,
+      "functions": [
+        {
+          "name": "fingerprint",
+          "line": 19,
+          "endLine": 20,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_live",
+          "line": 23,
+          "endLine": 26,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "prepare_review",
+          "line": 29,
+          "endLine": 103,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_review_kinds",
+          "line": 106,
+          "endLine": 109,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "summarize_review",
+          "line": 112,
+          "endLine": 180,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_meets",
+          "line": 183,
+          "endLine": 186,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_complete_review",
+          "line": 189,
+          "endLine": 192,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "freeze_development",
+          "line": 195,
+          "endLine": 252,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "freeze_candidate",
+          "line": 255,
+          "endLine": 329,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "validate_freeze",
+          "line": 332,
+          "endLine": 358,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "evaluate_heldout",
+          "line": 361,
+          "endLine": 397,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "load_artifact",
+          "line": 400,
+          "endLine": 406,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "write_artifact",
+          "line": 409,
+          "endLine": 416,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "run",
+          "line": 51,
+          "endLine": 57,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "metrics",
+          "line": 157,
+          "endLine": 168,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/query_plan.py",
+      "lines": 33,
+      "functions": [
+        {
+          "name": "build_query_plan",
+          "line": 20,
+          "endLine": 33,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "queries",
+          "line": 16,
+          "endLine": 17,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          33
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/search/query_policy.py",
+      "lines": 57,
+      "functions": [
+        {
+          "name": "__post_init__",
+          "line": 17,
+          "endLine": 28,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "from_config",
+          "line": 31,
+          "endLine": 39,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "weights",
+          "line": 41,
+          "endLine": 51,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "to_dict",
+          "line": 53,
+          "endLine": 57,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          57
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/search/registry.py",
+      "lines": 137,
+      "functions": [
+        {
+          "name": "_capability_metadata",
+          "line": 21,
+          "endLine": 26,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_provider_spec",
+          "line": 29,
+          "endLine": 44,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "build_provider_registry",
+          "line": 47,
+          "endLine": 137,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          137
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/search/resolve.py",
+      "lines": 175,
+      "functions": [
+        {
+          "name": "resolve_search_plan",
+          "line": 57,
+          "endLine": 85,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "build_counts",
+          "line": 88,
+          "endLine": 111,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_resolve_sources",
+          "line": 114,
+          "endLine": 128,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "resolve_disabled_sources",
+          "line": 131,
+          "endLine": 144,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "resolve_active_sources",
+          "line": 147,
+          "endLine": 154,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_resolve_scrape_top",
+          "line": 156,
+          "endLine": 159,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_resolve_value",
+          "line": 162,
+          "endLine": 167,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_resolve_int",
+          "line": 170,
+          "endLine": 171,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_resolve_nonnegative",
+          "line": 174,
+          "endLine": 175,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          175
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/search/search_runner.py",
+      "lines": 416,
+      "functions": [
+        {
+          "name": "available_routes",
+          "line": 109,
+          "endLine": 110,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "normalize_route",
+          "line": 113,
+          "endLine": 114,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "resolve_route",
+          "line": 117,
+          "endLine": 119,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "route_meta",
+          "line": 122,
+          "endLine": 126,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "normalize_source_name",
+          "line": 129,
+          "endLine": 130,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "missing",
+          "line": 164,
+          "endLine": 165,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_attach_provider_ranks",
+          "line": 168,
+          "endLine": 182,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "call_optional_timeout",
+          "line": 185,
+          "endLine": 198,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_merge_partial_rows",
+          "line": 201,
+          "endLine": 244,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "run_keyed_source",
+          "line": 247,
+          "endLine": 284,
+          "kind": "FunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/05-run_keyed_source.md"
+        },
+        {
+          "name": "provider_rank",
+          "line": 208,
+          "endLine": 213,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "__init__",
+          "line": 296,
+          "endLine": 300,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "run",
+          "line": 302,
+          "endLine": 407,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_run_keyed_source",
+          "line": 409,
+          "endLine": 416,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "publish_partial",
+          "line": 313,
+          "endLine": 319,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "call_provider",
+          "line": 321,
+          "endLine": 332,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          131,
+          416
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/__init__.py",
+      "lines": 0,
+      "functions": [],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/baidu.py",
+      "lines": 116,
+      "functions": [
+        {
+          "name": "search_baidu",
+          "line": 16,
+          "endLine": 23,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_search_baidu_summary",
+          "line": 26,
+          "endLine": 35,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_post_json",
+          "line": 38,
+          "endLine": 52,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_rows_from_response",
+          "line": 55,
+          "endLine": 108,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_answer_text",
+          "line": 111,
+          "endLine": 116,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/brave.py",
+      "lines": 64,
+      "functions": [
+        {
+          "name": "search_brave",
+          "line": 11,
+          "endLine": 64,
+          "kind": "FunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/07-search_brave.md"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          64
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/exa.py",
+      "lines": 71,
+      "functions": [
+        {
+          "name": "search_exa",
+          "line": 9,
+          "endLine": 71,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/firecrawl.py",
+      "lines": 79,
+      "functions": [
+        {
+          "name": "search_firecrawl",
+          "line": 9,
+          "endLine": 79,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/github.py",
+      "lines": 87,
+      "functions": [
+        {
+          "name": "_run_gh",
+          "line": 12,
+          "endLine": 36,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_github_api",
+          "line": 39,
+          "endLine": 59,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "search_github_repos",
+          "line": 62,
+          "endLine": 87,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/hackernews.py",
+      "lines": 74,
+      "functions": [
+        {
+          "name": "_plain_text",
+          "line": 13,
+          "endLine": 14,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_hackernews_item_url",
+          "line": 17,
+          "endLine": 18,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "search_hackernews",
+          "line": 21,
+          "endLine": 74,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/parallel.py",
+      "lines": 78,
+      "functions": [
+        {
+          "name": "search_parallel",
+          "line": 13,
+          "endLine": 78,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/serpapi.py",
+      "lines": 121,
+      "functions": [
+        {
+          "name": "_scrub",
+          "line": 12,
+          "endLine": 13,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_answer_box_text",
+          "line": 16,
+          "endLine": 24,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "search_serpapi",
+          "line": 27,
+          "endLine": 121,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_return_error",
+          "line": 54,
+          "endLine": 56,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/stackoverflow.py",
+      "lines": 92,
+      "functions": [
+        {
+          "name": "_content_encoding",
+          "line": 12,
+          "endLine": 17,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_looks_like_json",
+          "line": 20,
+          "endLine": 21,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_decode_response",
+          "line": 24,
+          "endLine": 38,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "search_stackoverflow",
+          "line": 41,
+          "endLine": 92,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/tavily.py",
+      "lines": 79,
+      "functions": [
+        {
+          "name": "search_tavily",
+          "line": 11,
+          "endLine": 79,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/twitter.py",
+      "lines": 166,
+      "functions": [
+        {
+          "name": "_scrub",
+          "line": 20,
+          "endLine": 22,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "search_twitter",
+          "line": 25,
+          "endLine": 166,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "result_rows",
+          "line": 65,
+          "endLine": 75,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "publish",
+          "line": 77,
+          "endLine": 79,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "request",
+          "line": 81,
+          "endLine": 87,
+          "kind": "AsyncFunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "search",
+          "line": 89,
+          "endLine": 161,
+          "kind": "AsyncFunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/v2ex.py",
+      "lines": 114,
+      "functions": [
+        {
+          "name": "_description",
+          "line": 15,
+          "endLine": 33,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_row_from_hit",
+          "line": 36,
+          "endLine": 80,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "search_v2ex",
+          "line": 83,
+          "endLine": 114,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/search/snapshots.py",
+      "lines": 320,
+      "functions": [
+        {
+          "name": "_expiry",
+          "line": 36,
+          "endLine": 41,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_sanitize",
+          "line": 44,
+          "endLine": 53,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_content_replay_projection",
+          "line": 56,
+          "endLine": 69,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_fusion_projection",
+          "line": 72,
+          "endLine": 79,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_proof_digest",
+          "line": 82,
+          "endLine": 84,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "capture_snapshot",
+          "line": 87,
+          "endLine": 215,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "replay_snapshot",
+          "line": 218,
+          "endLine": 278,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "compare_snapshot",
+          "line": 281,
+          "endLine": 297,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "write_snapshot",
+          "line": 300,
+          "endLine": 306,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "load_snapshot",
+          "line": 309,
+          "endLine": 320,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "observe",
+          "line": 113,
+          "endLine": 114,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "wrap",
+          "line": 116,
+          "endLine": 140,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "call",
+          "line": 117,
+          "endLine": 139,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/service.py",
+      "lines": 1093,
+      "functions": [
+        {
+          "name": "run_read_source",
+          "line": 120,
+          "endLine": 172,
+          "kind": "FunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/04-run_read_source.md"
+        },
+        {
+          "name": "run_fetch_source",
+          "line": 175,
+          "endLine": 318,
+          "kind": "FunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/03-run_fetch_source.md"
+        },
+        {
+          "name": "_run_search_candidates",
+          "line": 321,
+          "endLine": 530,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_query_provider_status",
+          "line": 533,
+          "endLine": 563,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_query_failures",
+          "line": 566,
+          "endLine": 592,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "run_search_web",
+          "line": 595,
+          "endLine": 694,
+          "kind": "FunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/02-run_search_web.md"
+        },
+        {
+          "name": "run_multi_search",
+          "line": 697,
+          "endLine": 758,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "run_scrape",
+          "line": 761,
+          "endLine": 784,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_run_scrape_raw",
+          "line": 787,
+          "endLine": 823,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_limit_scrape_row",
+          "line": 826,
+          "endLine": 832,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "list_sources",
+          "line": 835,
+          "endLine": 844,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "doctor_data",
+          "line": 847,
+          "endLine": 912,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_route_degradation",
+          "line": 915,
+          "endLine": 944,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_summarize_key_status",
+          "line": 947,
+          "endLine": 956,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_display_results",
+          "line": 959,
+          "endLine": 976,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_extract_summaries",
+          "line": 979,
+          "endLine": 992,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_source_from_answer_source",
+          "line": 995,
+          "endLine": 996,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_compact_text",
+          "line": 999,
+          "endLine": 1003,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_extract_source_briefs",
+          "line": 1006,
+          "endLine": 1074,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_compat_source_summaries",
+          "line": 1077,
+          "endLine": 1084,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_load_config_safe",
+          "line": 1087,
+          "endLine": 1091,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "route_resolver",
+          "line": 382,
+          "endLine": 386,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "fetch",
+          "line": 633,
+          "endLine": 647,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          694
+        ],
+        [
+          787,
+          826
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/state/__init__.py",
+      "lines": 0,
+      "functions": [],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/state/content_store.py",
+      "lines": 268,
+      "functions": [
+        {
+          "name": "_utc_now",
+          "line": 16,
+          "endLine": 17,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "__init__",
+          "line": 25,
+          "endLine": 38,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "put",
+          "line": 40,
+          "endLine": 92,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "reuse_for_url",
+          "line": 94,
+          "endLine": 136,
+          "kind": "FunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/09-ContentStore-reuse_for_url.md"
+        },
+        {
+          "name": "get",
+          "line": 138,
+          "endLine": 151,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "delete_source",
+          "line": 153,
+          "endLine": 164,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "purge_expired",
+          "line": 166,
+          "endLine": 169,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_bind_source_conn",
+          "line": 171,
+          "endLine": 194,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_lookup_conn",
+          "line": 196,
+          "endLine": 213,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_purge_expired_conn",
+          "line": 215,
+          "endLine": 225,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_drop_unreferenced_object",
+          "line": 227,
+          "endLine": 236,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_evict_lru",
+          "line": 238,
+          "endLine": 262,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_total_bytes",
+          "line": 264,
+          "endLine": 268,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          268
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/state/key_state.py",
+      "lines": 300,
+      "functions": [
+        {
+          "name": "_now",
+          "line": 28,
+          "endLine": 29,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_iso",
+          "line": 32,
+          "endLine": 33,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_parse_iso",
+          "line": 36,
+          "endLine": 42,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "key_id_for",
+          "line": 45,
+          "endLine": 47,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "key_fingerprint",
+          "line": 50,
+          "endLine": 55,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "classify_error",
+          "line": 278,
+          "endLine": 292,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_ordered_key_pool",
+          "line": 295,
+          "endLine": 300,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "candidates",
+          "line": 76,
+          "endLine": 80,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "classify_result",
+          "line": 82,
+          "endLine": 104,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "record_result",
+          "line": 106,
+          "endLine": 107,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "record_use",
+          "line": 109,
+          "endLine": 110,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "status_rows",
+          "line": 112,
+          "endLine": 113,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "reset",
+          "line": 115,
+          "endLine": 116,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "__init__",
+          "line": 122,
+          "endLine": 123,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "candidates",
+          "line": 125,
+          "endLine": 160,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "record_use",
+          "line": 162,
+          "endLine": 172,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "record_result",
+          "line": 174,
+          "endLine": 240,
+          "kind": "FunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/10-SQLiteKeyManager-record_result.md"
+        },
+        {
+          "name": "status_rows",
+          "line": 242,
+          "endLine": 248,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "reset",
+          "line": 250,
+          "endLine": 264,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_ensure_row",
+          "line": 266,
+          "endLine": 275,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          300
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/state/keys.py",
+      "lines": 138,
+      "functions": [
+        {
+          "name": "pick_key",
+          "line": 39,
+          "endLine": 49,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "key_pool",
+          "line": 52,
+          "endLine": 61,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "normalize_jina_config",
+          "line": 64,
+          "endLine": 87,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "jina_config_keys",
+          "line": 90,
+          "endLine": 98,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "count_jina_keys",
+          "line": 101,
+          "endLine": 109,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "load_keys",
+          "line": 112,
+          "endLine": 138,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          138
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/state/mark_exhausted.py",
+      "lines": 78,
+      "functions": [
+        {
+          "name": "_mark_config_exhausted",
+          "line": 16,
+          "endLine": 55,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "main",
+          "line": 58,
+          "endLine": 74,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_mark",
+          "line": 32,
+          "endLine": 46,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/state/site_memory.py",
+      "lines": 208,
+      "functions": [
+        {
+          "name": "_now",
+          "line": 11,
+          "endLine": 12,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_iso",
+          "line": 15,
+          "endLine": 16,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_parse_iso",
+          "line": 19,
+          "endLine": 25,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "site_key",
+          "line": 28,
+          "endLine": 42,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "classify_scrape_error",
+          "line": 200,
+          "endLine": 208,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "__init__",
+          "line": 57,
+          "endLine": 60,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "reorder_backends",
+          "line": 62,
+          "endLine": 89,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "record_attempt",
+          "line": 91,
+          "endLine": 148,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "stats",
+          "line": 150,
+          "endLine": 158,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "set_preference",
+          "line": 160,
+          "endLine": 170,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "reset",
+          "line": 172,
+          "endLine": 181,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "consume_updates",
+          "line": 183,
+          "endLine": 186,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_ensure_row",
+          "line": 188,
+          "endLine": 197,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "rank",
+          "line": 72,
+          "endLine": 87,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          57,
+          150
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/state/source_registry.py",
+      "lines": 89,
+      "functions": [
+        {
+          "name": "_utc_now",
+          "line": 14,
+          "endLine": 15,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "__init__",
+          "line": 19,
+          "endLine": 28,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "register",
+          "line": 30,
+          "endLine": 57,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "get",
+          "line": 59,
+          "endLine": 72,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "delete",
+          "line": 74,
+          "endLine": 77,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "purge_expired",
+          "line": 79,
+          "endLine": 82,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_purge_expired_conn",
+          "line": 85,
+          "endLine": 89,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          89
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/state/state_store.py",
+      "lines": 193,
+      "functions": [
+        {
+          "name": "__init__",
+          "line": 144,
+          "endLine": 147,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "connect",
+          "line": 150,
+          "endLine": 160,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "migrate",
+          "line": 162,
+          "endLine": 179,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_ensure_columns",
+          "line": 181,
+          "endLine": 185,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "rows",
+          "line": 187,
+          "endLine": 189,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "execute",
+          "line": 191,
+          "endLine": 193,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          193
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/support/__init__.py",
+      "lines": 0,
+      "functions": [],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/support/auth.py",
+      "lines": 34,
+      "functions": [
+        {
+          "name": "is_key_retryable_error",
+          "line": 16,
+          "endLine": 34,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          34
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/support/concurrency.py",
+      "lines": 142,
+      "functions": [
+        {
+          "name": "__init__",
+          "line": 23,
+          "endLine": 34,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "submit_before",
+          "line": 36,
+          "endLine": 48,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "submit_nowait",
+          "line": 50,
+          "endLine": 54,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_submit_acquired",
+          "line": 56,
+          "endLine": 65,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "shutdown",
+          "line": 67,
+          "endLine": 81,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_start_worker_if_needed",
+          "line": 83,
+          "endLine": 96,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_execute_task",
+          "line": 99,
+          "endLine": 106,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_worker",
+          "line": 108,
+          "endLine": 125,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_cancel_queued_tasks",
+          "line": 127,
+          "endLine": 142,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          142
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/support/config.py",
+      "lines": 86,
+      "functions": [
+        {
+          "name": "resolve_config_path",
+          "line": 14,
+          "endLine": 27,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "config_int",
+          "line": 34,
+          "endLine": 41,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "load_config",
+          "line": 44,
+          "endLine": 63,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "config_bool",
+          "line": 66,
+          "endLine": 72,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "config_list",
+          "line": 75,
+          "endLine": 86,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          86
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/support/dedup.py",
+      "lines": 51,
+      "functions": [
+        {
+          "name": "consensus_weight",
+          "line": 7,
+          "endLine": 11,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "rank_results",
+          "line": 14,
+          "endLine": 51,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_key",
+          "line": 38,
+          "endLine": 49,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/support/format.py",
+      "lines": 357,
+      "functions": [
+        {
+          "name": "body_preview_start",
+          "line": 34,
+          "endLine": 80,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_cell",
+          "line": 83,
+          "endLine": 87,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_md_link",
+          "line": 90,
+          "endLine": 94,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_sanitize_scraped",
+          "line": 97,
+          "endLine": 107,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "format_scrapes",
+          "line": 110,
+          "endLine": 158,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "format_results",
+          "line": 161,
+          "endLine": 357,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "_weight",
+          "line": 241,
+          "endLine": 244,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          83
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/support/http.py",
+      "lines": 212,
+      "functions": [
+        {
+          "name": "_origin",
+          "line": 25,
+          "endLine": 29,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_remaining",
+          "line": 32,
+          "endLine": 36,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_open_with_deadline",
+          "line": 81,
+          "endLine": 119,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_build_safe_opener",
+          "line": 158,
+          "endLine": 168,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "urlopen_retry",
+          "line": 175,
+          "endLine": 212,
+          "kind": "FunctionDef",
+          "status": "deepAnalyzed",
+          "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/08-urlopen_retry.md"
+        },
+        {
+          "name": "__init__",
+          "line": 47,
+          "endLine": 48,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "readable",
+          "line": 50,
+          "endLine": 51,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "readinto",
+          "line": 53,
+          "endLine": 66,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "close",
+          "line": 68,
+          "endLine": 72,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "__init__",
+          "line": 76,
+          "endLine": 78,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "connection",
+          "line": 84,
+          "endLine": 117,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "http_open",
+          "line": 123,
+          "endLine": 124,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "https_open",
+          "line": 128,
+          "endLine": 129,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "__init__",
+          "line": 133,
+          "endLine": 135,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "redirect_request",
+          "line": 137,
+          "endLine": 155,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "connect_socket",
+          "line": 93,
+          "endLine": 103,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "connect_tunnel",
+          "line": 105,
+          "endLine": 111,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          212
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/support/models.py",
+      "lines": 289,
+      "functions": [
+        {
+          "name": "normalize_content_kind",
+          "line": 36,
+          "endLine": 43,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "content_kind_priority",
+          "line": 46,
+          "endLine": 47,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "search_content",
+          "line": 59,
+          "endLine": 78,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "empty_result_row",
+          "line": 97,
+          "endLine": 101,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "is_empty_result",
+          "line": 104,
+          "endLine": 112,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_without_none",
+          "line": 115,
+          "endLine": 116,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "as_dict",
+          "line": 119,
+          "endLine": 123,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "as_dicts",
+          "line": 126,
+          "endLine": 127,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "normalize_scrape_result",
+          "line": 213,
+          "endLine": 245,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "to_dict",
+          "line": 143,
+          "endLine": 157,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "from_dict",
+          "line": 160,
+          "endLine": 177,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "to_dict",
+          "line": 189,
+          "endLine": 198,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "from_dict",
+          "line": 201,
+          "endLine": 210,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "to_dict",
+          "line": 255,
+          "endLine": 258,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "from_dict",
+          "line": 261,
+          "endLine": 268,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "to_dict",
+          "line": 277,
+          "endLine": 280,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "from_dict",
+          "line": 283,
+          "endLine": 289,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          59,
+          133
+        ],
+        [
+          185,
+          244
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/support/secrets.py",
+      "lines": 40,
+      "functions": [
+        {
+          "name": "_iter_secret_strings",
+          "line": 16,
+          "endLine": 29,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "scrub_secrets",
+          "line": 32,
+          "endLine": 40,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          40
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/support/tavily.py",
+      "lines": 61,
+      "functions": [
+        {
+          "name": "_error_body_text",
+          "line": 20,
+          "endLine": 36,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        },
+        {
+          "name": "tavily_http_error",
+          "line": 39,
+          "endLine": 61,
+          "kind": "FunctionDef",
+          "status": "notChecked"
+        }
+      ],
+      "status": "notChecked",
+      "readRanges": []
+    },
+    {
+      "path": "multi_search_mcp/src/support/url_security.py",
+      "lines": 117,
+      "functions": [
+        {
+          "name": "validate_public_http_url",
+          "line": 19,
+          "endLine": 20,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "validate_scrape_url",
+          "line": 23,
+          "endLine": 24,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "validate_redirect_target",
+          "line": 27,
+          "endLine": 28,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_validate_url",
+          "line": 31,
+          "endLine": 60,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_resolve_host_ips",
+          "line": 63,
+          "endLine": 77,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_parse_ip",
+          "line": 80,
+          "endLine": 84,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_ensure_public_ip",
+          "line": 87,
+          "endLine": 97,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_unsafe_reason",
+          "line": 100,
+          "endLine": 117,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          117
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/src/support/urlutil.py",
+      "lines": 31,
+      "functions": [
+        {
+          "name": "_is_tracking_param",
+          "line": 15,
+          "endLine": 17,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_norm_url",
+          "line": 20,
+          "endLine": 31,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          31
+        ]
+      ]
+    },
+    {
+      "path": "multi_search_mcp/tools.py",
+      "lines": 199,
+      "functions": [
+        {
+          "name": "_error",
+          "line": 30,
+          "endLine": 33,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "_safe_call",
+          "line": 36,
+          "endLine": 43,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "search_web_tool",
+          "line": 45,
+          "endLine": 62,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "fetch_source_tool",
+          "line": 65,
+          "endLine": 82,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "read_source_tool",
+          "line": 85,
+          "endLine": 98,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "multi_search_tool",
+          "line": 101,
+          "endLine": 132,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "scrape_url_tool",
+          "line": 135,
+          "endLine": 156,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "list_sources_tool",
+          "line": 159,
+          "endLine": 160,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "doctor_tool",
+          "line": 163,
+          "endLine": 164,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "get_key_status_tool",
+          "line": 167,
+          "endLine": 168,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "reset_key_state_tool",
+          "line": 171,
+          "endLine": 173,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "get_site_scraper_stats_tool",
+          "line": 176,
+          "endLine": 177,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "set_site_scraper_preference_tool",
+          "line": 180,
+          "endLine": 194,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        },
+        {
+          "name": "reset_site_scraper_stats_tool",
+          "line": 197,
+          "endLine": 199,
+          "kind": "FunctionDef",
+          "status": "readAsDependency"
+        }
+      ],
+      "status": "partiallyRead",
+      "readRanges": [
+        [
+          1,
+          199
+        ]
+      ]
+    }
+  ],
+  "executionMode": "Codex single-subagent adaptation; original Workflow engine, per-function agent fanout and schema-enforced returns NOT executed",
+  "coverageMeaning": "AST inventory is not read coverage; readAsDependency means source range read without individual whole-function dossier. Other providers are notChecked. No live keys, cookies, default SQLite or network accessed."
+}

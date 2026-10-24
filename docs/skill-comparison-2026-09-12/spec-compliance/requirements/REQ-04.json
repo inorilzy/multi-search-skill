@@ -1,0 +1,45 @@
+{
+  "requirementId": "REQ-04",
+  "title": "disabled_sources 对显式源生效且全禁用明确失败",
+  "document": "README.md",
+  "location": "README.md:L351",
+  "quote": "route 正常解析后会从结果里减去这些源，对 tool 显式传入的 `sources` 同样生效。",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'disabled_sources|all selected sources' multi_search_mcp/src/search/resolve.py multi_search_mcp/src/service.py",
+      "result": "10 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/search/resolve.py:39:    disabled_sources: set[str]",
+        "multi_search_mcp/src/search/resolve.py:69:        disabled_sources=resolve_disabled_sources(config),",
+        "multi_search_mcp/src/search/resolve.py:131:def resolve_disabled_sources(config: dict) -> set[str]:",
+        "multi_search_mcp/src/search/resolve.py:137:    disabled = {normalize_source_name(source) for source in config_list(config, \"disabled_sources\")}",
+        "multi_search_mcp/src/search/resolve.py:150:    disabled_sources: set[str],",
+        "multi_search_mcp/src/search/resolve.py:154:    return selected, selected - disabled_sources",
+        "multi_search_mcp/src/service.py:375:        plan.route, plan.sources, plan.disabled_sources",
+        "multi_search_mcp/src/service.py:379:            f\"all selected sources are disabled: {', '.join(sorted(base_sources))}\"",
+        "multi_search_mcp/src/service.py:384:            _route, plan.sources, plan.disabled_sources",
+        "multi_search_mcp/src/service.py:526:            \"disabled_sources\": sorted(plan.disabled_sources),"
+      ]
+    }
+  ],
+  "reasoning": "请求源经同一 resolve_active_sources 差集，_run_search_candidates 对非空 selected 且 active 为空抛 ValueError。未知禁用名称在源调用前失败；离线探针验证显式 github 被禁用后 active 为空。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-04.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/search/resolve.py",
+      "lines": "L131-L154",
+      "quote": "def resolve_disabled_sources(config: dict) -> set[str]:\n    \"\"\"Resolve the globally disabled search sources from config.\n\n    Only search sources are accepted; scrape backends (e.g. ``jina``) are not\n    valid here. Unknown names fail loudly instead of being silently ignored.\n    \"\"\"\n    disabled = {normalize_source_name(source) for source in config_list(config, \"disabled_sources\")}\n    unknown = disabled - ALL_SOURCE_NAMES\n    if unknown:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L374-L386",
+      "quote": "    base_sources, active_sources = resolve_active_sources(\n        plan.route, plan.sources, plan.disabled_sources\n    )\n    if base_sources and not active_sources:\n        raise ValueError(\n            f\"all selected sources are disabled: {', '.join(sorted(base_sources))}\"\n        )\n\n    def route_resolver(_route):",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

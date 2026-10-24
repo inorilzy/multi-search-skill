@@ -1,0 +1,528 @@
+[
+  {
+    "function": "_run_tool",
+    "file": "multi_search_mcp/server.py",
+    "lines": "L33-L40",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/01-_run_tool.md",
+    "invariants": [
+      {
+        "claim": "取消 await 不等于释放正在执行的槽位",
+        "evidence": "support/concurrency.py L99-L106、L120-L123"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "提交不等待可用槽位",
+        "establishedBy": "support/concurrency.py L50-L54"
+      },
+      {
+        "claim": "异常也回收 worker 槽位",
+        "establishedBy": "support/concurrency.py L105-L106、L121-L125"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "BoundedDaemonExecutor.submit_nowait",
+        "kind": "internal",
+        "propagates": "非阻塞 semaphore，满载返回 None；L50-L54；shutdown 抛错路径 L59-L61。"
+      },
+      {
+        "callee": "asyncio.wrap_future",
+        "kind": "external-black-box",
+        "propagates": "桥接同步 Future；本轮未读 asyncio 实现，取消协议是外部运行问题。"
+      }
+    ],
+    "callers": [
+      "server.py search_web L80、fetch_source L102、multi_search L148、scrape_url L165、doctor L177"
+    ],
+    "sharedState": [
+      "_TOOL_POOL；server.py L30"
+    ],
+    "openQuestions": [
+      "unclear; need to inspect 目标 MCP/asyncio 版本实际取消传播；本轮仅源码，不运行 MCP 会话。"
+    ]
+  },
+  {
+    "function": "run_search_web",
+    "file": "multi_search_mcp/src/service.py",
+    "lines": "L595-L694",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/02-run_search_web.md",
+    "invariants": [
+      {
+        "claim": "抓取结果与候选按输入位置连接，成功/失败不影响排名",
+        "evidence": "scrape/stage.py L31、L60、L91-L96；service.py L653"
+      },
+      {
+        "claim": "预览上限不缩短已缓存正文",
+        "evidence": "service.py L637、L296-L308、L666-L671"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "candidate 的 source_id/url/canonical_url 存在",
+        "establishedBy": "search/candidate.py L191-L207"
+      },
+      {
+        "claim": "抓取结果总有对应输入槽位",
+        "establishedBy": "scrape/stage.py L31、L91-L96"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "_run_search_candidates",
+        "kind": "internal",
+        "propagates": "L321-L530：验证 query/plan；query deadline 共用；选中正文后才存储；provider body 解释见 models.py L59-L78。"
+      },
+      {
+        "callee": "run_ranked_fetch_stage",
+        "kind": "internal",
+        "propagates": "错误补位，同序返回；stage.py L91-L96。"
+      },
+      {
+        "callee": "run_fetch_source",
+        "kind": "internal",
+        "propagates": "传 full_content=True 后先缓存正文；service.py L633-L644。"
+      },
+      {
+        "callee": "body_preview_start",
+        "kind": "internal",
+        "propagates": "在 title/snippet 精确条件下选择原文 offset，失败回 0；format.py L34-L80。"
+      }
+    ],
+    "callers": [
+      "tools.py L54；cli.py L146"
+    ],
+    "sharedState": [
+      "search_sources/content_sources/content_objects；service.py L456-L495"
+    ],
+    "openQuestions": [
+      "unclear; need to inspect 其他 provider 对 body/content_kind 的实际来源保证；本轮只深入 Brave 与 Exa 抓取。"
+    ]
+  },
+  {
+    "function": "run_fetch_source",
+    "file": "multi_search_mcp/src/service.py",
+    "lines": "L175-L318",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/03-run_fetch_source.md",
+    "invariants": [
+      {
+        "claim": "跨来源 URL 缓存命中需要当前 retention 和 scope 相同",
+        "evidence": "service.py L244-L254；content_store.py L113-L126"
+      },
+      {
+        "claim": "full_content 表示完整已取得正文，仍受采集及持久化容量约束",
+        "evidence": "service.py L228、L279、L296-L315；content_store.py L55-L64"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "存储失败不会返回 persisted=True",
+        "establishedBy": "state/state_store.py L153-L158；service.py L296-L315"
+      },
+      {
+        "claim": "正文内容只作为不可信数据标记",
+        "establishedBy": "service.py L267、L316"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "SourceRegistry.get",
+        "kind": "internal",
+        "propagates": "无记录与过期均 None；source_registry.py L59-L72。"
+      },
+      {
+        "callee": "validate_public_http_url",
+        "kind": "internal",
+        "propagates": "检查 scheme/credentials/全部解析 IP；url_security.py L31-L60；连接时 DNS 状态另见开放问题。"
+      },
+      {
+        "callee": "retention_policy_for_sources",
+        "kind": "internal",
+        "propagates": "多个来源取布尔交集和最短 TTL；capabilities.py L349-L365。"
+      },
+      {
+        "callee": "ContentStore.get/reuse_for_url/put",
+        "kind": "internal",
+        "propagates": "清理过期；scope 匹配；UTF-8 容量拒绝；content_store.py L40-L151。"
+      },
+      {
+        "callee": "_run_scrape_raw",
+        "kind": "internal",
+        "propagates": "配置、key manager、site memory 注入及结果规范化；service.py L787-L823；smart 的各 backend 分支 L210-L300。"
+      }
+    ],
+    "callers": [
+      "tools.py L74；cli.py L161；service.py L635"
+    ],
+    "sharedState": [
+      "content_sources 与 content_objects；state_store.py L108-L128"
+    ],
+    "openQuestions": [
+      "unclear; need to inspect 部署是否把 source_id 当作同一可信调用方的 bearer reference；当前入口无 tenant 字段，运行宿主权限未检查。",
+      "unclear; need to inspect DNS 预检与最终连接之间、远端抓取服务内实际目标的契约；本轮不做网络实验。"
+    ]
+  },
+  {
+    "function": "run_read_source",
+    "file": "multi_search_mcp/src/service.py",
+    "lines": "L120-L172",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/04-run_read_source.md",
+    "invariants": [
+      {
+        "claim": "分页边界以原始正文字符为单位",
+        "evidence": "service.py L149-L159"
+      },
+      {
+        "claim": "read 不建立新的来源 TTL",
+        "evidence": "content_store.py L146-L150 仅更新 last_access_at"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "已过期缓存不能读取",
+        "establishedBy": "state/content_store.py L142、L215-L225"
+      },
+      {
+        "claim": "匹配失败不返回一个无关片段",
+        "establishedBy": "service.py L146-L148"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "ContentStore.get",
+        "kind": "internal",
+        "propagates": "None 为缺失/过期；有效命中同时触碰 LRU；L138-L151。"
+      }
+    ],
+    "callers": [
+      "tools.py L92；cli.py L174"
+    ],
+    "sharedState": [
+      "content_sources/content_objects（同 fetch）；state_store.py L108-L128"
+    ],
+    "openQuestions": []
+  },
+  {
+    "function": "run_keyed_source",
+    "file": "multi_search_mcp/src/search/search_runner.py",
+    "lines": "L247-L284",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/05-run_keyed_source.md",
+    "invariants": [
+      {
+        "claim": "key use_count 与 success/failure_count 是不同时间的记录",
+        "evidence": "search_runner.py L266-L270；key_state.py L162-L174"
+      },
+      {
+        "claim": "重试中保留部分候选并以来源+canonical URL 去重",
+        "evidence": "search_runner.py L225-L243、L276-L284"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "key deadline 每次尝试前检查",
+        "establishedBy": "search_runner.py L262-L264"
+      },
+      {
+        "claim": "失败类别来自 provider 行而非 HTTP code 单独推断",
+        "establishedBy": "key_state.py L82-L104；support/auth.py L25-L33"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "SQLiteKeyManager.candidates",
+        "kind": "internal",
+        "propagates": "按状态过滤并按 never_used/last_used_at/order 排序；key_state.py L125-L160。"
+      },
+      {
+        "callee": "record_use/record_result",
+        "kind": "internal",
+        "propagates": "独立 SQL 事务；key_state.py L162-L240。"
+      },
+      {
+        "callee": "_attach_provider_ranks/_merge_partial_rows",
+        "kind": "internal",
+        "propagates": "合法候选附 rank；部分行按 identity 合并；search_runner.py L168-L244。"
+      },
+      {
+        "callee": "call_with_key",
+        "kind": "internal",
+        "propagates": "选定 Brave 路径：registry.py L54-L59；异步池异常处理在 search_runner.py L393-L396。"
+      }
+    ],
+    "callers": [
+      "SearchRunner._run_keyed_source L413-L416"
+    ],
+    "sharedState": [
+      "key_state；key_state.py L162-L240"
+    ],
+    "openQuestions": [
+      "unclear; need to inspect 运营对同一 key 并行使用的要求；当前选择快照与使用记账之间无独占预留，不能把 LRU 排序描述为独占分配。"
+    ]
+  },
+  {
+    "function": "run_ranked_fetch_stage",
+    "file": "multi_search_mcp/src/scrape/stage.py",
+    "lines": "L18-L98",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/06-run_ranked_fetch_stage.md",
+    "invariants": [
+      {
+        "claim": "超时响应不代表 callback 没有副作用",
+        "evidence": "stage.py L49-L51；service.py L296-L304"
+      },
+      {
+        "claim": "完成顺序不影响返回顺序",
+        "evidence": "stage.py L60、L69、L91-L96"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "运行中的任务最终释放槽位",
+        "establishedBy": "support/concurrency.py L120-L125"
+      },
+      {
+        "claim": "callback 异常可形成对应 hit 错误",
+        "establishedBy": "scrape/stage.py L58-L62"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "BoundedDaemonExecutor.submit_before",
+        "kind": "internal",
+        "propagates": "等待 semaphore 仅至 deadline；concurrency.py L44-L48。"
+      },
+      {
+        "callee": "fetch",
+        "kind": "internal",
+        "propagates": "service.py L633-L647 调用 run_fetch_source，异常转结构化 error。"
+      },
+      {
+        "callee": "scrub_secrets",
+        "kind": "internal",
+        "propagates": "模式替换/显式 secret 集/截长；secrets.py L32-L40，此调用仅传 error。"
+      }
+    ],
+    "callers": [
+      "service.py L649-L650"
+    ],
+    "sharedState": [
+      "_SCRAPE_POOL；stage.py L12-L14"
+    ],
+    "openQuestions": []
+  },
+  {
+    "function": "search_brave",
+    "file": "multi_search_mcp/src/search/searchers/brave.py",
+    "lines": "L11-L64",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/07-search_brave.md",
+    "invariants": [
+      {
+        "claim": "Brave 结果只声明 excerpt/metadata",
+        "evidence": "searchers/brave.py L52-L63；models.py L65-L78"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "count 受本地 provider cap 限制",
+        "establishedBy": "search/resolve.py L98-L110"
+      },
+      {
+        "claim": "运行时 adapter 异常不会逃出 SearchRunner.run",
+        "establishedBy": "search/search_runner.py L391-L396"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "urlopen_retry",
+        "kind": "internal",
+        "propagates": "连接、SSL 重试和 response read 共用 helper deadline；http.py L175-L212。"
+      },
+      {
+        "callee": "Brave API",
+        "kind": "external-black-box",
+        "propagates": "发送 query/count/API key；响应 schema 和内容真实性需外部契约。"
+      },
+      {
+        "callee": "scrub_secrets",
+        "kind": "internal",
+        "propagates": "显式 key 与常见 token 模式替换，secrets.py L32-L40。"
+      }
+    ],
+    "callers": [
+      "registry.py L54-L59 经 call_optional_timeout L185-L198"
+    ],
+    "sharedState": [
+      "无直接 DB 写入；key 外层记账 search_runner.py L267-L270"
+    ],
+    "openQuestions": [
+      "unclear; need to inspect Brave API 当前 schema/压缩体规模保证；本轮离线不验证上游。"
+    ]
+  },
+  {
+    "function": "urlopen_retry",
+    "file": "multi_search_mcp/src/support/http.py",
+    "lines": "L175-L212",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/08-urlopen_retry.md",
+    "invariants": [
+      {
+        "claim": "SSL 重试及重定向沿用原 deadline",
+        "evidence": "http.py L147-L151、L187-L202"
+      },
+      {
+        "claim": "带凭据的跨 origin redirect 与 HTTPS 降级被拒绝",
+        "evidence": "http.py L139-L145"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "response read 执行预算检查",
+        "establishedBy": "support/http.py L76-L78、L89、L53-L66"
+      },
+      {
+        "claim": "redirect 检查全部解析 IP",
+        "establishedBy": "support/http.py L139；url_security.py L52-L59"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "_remaining/_build_safe_opener/_open_with_deadline",
+        "kind": "internal",
+        "propagates": "remaining<=0 抛错；创建连接/响应 handler 保留 deadline；http.py L32-L36、L81-L129、L158-L168。"
+      },
+      {
+        "callee": "_SafeHTTPRedirectHandler.redirect_request",
+        "kind": "internal",
+        "propagates": "校验新 URL/origin/credentials，并在错误时关闭 fp；L137-L155。"
+      },
+      {
+        "callee": "urllib/http.client/socket/TLS",
+        "kind": "external-black-box",
+        "propagates": "运行库未逐函数分析；本轮不把 Python 的 DNS/代理/TLS 行为当成完成验证。"
+      }
+    ],
+    "callers": [
+      "searchers/brave.py L36；scrapers/exa.py L33；其余调用者 inventory-only"
+    ],
+    "sharedState": [
+      "_shared_opener 为进程共享且 install_opener；http.py L171-L172"
+    ],
+    "openQuestions": [
+      "unclear; need to inspect 目标 Python socket DNS、代理 CONNECT 与 TLS 在该运行环境的计时边界；本轮不声称硬实时超时。"
+    ]
+  },
+  {
+    "function": "ContentStore.reuse_for_url",
+    "file": "multi_search_mcp/src/state/content_store.py",
+    "lines": "L94-L136",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/09-ContentStore-reuse_for_url.md",
+    "invariants": [
+      {
+        "claim": "URL 复用不延长原始到期时间",
+        "evidence": "content_store.py L123-L126"
+      },
+      {
+        "claim": "正文对象和来源引用分别存储，删除单一来源不必删除共享正文",
+        "evidence": "content_store.py L171-L194、L227-L236"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "当前 retention 许可由调用者建立",
+        "establishedBy": "service.py L244-L254"
+      },
+      {
+        "claim": "scope 确定 provider/backend/keys 上下文",
+        "establishedBy": "service.py L247-L251"
+      },
+      {
+        "claim": "事务中任一步失败回滚",
+        "establishedBy": "state/state_store.py L153-L158"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "_purge_expired_conn",
+        "kind": "internal",
+        "propagates": "先删过期引用，再删孤儿正文；L215-L236。"
+      },
+      {
+        "callee": "_bind_source_conn",
+        "kind": "internal",
+        "propagates": "upsert source_id，旧 hash 无引用时才删除；L171-L194。"
+      },
+      {
+        "callee": "_evict_lru",
+        "kind": "internal",
+        "propagates": "容量过大时逐出非 protected 对象及其所有引用；无可逐出对象则报错；L238-L268。"
+      },
+      {
+        "callee": "StateStore.connect",
+        "kind": "internal",
+        "propagates": "commit、rollback、finally close；state_store.py L150-L160。"
+      }
+    ],
+    "callers": [
+      "service.py L252；rg 全包其他生产调用未发现"
+    ],
+    "sharedState": [
+      "content_sources/content_objects；state_store.py L108-L128"
+    ],
+    "openQuestions": []
+  },
+  {
+    "function": "SQLiteKeyManager.record_result",
+    "file": "multi_search_mcp/src/state/key_state.py",
+    "lines": "L174-L240",
+    "analysisFile": "docs/skill-comparison-2026-09-12/audit-context/functions/10-SQLiteKeyManager-record_result.md",
+    "invariants": [
+      {
+        "claim": "invalid strike 增量与状态选择使用同一 SQL 更新",
+        "evidence": "key_state.py L204-L212、L226-L240"
+      },
+      {
+        "claim": "错误字符串入 key_state 前应用已知 key 脱敏",
+        "evidence": "key_state.py L237；support/secrets.py L32-L40"
+      }
+    ],
+    "assumptions": [
+      {
+        "claim": "结果状态更新对应行存在",
+        "establishedBy": "key_state.py L175、L266-L275"
+      },
+      {
+        "claim": "SQL 写入错误传播并回滚",
+        "establishedBy": "state/state_store.py L153-L158"
+      }
+    ],
+    "calls": [
+      {
+        "callee": "_ensure_row",
+        "kind": "internal",
+        "propagates": "INSERT OR IGNORE 建立唯一 provider/key_id；L266-L275。"
+      },
+      {
+        "callee": "classify_error",
+        "kind": "internal",
+        "propagates": "显式类型优先；否则字符串顺序分类；L278-L292。"
+      },
+      {
+        "callee": "StateStore.execute/connect",
+        "kind": "internal",
+        "propagates": "每次 UPDATE 独立连接事务；state_store.py L150-L160、L191-L193。"
+      },
+      {
+        "callee": "scrub_secrets",
+        "kind": "internal",
+        "propagates": "对已知 candidate.key 与常见模式替换；secrets.py L32-L40。"
+      }
+    ],
+    "callers": [
+      "search_runner.py L270；scrape.py L106"
+    ],
+    "sharedState": [
+      "key_state，同 candidates/record_use/reset 共享；L125-L275"
+    ],
+    "openQuestions": [
+      "unclear; need to inspect 所有 search provider 是否发送 target origin；本轮只记录 search/scrape 两条调用链的不同处理，未判定业务影响。"
+    ]
+  }
+]

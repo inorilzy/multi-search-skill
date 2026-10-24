@@ -1,0 +1,285 @@
+   Compiling multi-search-desktop v0.1.0 (D:\0-code-project\multi-search-skill\desktop\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.72s
+     Running unittests src\lib.rs (desktop\src-tauri\target\debug\deps\multi_search_desktop-5b13391374731d28.exe)
+
+running 17 tests
+test credential::decryption_tests::invalid_dpapi_payload_reports_unreadable_not_unknown_availability ... ok
+test credential_commands::tests::application_entry_requires_allowlist_and_https ... ok
+test credential_commands::tests::storage_capability_rejects_old_cli ... ok
+test credential_commands::tests::baidu_application_link_is_the_official_iam_key_page ... ok
+test windows_util::tests::machine_registry_path_has_no_embedded_nul_before_building_child_environment ... ok
+test manager::tests::management_mutations_fail_fast_while_busy ... ok
+test provider::tests::allowed_source_names_cover_canonical_alias_and_cli ... ok
+test provider::tests::canonical_sources_are_unique ... ok
+test provider::tests::keyed_and_cookie_are_mutually_exclusive ... ok
+test provider::tests::resolve_matches_canonical_cli_source_and_alias ... ok
+test redaction::tests::short_values_never_destroy_normal_output ... ok
+test windows_util::tests::decode_utf16_rejects_odd_bytes_and_embedded_nul ... ok
+test credential_commands::tests::default_read_masks_keys_and_returns_nonsecret_revision ... ok
+test install::lock_error_tests::permission_denied_is_a_clear_lock_message_that_never_mentions_termination ... ok
+test windows_util::tests::expand_is_case_insensitive_and_leaves_unknown_references ... ok
+test manager::tests::execution_slot_recovers_after_poison ... ok
+test process::output_tests::reader_recovers_poison_and_marks_truncation ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\cookies.rs (desktop\src-tauri\target\debug\deps\cookies-fb5533783311d5d8.exe)
+
+running 5 tests
+test confirmation_precedes_io_and_legacy_status_is_read_only ... ok
+test invalid_and_oversized_maps_never_echo_or_persist ... ok
+test import_encrypts_without_touching_source_and_delete_never_falls_back ... ok
+test failed_import_rolls_back_row_and_mode_and_preserves_other_fields ... ok
+test rust_python_cookie_ciphertext_protocol_roundtrip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests\credential_rows.rs (desktop\src-tauri\target\debug\deps\credential_rows-83ca7d150ad250d3.exe)
+
+running 10 tests
+test append_creates_store_when_absent_and_single_key_stays_scalar ... ok
+test hidden_entry_shape_rejects_row_ops_without_losing_data ... ok
+test unreadable_store_rejects_row_mutation_and_is_untouched ... ok
+test remove_last_row_deletes_credentials_row ... ok
+test failed_write_rolls_back_and_keeps_original_blob ... ok
+test append_to_existing_rows_preserves_every_entry_verbatim ... ok
+test concurrent_appends_each_keep_their_key ... ok
+test remove_exact_duplicate_jina_row_drops_its_metadata ... ok
+test remove_rejects_stale_snapshot_and_out_of_range_without_writing ... ok
+test append_rejects_invalid_and_over_limit_without_writing ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests\credential_sources.rs (desktop\src-tauri\target\debug\deps\credential_sources-0bf087cabe4b9969.exe)
+
+running 15 tests
+test github_repos_maps_to_github_provider_and_unknown_names_are_rejected ... ok
+test all_twelve_source_tests_use_typed_cli_arguments_and_independent_status ... ok
+test jina_editor_roundtrip_preserves_metadata_for_padded_stored_keys ... ok
+test jina_credentials_round_trip_without_becoming_a_search_source ... ok
+test jina_structured_keys_are_visible_in_editor_without_silent_omission ... ok
+test non_jina_save_ignores_structured_merge ... ok
+test jina_editor_save_preserves_metadata_of_unchanged_lines ... ok
+test unknown_source_never_reaches_the_backend ... ok
+test github_repos_uses_github_entry_and_tavily_entry_does_not_satisfy_it ... ok
+test environment_alias_precedence_matches_real_python_load_keys_contract ... ok
+test env_override_is_named_by_variable_and_never_valued ... ok
+test store_overrides_file_list_and_file_is_untouched ... ok
+test corrupt_keys_file_counts_as_zero_and_is_not_echoed ... ok
+test file_list_is_reported_by_count_and_never_by_value ... ok
+test every_allowlisted_source_reads_only_its_own_provider_target ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\credentials.rs (desktop\src-tauri\target\debug\deps\credentials-8f6f4d47ee21027e.exe)
+
+running 10 tests
+test invalid_keys_rejected_without_echoing_value ... ok
+test rust_reads_blob_written_by_python_store ... ok
+test rust_written_blob_has_contract_bytes ... ok
+test overview_reports_source_without_value_and_env_overrides_store ... ok
+test delete_then_absent_and_unreadable_entry_is_reported_not_echoed ... ok
+test multi_key_readback_is_one_per_line_and_overview_stays_non_secret ... ok
+test store_failure_is_explicit_and_never_falls_back ... ok
+test save_writes_namespaced_versioned_blob_and_trims_key ... ok
+test test_args_never_contain_key_material ... ok
+test test_outcome_classifies_provider_errors_and_success ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diagnostics.rs (desktop\src-tauri\target\debug\deps\diagnostics-72c5a6a9138da49d.exe)
+
+running 8 tests
+test absent_cli_reports_both_discovery_boundaries_without_touching_user_profile ... ok
+test user_discovery_without_app_discovery_requires_a_host_restart ... ok
+test detected_cli_has_actual_path_and_version_but_does_not_imply_user_discovery ... ok
+test explicit_unmanaged_executable_is_not_probed ... ok
+test invalid_executable_and_failed_version_have_distinct_reasons ... ok
+test legacy_cli_reports_version_failure_with_exit_code_and_update_guidance ... ok
+test failed_version_output_is_redacted_before_returning_to_callers ... ok
+test version_timeout_is_bounded ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.95s
+
+     Running tests\execution.rs (desktop\src-tauri\target\debug\deps\execution-86c371b6ea0d779f.exe)
+
+running 13 tests
+test unreadable_route_config_blocks_execution_instead_of_falling_back_to_builtins ... ok
+test legacy_cli_cannot_search_using_old_credentials ... ok
+test database_error_is_not_reported_as_old_cli_capability ... ok
+test search_preserves_literal_arguments_and_reports_real_success ... ok
+test shutdown_terminates_its_execution_without_disabling_the_standalone_cli ... ok
+test partial_failure_is_visible_and_known_credentials_are_redacted ... ok
+test custom_route_is_validated_from_current_config_and_explicit_timeout_still_wins ... ok
+test non_default_legacy_route_timeout_can_be_tested_but_arbitrary_values_above_sixty_are_rejected ... ok
+test cancellation_stops_owned_descendants_but_not_unrelated_processes ... ok
+test zero_and_failed_searches_have_distinct_outcomes_and_failure_exit_code ... ok
+test option_like_queries_remain_literal_after_terminator ... ok
+test completion_cancellation_races_do_not_relabel_completed_runs_or_cancel_unknown_ids ... ok
+test concurrent_completion_and_cancel_publish_one_terminal_state ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.46s
+
+     Running tests\install_release_boundary.rs (desktop\src-tauri\target\debug\deps\install_release_boundary-55fd25b6a3994988.exe)
+
+running 2 tests
+test default_build_plan_ignores_isolation_keys ... ok
+test default_build_ignores_isolation_and_anchor_test_keys ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests\installed_cli.rs (desktop\src-tauri\target\debug\deps\installed_cli-35fe4c2f9ff7170f.exe)
+
+running 2 tests
+test actual_installed_cli_detection_search_partial_failure_and_cancellation ... ignored, run via scripts/desktop_native_acceptance.py with a disposable installed CLI and controlled HTTP
+test rust_child_bootstrap_active_proof ... ignored, run via scripts/desktop_native_acceptance.py with a disposable installed CLI and controlled HTTP
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\process_env.rs (desktop\src-tauri\target\debug\deps\process_env-3f37f28b09a64c43.exe)
+
+running 8 tests
+test acceptance_pythonpath_selector_does_not_bypass_default_scrub ... ok
+test empty_environment_produces_empty_child_environment ... ok
+test secret_marker_filter_is_case_insensitive_and_desktop_namespace_is_exempt ... ok
+test secret_variables_never_reach_the_child_environment ... ok
+test allowlisted_runtime_and_desktop_configuration_variables_are_forwarded ... ok
+test unrelated_environment_entries_are_not_forwarded ... ok
+test real_child_process_default_build_never_maps_acceptance_bootstrap ... ok
+test real_child_process_does_not_inherit_provider_credentials ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests\provider_parity.rs (desktop\src-tauri\target\debug\deps\provider_parity-a8af868f7ff68dd6.exe)
+
+running 2 tests
+test rust_provider_manifest_matches_python_registries ... ok
+test rust_alias_set_is_a_subset_of_python_aliases ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests\scrape_memory.rs (desktop\src-tauri\target\debug\deps\scrape_memory-3cc1aca81d338c3f.exe)
+
+running 12 tests
+test state_path_prefers_env_then_userprofile_then_home ... ok
+test missing_state_database_reports_unavailable_and_writes_nothing ... ok
+test missing_table_reports_unavailable_with_reason ... ok
+test pin_rejects_unknown_scraper ... ok
+test future_schema_and_invalid_site_never_mutate_memory ... ok
+test cooldown_is_derived_from_iso_time_and_bad_time_is_not_cooldown ... ok
+test pin_is_atomic_and_rolls_back_the_insert_when_update_fails ... ok
+test reset_requires_one_site_and_preserves_other_rows ... ok
+test reads_rows_sorted_by_site_pin_success_and_scraper ... ok
+test pin_inserts_row_and_puts_backend_first ... ok
+test concurrent_pins_get_distinct_priorities_without_lost_writes ... ok
+test python_v2_creation_and_v1_migration_support_category_view_pin_reset ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests\settings.rs (desktop\src-tauri\target\debug\deps\settings-ae721349e29857cd.exe)
+
+running 34 tests
+test independent_cli_handoff_database ... ok
+test missing_scrape_backends_view_uses_factory_chain_and_options ... ok
+test empty_userprofile_falls_back_to_home ... ok
+test source_names_accepted_by_execution_allowlist ... ok
+test missing_database_shows_defaults_without_creating_it ... ok
+test corrupt_db_blocks_save_without_overwriting ... ok
+test scrape_backends_reject_unknown_and_empty_lists_without_writing ... ok
+test all_route_sources_disabled_is_truthful ... ok
+test current_last_and_invalid_routes_are_rejected_before_sqlite_changes ... ok
+test builtin_factory_is_used_only_when_routes_is_missing ... ok
+test old_user_dev_and_config_env_are_ignored_and_untouched ... ok
+test restart_reads_sqlite_not_dev ... ok
+test explicit_db_is_only_target ... ok
+test invalid_input_does_not_change_database ... ok
+test toggle_source_preserves_other_settings ... ok
+test omitted_routes_preserve_existing_map_and_unknown_fields ... ok
+test malformed_settings_block_save_and_roll_back ... ok
+test omitted_scrape_backends_preserve_existing_key ... ok
+test complete_route_map_supports_create_edit_delete_and_global_disable ... ok
+test trigger_failure_rolls_back_previous_settings ... ok
+test unknown_fields_preserved ... ok
+test save_canonical_sources_into_versioned_sqlite ... ok
+test scrape_backends_save_trims_dedupes_and_keeps_order ... ok
+test version_zero_nonempty_and_incomplete_version_one_are_rejected ... ok
+test unsupported_version_fails_closed ... ok
+test missing_or_absent_scrape_backends_is_not_reported_invalid ... ok
+test unreadable_view_still_exposes_default_scrape_chain ... ok
+test invalid_saved_scrape_backends_can_be_overwritten_by_save ... ok
+test aliases_null_type_and_legacy_timeout_previews_remain_compatible ... ok
+test twitter_is_path_only_and_env_never_overrides ... ok
+test dirty_scrape_backends_read_tolerantly_and_fall_back_when_useless ... ok
+test malformed_routes_or_type_are_unreadable_and_block_transactional_save ... ok
+test scrape_patch_and_other_settings_writes_preserve_each_other ... ok
+test python_cli_reads_desktop_written_settings_and_rejects_future_versions ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests\skill.rs (desktop\src-tauri\target\debug\deps\skill-5b92d850924d48bc.exe)
+
+running 6 tests
+test existing_target_is_never_overwritten_and_local_content_survives ... ok
+test missing_cli_blocks_install_and_writes_nothing ... ok
+test project_scope_requires_an_existing_absolute_project_and_writes_only_there ... ok
+test unrelated_skills_in_the_same_folder_are_kept ... ok
+test incompatible_cli_blocks_install_and_names_the_missing_flag ... ok
+test fresh_global_install_writes_only_the_isolated_profile_and_verifies ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.74s
+
+     Running tests\skill_manage.rs (desktop\src-tauri\target\debug\deps\skill_manage-f362c246d73166f6.exe)
+
+running 19 tests
+test removal_reports_absent_state_without_deleting_anything ... ok
+test outcomes_serialize_the_field_names_the_ui_reads ... ok
+test removal_requires_confirmation_and_deletes_only_tool_owned_files ... ok
+test managed_path_replaced_with_user_folder_is_preserved ... ok
+test new_marker_records_explicit_schema_version_and_hashes ... ok
+test incomplete_ownership_marker_never_authorizes_delete_or_update ... ok
+test unknown_folder_is_never_updated_or_removed ... ok
+test linked_references_never_modify_external_files ... ok
+test status_exposes_target_release_requirements_and_blocks_incompatible_update ... ok
+test unmodified_install_reports_current_and_update_is_not_needed ... ok
+test missing_managed_file_can_be_repaired_after_confirmation ... ok
+test partial_removal_keeps_ownership_for_retry ... ok
+test failed_update_keeps_the_old_usable_skill ... ok
+test release_06_marker_without_hashes_remains_managed ... ok
+test update_preserves_unknown_files_and_nested_user_content ... ok
+test retry_after_failed_update_does_not_misreport_completion ... ok
+test local_modification_requires_confirmation_and_is_backed_up_before_overwrite ... ok
+test outdated_skill_updates_without_confirmation_when_unmodified ... ok
+test filesystem_update_failure_keeps_old_skill_and_retry_succeeds ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.72s
+
+     Running tests\sqlite_credentials.rs (desktop\src-tauri\target\debug\deps\sqlite_credentials-535c43e9713b2672.exe)
+
+running 8 tests
+test invalid_jina_and_non_jina_objects_fail_before_persistence ... ok
+test jina_json_structure_is_preserved ... ok
+test malformed_dpapi_is_error_not_legacy_fallback ... ok
+test failed_write_rolls_back_original_value ... ok
+test synthetic_native_roundtrip_preserves_multi_keys_and_never_stores_plaintext ... ok
+test rust_python_native_encryption_protocol_in_both_directions ... ok
+test rust_editor_roundtrip_keeps_jina_exhausted_keys_out_of_python_rotation ... ok
+test rust_python_product_credential_store_roundtrip ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests\ui_contract.rs (desktop\src-tauri\target\debug\deps\ui_contract-711ce87769a39c40.exe)
+
+running 4 tests
+test emit_types_d_ts ... ignored, explicit code generation only
+test ipc_commands_arguments_and_capability_match ... ok
+test payloads_js_matches_rust_field_types ... ok
+test types_d_ts_is_up_to_date ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests multi_search_desktop
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

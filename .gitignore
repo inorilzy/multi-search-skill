@@ -34,3 +34,6 @@ mcp.local.json
 qianfan_*.json
 qianfan_*.md
 desktop/src-tauri/resources/
+
+# Browser profile dumps captured during UI verification (cookies, history, logins)
+docs/verification-evidence/edge-*-profile/

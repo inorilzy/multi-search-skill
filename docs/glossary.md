@@ -51,7 +51,7 @@
 | **预取正文选择** | `run_search_candidates` 对原始结果按 canonical URL 只选一次正文：字符数最长优先，等长时依次按 provider 名、正文文本升序选择，与 query/provider/重复行的输入顺序和 `use_state` 无关。同一选择用于可选缓存和 `run_search_web` 的正文获取，再裁剪响应预览；retention 仍按候选全部 providers 合并，已有合法缓存继续按原命中与有效期规则使用。 | `multi_search_mcp/src/core/search_pipeline.py` → `run_search_candidates` / `run_search_web` |
 | **正文预览（Markdown）** | 搜索正文只存放在 `scrapes[].markdown`，按 `source_id` 对应候选，默认最多 1200 字符；需要截断时从完全匹配结果标题的一级标题开始，没有匹配标题时可定位逐字匹配完整摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从开头开始。`preview_start/end` 是原文字符偏移（左闭右开），省略前文也算 `truncated`。`multi_search` 的 markdown/both 模式只在顶层 `markdown` 放正文，`scrapes` 保留元数据。`fetch_source` 的单页文本字段为 `body`；预览不改缓存。 | `multi_search_mcp/src/core/search_pipeline.py` → `run_search_web` / `multi_search_mcp/src/core/body_fetch.py` → `run_fetch_source` |
 | **选读 / 全文** | 调用工具的 Agent 根据问题和预览选 3–5 篇，逐篇用 `fetch_source(full_content=True)` 一次读取全部已取得文本；少于 3 篇合格来源时读取可用数量并说明。Core 继续抓取 RRF 最终 15 条；选读是 Agent 阅读流程。全文受后端现有抓取限制约束，Reddit 仅含已加载评论。 | `skills/multi-search/SKILL.md` / `multi_search_mcp/src/core/body_fetch.py` → `run_fetch_source` |
-| **ScrapeResult（统一抓取结果）** | 四个通用后端（Jina、Exa、Tavily、Firecrawl）及 Reddit、Twitter/X 专用适配器在共享入口统一为 `url/title/markdown/length/via/truncated`。`length` 是取得正文的字符数，`truncated` 标明预览是否截断；失败时正文为空、长度为 0，并增加 `error`。适配器可附带 `error_origin`（`target` 或 `provider`）及 `error_type`：明确的目标错误保留使用记录，但不轮换 key、不写密钥健康状态；明确类别优先于错误文字分类。上游私有响应字段不会直接透传。 | `multi_search_mcp/src/support/models.py` → `normalize_scrape_result` |
+| **ScrapeResult（统一抓取结果）** | 四个通用后端（Jina、Exa、Tavily、Firecrawl）及 Reddit、Twitter/X 专用适配器在共享入口统一为 `url/title/markdown/length/via/truncated`。`length` 是取得正文的字符数，`truncated` 标明预览是否截断；失败时正文为空、长度为 0，并增加 `error`。统一错误字段为 `origin`（`target` 或 `provider`）及 `kind`；分类辅助函数接受旧 `error_origin` / `error_type` 作为兼容输入，归一化抓取输出仅保留新字段：明确的目标错误保留使用记录，但不轮换 key、不写密钥健康状态；明确类别优先于错误文字分类。上游私有响应字段不会直接透传。 | `multi_search_mcp/src/support/models.py` → `normalize_scrape_result` |
 | **SearchHit（搜索候选）** | 概念见 [CONTEXT.md](../CONTEXT.md)。候选包含 `source_id/title/url/canonical_url/content/providers/provider_ranks/rrf_score/body_available`；公共响应在排序后补充抓取状态或 `body_error`，正文由同一 `source_id` 的抓取结果提供。 | `multi_search_mcp/src/search/candidate.py` / `multi_search_mcp/src/core/search_pipeline.py` |
 | **response_id / source_id** | `response_id` 标识一次候选搜索；`source_id` 稳定标识该响应中的 canonical URL，并作为 `fetch_source` / `read_source` 的引用。 | `multi_search_mcp/src/search/candidate.py` / `multi_search_mcp/src/state/source_registry.py` |
 | **provider_rank / RRF** | 保留 provider 内部原始名次；同一 query 先做等权 RRF，expanded query 再按 query 排名做第二级 RRF，默认等权。`k=40`，两级均无中间截断，最终最多 15 条。provider 原生 score 只保留为诊断，正文不改变排序。 | `multi_search_mcp/src/search/search_runner.py` / `multi_search_mcp/src/search/candidate.py` |
@@ -60,11 +60,16 @@
 | **scrape backend（抓取后端）** | 抓正文用的后端，与搜索源不同。已知集合：`jina`、`exa`、`tavily`、`firecrawl`。 | `multi_search_mcp/src/scrape/scrape.py` → `KNOWN_BACKENDS` |
 | **site memory（站点抓取记忆）** | 记录站点抓取结果、手动固定与冷却；排序按手动固定、配置链顺序及冷却降级，不按历史成功率自动重排。 | `multi_search_mcp/src/state/site_memory.py` → `SiteScraperMemory` |
 | **dedup（去重）** | 两个搜索入口统一使用保守 canonical URL 后按 RRF 融合，同一 query、同一 provider 的重复 URL 只按最好名次投一票。跨 provider、跨 query 的贡献保留。 | `multi_search_mcp/src/search/candidate.py` |
-| **ContentStore（正文缓存）** | 对后端本次返回的原始正文执行容量检查与持久化，再裁剪本次响应。`max_chars` 只限制返回预览，不能截短缓存；TTL、单对象/总容量、LRU 和 provider retention 继续生效。 | `multi_search_mcp/src/state/content_store.py` / `multi_search_mcp/src/core/scrape_pipeline.py` → `run_scrape_raw` |
+| **ContentStore（正文缓存）** | 正文获取先按 UTF-8 单对象字节上限在字符边界截断，再持久化与裁剪响应；首次响应 `truncated` 包含字节或预览裁剪。`max_chars` 本身仅限制预览；TTL、总容量、LRU 和 retention 继续生效。SQLite/OSError/ContentStoreError 写入失败不丢弃已取得正文，返回 `persisted=false` 与 `cache_error`。schema v2 的 `content_sources.truncated` 按 source/acquisition 绑定保存截断状态，get/URL reuse/read 均保留，相关回归已独立通过；不是 content hash 的共享属性。完整重写可清除旧标记，展示 preview 不污染 acquisition；旧缓存默认 false 不代表可重建过去丢失的证据。 | `multi_search_mcp/src/state/content_store.py` / `multi_search_mcp/src/core/body_fetch.py` → `run_fetch_source` |
 | **SourceRegistry（来源注册表）** | 保存短期来源引用；每个注册批次在同一事务中删除已到期记录，按 `expires_at` 索引查找。没有后台定时器，应用停止时不会自动执行清理。 | `multi_search_mcp/src/state/source_registry.py` / `multi_search_mcp/src/state/state_store.py` |
 | **fetch_source（按需抓取）** | 按 `source_id` 或显式 URL 抓一条正文；先查 ContentStore，未命中才调用现有 scraper 链。`full_content=False` 保留默认 20000 字符及显式 `max_chars` 限制；`True` 覆盖 `max_chars`，一次返回全部已取得文本，缓存容量与 retention 不变。目标 URL 统一执行 SSRF 校验。 | `multi_search_mcp/src/core/body_fetch.py` → `run_fetch_source` |
-| **read_source（局部读取）** | 只读 ContentStore，支持 keyword/offset/limit，供定向查证缓存片段。缺失或过期时明确要求先调用 `fetch_source`，不会隐式联网；默认选读全文使用 `fetch_source(full_content=True)`。 | `multi_search_mcp/src/core/body_fetch.py` → `run_read_source` |
+| **read_source（局部读取）** | 只读 ContentStore，支持 keyword/offset/limit，供定向查证缓存片段。`truncated` 表示 acquisition 不完整，`has_more` 仅表示缓存内有更多字符，两者独立。缺失或过期时明确要求先调用 `fetch_source`，不会隐式联网；默认选读全文使用 `fetch_source(full_content=True)`。 | `multi_search_mcp/src/core/body_fetch.py` → `run_read_source` |
 | **降级 / degradation** | route 的主源全部失败或无可用结果时，在结果里**显式标注**。当前所有 route 的 `degrade_to` 都为空，所以只会输出「primary providers unavailable」提示，不会自动切换到兜底源（兜底机制保留但未启用）。 | `multi_search_mcp/src/search/search_runner.py` → `ROUTE_META` 的 `degrade_to` ＋ `multi_search_mcp/src/core/present.py` → `_route_degradation` |
+
+| 术语 | 定义 | 代码出处 |
+|---|---|---|
+| **deadline（整批截止时间）** | 使用 monotonic 时间控制准入和等待；到期后只收集已完成任务，未完成任务返回准入失败/超时结果，不再无界 result() 等待。Python 不能强杀运行线程，迟到任务仍占池槽至返回，守护线程不阻塞进程退出；每层 fan-out 使用独立池。 | `multi_search_mcp/src/support/concurrency.py` → `BoundedDaemonExecutor.run_all_before` |
+| **错误分类与 key 重试** | row_kind 优先 kind，再读取旧 error_type/标记；row_origin 优先 origin，再读旧 error_origin，kind=target 可推导 target。结构化类别优先于文字；仅缺类别时才使用文字匹配。target 不触发 key 轮换；provider invalid/quota/rate-limit 可轮换，直到成功、不再可重试或 deadline 到期。 | `multi_search_mcp/src/support/auth.py` → `row_kind` / `row_origin` / `is_key_retryable_error`；`multi_search_mcp/src/state/key_state.py` → `rotate_keys` |
 
 ## 5. Key 与状态
 
@@ -72,18 +77,18 @@
 
 | 术语 | 定义 | 代码出处 |
 |------|------|---------|
-| **key 轮换** | 同一 provider 有多个 key 时，按「未用过优先 → 最久未用（LRU）」挑选。每次选中更新 `last_used_at` / `use_count`。 | `multi_search_mcp/src/state/key_state.py` → `SQLiteKeyManager.candidates` |
+| **key 轮换** | 同一 provider 有多个 key 时，按「未用过优先 → 最久未用（LRU）」挑选。SQLite 调用前通过 `reserve` 在 `BEGIN IMMEDIATE` 内重查健康、按最新 LRU 选择并更新 use_count/last_used_at；不是独占 lease，允许同 key 并发。 | `multi_search_mcp/src/state/key_state.py` → `SQLiteKeyManager.candidates` / `SQLiteKeyManager.reserve` |
 | **Jina 配置 `exhausted`** | SQLite Jina 凭据元数据中的静态排除标记，由操作员手动维护；为 `true` 时 `jina_config_keys()` 不会将该 key 交给轮换。它不是运行态状态，不由 HTTP 402 自动写入，也没有 24 小时恢复期。 | `multi_search_mcp/src/state/keys.py` → `jina_config_keys`；`multi_search_mcp/src/support/credential_store.py` |
 | **key 状态：active** | 运行态当前没有阻止使用的健康状态；若 `manually_disabled` 仍为真，候选选择仍会跳过；也不覆盖 Jina 配置中的静态 `exhausted` 排除。成功回报会将运行态写回 `active`。 | `multi_search_mcp/src/state/key_state.py` → `ACTIVE` / `SQLiteKeyManager.record_result` |
 | **key 状态：cooldown** | 运行态临时失败（如限流）；当前冷却 15 分钟，`cooldown_until` 未到期时跳过，期满后重新允许尝试。 | `multi_search_mcp/src/state/key_state.py` → `COOLDOWN` / `cooldown_until` |
 | **key 状态：quota_exhausted** | 运行态收到配额/余额用尽信号；当前恢复期 24 小时，`exhausted_until` 未到期时跳过，期满后重新允许尝试。它不等于配置级 `exhausted`，不会写回 keys file。 | `multi_search_mcp/src/state/key_state.py` → `QUOTA_EXHAUSTED` / `exhausted_until` |
-| **key 状态：transient_invalid** | 运行态暂时视为无效；连续收到 provider 的 invalid 分类失败时，前两次先冷却 15 分钟并在冷却期跳过，第三次才升级为 `invalid`。success、`rate_limit`、`quota_exhausted` 和其它非 invalid provider 结果都会清零 `invalid_strikes`。 | `multi_search_mcp/src/state/key_state.py` → `TRANSIENT_INVALID` / `INVALID_COOLDOWN` / `INVALID_STRIKE_LIMIT` / `SQLiteKeyManager.record_result` |
+| **key 状态：transient_invalid** | 运行态暂时视为无效；连续收到 provider 的 invalid 分类失败时，没有既存强状态时，前两次先冷却 15 分钟并在冷却期跳过，第三次升级为 `invalid`。success、`rate_limit`、`quota_exhausted` 清零 `invalid_strikes`；timeout/network/未分类失败与 target 错误不清零。既存 invalid、quota_exhausted、disabled 在 invalid 失败更新时保留。 | `multi_search_mcp/src/state/key_state.py` → `TRANSIENT_INVALID` / `INVALID_COOLDOWN` / `INVALID_STRIKE_LIMIT` / `SQLiteKeyManager.record_result` |
 | **key 状态：invalid** | 运行态达到 invalid 计数阈值后的长期排除状态；候选选择会跳过，需调用 `reset_key_state` 或明确重置后才会重新使用。 | `multi_search_mcp/src/state/key_state.py` → `INVALID` / `SQLiteKeyManager.candidates` |
-| **key 状态：disabled** | 运行态被操作员手动禁用（`manually_disabled` 或 `disabled`）；无自动到期恢复，候选选择会跳过，需清除该标记或调用 `reset_key_state`。它也不等于 Jina 配置级 `exhausted`。 | `multi_search_mcp/src/state/key_state.py` → `DISABLED` / `manually_disabled` |
+| **key 状态：disabled** | 运行态被操作员手动禁用（`manually_disabled` 或 `disabled`）；无自动到期恢复，候选选择会跳过，`reset` 仅重置运行时 status/期限/strikes，不清除 `manually_disabled`；手动禁用标记须另行明确解除。它也不等于 Jina 配置级 `exhausted`。 | `multi_search_mcp/src/state/key_state.py` → `DISABLED` / `manually_disabled` |
 | **StateStore（状态库）** | SQLite 状态库，存 key 状态、站点记忆、短期 source registry 与 ContentStore，默认 `~/.multi-search/state.sqlite`。 | `multi_search_mcp/src/state/state_store.py` |
 | **use_state（状态开关）** | 工具参数。`false` 时跳过 SQLite 状态、key 轮换、站点记忆，用于干净测试。 | `multi_search_mcp/src/core/requests.py` / `multi_search_mcp/src/core/runtime.py` |
 
-`invalid_strikes` 只表示连续的 provider invalid 分类失败：每次 invalid 结果原子累加，并在同一转换中决定 `transient_invalid` 或永久 `invalid`；其它 provider 结果清零计数并按自身状态更新。抓取 target 错误在编排入口作为中立事件处理，既不增加也不清零计数，也不覆盖已有健康状态或冷却。时间字段到期后候选选择器会重新允许尝试，但数据库的 `status` 不会仅因时间流逝自动改写为 `active`。
+失败写入的状态保护并非简单全序覆盖：rate_limit 与 invalid 失败保留已有 invalid/quota_exhausted/disabled；quota_exhausted 失败保留已有 invalid/disabled。invalid 失败仍原子累加 strikes；success、rate_limit、quota_exhausted 清零 strikes。timeout/network/未分类失败仅记录失败计数与脱敏错误，不改变 status、期限或 strikes。target 错误只保留调用使用记录，不写健康结果。成功回报仍写 active、清冷却与 strikes，但不清 manually_disabled；因此不能把失败更新的强状态保护扩展成“成功永不覆盖”。时间到期仅允许候选再尝试，不自动改写数据库 status。
 
 ## 6. 入口与配置
 
@@ -93,7 +98,9 @@
 | **CLI** | `multi-search` console entry；`search/fetch/read/doctor/keys` 都直接调用同一 Core 和 StateStore，按需启动并退出，不依赖 MCP 或常驻服务。 | `multi_search_mcp/cli.py` |
 | **SKILL** | 给 agent 的薄自然语言触发层，告诉它何时调工具、传什么 route/sources。 | `skills/multi-search/SKILL.md` |
 | **config（行为配置）** | 非敏感的默认值（route/count/timeout 等）。默认只从 SQLite settings 读取；JSON 仅在显式传入路径时读取，不自动使用环境变量或源码树 fallback。 | `multi_search_mcp/src/support/config.py` → `resolve_config_path` |
-| **credential store（凭据库）** | SQLite 是唯一默认凭据来源；provider 凭据由 DPAPI 加密。旧 keys file 仅为显式迁移/兼容输入，环境变量不覆盖凭据。Twitter cookie 路径存于 settings。 | `multi_search_mcp/src/support/credential_store.py` / `multi_search_mcp/src/state/keys.py` |
+| **credential store（凭据库）** | SQLite 是唯一默认凭据来源；provider 凭据由 DPAPI 加密。旧 keys file 仅为显式迁移/兼容输入，环境变量不覆盖凭据。Twitter file 路径与 file/managed 模式存于 settings；managed 使用独立 twitter_cookies 加密条目，不属于 API-key 轮换集合。 | `multi_search_mcp/src/support/credential_store.py` / `multi_search_mcp/src/state/keys.py` |
+
+| **Twitter Cookie 模式** | settings.twitter_cookies_mode 缺省为 file（旧明文文件，不自动迁移）；Windows 显式导入切换 managed，DPAPI 凭据实际调用时解密为字典，无临时明文文件。managed 缺失/损坏/非 Windows 不回退 file。删除保持 managed，不删除原始文件；当前 UI 不提供 managed→file 切换。DPAPI 不防同用户进程/内存读取。 | `desktop/src-tauri/COOKIE-PROTOCOL.md` / `multi_search_mcp/src/support/credential_store.py` |
 
 ## 维护约定
 

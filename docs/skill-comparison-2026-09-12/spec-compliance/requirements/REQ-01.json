@@ -1,0 +1,56 @@
+{
+  "requirementId": "REQ-01",
+  "title": "MCP 与 CLI 搜索调用共享 Core",
+  "document": "README.md",
+  "location": "README.md:L6",
+  "quote": "MCP 与 CLI 使用同一套搜索、key 状态和 SQLite 缓存",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'run_search_web|search_web_tool' multi_search_mcp/src/service.py multi_search_mcp/tools.py multi_search_mcp/cli.py multi_search_mcp/server.py",
+      "result": "9 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/server.py:23:    search_web_tool,",
+        "multi_search_mcp/server.py:81:        search_web_tool,",
+        "multi_search_mcp/cli.py:18:    run_search_web,",
+        "multi_search_mcp/cli.py:146:    return run_search_web(",
+        "multi_search_mcp/tools.py:19:    run_search_web,",
+        "multi_search_mcp/tools.py:45:def search_web_tool(",
+        "multi_search_mcp/tools.py:54:    return _safe_call(lambda: run_search_web(SearchWebRequest(",
+        "multi_search_mcp/src/service.py:595:def run_search_web(",
+        "multi_search_mcp/src/service.py:704:    response = run_search_web("
+      ]
+    }
+  ],
+  "reasoning": "CLI _handle_search → service.run_search_web；server.search_web → _run_tool → tools.search_web_tool → 同一 run_search_web。tools._safe_call 将 ValueError/Exception 分类，CLI main 将异常转换退出码；本条只判共享调用路径，参数逐个版本兼容不在此条。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-01.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L595-L628",
+      "quote": "def run_search_web(\n    request: SearchWebRequest | dict,\n    *,\n    providers: dict | None = None,\n    keys: dict | None = None,\n    config: dict | None = None,\n    state_store: StateStore | None = None,\n    query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,\n    scraper=None,",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/tools.py",
+      "lines": "L45-L62",
+      "quote": "def search_web_tool(\n    query: str,\n    route: str | None = None,\n    count: int | None = None,\n    sources: list[str] | None = None,\n    timeout: int | None = None,\n    expand: list[str] | None = None,\n    use_state: bool = True,\n) -> dict[str, Any]:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/cli.py",
+      "lines": "L145-L154",
+      "quote": "def _handle_search(args: argparse.Namespace) -> dict[str, Any]:\n    return run_search_web(\n        SearchWebRequest(\n            query=args.query,\n            route=args.route,\n            count=args.count,\n            sources=list(args.sources or []),\n            timeout=args.timeout,\n            expand=None if args.expand is None else list(args.expand),",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/server.py",
+      "lines": "L80-L83",
+      "quote": "    return await _run_tool(\n        search_web_tool,\n        query, route, count, sources, timeout, expand, use_state\n    )",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

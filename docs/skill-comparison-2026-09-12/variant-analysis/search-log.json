@@ -1,0 +1,270 @@
+[
+  {
+    "id": "A1",
+    "pattern": "scrub_secrets\\(e, token\\)",
+    "scope": "multi_search_mcp",
+    "purpose": "GitHub exact seed",
+    "exit_code": 0,
+    "match_count": 1,
+    "matches": [
+      {
+        "file": "multi_search_mcp/src/search/searchers/github.py",
+        "line": 58,
+        "text": "return -1, \"\", scrub_secrets(e, token)",
+        "triage": "known seed; corrected offline probe confirms invalid after three simulated retries"
+      }
+    ]
+  },
+  {
+    "id": "A2",
+    "pattern": "scrub_secrets\\((e|exc), token\\)",
+    "scope": "multi_search_mcp",
+    "purpose": "Generalize exception identifier only",
+    "exit_code": 0,
+    "match_count": 1,
+    "matches": [
+      {
+        "file": "multi_search_mcp/src/search/searchers/github.py",
+        "line": 58,
+        "text": "return -1, \"\", scrub_secrets(e, token)",
+        "triage": "known seed; corrected offline probe confirms invalid after three simulated retries"
+      }
+    ]
+  },
+  {
+    "id": "A3",
+    "pattern": "scrub_secrets\\((e|exc), (token|api_key)\\)",
+    "scope": "multi_search_mcp",
+    "purpose": "Generalize credential identifier only",
+    "exit_code": 0,
+    "match_count": 12,
+    "matches": [
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/exa.py",
+        "line": 68,
+        "text": "\"url\": url, \"error\": f\"Exa: {scrub_secrets(exc, api_key)}\",",
+        "triage": "read structured HTTP and target branches; target-error controls preserve key state; generic exception line alone is not a finding"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/exa.py",
+        "line": 73,
+        "text": "return {\"url\": url, \"error\": f\"Exa: {scrub_secrets(exc, api_key)}\"}",
+        "triage": "read structured HTTP and target branches; target-error controls preserve key state; generic exception line alone is not a finding"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/firecrawl.py",
+        "line": 54,
+        "text": "return {\"url\": url, \"error\": f\"Firecrawl: {scrub_secrets(exc, api_key)}\"}",
+        "triage": "target-warning branch is conditionally reproduced; exact live empty-body payload not established"
+      },
+      {
+        "file": "multi_search_mcp/src/search/searchers/baidu.py",
+        "line": 52,
+        "text": "return {\"error\": scrub_secrets(exc, api_key)}",
+        "triage": "HTTP403 synthetic hypothesis only; provider-specific rate-limit semantics not established; not a confirmed new defect"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/tavily.py",
+        "line": 100,
+        "text": "return {\"url\": url, \"error\": f\"Tavily: {scrub_secrets(exc, api_key)}\"}",
+        "triage": "read structured HTTP and target branches; target-error controls preserve key state; generic exception line alone is not a finding"
+      },
+      {
+        "file": "multi_search_mcp/src/search/searchers/brave.py",
+        "line": 42,
+        "text": "return [{\"source\": \"brave\", \"error\": scrub_secrets(e, api_key)}]",
+        "triage": "HTTP403 synthetic hypothesis only; provider-specific rate-limit semantics not established; not a confirmed new defect"
+      },
+      {
+        "file": "multi_search_mcp/src/search/searchers/exa.py",
+        "line": 45,
+        "text": "return [{\"source\": \"exa\", \"error\": scrub_secrets(e, api_key)}]",
+        "triage": "HTTP403 synthetic hypothesis only; provider-specific rate-limit semantics not established; not a confirmed new defect"
+      },
+      {
+        "file": "multi_search_mcp/src/search/searchers/firecrawl.py",
+        "line": 42,
+        "text": "return [{\"source\": source, \"error\": scrub_secrets(e, api_key)}]",
+        "triage": "HTTP403 synthetic hypothesis only; provider-specific rate-limit semantics not established; not a confirmed new defect"
+      },
+      {
+        "file": "multi_search_mcp/src/search/searchers/github.py",
+        "line": 58,
+        "text": "return -1, \"\", scrub_secrets(e, token)",
+        "triage": "known seed; corrected offline probe confirms invalid after three simulated retries"
+      },
+      {
+        "file": "multi_search_mcp/src/search/searchers/parallel.py",
+        "line": 45,
+        "text": "return [{\"source\": \"parallel\", \"error\": scrub_secrets(exc, api_key)}]",
+        "triage": "HTTP403 synthetic hypothesis only; provider-specific rate-limit semantics not established; not a confirmed new defect"
+      },
+      {
+        "file": "multi_search_mcp/src/search/searchers/serpapi.py",
+        "line": 80,
+        "text": "return _return_error(str(scrub_secrets(e, api_key)))",
+        "triage": "HTTP403 synthetic hypothesis only; provider-specific rate-limit semantics not established; not a confirmed new defect"
+      },
+      {
+        "file": "multi_search_mcp/src/search/searchers/tavily.py",
+        "line": 54,
+        "text": "return [{\"source\": \"tavily\", \"error\": scrub_secrets(e, api_key)}]",
+        "triage": "HTTP403 synthetic hypothesis only; provider-specific rate-limit semantics not established; not a confirmed new defect"
+      }
+    ]
+  },
+  {
+    "id": "A4",
+    "pattern": "page\\.get\\(\"warning\"\\)",
+    "scope": "multi_search_mcp",
+    "purpose": "Alternate manifestation: target warning transformed to error",
+    "exit_code": 0,
+    "match_count": 2,
+    "matches": [
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/firecrawl.py",
+        "line": 42,
+        "text": "warning = page.get(\"warning\") or \"empty content\"",
+        "triage": "target-warning branch is conditionally reproduced; exact live empty-body payload not established"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/jina.py",
+        "line": 152,
+        "text": "message = page.get(\"warning\") or data.get(\"message\") or \"empty content\"",
+        "triage": "target-warning branch is conditionally reproduced; exact live empty-body payload not established"
+      }
+    ]
+  },
+  {
+    "id": "A5",
+    "pattern": "error_origin.*target|error_type.*target",
+    "scope": "multi_search_mcp",
+    "purpose": "Counterexamples: preserved target semantics",
+    "exit_code": 0,
+    "match_count": 8,
+    "matches": [
+      {
+        "file": "multi_search_mcp/src/scrape/scrape.py",
+        "line": 103,
+        "text": "if key_manager is None or result.get(\"error_origin\") == \"target\":",
+        "triage": "shared target-origin handling/caller path inspected; not a distinct new instance"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/exa.py",
+        "line": 50,
+        "text": "\"error_origin\": \"target\", \"error_type\": \"target\",",
+        "triage": "read structured HTTP and target branches; target-error controls preserve key state; generic exception line alone is not a finding"
+      },
+      {
+        "file": "multi_search_mcp/src/support/auth.py",
+        "line": 25,
+        "text": "if row.get(\"error_origin\") == \"target\":",
+        "triage": "shared target-origin handling/caller path inspected; not a distinct new instance"
+      },
+      {
+        "file": "multi_search_mcp/src/state/key_state.py",
+        "line": 89,
+        "text": "error_rows = [row for row in error_rows if row.get(\"error_origin\") != \"target\"]",
+        "triage": "shared target-origin handling/caller path inspected; not a distinct new instance"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/tavily.py",
+        "line": 56,
+        "text": "error.update(error_origin=\"target\", error_type=\"target\")",
+        "triage": "read structured HTTP and target branches; target-error controls preserve key state; generic exception line alone is not a finding"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/tavily.py",
+        "line": 86,
+        "text": "advanced.get(\"error_origin\") == \"target\"",
+        "triage": "read structured HTTP and target branches; target-error controls preserve key state; generic exception line alone is not a finding"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/tavily.py",
+        "line": 87,
+        "text": "or basic.get(\"error_origin\") == \"target\"",
+        "triage": "read structured HTTP and target branches; target-error controls preserve key state; generic exception line alone is not a finding"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/tavily.py",
+        "line": 89,
+        "text": "merged.update(error_origin=\"target\", error_type=\"target\")",
+        "triage": "read structured HTTP and target branches; target-error controls preserve key state; generic exception line alone is not a finding"
+      }
+    ]
+  },
+  {
+    "id": "B1",
+    "pattern": "^def get_key_status\\(",
+    "scope": "multi_search_mcp",
+    "purpose": "Exact blocking-entrypoint seed",
+    "exit_code": 0,
+    "match_count": 1,
+    "matches": [
+      {
+        "file": "multi_search_mcp/server.py",
+        "line": 181,
+        "text": "def get_key_status(provider: str | None = None) -> dict:",
+        "triage": "followed through MCP wrapper, service/tool and temporary SQLite; see all-tool inventory and probe controls"
+      }
+    ]
+  },
+  {
+    "id": "B2",
+    "pattern": "^def (get_key_status|reset_key_state|get_site_scraper_stats|set_site_scraper_preference|reset_site_scraper_stats|read_source|list_sources)\\(",
+    "scope": "multi_search_mcp",
+    "purpose": "Sibling entrypoints; AST inventory checks all MCP tools",
+    "exit_code": 0,
+    "match_count": 8,
+    "matches": [
+      {
+        "file": "multi_search_mcp/server.py",
+        "line": 109,
+        "text": "def read_source(",
+        "triage": "followed through MCP wrapper, service/tool and temporary SQLite; see all-tool inventory and probe controls"
+      },
+      {
+        "file": "multi_search_mcp/server.py",
+        "line": 169,
+        "text": "def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:",
+        "triage": "followed through MCP wrapper, service/tool and temporary SQLite; see all-tool inventory and probe controls"
+      },
+      {
+        "file": "multi_search_mcp/server.py",
+        "line": 181,
+        "text": "def get_key_status(provider: str | None = None) -> dict:",
+        "triage": "followed through MCP wrapper, service/tool and temporary SQLite; see all-tool inventory and probe controls"
+      },
+      {
+        "file": "multi_search_mcp/server.py",
+        "line": 187,
+        "text": "def reset_key_state(provider: str | None = None, key_id: str | None = None) -> dict:",
+        "triage": "followed through MCP wrapper, service/tool and temporary SQLite; see all-tool inventory and probe controls"
+      },
+      {
+        "file": "multi_search_mcp/server.py",
+        "line": 193,
+        "text": "def get_site_scraper_stats(site: str | None = None) -> dict:",
+        "triage": "followed through MCP wrapper, service/tool and temporary SQLite; see all-tool inventory and probe controls"
+      },
+      {
+        "file": "multi_search_mcp/server.py",
+        "line": 199,
+        "text": "def set_site_scraper_preference(site: str, scraper: str, priority: int | None = None,",
+        "triage": "followed through MCP wrapper, service/tool and temporary SQLite; see all-tool inventory and probe controls"
+      },
+      {
+        "file": "multi_search_mcp/server.py",
+        "line": 206,
+        "text": "def reset_site_scraper_stats(site: str | None = None) -> dict:",
+        "triage": "followed through MCP wrapper, service/tool and temporary SQLite; see all-tool inventory and probe controls"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "line": 835,
+        "text": "def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:",
+        "triage": "followed through MCP wrapper, service/tool and temporary SQLite; see all-tool inventory and probe controls"
+      }
+    ]
+  }
+]

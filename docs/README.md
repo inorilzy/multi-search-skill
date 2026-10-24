@@ -13,6 +13,16 @@
 - [scrape-chain-acceptance-tickets.md](scrape-chain-acceptance-tickets.md)
 - [抓取链交接](../HANDOFF-SCRAPE-CHAIN.md)：仅开头最新状态有效，旧记录已折叠。
 
+## 本轮修复交付
+
+- [最终独立复验（t14）](independent-review-final-2026-10-22.md)：记录冻结时的失败结论、F-01–F-04 与未验边界；后续修复不追改该历史 verdict，也不代表全部问题完成。
+- [阶段独立审查](independent-review-stage-2026-10-22.md)：跨语言兼容问题及阶段证据。
+- [Python 修复证据与剩余工作](python-review-evidence-2026-10-22.md)：包含 v2 截断、managed Cookie、原子 reserve 和明确延期事项。
+
+- [Rust/Tauri 修复与验证](../desktop/src-tauri/REVIEW-2026-10-22.md)：本轮实现、验证与保留边界，不等同真实 bundle 发布验收。
+- [Managed Twitter cookies 协议 v1](../desktop/src-tauri/COOKIE-PROTOCOL.md)：存储校验、IPC 契约、file/managed 模式迁移、DPAPI 威胁边界及跨语言修复验证命令；属实现证据，不是独立验收。
+- [仓库卫生复核台账](repo-hygiene-review-2026-10-22.md)：文档与生成物处置依据。
+
 ## Provider 参考
 
 以下为外部服务接入参考；免费额度和远端 API 以服务商最新声明为准。

@@ -1,0 +1,79 @@
+{
+  "requirementId": "REQ-19",
+  "title": "正文超时保留排名结果及显式失败",
+  "document": "README.md",
+  "location": "README.md:L416",
+  "quote": "超时会保留 RRF 结果并显式报告正文失败。",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'timeout_row|results|future.cancel' multi_search_mcp/src/scrape/stage.py multi_search_mcp/src/service.py",
+      "result": "44 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/service.py:14:from .support.format import body_preview_start, format_results, format_scrapes",
+        "multi_search_mcp/src/service.py:27:from .search.candidate import SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_results, make_source_id",
+        "multi_search_mcp/src/service.py:49:# Upper bound for the snippet shown in ``display_results``. Without this, scraped",
+        "multi_search_mcp/src/service.py:401:    query_results: dict[str, list[dict]] = {}",
+        "multi_search_mcp/src/service.py:404:        query_results[queries[0]] = runner.run(queries[0], deadline=search_deadline)",
+        "multi_search_mcp/src/service.py:416:                    query_results[query] = future.result()",
+        "multi_search_mcp/src/service.py:418:                    query_results[query] = [{",
+        "multi_search_mcp/src/service.py:422:    query_runs = [(query, query_results[query]) for query in queries]",
+        "multi_search_mcp/src/service.py:442:    hits = fuse_search_results(",
+        "multi_search_mcp/src/service.py:446:    primary_rows = query_results[query_plan.primary_query]",
+        "multi_search_mcp/src/service.py:447:    primary_has_candidates = bool(fuse_search_results(",
+        "multi_search_mcp/src/service.py:505:        \"results\": hits,",
+        "multi_search_mcp/src/service.py:650:        response[\"results\"], fetch=fetch, timeout=body_timeout, concurrency=concurrency,",
+        "multi_search_mcp/src/service.py:653:    for hit, body_result in zip(response[\"results\"], fetched[\"results\"]):",
+        "multi_search_mcp/src/service.py:680:        update for result in fetched[\"results\"]",
+        "multi_search_mcp/src/service.py:690:        body_fetch_count=len(response[\"results\"]),",
+        "multi_search_mcp/src/service.py:716:    results = response[\"results\"]",
+        "multi_search_mcp/src/service.py:723:        display_results=_display_results(results),",
+        "multi_search_mcp/src/service.py:726:        valid_result_count=len(results),",
+        "multi_search_mcp/src/service.py:737:            \"all final RRF results (at most 15) are fetched\"",
+        "multi_search_mcp/src/service.py:745:        response[\"markdown\"] = format_results(",
+        "multi_search_mcp/src/service.py:746:            results + [row for row in rows if row.get(\"source\") in ANSWER_SOURCES or row.get(\"error\") or is_empty_result(row)],",
+        "multi_search_mcp/src/service.py:915:def _route_degradation(route: str, results: list[dict], source_names: set[str] | None, meta: dict) -> dict | None:",
+        "multi_search_mcp/src/service.py:921:    rows = as_dicts(results)",
+        "multi_search_mcp/src/service.py:938:        \"reason\": \"primary providers unavailable or returned no usable results\",",
+        "multi_search_mcp/src/service.py:959:def _display_results(results: list[dict]) -> list[dict]:",
+        "multi_search_mcp/src/service.py:961:    for row in as_dicts(results):",
+        "multi_search_mcp/src/service.py:979:def _extract_summaries(results: list[dict]) -> list[dict]:",
+        "multi_search_mcp/src/service.py:981:    for row in as_dicts(results):",
+        "multi_search_mcp/src/service.py:1006:def _extract_source_briefs(results: list[dict], *, max_items_per_source: int = 3) -> list[dict]:",
+        "multi_search_mcp/src/service.py:1014:    rows = as_dicts(results)",
+        "multi_search_mcp/src/scrape/stage.py:1:\"\"\"Fetch the final ranked results under a shared deadline and bounded pool.\"\"\"",
+        "multi_search_mcp/src/scrape/stage.py:31:    results: list[dict | None] = [None] * len(hits)",
+        "multi_search_mcp/src/scrape/stage.py:42:    def timeout_row(hit: dict) -> dict:",
+        "multi_search_mcp/src/scrape/stage.py:48:            return timeout_row(hit)",
+        "multi_search_mcp/src/scrape/stage.py:51:            return timeout_row(hit)",
+        "multi_search_mcp/src/scrape/stage.py:60:            results[index] = future.result()",
+        "multi_search_mcp/src/scrape/stage.py:62:            results[index] = error_row(hits[index], str(exc) or type(exc).__name__)",
+        "multi_search_mcp/src/scrape/stage.py:90:            future.cancel()",
+        "multi_search_mcp/src/scrape/stage.py:91:    final_results = [",
+        "multi_search_mcp/src/scrape/stage.py:92:        result if result is not None else timeout_row(hit)",
+        "multi_search_mcp/src/scrape/stage.py:93:        for hit, result in zip(hits, results)",
+        "multi_search_mcp/src/scrape/stage.py:96:        \"results\": final_results,",
+        "multi_search_mcp/src/scrape/stage.py:97:        \"errors\": [result for result in final_results if result.get(\"error\")],"
+      ]
+    }
+  ],
+  "reasoning": "stage固定槽位按hit输入顺序收集；已完成成功保留，pending/未提交返回timeout行，晚返回也不伪装成功；service将body_error和errors stage=fetch填回而不重排结果。离线一快一慢示例约0.04s返回、原顺序保留且第二项显式错误。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-19.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/scrape/stage.py",
+      "lines": "L30-L96",
+      "quote": "    deadline = time.monotonic() + timeout\n    results: list[dict | None] = [None] * len(hits)\n    active: dict[Future, int] = {}\n    next_index = 0\n\n    def error_row(hit: dict, error: Any) -> dict:\n        return {\n            \"source_id\": hit.get(\"source_id\", \"\"),\n            \"url\": hit.get(\"url\", \"\"),",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L649-L687",
+      "quote": "    fetched = run_ranked_fetch_stage(\n        response[\"results\"], fetch=fetch, timeout=body_timeout, concurrency=concurrency,\n    )\n    scrapes = []\n    for hit, body_result in zip(response[\"results\"], fetched[\"results\"]):\n        page = normalize_scrape_result({\n            \"title\": hit[\"title\"], \"markdown\": body_result.get(\"body\"),\n            \"length\": body_result.get(\"content_length\"),\n            \"truncated\": bool(body_result.get(\"truncated\")),",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

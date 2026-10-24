@@ -1,0 +1,20 @@
+{
+  "started_utc": "2026-09-13T03:36:28+00:00",
+  "finished_utc": "2026-09-13T03:46:30.515530+00:00",
+  "execution": "Direct five-step method; subagent prepared probes, then platform content filter interrupted it; primary agent corrected GitHub token argument, reran probes and completed triage/report.",
+  "seed_count": 2,
+  "mcp_tools_inventoried": 12,
+  "blocking_tools_including_seed": 7,
+  "blocking_siblings_beyond_seed": 6,
+  "distinct_blocking_fix_families": 1,
+  "conditional_target_warning_adapter_instances": 2,
+  "confirmed_first_time_live_defects": 0,
+  "error_probe_cases": 13,
+  "mcp_probe_cases": 11,
+  "scope_limits": [
+    "Only two root-cause families.",
+    "No complete production-provider protocol validation.",
+    "No claim that all root-cause variants or whole-repository defects were found.",
+    "No repeat-run or model-controlled benchmark."
+  ]
+}

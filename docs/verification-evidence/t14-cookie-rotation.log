@@ -1,0 +1,2 @@
+{"twitter_result_rows": 1, "cookies_reached_client": {"auth_token": "synthetic-auth", "ct0": "synthetic-csrf"}, "key_state_rows": [], "credential_store_reads": [["twitter_cookies"]]}
+{"missing_managed_rows": [{"source": "twitter", "error": "managed Twitter cookies unavailable or invalid; import again in desktop"}], "key_state_rows": []}

@@ -1,0 +1,40 @@
+{
+  "requirementId": "REQ-21",
+  "title": "MCP取消不能提前释放正在运行任务容量",
+  "document": "docs/mcp-dispatch.md",
+  "location": "docs/mcp-dispatch.md:L7",
+  "quote": "实际返回前始终占用调度槽位。",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'wrap_future|set_running_or_notify_cancel|_slots.release' multi_search_mcp/server.py multi_search_mcp/src/support/concurrency.py",
+      "result": "5 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/support/concurrency.py:60:                self._slots.release()",
+        "multi_search_mcp/src/support/concurrency.py:101:        if not future.set_running_or_notify_cancel():",
+        "multi_search_mcp/src/support/concurrency.py:123:                    self._slots.release()",
+        "multi_search_mcp/src/support/concurrency.py:140:                self._slots.release()",
+        "multi_search_mcp/server.py:40:    return await asyncio.wrap_future(future)"
+      ]
+    }
+  ],
+  "reasoning": "await包裹concurrent Future，取消只能在set_running前成功；正在运行Future不能cancel。worker finally在fn结束后释放slot，异常同样释放。离线单槽事件探针证明运行中cancel=False且新提交拒绝，放行实际结束后可退出。未把此probe称为真实MCP取消协议验收。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-21.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/server.py",
+      "lines": "L33-L40",
+      "quote": "async def _run_tool(fn: Callable[..., dict], *args) -> dict:\n    future = _TOOL_POOL.submit_nowait(contextvars.copy_context().run, fn, *args)\n    if future is None:\n        return {\"error\": \"MCP tool capacity exhausted; retry after active calls finish\",\n                \"error_type\": \"runtime_error\"}\n    # Cancels queued work if possible, but cannot stop a running thread/network\n    # call. The executor retains its slot until actual completion.\n    return await asyncio.wrap_future(future)",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/support/concurrency.py",
+      "lines": "L98-L125",
+      "quote": "    @staticmethod\n    def _execute_task(task) -> None:\n        future, fn, args, kwargs = task\n        if not future.set_running_or_notify_cancel():\n            return\n        try:\n            future.set_result(fn(*args, **kwargs))\n        except BaseException as exc:\n            future.set_exception(exc)",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

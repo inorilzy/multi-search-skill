@@ -1,0 +1,72 @@
+{
+  "requirementId": "REQ-17",
+  "title": "use_state=false跳过SQLite及站点记忆",
+  "document": "docs/glossary.md",
+  "location": "docs/glossary.md:L88",
+  "quote": "`false` 时跳过 SQLite 状态、key 轮换、站点记忆",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'request.use_state|BasicKeyManager|site_memory' multi_search_mcp/src/service.py multi_search_mcp/src/state/key_state.py",
+      "result": "19 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/state/key_state.py:73:class BasicKeyManager:",
+        "multi_search_mcp/src/state/key_state.py:119:class SQLiteKeyManager(BasicKeyManager):",
+        "multi_search_mcp/src/service.py:15:from .state.key_state import BasicKeyManager, SQLiteKeyManager",
+        "multi_search_mcp/src/service.py:42:from .state.site_memory import SiteScraperMemory",
+        "multi_search_mcp/src/service.py:131:    if not request.use_state:",
+        "multi_search_mcp/src/service.py:192:    if not request.use_state and request.source_id and source_record is None:",
+        "multi_search_mcp/src/service.py:195:    store = (state_store or StateStore()) if request.use_state else None",
+        "multi_search_mcp/src/service.py:282:                use_state=request.use_state,",
+        "multi_search_mcp/src/service.py:363:        use_state=request.use_state,",
+        "multi_search_mcp/src/service.py:367:    store = (state_store or StateStore()) if request.use_state else None",
+        "multi_search_mcp/src/service.py:368:    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()",
+        "multi_search_mcp/src/service.py:622:    store = (state_store or StateStore()) if request.use_state else None",
+        "multi_search_mcp/src/service.py:638:                    timeout=remaining, use_state=request.use_state,",
+        "multi_search_mcp/src/service.py:708:            config_path=request.config_path, use_state=request.use_state,",
+        "multi_search_mcp/src/service.py:804:    store = (state_store or StateStore()) if request.use_state else None",
+        "multi_search_mcp/src/service.py:805:    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()",
+        "multi_search_mcp/src/service.py:806:    site_memory = SiteScraperMemory(store) if store else None",
+        "multi_search_mcp/src/service.py:817:        site_memory=site_memory,",
+        "multi_search_mcp/src/service.py:823:    return result, site_memory.consume_updates() if site_memory else [], scrape_chars"
+      ]
+    }
+  ],
+  "reasoning": "search/fetch/scrape由开关决定store=None、BasicKeyManager和site_memory=None；Basic无DB写入，固定key候选不做持久LRU。按IDfetch无state且无内部source_record时拒绝，read无state拒绝。端到端探针将默认StateStore构造设为异常，搜索prefetch依然成功。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-17.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L190-L195",
+      "quote": "    if bool(request.source_id) == bool(request.url):\n        raise ValueError(\"provide exactly one of source_id or url\")\n    if not request.use_state and request.source_id and source_record is None:\n        raise ValueError(\"source_id fetch requires state; provide an explicit URL\")\n\n    store = (state_store or StateStore()) if request.use_state else None",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L366-L368",
+      "quote": "    runtime_keys = load_keys() if keys is None else dict(keys)\n    store = (state_store or StateStore()) if request.use_state else None\n    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L621-L622",
+      "quote": "    runtime_keys = load_keys() if keys is None else dict(keys)\n    store = (state_store or StateStore()) if request.use_state else None",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L804-L823",
+      "quote": "    store = (state_store or StateStore()) if request.use_state else None\n    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()\n    site_memory = SiteScraperMemory(store) if store else None\n    scraper_fn = scraper or scrape_url_smart\n    result = scraper_fn(\n        request.url,\n        timeout=timeout,\n        deadline=deadline,\n        backends=tuple(request.backends) if request.backends else None,",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/key_state.py",
+      "lines": "L73-L116",
+      "quote": "class BasicKeyManager:\n    \"\"\"Compatibility key manager using the existing random key pool.\"\"\"\n\n    def candidates(self, provider: str, key_value: Any) -> list[KeyCandidate]:\n        return [\n            KeyCandidate(key=key, key_id=key_id_for(provider, key), fingerprint=key_fingerprint(key))\n            for key in _ordered_key_pool(key_value)\n        ]\n",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

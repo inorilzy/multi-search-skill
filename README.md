@@ -45,11 +45,11 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `key
 
 边界约定：**SQLite 为唯一凭据/配置权威来源**。provider key 与设置统一存放于 `~/.multi-search/config.sqlite`（敏感凭据字段 DPAPI 加密），运行状态默认保存在 `~/.multi-search/state.sqlite`。`MULTI_SEARCH_CONFIG_DB` 仅用于显式隔离数据库；不隐式读取 `MULTI_SEARCH_CONFIG` 或旧 JSON。显式 `--config` 可读取非敏感 JSON 作为兼容输入；仓库 JSON 是示例，不是自动加载的运行时配置。旧密钥 JSON 仅用于显式迁移。
 
-当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
+当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。预览不改缓存内容；正文获取仍受 UTF-8 单对象字节上限限制。state schema v2 将 acquisition 截断标记保存在 source 绑定上，首次 fetch、缓存命中、URL reuse 与 read 保留该信息；相关回归已验证。fetch 的 `truncated` 为取得正文截断与本次预览截断的合并，read 的 `has_more` 仅表示缓存内还有字符，不代表原页面完整。旧缓存缺失的截断证据不能追溯重建。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
 
 ## Windows 桌面管理（本地开发候选）
 
-`desktop/` 是 Tauri 2 管理窗口，仅检测已安装的 `multi-search.exe`、显示版本/实际路径，并运行或取消一次测试搜索；尚不提供 UI 安装、凭据编辑或 Skill 安装。CLI 新增 `--version`。检测区区分应用继承的 PATH 与 Windows 用户/机器持久化 PATH，新终端可发现不意味着已打开的终端或 Agent 已刷新环境。也可指定已安装 CLI 的绝对路径。
+`desktop/` 是 Tauri 2 管理窗口，支持 CLI 检测/安装管理、Skill 管理、凭据与搜索/抓取设置、站点记忆和一次测试搜索；Cookie 托管需用户显式确认。真实 bundle/安装器与动态 WebView ACL 仍需单独验收。CLI 新增 `--version`。检测区区分应用继承的 PATH 与 Windows 用户/机器持久化 PATH，新终端可发现不意味着已打开的终端或 Agent 已刷新环境。也可指定已安装 CLI 的绝对路径。
 
 已有 Node、Rust/MSVC 与 WebView2 的 Windows 开发环境中：
 
@@ -176,7 +176,9 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 - 桌面端 UI 写入并管理 `config.sqlite`；CLI 直接读取同一文件，不需要再把密钥导出到环境变量或单独文件。
 - `MULTI_SEARCH_CONFIG_DB` 仅在显式隔离运行（如测试）时改指其它数据库路径。
 - 旧 `~/.search-keys.json` 仅是显式迁移输入，不参与默认搜索；迁移完成后由操作员自行保管。Jina 静态 exhausted 元数据与运行时 quota_exhausted 不同，前者由桌面凭据管理维护，后者可通过既有 `keys reset` 重置。
-- `TWITTER_COOKIES_PATH` 作为非敏感的 cookie **路径**引用继续存在于设置中，cookie 文件本身与 provider key 不写入命令行。
+- `twitter_cookies_mode` 缺省为 `file`，继续读取设置中的 `twitter_cookies_path`；兼容文件仍是明文，旧用户不会自动迁移。
+- Windows 桌面显式确认导入后切换为 `managed`：独立 `twitter_cookies` 凭据由当前用户 DPAPI 加密；实际 Twitter 调用才解密并将字典直接交给 XKit，不写临时明文文件，也不进入 API-key 轮换池。managed 缺失/损坏/解密失败或非 Windows 均 fail closed，不自动回退旧文件。
+- 删除托管 Cookie 后仍保持 managed 模式且不可用；编辑旧路径不会退出 managed，当前 UI 没有 managed→file 切换命令。导入/删除均不修改或删除原始文件，旧明文副本由用户另行管理。DPAPI 不防同用户进程、内存或受控窗口被攻陷；也不声明安全擦除。协议与限制见 [Cookie 协议](desktop/src-tauri/COOKIE-PROTOCOL.md)。
 
 ## 架构和术语
 
@@ -224,7 +226,7 @@ flowchart LR
 - 搜索阶段统一获取 RRF 最终前 15 条的正文；有效候选不足 15 条时全部获取。已有可用正文缓存时直接复用。
 - `scrape_top` / `scrape_per_source` 仅保留兼容接收，不改变最终抓取列表；显式传入时 diagnostics 会说明其不再生效。
 - 默认抓取后端从可用能力构建：Jina 匿名优先；Exa / Tavily 只有配置对应 key 后才进入 fallback 链；Firecrawl `/v2/scrape` 无 key 也会作为最后 fallback，但匿名额度是 IP 级免费日额度，不参与批量抓取 primary 轮换。抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
-- Jina、Parallel、Exa、Tavily、Firecrawl 等带 key 的 provider/backend 走 SQLite key state：`invalid` 只累计连续的 provider 认证失败，前两次为 `transient_invalid`，第三次才升级为永久 `invalid`；success、`rate_limit`、`quota_exhausted` 或其它非 invalid provider 结果都会清零 `invalid_strikes`，而 target 错误是中立事件，不改变既有 key 健康、冷却或计数。`invalid` / `disabled` 无自动恢复，需明确重置或人工清除后才会重新使用；`cooldown` 和 `transient_invalid` 在 `cooldown_until` 未到期时跳过，当前冷却为 15 分钟；`quota_exhausted` 在 `exhausted_until` 未到期时跳过，当前恢复期为 24 小时，期满后重新允许尝试。从未使用过的 key 优先；同等情况下按 `last_used_at` 最早优先；每次选中会更新 `last_used_at` 和 `use_count`。
+- Jina、Parallel、Exa、Tavily、Firecrawl 等带 key 的 provider/backend 走 SQLite key state：`invalid` 只累计连续的 provider 认证失败，无既存强状态时前两次为 `transient_invalid`，第三次升级为 `invalid`；失败更新保护已有强状态，具体分支见术语表；success、`rate_limit`、`quota_exhausted` 清零 `invalid_strikes`；timeout/network/未分类失败仅记失败，不清除状态、期限或 strikes，而 target 错误是中立事件，不改变既有 key 健康、冷却或计数。`invalid` / `disabled` 无自动恢复，需明确重置或人工清除后才会重新使用；`cooldown` 和 `transient_invalid` 在 `cooldown_until` 未到期时跳过，当前冷却为 15 分钟；`quota_exhausted` 在 `exhausted_until` 未到期时跳过，当前恢复期为 24 小时，期满后重新允许尝试。从未使用过的 key 优先；同等情况下按 `last_used_at` 最早优先；每次选中会更新 `last_used_at` 和 `use_count`。
 - 每个候选 URL 只走一次完整 fallback 链；失败或 `scrape_timeout` 后记录 Errors，不自动补位。
 - GitHub repo 根 URL 保持原地址，由抓取后端解析仓库页面；不猜测 README 的文件名或位置。
 
@@ -279,7 +281,7 @@ search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
 search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `doctor`、`keys status`、`keys reset`。
+CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `doctor`、`keys status`、`keys reset`。重置须显式选择 `--provider` / `--key-id` 或 `--all`，且不解除 `manually_disabled`。
 
 ## 配置和参数
 
@@ -370,7 +372,7 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-se
 
 ### 为什么结果里没有 Twitter/X？
 
-Twitter/X 需要 cookies。确认依赖已安装，并在桌面端 / `config.sqlite` 中配置 `twitter_cookies_path` 指向存有 `auth_token` 与 `ct0` 的 cookies 文件；源码直接运行时先执行 `uv sync --locked`。
+Twitter/X 需要含 `auth_token` 与 `ct0` 的 Cookie map。先执行 `uv sync --locked` 确认依赖：file 模式检查设置中的文件路径；Windows managed 模式检查桌面托管状态，缺失时显式重新导入，不会自动改读旧文件。原文件不会自动删除，非 Windows 不支持 DPAPI 托管。
 
 ### 抓取正文太慢怎么办？
 
@@ -381,3 +383,7 @@ Twitter/X 需要 cookies。确认依赖已安装，并在桌面端 / `config.sql
 [MIT](LICENSE)
 
 
+
+## 本轮验证边界
+
+本轮文档同步不表示所有审查问题已完成。缓存 v2 与 Cookie 合成/跨语言测试已有独立证据；延期架构项与未验证边界见 [最终独立报告](docs/independent-review-final-2026-10-22.md)。CI 增加 Windows Rust 矩阵（Python 依赖、临时 profile/DB、minimal、fixture/ts、install boundary、显式 native overlay）；远程 Actions 本轮未运行。overlay 不构造 bundle，不替代真实安装器、原生窗口动态 ACL 或发布验收。

@@ -1,0 +1,50 @@
+{
+  "requirementId": "REQ-22",
+  "title": "key选择优先未使用其次最久未用",
+  "document": "docs/glossary.md",
+  "location": "docs/glossary.md:L81",
+  "quote": "按「未用过优先 → 最久未用（LRU）」挑选。",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'never_used|last_used_at|record_use' multi_search_mcp/src/state/key_state.py multi_search_mcp/src/search/search_runner.py multi_search_mcp/src/scrape/scrape.py",
+      "result": "9 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/scrape/scrape.py:115:            key_manager.record_use(provider, _candidate_for(provider, key))",
+        "multi_search_mcp/src/state/key_state.py:109:    def record_use(self, provider: str, candidate: KeyCandidate) -> None:",
+        "multi_search_mcp/src/state/key_state.py:156:            last_used_at = row.get(\"last_used_at\") or \"\"",
+        "multi_search_mcp/src/state/key_state.py:157:            never_used = 0 if not last_used_at else 1",
+        "multi_search_mcp/src/state/key_state.py:158:            usable.append((never_used, last_used_at, f\"{order:08d}\", cand))",
+        "multi_search_mcp/src/state/key_state.py:162:    def record_use(self, provider: str, candidate: KeyCandidate) -> None:",
+        "multi_search_mcp/src/state/key_state.py:168:            SET use_count = use_count + 1, last_used_at = ?, updated_at = ?",
+        "multi_search_mcp/src/search/search_runner.py:266:        if hasattr(manager, \"record_use\") and isinstance(candidate, KeyCandidate):",
+        "multi_search_mcp/src/search/search_runner.py:267:            manager.record_use(provider, candidate)"
+      ]
+    }
+  ],
+  "reasoning": "candidates按never_used/last_used_at/配置顺序排序；search与scrape在真正尝试前调用record_use递增次数、记录时刻。候选列表预取本身不算使用；并发请求可能取到同一key，不在文档中加上未承诺的互斥租约要求。探针用a后选择未使用b。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-22.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/state/key_state.py",
+      "lines": "L125-L171",
+      "quote": "    def candidates(self, provider: str, key_value: Any) -> list[KeyCandidate]:\n        raw = [\n            KeyCandidate(key=key, key_id=key_id_for(provider, key), fingerprint=key_fingerprint(key))\n            for key in _ordered_key_pool(key_value)\n        ]\n        now = _now()\n        rows = {\n            row[\"key_id\"]: row\n            for row in self.store.rows(",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/search/search_runner.py",
+      "lines": "L255-L268",
+      "quote": "    candidates = manager.candidates(provider, key_value)\n    if not candidates:\n        if key_value and not key_required:\n            return [{\"source\": source, \"error\": \"no usable API keys\"}]\n        return missing(source, \"missing API key\")\n    last_results: list[dict] = []\n    partial_rows: list[dict] = []\n    for idx, candidate in enumerate(candidates):\n        if deadline is not None and time.monotonic() >= deadline:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/scrape/scrape.py",
+      "lines": "L109-L123",
+      "quote": "def _scrape_with_key_pool(provider: str, keys: list[str], call, deadline: float | None = None, key_manager=None) -> dict | None:\n    last: dict | None = None\n    for key in keys:\n        if deadline is not None and time.monotonic() >= deadline:\n            break\n        if key_manager is not None:\n            key_manager.record_use(provider, _candidate_for(provider, key))\n        result = call(key)\n        _record_key_result(provider, key, result, key_manager)",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

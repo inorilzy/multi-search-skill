@@ -1,0 +1,49 @@
+{
+  "requirementId": "REQ-08",
+  "title": "预取正文按长度/provider/文本确定性选择",
+  "document": "docs/glossary.md",
+  "location": "docs/glossary.md:L59",
+  "quote": "字符数最长优先，等长时依次按 provider 名、正文文本升序选择",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'selected_bodies|candidate =|prefetched' multi_search_mcp/src/service.py",
+      "result": "14 hits in explicit evidence files",
+      "matches": [
+        "184:    prefetched_body: str | None = None,",
+        "242:        if not prefetched_body:",
+        "271:    if prefetched_body:",
+        "272:        result = {\"markdown\": prefetched_body, \"via\": \"provider:prefetch\"}",
+        "329:    prefetched_bodies: dict[str, str] | None = None,",
+        "477:            candidate = (-len(body), str(row.get(\"source\") or \"\"), body)",
+        "481:    selected_bodies = {url: candidate[2] for url, candidate in bodies.items()}",
+        "482:    if prefetched_bodies is not None:",
+        "483:        prefetched_bodies.update(selected_bodies)",
+        "489:            body = selected_bodies.get(str(hit[\"canonical_url\"]))",
+        "580:        has_valid_candidate = any(",
+        "623:    prefetched = {}",
+        "627:        prefetched_bodies=prefetched,",
+        "642:                prefetched_body=prefetched.get(hit[\"canonical_url\"]),"
+      ]
+    }
+  ],
+  "reasoning": "_run_search_candidates 为所有原始行按canonical URL选择(-len,source,body)最小tuple；错误/无URL/无body跳过。选择发生于use_state分支外，同一map用于可选缓存及fetch。字符串等长tie不是依赖到达顺序。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-08.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L468-L499",
+      "quote": "    # Select once for both persistence and fetching, independently of use_state.\n    # Longest body wins; ties use source then body text in ascending order.\n    bodies: dict[str, tuple[int, str, str]] = {}\n    for _query, query_rows in query_runs:\n        for row in query_rows:\n            body = search_content(row).body\n            if not body or not row.get(\"url\") or row.get(\"error\"):\n                continue\n            url = canonicalize_url(str(row[\"url\"]))",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L623-L643",
+      "quote": "    prefetched = {}\n    response = _run_search_candidates(\n        request, providers=providers, keys=runtime_keys, config=resolved_config,\n        state_store=store, query_runs_observer=query_runs_observer,\n        prefetched_bodies=prefetched,\n    )\n    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, \"scrape_chars\", 1200), 20_000))\n    body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, \"scrape_timeout\", 60)\n    concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, \"scrape_concurrency\", 5))",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

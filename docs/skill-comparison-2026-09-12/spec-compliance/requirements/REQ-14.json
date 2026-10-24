@@ -1,0 +1,58 @@
+{
+  "requirementId": "REQ-14",
+  "title": "full_content 覆盖max_chars并保留取得的全部正文",
+  "document": "README.md",
+  "location": "README.md:L345",
+  "quote": "设为 `True` 时覆盖 `max_chars`，一次返回全部已取得文本。",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'full_content|max_chars|content_store.put' multi_search_mcp/src/service.py multi_search_mcp/src/state/content_store.py",
+      "result": "17 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/service.py:104:    max_chars: int = 20_000",
+        "multi_search_mcp/src/service.py:108:    full_content: bool = False",
+        "multi_search_mcp/src/service.py:228:    max_chars = None if request.full_content else max(1, min(int(request.max_chars), 20_000))",
+        "multi_search_mcp/src/service.py:259:            \"body\": str(cached[\"content\"])[:max_chars],",
+        "multi_search_mcp/src/service.py:266:            \"truncated\": max_chars is not None and len(str(cached[\"content\"])) > max_chars,",
+        "multi_search_mcp/src/service.py:297:        content_store.put(",
+        "multi_search_mcp/src/service.py:308:        \"body\": body[:max_chars],",
+        "multi_search_mcp/src/service.py:315:        \"truncated\": max_chars is not None and len(body) > max_chars,",
+        "multi_search_mcp/src/service.py:629:    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, \"scrape_chars\", 1200), 20_000))",
+        "multi_search_mcp/src/service.py:637:                    source_id=hit[\"source_id\"], full_content=True,",
+        "multi_search_mcp/src/service.py:667:        start = body_preview_start(body, hit[\"title\"], max_chars, hit.get(\"content\") or \"\")",
+        "multi_search_mcp/src/service.py:668:        end = min(len(body), start + max_chars)",
+        "multi_search_mcp/src/service.py:751:        ) + format_scrapes(response[\"scrapes\"], max_chars=plan.scrape_chars)",
+        "multi_search_mcp/src/service.py:782:        response[\"markdown\"] = format_scrapes([result], max_chars=scrape_chars)",
+        "multi_search_mcp/src/service.py:826:def _limit_scrape_row(row: dict, max_chars: int) -> dict:",
+        "multi_search_mcp/src/service.py:829:    if isinstance(markdown, str) and len(markdown) > max_chars:",
+        "multi_search_mcp/src/service.py:830:        limited[\"markdown\"] = markdown[:max_chars]"
+      ]
+    }
+  ],
+  "reasoning": "full_content将切片上限设None，缓存命中和新抓取均使用相同变量。原body先进行容量检查与put，再裁剪响应；超过容量抛错不静默截缓存。5510字探针先7字预览，再max_chars=1/full_content=True返回5510字。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-14.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L228-L268",
+      "quote": "    max_chars = None if request.full_content else max(1, min(int(request.max_chars), 20_000))\n\n    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None\n    cached = content_store.get(source_id) if content_store and source_id else None\n    if cached is not None and not retention.persist_body:\n        content_store.delete_source(source_id)\n        cached = None\n    cache_scope = \"\"\n    resolved_config = None",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L278-L315",
+      "quote": "                # Preview size must not truncate the cached acquisition.\n                scrape_chars=DEFAULT_MAX_OBJECT_BYTES,\n                timeout=request.timeout,\n                output=\"json\",\n                use_state=request.use_state,\n            ),\n            state_store=store,\n            scraper=scraper,\n            keys=runtime_keys,",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/content_store.py",
+      "lines": "L55-L69",
+      "quote": "        payload = content.encode(\"utf-8\")\n        content_bytes = len(payload)\n        if content_bytes > self.max_object_bytes:\n            raise ContentStoreError(\n                f\"content size {content_bytes} exceeds max object bytes {self.max_object_bytes}\"\n            )\n        if content_bytes > self.max_total_bytes:\n            raise ContentStoreError(\n                f\"content size {content_bytes} exceeds max total bytes {self.max_total_bytes}\"",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

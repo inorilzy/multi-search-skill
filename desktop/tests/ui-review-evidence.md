@@ -14,6 +14,15 @@
 - `checkJs:true` now checks every module. `strict:false` permits existing dynamic page/API shapes; this is not a claim of fully strict typing. Shared API generated payload contracts remain checked. Existing mature settings/scrape state machines remain, rather than introducing an unneeded global draft store or changing tested save behavior.
 - CSS work was independently delivered by ui-styles: one semantic token set, readable fonts, muted contrast >=4.5:1, usable narrow navigation, no repeated panel entrance animation, spinner/result/key-row classes. No dark theme was added because its absence alone was not a defect.
 
+## Cookie management follow-up (t13)
+
+- Settings now includes an independent Cookie management panel. Mount only calls `cookie_status`; import/delete require explicit inline confirmation. Input paths and backend errors are rendered as text. Cookie bodies never enter WebView; no reveal/read-body/copy command exists.
+- `CookieStatus { present, mode, supported }` is shared with generated Rust types. API adapters expose `cookie_status()`, `cookie_import({path, confirmed})`, and `cookie_delete({confirmed})`; invalid confirmations fail before IPC and malformed responses fail payload validation.
+- Import explains Windows current-user DPAPI, replacing existing managed cookies, and that source files are never modified/deleted. Users must handle old plaintext copies themselves. Delete explains irreversible removal and retaining managed mode without fallback. Import failure never offers automatic file fallback.
+- Existing file-mode users retain their explicit file-path setting and see a plaintext-risk warning. No mode changes occur on mount or general settings save. Linux/unsupported platforms disable encrypted mutation controls and explain file compatibility; there is intentionally no managed-to-file recovery switch in this iteration.
+- New mock tests cover status-only mount, confirm/cancel, Escape cancellation within the real settings mount, malicious path/error text, successful import/delete, failed import/delete, failed status and retry, unsupported platform, duplicate clicks, disposal during import, and exact API contracts.
+- `npm --prefix desktop test`: 138/138 passed, 0 failed (1879 ms). `npm --prefix desktop run typecheck`: passed. No real Cookie files, configurations, DPAPI operations, or CSS changes were used in UI tests. Real-platform encryption behavior belongs to Rust/Python verification; no browser rendering claim is made.
+
 ## Checks
 
 - `npm --prefix desktop ci`: passed, 12 packages, zero reported vulnerabilities.
@@ -21,6 +30,7 @@
 - `npm --prefix desktop run typecheck`: passed with `checkJs:true`.
 - `git diff --check -- desktop/ui desktop/tests`: passed.
 - `node --test desktop/tests` is not supported as a directory argument by the installed Node 24; use the project's test script (`node --test tests/*.test.js`).
+- Explicit CLI path fields describe the backend policy: PATH-discovered or managed installs only; arbitrary executable paths are rejected by the backend and shown as text.
 - Regression coverage includes stale mount vs current page, rejected stale mount, malicious error/provider labels, retry after failed manifest, masked reveal/copy/hide/dispose, initial sources collapsed/no reads, and dedicated scrape save avoiding general-setting writes or pre-save rereads. The adapter test checks invalid arguments are rejected before IPC, exact `{ backends }` payload, and malformed `SettingsView` rejection. Existing draft locking, failures, credential rechecks, refresh confirmation, and default restoration tests remain passing.
 - Tests use isolated happy-dom mock APIs. No real credential store, external search, install, PATH change or browser link was invoked.
 - **Not visually verified:** no real-browser screenshot/rendering evidence; happy-dom verifies interactions, not layout or screen-reader output. CSS responsive/contrast claims are static checks from ui-styles.

@@ -1,0 +1,1574 @@
+[
+  {
+    "requirementId": "REQ-01",
+    "title": "MCP 与 CLI 搜索调用共享 Core",
+    "document": "README.md",
+    "location": "README.md:L6",
+    "quote": "MCP 与 CLI 使用同一套搜索、key 状态和 SQLite 缓存",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'run_search_web|search_web_tool' multi_search_mcp/src/service.py multi_search_mcp/tools.py multi_search_mcp/cli.py multi_search_mcp/server.py",
+        "result": "9 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/server.py:23:    search_web_tool,",
+          "multi_search_mcp/server.py:81:        search_web_tool,",
+          "multi_search_mcp/cli.py:18:    run_search_web,",
+          "multi_search_mcp/cli.py:146:    return run_search_web(",
+          "multi_search_mcp/tools.py:19:    run_search_web,",
+          "multi_search_mcp/tools.py:45:def search_web_tool(",
+          "multi_search_mcp/tools.py:54:    return _safe_call(lambda: run_search_web(SearchWebRequest(",
+          "multi_search_mcp/src/service.py:595:def run_search_web(",
+          "multi_search_mcp/src/service.py:704:    response = run_search_web("
+        ]
+      }
+    ],
+    "reasoning": "CLI _handle_search → service.run_search_web；server.search_web → _run_tool → tools.search_web_tool → 同一 run_search_web。tools._safe_call 将 ValueError/Exception 分类，CLI main 将异常转换退出码；本条只判共享调用路径，参数逐个版本兼容不在此条。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-01.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L595-L628",
+        "quote": "def run_search_web(\n    request: SearchWebRequest | dict,\n    *,\n    providers: dict | None = None,\n    keys: dict | None = None,\n    config: dict | None = None,\n    state_store: StateStore | None = None,\n    query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,\n    scraper=None,",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/tools.py",
+        "lines": "L45-L62",
+        "quote": "def search_web_tool(\n    query: str,\n    route: str | None = None,\n    count: int | None = None,\n    sources: list[str] | None = None,\n    timeout: int | None = None,\n    expand: list[str] | None = None,\n    use_state: bool = True,\n) -> dict[str, Any]:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/cli.py",
+        "lines": "L145-L154",
+        "quote": "def _handle_search(args: argparse.Namespace) -> dict[str, Any]:\n    return run_search_web(\n        SearchWebRequest(\n            query=args.query,\n            route=args.route,\n            count=args.count,\n            sources=list(args.sources or []),\n            timeout=args.timeout,\n            expand=None if args.expand is None else list(args.expand),",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/server.py",
+        "lines": "L80-L83",
+        "quote": "    return await _run_tool(\n        search_web_tool,\n        query, route, count, sources, timeout, expand, use_state\n    )",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-02",
+    "title": "CLI 全失败、零匹配、部分成功退出语义",
+    "document": "README.md",
+    "location": "README.md:L35",
+    "quote": "搜索全部活动源失败时 CLI 退出 `1`，JSON 仍保留完整错误；正常零匹配和部分成功退出 `0`。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'provider_status|succeeded|return 1' multi_search_mcp/cli.py multi_search_mcp/src/service.py multi_search_mcp/src/search/search_runner.py",
+        "result": "9 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/service.py:506:        \"provider_status\": _query_provider_status(query_runs),",
+          "multi_search_mcp/src/service.py:533:def _query_provider_status(",
+          "multi_search_mcp/src/service.py:544:        succeeded = False",
+          "multi_search_mcp/src/service.py:553:                    succeeded = True",
+          "multi_search_mcp/src/service.py:556:        status = \"partial\" if succeeded and errors else \"error\" if errors else \"ok\"",
+          "multi_search_mcp/cli.py:118:            statuses = payload.get(\"provider_status\") or []",
+          "multi_search_mcp/cli.py:121:                return 1",
+          "multi_search_mcp/cli.py:127:            return 1",
+          "multi_search_mcp/cli.py:134:        return 1"
+        ]
+      }
+    ],
+    "reasoning": "SearchRunner 空返回生成 empty_result_row；_query_provider_status 将无错误空响应置 ok、成功和错误并存置 partial；CLI 在写完 payload 后仅全 error 返回1。探针实测三个退出码1/0/0。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-02.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/cli.py",
+        "lines": "L115-L128",
+        "quote": "        payload = args.handler(args)\n        _write_payload(payload, args.format, stdout)\n        if args.command == \"search\":\n            statuses = payload.get(\"provider_status\") or []\n            if statuses and all(row.get(\"status\") == \"error\" for row in statuses):\n                stderr.write(\"error: all selected search providers failed\\n\")\n                return 1\n        if args.command == \"doctor\" and (\n            payload.get(\"config_error\") or payload.get(\"keys_error\")",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L533-L563",
+        "quote": "def _query_provider_status(\n    query_runs: list[tuple[str, list[dict]]],\n) -> list[dict]:\n    sources = sorted({\n        str(row.get(\"source\") or \"?\")\n        for _query, rows in query_runs\n        for row in rows\n    })\n    output = []",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/search/search_runner.py",
+        "lines": "L392-L406",
+        "quote": "                    source_results = future.result()\n                except Exception as exc:\n                    with partial_lock:\n                        results.extend(partial_results.get(source, []))\n                    results.append({\"source\": source, \"error\": scrub_secrets(exc, self.config.keys)})\n                else:\n                    if source_results:\n                        results.extend(_attach_provider_ranks(source_results))\n                    else:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-03",
+    "title": "显式 sources 覆盖 route 选源",
+    "document": "docs/glossary.md",
+    "location": "docs/glossary.md:L47",
+    "quote": "**优先级高于 route，会忽略 route。**",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'requested_sources|source_names' multi_search_mcp/src/search/resolve.py multi_search_mcp/src/service.py",
+        "result": "11 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/search/resolve.py:60:    source_names = _resolve_sources(route, request.sources)",
+          "multi_search_mcp/src/search/resolve.py:68:        sources=source_names,",
+          "multi_search_mcp/src/search/resolve.py:114:def _resolve_sources(route: str, requested_sources: list[str] | None) -> set[str] | None:",
+          "multi_search_mcp/src/search/resolve.py:115:    if requested_sources:",
+          "multi_search_mcp/src/search/resolve.py:116:        source_names = {normalize_source_name(str(source)) for source in requested_sources}",
+          "multi_search_mcp/src/search/resolve.py:117:        unknown_sources = source_names - ALL_SOURCE_NAMES",
+          "multi_search_mcp/src/search/resolve.py:123:        return source_names",
+          "multi_search_mcp/src/search/resolve.py:149:    requested_sources: set[str] | None,",
+          "multi_search_mcp/src/search/resolve.py:153:    selected = requested_sources or resolve_route(route)",
+          "multi_search_mcp/src/service.py:915:def _route_degradation(route: str, results: list[dict], source_names: set[str] | None, meta: dict) -> dict | None:",
+          "multi_search_mcp/src/service.py:916:    if source_names is not None:"
+        ]
+      }
+    ],
+    "reasoning": "resolve_search_plan → _resolve_sources 将指定源及别名校验成集合；resolve_active_sources 选 requested_sources 或 route。无显式源进入 route，未知源失败。此处“忽略”限于本节选源，不把 route 默认 timeout/count 也解释为被清除。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-03.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/search/resolve.py",
+        "lines": "L114-L128",
+        "quote": "def _resolve_sources(route: str, requested_sources: list[str] | None) -> set[str] | None:\n    if requested_sources:\n        source_names = {normalize_source_name(str(source)) for source in requested_sources}\n        unknown_sources = source_names - ALL_SOURCE_NAMES\n        if unknown_sources:\n            raise ValueError(\n                f\"unknown source(s): {', '.join(sorted(unknown_sources))}; \"\n                f\"valid sources: {', '.join(sorted(ALL_SOURCE_NAMES))}\"\n            )",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/search/resolve.py",
+        "lines": "L147-L154",
+        "quote": "def resolve_active_sources(\n    route: str,\n    requested_sources: set[str] | None,\n    disabled_sources: set[str],\n) -> tuple[set[str], set[str]]:\n    \"\"\"Return (selected, active) sources, where active drops disabled ones.\"\"\"\n    selected = requested_sources or resolve_route(route)\n    return selected, selected - disabled_sources",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L374-L386",
+        "quote": "    base_sources, active_sources = resolve_active_sources(\n        plan.route, plan.sources, plan.disabled_sources\n    )\n    if base_sources and not active_sources:\n        raise ValueError(\n            f\"all selected sources are disabled: {', '.join(sorted(base_sources))}\"\n        )\n\n    def route_resolver(_route):",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-04",
+    "title": "disabled_sources 对显式源生效且全禁用明确失败",
+    "document": "README.md",
+    "location": "README.md:L351",
+    "quote": "route 正常解析后会从结果里减去这些源，对 tool 显式传入的 `sources` 同样生效。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'disabled_sources|all selected sources' multi_search_mcp/src/search/resolve.py multi_search_mcp/src/service.py",
+        "result": "10 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/search/resolve.py:39:    disabled_sources: set[str]",
+          "multi_search_mcp/src/search/resolve.py:69:        disabled_sources=resolve_disabled_sources(config),",
+          "multi_search_mcp/src/search/resolve.py:131:def resolve_disabled_sources(config: dict) -> set[str]:",
+          "multi_search_mcp/src/search/resolve.py:137:    disabled = {normalize_source_name(source) for source in config_list(config, \"disabled_sources\")}",
+          "multi_search_mcp/src/search/resolve.py:150:    disabled_sources: set[str],",
+          "multi_search_mcp/src/search/resolve.py:154:    return selected, selected - disabled_sources",
+          "multi_search_mcp/src/service.py:375:        plan.route, plan.sources, plan.disabled_sources",
+          "multi_search_mcp/src/service.py:379:            f\"all selected sources are disabled: {', '.join(sorted(base_sources))}\"",
+          "multi_search_mcp/src/service.py:384:            _route, plan.sources, plan.disabled_sources",
+          "multi_search_mcp/src/service.py:526:            \"disabled_sources\": sorted(plan.disabled_sources),"
+        ]
+      }
+    ],
+    "reasoning": "请求源经同一 resolve_active_sources 差集，_run_search_candidates 对非空 selected 且 active 为空抛 ValueError。未知禁用名称在源调用前失败；离线探针验证显式 github 被禁用后 active 为空。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-04.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/search/resolve.py",
+        "lines": "L131-L154",
+        "quote": "def resolve_disabled_sources(config: dict) -> set[str]:\n    \"\"\"Resolve the globally disabled search sources from config.\n\n    Only search sources are accepted; scrape backends (e.g. ``jina``) are not\n    valid here. Unknown names fail loudly instead of being silently ignored.\n    \"\"\"\n    disabled = {normalize_source_name(source) for source in config_list(config, \"disabled_sources\")}\n    unknown = disabled - ALL_SOURCE_NAMES\n    if unknown:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L374-L386",
+        "quote": "    base_sources, active_sources = resolve_active_sources(\n        plan.route, plan.sources, plan.disabled_sources\n    )\n    if base_sources and not active_sources:\n        raise ValueError(\n            f\"all selected sources are disabled: {', '.join(sorted(base_sources))}\"\n        )\n\n    def route_resolver(_route):",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-05",
+    "title": "同 query/provider 重复 URL 仅按最佳名次投票",
+    "document": "docs/glossary.md",
+    "location": "docs/glossary.md:L70",
+    "quote": "同一 query、同一 provider 的重复 URL 只按最好名次投一票。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'grouped|existing|provider_rank' multi_search_mcp/src/search/candidate.py",
+        "result": "15 hits in explicit evidence files",
+        "matches": [
+          "89:    grouped: dict[str, dict[str, dict]] = {}",
+          "94:            int(row[\"provider_rank\"]) if row.get(\"provider_rank\") else float(\"inf\"),",
+          "112:        rank = int(row.get(\"provider_rank\") or inferred_ranks[source])",
+          "118:        row[\"provider_rank\"] = rank",
+          "120:        existing = grouped.setdefault(source, {}).get(canonical_url)",
+          "121:        if existing is None or rank < int(existing[\"provider_rank\"]):",
+          "122:            grouped[source][canonical_url] = row",
+          "123:    return grouped",
+          "137:            int(item[1][\"provider_rank\"]),",
+          "154:                int(item[1][\"provider_rank\"]),",
+          "163:    provider_ranks = []",
+          "171:            \"rank\": int(row[\"provider_rank\"]),",
+          "175:        provider_ranks.append(rank)",
+          "202:        \"provider_ranks\": provider_ranks,",
+          "226:                1.0 / (RRF_RANK_CONSTANT + int(row[\"provider_rank\"]))"
+        ]
+      }
+    ],
+    "reasoning": "_candidate_rows 先规范化URL，再以 provider→canonical URL 保存最小 rank；_fuse_one_query 对每个保留行累加一次。error/answer/无URL/非正rank不会贡献；跨query贡献由第二层保留。探针重复跟踪参数URL仅保留rank20，不让rank80多投票。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-05.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/search/candidate.py",
+        "lines": "L87-L123",
+        "quote": "def _candidate_rows(query: str, rows: list[dict]) -> dict[str, dict[str, dict]]:\n    \"\"\"Return one deterministic row per provider/canonical URL.\"\"\"\n    grouped: dict[str, dict[str, dict]] = {}\n    ordered = sorted(\n        (dict(row) for row in rows),\n        key=lambda row: (\n            str(row.get(\"source\") or \"\"),\n            int(row[\"provider_rank\"]) if row.get(\"provider_rank\") else float(\"inf\"),\n            canonicalize_url(str(row.get(\"url\") or \"\")),",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/search/candidate.py",
+        "lines": "L216-L229",
+        "quote": "def _fuse_one_query(\n    query: str, rows: list[dict]\n) -> tuple[dict[str, list[tuple[str, dict]]], dict[str, float], list[str]]:\n    provider_rows = _candidate_rows(query, rows)\n    by_url: dict[str, list[tuple[str, dict]]] = {}\n    scores: dict[str, float] = {}\n    for provider in sorted(provider_rows):\n        for canonical_url, row in provider_rows[provider].items():\n            by_url.setdefault(canonical_url, []).append((provider, row))",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-06",
+    "title": "两级 RRF 无中间截断且最终最多15",
+    "document": "skills/multi-search/references/search.md",
+    "location": "skills/multi-search/references/search.md:L55",
+    "quote": "Expanded queries fuse in two stages:",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'RRF_RANK_CONSTANT|ordered_urls|limit' multi_search_mcp/src/search/candidate.py multi_search_mcp/src/service.py",
+        "result": "35 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/service.py:116:    limit: int = 4_000",
+          "multi_search_mcp/src/service.py:143:    limit = max(1, min(int(request.limit), 8_000))",
+          "multi_search_mcp/src/service.py:159:    end = min(len(body), start + limit)",
+          "multi_search_mcp/src/service.py:441:    limit = SEARCH_RESULT_LIMIT",
+          "multi_search_mcp/src/service.py:443:        query_runs, response_id=response_id, limit=limit,",
+          "multi_search_mcp/src/service.py:448:        [(query_plan.primary_query, primary_rows)], response_id=response_id, limit=1,",
+          "multi_search_mcp/src/service.py:689:        result_limit=SEARCH_RESULT_LIMIT,",
+          "multi_search_mcp/src/service.py:735:        response[\"diagnostics\"][\"legacy_scrape_limits\"] = (",
+          "multi_search_mcp/src/service.py:736:            \"scrape_top and scrape_per_source no longer limit fetching; \"",
+          "multi_search_mcp/src/service.py:778:        \"result\": _limit_scrape_row(result, scrape_chars),",
+          "multi_search_mcp/src/service.py:826:def _limit_scrape_row(row: dict, max_chars: int) -> dict:",
+          "multi_search_mcp/src/service.py:827:    limited = dict(row)",
+          "multi_search_mcp/src/service.py:828:    markdown = limited.get(\"markdown\")",
+          "multi_search_mcp/src/service.py:830:        limited[\"markdown\"] = markdown[:max_chars]",
+          "multi_search_mcp/src/service.py:831:        limited[\"truncated\"] = True",
+          "multi_search_mcp/src/service.py:832:    return limited",
+          "multi_search_mcp/src/service.py:892:            \"https://api.github.com/rate_limit\",",
+          "multi_search_mcp/src/service.py:999:def _compact_text(value: Any, limit: int = 600) -> str:",
+          "multi_search_mcp/src/service.py:1001:    if len(text) <= limit:",
+          "multi_search_mcp/src/service.py:1003:    return text[: max(0, limit - 1)].rstrip() + \"…\"",
+          "multi_search_mcp/src/search/candidate.py:13:RRF_RANK_CONSTANT = 40",
+          "multi_search_mcp/src/search/candidate.py:80:def _compact(value: Any, limit: int = SEARCH_HIT_CONTENT_CHARS) -> str:",
+          "multi_search_mcp/src/search/candidate.py:82:    if len(text) <= limit:",
+          "multi_search_mcp/src/search/candidate.py:84:    return text[: max(0, limit - 1)].rstrip() + \"…\"",
+          "multi_search_mcp/src/search/candidate.py:226:                1.0 / (RRF_RANK_CONSTANT + int(row[\"provider_rank\"]))",
+          "multi_search_mcp/src/search/candidate.py:228:    ordered_urls = sorted(by_url, key=lambda url: (-scores[url], url))",
+          "multi_search_mcp/src/search/candidate.py:229:    return by_url, scores, ordered_urls",
+          "multi_search_mcp/src/search/candidate.py:236:    limit: int = SEARCH_RESULT_LIMIT,",
+          "multi_search_mcp/src/search/candidate.py:253:        _query, by_url, provider_scores, ordered_urls = per_query[0]",
+          "multi_search_mcp/src/search/candidate.py:261:            for url in ordered_urls[: max(0, int(limit))]",
+          "multi_search_mcp/src/search/candidate.py:267:    for query, by_url, _provider_scores, ordered_urls in per_query:",
+          "multi_search_mcp/src/search/candidate.py:268:        for rank, canonical_url in enumerate(ordered_urls, start=1):",
+          "multi_search_mcp/src/search/candidate.py:271:            contribution = weight / (RRF_RANK_CONSTANT + rank)",
+          "multi_search_mcp/src/search/candidate.py:278:    ordered_urls = sorted(contributions, key=lambda url: (-scores[url], url))",
+          "multi_search_mcp/src/search/candidate.py:287:        for url in ordered_urls[: max(0, int(limit))]"
+        ]
+      }
+    ],
+    "reasoning": "每 query _fuse_one_query 返回全部 ordered_urls；多query对全部列表 enumerate、默认权重1，再只在最终列表切片。单query也只在最终切片。离线例中首query rank20因第二query支持进入第一名。原生score仅附在diagnostic provider_ranks，不参与加分。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-06.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/search/candidate.py",
+        "lines": "L216-L229",
+        "quote": "def _fuse_one_query(\n    query: str, rows: list[dict]\n) -> tuple[dict[str, list[tuple[str, dict]]], dict[str, float], list[str]]:\n    provider_rows = _candidate_rows(query, rows)\n    by_url: dict[str, list[tuple[str, dict]]] = {}\n    scores: dict[str, float] = {}\n    for provider in sorted(provider_rows):\n        for canonical_url, row in provider_rows[provider].items():\n            by_url.setdefault(canonical_url, []).append((provider, row))",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/search/candidate.py",
+        "lines": "L249-L287",
+        "quote": "    per_query = [\n        (query, *_fuse_one_query(query, rows)) for query, rows in query_runs\n    ]\n    if len(per_query) == 1:\n        _query, by_url, provider_scores, ordered_urls = per_query[0]\n        return [\n            _public_hit(\n                response_id=response_id,\n                canonical_url=url,",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L440-L445",
+        "quote": "    response_id = f\"resp_{uuid.uuid4().hex}\"\n    limit = SEARCH_RESULT_LIMIT\n    hits = fuse_search_results(\n        query_runs, response_id=response_id, limit=limit,\n        primary_query=query_plan.primary_query, query_policy=query_policy,\n    )",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-07",
+    "title": "候选摘要与正文各自保留",
+    "document": "CONTEXT.md",
+    "location": "CONTEXT.md:L7",
+    "quote": "排序入选后可附带正文预览，摘要与正文各自保留。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'search_content|markdown|content' multi_search_mcp/src/support/models.py multi_search_mcp/src/search/candidate.py multi_search_mcp/src/service.py",
+        "result": "107 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/service.py:17:from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content",
+          "multi_search_mcp/src/service.py:41:from .state.content_store import ContentStore, ContentStoreError, DEFAULT_MAX_OBJECT_BYTES",
+          "multi_search_mcp/src/service.py:50:# page bodies written back onto result rows (``scraped_content``) leak full text",
+          "multi_search_mcp/src/service.py:108:    full_content: bool = False",
+          "multi_search_mcp/src/service.py:124:    content_store: ContentStore | None = None,",
+          "multi_search_mcp/src/service.py:133:    store = state_store or (content_store.store if content_store else StateStore())",
+          "multi_search_mcp/src/service.py:134:    cache = content_store or ContentStore(store)",
+          "multi_search_mcp/src/service.py:138:            \"cached content is missing or expired; call fetch_source first\"",
+          "multi_search_mcp/src/service.py:141:    body = str(cached[\"content\"])",
+          "multi_search_mcp/src/service.py:148:            raise ValueError(\"keyword was not found in cached content\")",
+          "multi_search_mcp/src/service.py:162:        \"content\": body[start:end],",
+          "multi_search_mcp/src/service.py:168:        \"content_length\": len(body),",
+          "multi_search_mcp/src/service.py:169:        \"content_hash\": cached[\"content_hash\"],",
+          "multi_search_mcp/src/service.py:171:        \"untrusted_content\": True,",
+          "multi_search_mcp/src/service.py:222:                \"content\": \"\",",
+          "multi_search_mcp/src/service.py:223:                \"content_kind\": \"metadata\",",
+          "multi_search_mcp/src/service.py:228:    max_chars = None if request.full_content else max(1, min(int(request.max_chars), 20_000))",
+          "multi_search_mcp/src/service.py:230:    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None",
+          "multi_search_mcp/src/service.py:231:    cached = content_store.get(source_id) if content_store and source_id else None",
+          "multi_search_mcp/src/service.py:233:        content_store.delete_source(source_id)",
+          "multi_search_mcp/src/service.py:244:            if content_store and retention.persist_body:",
+          "multi_search_mcp/src/service.py:252:                cached = content_store.reuse_for_url(",
+          "multi_search_mcp/src/service.py:259:            \"body\": str(cached[\"content\"])[:max_chars],",
+          "multi_search_mcp/src/service.py:260:            \"content_hash\": cached[\"content_hash\"],",
+          "multi_search_mcp/src/service.py:261:            \"content_length\": len(str(cached[\"content\"])),",
+          "multi_search_mcp/src/service.py:263:            \"backend\": \"content-store\",",
+          "multi_search_mcp/src/service.py:266:            \"truncated\": max_chars is not None and len(str(cached[\"content\"])) > max_chars,",
+          "multi_search_mcp/src/service.py:267:            \"untrusted_content\": True,",
+          "multi_search_mcp/src/service.py:272:        result = {\"markdown\": prefetched_body, \"via\": \"provider:prefetch\"}",
+          "multi_search_mcp/src/service.py:293:    body = str(result.get(\"markdown\") or \"\")",
+          "multi_search_mcp/src/service.py:297:        content_store.put(",
+          "multi_search_mcp/src/service.py:302:        if content_store and source_id and retention.persist_body",
+          "multi_search_mcp/src/service.py:309:        \"content_length\": len(body),",
+          "multi_search_mcp/src/service.py:310:        \"content_hash\": stored.get(\"content_hash\") if stored else None,",
+          "multi_search_mcp/src/service.py:316:        \"untrusted_content\": True,",
+          "multi_search_mcp/src/service.py:462:            if not retention.persist_content:",
+          "multi_search_mcp/src/service.py:463:                registry_hit[\"content\"] = \"\"",
+          "multi_search_mcp/src/service.py:467:    content_store_errors = []",
+          "multi_search_mcp/src/service.py:473:            body = search_content(row).body",
+          "multi_search_mcp/src/service.py:497:                content_store_errors.append({",
+          "multi_search_mcp/src/service.py:524:            \"content_store_errors\": content_store_errors,",
+          "multi_search_mcp/src/service.py:637:                    source_id=hit[\"source_id\"], full_content=True,",
+          "multi_search_mcp/src/service.py:655:            \"title\": hit[\"title\"], \"markdown\": body_result.get(\"body\"),",
+          "multi_search_mcp/src/service.py:656:            \"length\": body_result.get(\"content_length\"),",
+          "multi_search_mcp/src/service.py:666:        body = page[\"markdown\"]",
+          "multi_search_mcp/src/service.py:667:        start = body_preview_start(body, hit[\"title\"], max_chars, hit.get(\"content\") or \"\")",
+          "multi_search_mcp/src/service.py:670:            markdown=body[start:end], preview_start=start, preview_end=end,",
+          "multi_search_mcp/src/service.py:729:                    \"want_content\": False, \"timeout\": plan.timeout,",
+          "multi_search_mcp/src/service.py:739:    if plan.output_mode in {\"markdown\", \"both\"}:",
+          "multi_search_mcp/src/service.py:745:        response[\"markdown\"] = format_results(",
+          "multi_search_mcp/src/service.py:755:            {key: value for key, value in row.items() if key != \"markdown\"}",
+          "multi_search_mcp/src/service.py:781:    if request.output in {\"markdown\", \"both\"}:",
+          "multi_search_mcp/src/service.py:782:        response[\"markdown\"] = format_scrapes([result], max_chars=scrape_chars)",
+          "multi_search_mcp/src/service.py:783:        response[\"result\"].pop(\"markdown\", None)",
+          "multi_search_mcp/src/service.py:828:    markdown = limited.get(\"markdown\")",
+          "multi_search_mcp/src/service.py:829:    if isinstance(markdown, str) and len(markdown) > max_chars:",
+          "multi_search_mcp/src/service.py:830:        limited[\"markdown\"] = markdown[:max_chars]",
+          "multi_search_mcp/src/service.py:972:                row.get(\"description\") or row.get(\"content\") or row.get(\"scraped_content\") or \"\",",
+          "multi_search_mcp/src/service.py:1053:            description = _compact_text(row.get(\"description\") or row.get(\"scraped_content\"), 240)",
+          "multi_search_mcp/src/search/candidate.py:8:from ..support.models import ANSWER_SOURCES, content_kind_priority, is_empty_result, search_content",
+          "multi_search_mcp/src/search/candidate.py:143:    content_rows = []",
+          "multi_search_mcp/src/search/candidate.py:145:        content = search_content(row)",
+          "multi_search_mcp/src/search/candidate.py:146:        if content.snippet.strip():",
+          "multi_search_mcp/src/search/candidate.py:147:            content_rows.append((provider, row, content))",
+          "multi_search_mcp/src/search/candidate.py:148:    if content_rows:",
+          "multi_search_mcp/src/search/candidate.py:149:        _content_provider, _content_row, content = sorted(",
+          "multi_search_mcp/src/search/candidate.py:150:            content_rows,",
+          "multi_search_mcp/src/search/candidate.py:152:                -content_kind_priority(item[2].snippet_kind),",
+          "multi_search_mcp/src/search/candidate.py:158:        content_text = content.snippet",
+          "multi_search_mcp/src/search/candidate.py:159:        content_kind = content.snippet_kind",
+          "multi_search_mcp/src/search/candidate.py:161:        content_text = \"\"",
+          "multi_search_mcp/src/search/candidate.py:162:        content_kind = \"metadata\"",
+          "multi_search_mcp/src/search/candidate.py:178:        bool(search_content(row).body)",
+          "multi_search_mcp/src/search/candidate.py:197:        \"content\": _compact(content_text),",
+          "multi_search_mcp/src/search/candidate.py:198:        \"content_kind\": content_kind,",
+          "multi_search_mcp/src/search/candidate.py:205:        \"content_ref\": source_id,",
+          "multi_search_mcp/src/search/candidate.py:206:        \"untrusted_content\": True,",
+          "multi_search_mcp/src/support/models.py:14:CONTENT_KIND_CONTENT = \"content\"",
+          "multi_search_mcp/src/support/models.py:36:def normalize_content_kind(",
+          "multi_search_mcp/src/support/models.py:46:def content_kind_priority(kind: Any) -> int:",
+          "multi_search_mcp/src/support/models.py:47:    return CONTENT_KIND_PRIORITY[normalize_content_kind(kind)]",
+          "multi_search_mcp/src/support/models.py:59:def search_content(row: dict) -> SearchContent:",
+          "multi_search_mcp/src/support/models.py:62:    Some adapters also put highlights in scraped_content. Only body/content",
+          "multi_search_mcp/src/support/models.py:65:    kind = normalize_content_kind(row.get(\"content_kind\"))",
+          "multi_search_mcp/src/support/models.py:67:        str(row.get(\"scraped_content\") or \"\")",
+          "multi_search_mcp/src/support/models.py:73:        else row.get(\"content\") or row.get(\"description\") or \"\"",
+          "multi_search_mcp/src/support/models.py:136:    scraped_content: str = \"\"",
+          "multi_search_mcp/src/support/models.py:137:    content_kind: str = CONTENT_KIND_METADATA",
+          "multi_search_mcp/src/support/models.py:149:            \"scraped_content\": self.scraped_content,",
+          "multi_search_mcp/src/support/models.py:150:            \"content_kind\": normalize_content_kind(self.content_kind),",
+          "multi_search_mcp/src/support/models.py:162:            \"source\", \"title\", \"url\", \"description\", \"scraped_content\",",
+          "multi_search_mcp/src/support/models.py:163:            \"content_kind\",",
+          "multi_search_mcp/src/support/models.py:171:            scraped_content=str(data.get(\"scraped_content\", \"\") or \"\"),",
+          "multi_search_mcp/src/support/models.py:172:            content_kind=normalize_content_kind(data.get(\"content_kind\")),",
+          "multi_search_mcp/src/support/models.py:184:    markdown: str = \"\"",
+          "multi_search_mcp/src/support/models.py:193:            \"markdown\": self.markdown,",
+          "multi_search_mcp/src/support/models.py:194:            \"length\": self.length if self.length is not None else len(self.markdown),",
+          "multi_search_mcp/src/support/models.py:202:        known = {\"url\", \"title\", \"markdown\", \"length\", \"via\"}",
+          "multi_search_mcp/src/support/models.py:206:            markdown=str(data.get(\"markdown\", \"\") or \"\"),",
+          "multi_search_mcp/src/support/models.py:217:    Plain text is valid Markdown; content is preserved without rewriting it.",
+          "multi_search_mcp/src/support/models.py:225:    markdown = row.get(\"markdown\")",
+          "multi_search_mcp/src/support/models.py:228:    elif not error and (not isinstance(markdown, str) or not markdown.strip()):",
+          "multi_search_mcp/src/support/models.py:229:        error = \"invalid scrape response: expected non-empty markdown\"",
+          "multi_search_mcp/src/support/models.py:240:    if isinstance(length, bool) or not isinstance(length, int) or length < len(markdown):",
+          "multi_search_mcp/src/support/models.py:241:        length = len(markdown)",
+          "multi_search_mcp/src/support/models.py:243:        url=target, title=title, markdown=markdown, length=length, via=backend,",
+          "multi_search_mcp/src/support/models.py:244:        raw={\"truncated\": bool(row.get(\"truncated\")) or length > len(markdown)},"
+        ]
+      }
+    ],
+    "reasoning": "search_content 从 body/content类型取 scraped_content，同时保留独立 description；candidate仅存snippet，run_search_web将body放scrapes并按source_id关联，失败写body_error且不删除snippet。端到端离线模拟验证snippet与1200字body分离。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-07.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/support/models.py",
+        "lines": "L59-L78",
+        "quote": "def search_content(row: dict) -> SearchContent:\n    \"\"\"Interpret legacy provider fields once for candidate output and caching.\n\n    Some adapters also put highlights in scraped_content. Only body/content\n    rows contain bodies; a body row can independently carry a description.\n    \"\"\"\n    kind = normalize_content_kind(row.get(\"content_kind\"))\n    body = (\n        str(row.get(\"scraped_content\") or \"\")",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/search/candidate.py",
+        "lines": "L143-L162",
+        "quote": "    content_rows = []\n    for provider, row in contributions:\n        content = search_content(row)\n        if content.snippet.strip():\n            content_rows.append((provider, row, content))\n    if content_rows:\n        _content_provider, _content_row, content = sorted(\n            content_rows,\n            key=lambda item: (",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L653-L676",
+        "quote": "    for hit, body_result in zip(response[\"results\"], fetched[\"results\"]):\n        page = normalize_scrape_result({\n            \"title\": hit[\"title\"], \"markdown\": body_result.get(\"body\"),\n            \"length\": body_result.get(\"content_length\"),\n            \"truncated\": bool(body_result.get(\"truncated\")),\n            \"error\": body_result.get(\"error\"),\n        }, url=hit[\"url\"], via=body_result.get(\"backend\") or \"\")\n        page[\"source_id\"] = hit[\"source_id\"]\n        scrapes.append(page)",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-08",
+    "title": "预取正文按长度/provider/文本确定性选择",
+    "document": "docs/glossary.md",
+    "location": "docs/glossary.md:L59",
+    "quote": "字符数最长优先，等长时依次按 provider 名、正文文本升序选择",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'selected_bodies|candidate =|prefetched' multi_search_mcp/src/service.py",
+        "result": "14 hits in explicit evidence files",
+        "matches": [
+          "184:    prefetched_body: str | None = None,",
+          "242:        if not prefetched_body:",
+          "271:    if prefetched_body:",
+          "272:        result = {\"markdown\": prefetched_body, \"via\": \"provider:prefetch\"}",
+          "329:    prefetched_bodies: dict[str, str] | None = None,",
+          "477:            candidate = (-len(body), str(row.get(\"source\") or \"\"), body)",
+          "481:    selected_bodies = {url: candidate[2] for url, candidate in bodies.items()}",
+          "482:    if prefetched_bodies is not None:",
+          "483:        prefetched_bodies.update(selected_bodies)",
+          "489:            body = selected_bodies.get(str(hit[\"canonical_url\"]))",
+          "580:        has_valid_candidate = any(",
+          "623:    prefetched = {}",
+          "627:        prefetched_bodies=prefetched,",
+          "642:                prefetched_body=prefetched.get(hit[\"canonical_url\"]),"
+        ]
+      }
+    ],
+    "reasoning": "_run_search_candidates 为所有原始行按canonical URL选择(-len,source,body)最小tuple；错误/无URL/无body跳过。选择发生于use_state分支外，同一map用于可选缓存及fetch。字符串等长tie不是依赖到达顺序。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-08.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L468-L499",
+        "quote": "    # Select once for both persistence and fetching, independently of use_state.\n    # Longest body wins; ties use source then body text in ascending order.\n    bodies: dict[str, tuple[int, str, str]] = {}\n    for _query, query_rows in query_runs:\n        for row in query_rows:\n            body = search_content(row).body\n            if not body or not row.get(\"url\") or row.get(\"error\"):\n                continue\n            url = canonicalize_url(str(row[\"url\"]))",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L623-L643",
+        "quote": "    prefetched = {}\n    response = _run_search_candidates(\n        request, providers=providers, keys=runtime_keys, config=resolved_config,\n        state_store=store, query_runs_observer=query_runs_observer,\n        prefetched_bodies=prefetched,\n    )\n    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, \"scrape_chars\", 1200), 20_000))\n    body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, \"scrape_timeout\", 60)\n    concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, \"scrape_concurrency\", 5))",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-09",
+    "title": "有匹配H1时预览偏移指向原正文标题",
+    "document": "README.md",
+    "location": "README.md:L69",
+    "quote": "预览从与结果标题完全匹配的页面一级标题开始",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "medium",
+    "searched": [
+      {
+        "where": "rg -n 'body_preview_start|preview_start|preview_end' multi_search_mcp/src/support/format.py multi_search_mcp/src/service.py",
+        "result": "4 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/support/format.py:34:def body_preview_start(body: str, title: str, max_chars: int, snippet: str = \"\") -> int:",
+          "multi_search_mcp/src/service.py:14:from .support.format import body_preview_start, format_results, format_scrapes",
+          "multi_search_mcp/src/service.py:667:        start = body_preview_start(body, hit[\"title\"], max_chars, hit.get(\"content\") or \"\")",
+          "multi_search_mcp/src/service.py:670:            markdown=body[start:end], preview_start=start, preview_end=end,"
+        ]
+      }
+    ],
+    "reasoning": "正文超过max_chars才定位；扫描跳过围栏code block，识别ATX/Setext及整行链接H1；在service切片并设置原字符偏移、省略前文则truncated。探针位置12且正文不改。实际标题比较会unescape/strip/casefold；文档“完全匹配”未定义大小写归一化，报告不把此实现细节包装为已证bug。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-09.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/support/format.py",
+        "lines": "L34-L80",
+        "quote": "def body_preview_start(body: str, title: str, max_chars: int, snippet: str = \"\") -> int:\n    \"\"\"Locate an exact H1 or quoted snippet without rewriting acquired text.\n\n    Prefer an exact plain/link H1. A sufficiently long verbatim snippet may\n    locate a paragraph when no title matches; only whitespace may differ.\n    \"\"\"\n    if len(body) <= max_chars:\n        return 0\n    expected = unescape(title).strip().casefold()",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L666-L672",
+        "quote": "        body = page[\"markdown\"]\n        start = body_preview_start(body, hit[\"title\"], max_chars, hit.get(\"content\") or \"\")\n        end = min(len(body), start + max_chars)\n        page.update(\n            markdown=body[start:end], preview_start=start, preview_end=end,\n            truncated=page[\"truncated\"] or start > 0 or end < len(body),\n        )",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-10",
+    "title": "旧 scrape_top 不再裁剪最终抓取列表",
+    "document": "skills/multi-search/references/search.md",
+    "location": "skills/multi-search/references/search.md:L67",
+    "quote": "`scrape_top` no longer selects how many URLs to fetch.",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'scrape_top|legacy_scrape_limits|run_ranked_fetch_stage' multi_search_mcp/src/service.py",
+        "result": "8 hits in explicit evidence files",
+        "matches": [
+          "19:from .scrape.stage import run_ranked_fetch_stage",
+          "62:    scrape_top: int | None = None",
+          "359:        scrape_top=0,",
+          "649:    fetched = run_ranked_fetch_stage(",
+          "728:        route_meta={**plan.route_defaults, \"scrape_top\": SEARCH_RESULT_LIMIT,",
+          "734:    if request.scrape_top is not None or request.scrape_per_source is not None:",
+          "735:        response[\"diagnostics\"][\"legacy_scrape_limits\"] = (",
+          "736:            \"scrape_top and scrape_per_source no longer limit fetching; \""
+        ]
+      }
+    ],
+    "reasoning": "run_multi_search 包装 run_search_web；传正文预览/超时/并发，但不以scrape_top裁剪response.results。最终list整体交fetch stage。显式旧参数只产生diagnostic；markdown/both输出仅移除scrapes中的重复正文副本。负旧参数仍被输入验证，未声称任意旧参数值都接受。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-10.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L697-L714",
+        "quote": "def run_multi_search(request: MultiSearchRequest | dict) -> dict:\n    \"\"\"Compatibility presentation of the shared RRF search-and-fetch flow.\"\"\"\n    if isinstance(request, dict):\n        request = MultiSearchRequest(**request)\n    config = _load_config_safe(request.config_path)\n    plan = resolve_search_plan(request, config)\n    query_runs = []\n    response = run_search_web(\n        SearchWebRequest(",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L734-L757",
+        "quote": "    if request.scrape_top is not None or request.scrape_per_source is not None:\n        response[\"diagnostics\"][\"legacy_scrape_limits\"] = (\n            \"scrape_top and scrape_per_source no longer limit fetching; \"\n            \"all final RRF results (at most 15) are fetched\"\n        )\n    if plan.output_mode in {\"markdown\", \"both\"}:\n        raw_counts = {}\n        for row in rows:\n            if row.get(\"url\") and not row.get(\"error\") and not is_empty_result(row):",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L649-L651",
+        "quote": "    fetched = run_ranked_fetch_stage(\n        response[\"results\"], fetch=fetch, timeout=body_timeout, concurrency=concurrency,\n    )",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-11",
+    "title": "source_id 是一次响应内canonical URL的短期身份",
+    "document": "CONTEXT.md",
+    "location": "CONTEXT.md:L15",
+    "quote": "一次搜索响应中某个来源的短期身份",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'make_source_id|response_id|expires_at' multi_search_mcp/src/search/candidate.py multi_search_mcp/src/state/source_registry.py multi_search_mcp/src/service.py",
+        "result": "28 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/service.py:27:from .search.candidate import SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_results, make_source_id",
+          "multi_search_mcp/src/service.py:170:        \"expires_at\": cached[\"expires_at\"],",
+          "multi_search_mcp/src/service.py:211:        response_id = f\"resp_{uuid.uuid4().hex}\"",
+          "multi_search_mcp/src/service.py:213:        source_id = make_source_id(response_id, canonical_url)",
+          "multi_search_mcp/src/service.py:217:            ).register(response_id, [{",
+          "multi_search_mcp/src/service.py:262:            \"expires_at\": cached[\"expires_at\"],",
+          "multi_search_mcp/src/service.py:311:        \"expires_at\": stored.get(\"expires_at\") if stored else None,",
+          "multi_search_mcp/src/service.py:440:    response_id = f\"resp_{uuid.uuid4().hex}\"",
+          "multi_search_mcp/src/service.py:443:        query_runs, response_id=response_id, limit=limit,",
+          "multi_search_mcp/src/service.py:448:        [(query_plan.primary_query, primary_rows)], response_id=response_id, limit=1,",
+          "multi_search_mcp/src/service.py:466:            ).register(response_id, [registry_hit])",
+          "multi_search_mcp/src/service.py:504:        \"response_id\": response_id,",
+          "multi_search_mcp/src/state/source_registry.py:30:    def register(self, response_id: str, hits: list[dict]) -> None:",
+          "multi_search_mcp/src/state/source_registry.py:32:        expires_at = now + timedelta(seconds=self.ttl_seconds)",
+          "multi_search_mcp/src/state/source_registry.py:39:                      source_id, response_id, title, url, canonical_url,",
+          "multi_search_mcp/src/state/source_registry.py:41:                      created_at, expires_at",
+          "multi_search_mcp/src/state/source_registry.py:46:                        response_id,",
+          "multi_search_mcp/src/state/source_registry.py:55:                        expires_at.isoformat(),",
+          "multi_search_mcp/src/state/source_registry.py:66:        expires_at = datetime.fromisoformat(str(row[\"expires_at\"]))",
+          "multi_search_mcp/src/state/source_registry.py:67:        if expires_at <= self.clock():",
+          "multi_search_mcp/src/state/source_registry.py:87:            \"DELETE FROM search_sources WHERE expires_at <= ?\", (now,)",
+          "multi_search_mcp/src/search/candidate.py:73:def make_source_id(response_id: str, canonical_url: str) -> str:",
+          "multi_search_mcp/src/search/candidate.py:75:        f\"{response_id}\\0{canonical_url}\".encode(\"utf-8\")",
+          "multi_search_mcp/src/search/candidate.py:128:    response_id: str,",
+          "multi_search_mcp/src/search/candidate.py:191:    source_id = make_source_id(response_id, canonical_url)",
+          "multi_search_mcp/src/search/candidate.py:235:    response_id: str,",
+          "multi_search_mcp/src/search/candidate.py:256:                response_id=response_id,",
+          "multi_search_mcp/src/search/candidate.py:281:            response_id=response_id,"
+        ]
+      }
+    ],
+    "reasoning": "ID由response_id与canonical URL拼接SHA256前20hex构成；新搜索/直接URLfetch创建随机response_id。registry过期查询删引用；未知source fetch抛错。离线跨响应同URL产生不同ID，但cache_scope允许正文复用。未主张此短ID是授权令牌或永久身份。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-11.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/search/candidate.py",
+        "lines": "L73-L77",
+        "quote": "def make_source_id(response_id: str, canonical_url: str) -> str:\n    digest = hashlib.sha256(\n        f\"{response_id}\\0{canonical_url}\".encode(\"utf-8\")\n    ).hexdigest()\n    return f\"src_{digest[:20]}\"",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/search/candidate.py",
+        "lines": "L191-L206",
+        "quote": "    source_id = make_source_id(response_id, canonical_url)\n    hit = {\n        \"source_id\": source_id,\n        \"title\": str(representative.get(\"title\") or representative.get(\"url\") or \"\"),\n        \"url\": str(representative.get(\"url\") or canonical_url),\n        \"canonical_url\": canonical_url,\n        \"content\": _compact(content_text),\n        \"content_kind\": content_kind,\n        \"published_at\": published_at,",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/source_registry.py",
+        "lines": "L30-L69",
+        "quote": "    def register(self, response_id: str, hits: list[dict]) -> None:\n        now = self.clock()\n        expires_at = now + timedelta(seconds=self.ttl_seconds)\n        with self.store.connect() as conn:\n            self._purge_expired_conn(conn, now.isoformat())\n            for hit in hits:\n                conn.execute(\n                    \"\"\"\n                    INSERT OR REPLACE INTO search_sources (",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L209-L226",
+        "quote": "    source_id = str(request.source_id or \"\")\n    if not source_id:\n        response_id = f\"resp_{uuid.uuid4().hex}\"\n        canonical_url = canonicalize_url(url)\n        source_id = make_source_id(response_id, canonical_url)\n        if store is not None:\n            SourceRegistry(\n                store, ttl_seconds=retention.max_ttl_seconds\n            ).register(response_id, [{",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-12",
+    "title": "有效 source_id 的缓存失效后仍以原ID重抓",
+    "document": "skills/multi-search/references/verification.md",
+    "location": "skills/multi-search/references/verification.md:L11",
+    "quote": "With a valid `source_id`, missing or expired cached content is fetched again",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'cached is None|source_id|ContentStore' multi_search_mcp/src/service.py",
+        "result": "43 hits in explicit evidence files",
+        "matches": [
+          "27:from .search.candidate import SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_results, make_source_id",
+          "41:from .state.content_store import ContentStore, ContentStoreError, DEFAULT_MAX_OBJECT_BYTES",
+          "101:    source_id: str | None = None",
+          "113:    source_id: str",
+          "124:    content_store: ContentStore | None = None,",
+          "126:    \"\"\"Read a bounded slice from ContentStore without accessing the network.\"\"\"",
+          "129:    if not request.source_id:",
+          "130:        raise ValueError(\"source_id is required\")",
+          "134:    cache = content_store or ContentStore(store)",
+          "135:    cached = cache.get(request.source_id)",
+          "136:    if cached is None:",
+          "161:        \"source_id\": request.source_id,",
+          "190:    if bool(request.source_id) == bool(request.url):",
+          "191:        raise ValueError(\"provide exactly one of source_id or url\")",
+          "192:    if not request.use_state and request.source_id and source_record is None:",
+          "193:        raise ValueError(\"source_id fetch requires state; provide an explicit URL\")",
+          "196:    if source_record is not None and source_record.get(\"source_id\") != request.source_id:",
+          "197:        raise ValueError(\"source record does not match source_id\")",
+          "199:    if source is None and store and request.source_id:",
+          "200:        source = SourceRegistry(store).get(request.source_id)",
+          "201:    if request.source_id and source is None:",
+          "203:            \"source_id is unknown or expired; call search_web again before fetch_source\"",
+          "209:    source_id = str(request.source_id or \"\")",
+          "210:    if not source_id:",
+          "213:        source_id = make_source_id(response_id, canonical_url)",
+          "218:                \"source_id\": source_id,",
+          "230:    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None",
+          "231:    cached = content_store.get(source_id) if content_store and source_id else None",
+          "233:        content_store.delete_source(source_id)",
+          "238:    if cached is None:",
+          "253:                    source_id, canonical_url=canonicalize_url(url), cache_scope=cache_scope,",
+          "257:            \"source_id\": source_id,",
+          "298:            source_id, body,",
+          "302:        if content_store and source_id and retention.persist_body",
+          "306:        \"source_id\": source_id or None,",
+          "493:                ContentStore(",
+          "495:                ).put(str(hit[\"source_id\"]), body)",
+          "496:            except ContentStoreError as exc:",
+          "498:                    \"source_id\": hit[\"source_id\"],",
+          "637:                    source_id=hit[\"source_id\"], full_content=True,",
+          "646:            return {\"source_id\": hit[\"source_id\"], \"url\": hit[\"url\"],",
+          "660:        page[\"source_id\"] = hit[\"source_id\"]",
+          "684:        {key: row[key] for key in (\"source_id\", \"url\", \"error\")}"
+        ]
+      }
+    ],
+    "reasoning": "fetch先校验来源引用，再查正文；缓存未命中可按同scope URL复用，否则调用scraper，存回原ID；来源本身不存在才报未知/过期。探针删除所有可复用正文、保留registry后同ID重新取得body。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-12.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L195-L205",
+        "quote": "    store = (state_store or StateStore()) if request.use_state else None\n    if source_record is not None and source_record.get(\"source_id\") != request.source_id:\n        raise ValueError(\"source record does not match source_id\")\n    source = source_record\n    if source is None and store and request.source_id:\n        source = SourceRegistry(store).get(request.source_id)\n    if request.source_id and source is None:\n        raise ValueError(\n            \"source_id is unknown or expired; call search_web again before fetch_source\"",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L230-L254",
+        "quote": "    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None\n    cached = content_store.get(source_id) if content_store and source_id else None\n    if cached is not None and not retention.persist_body:\n        content_store.delete_source(source_id)\n        cached = None\n    cache_scope = \"\"\n    resolved_config = None\n    runtime_keys = keys\n    if cached is None:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L270-L316",
+        "quote": "    updates = []\n    if prefetched_body:\n        result = {\"markdown\": prefetched_body, \"via\": \"provider:prefetch\"}\n    else:\n        result, updates, _scrape_chars = _run_scrape_raw(\n            ScrapeRequest(\n                url=url,\n                backends=request.backends,\n                # Preview size must not truncate the cached acquisition.",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-13",
+    "title": "read_source 缓存未命中不会隐式联网",
+    "document": "docs/glossary.md",
+    "location": "docs/glossary.md:L74",
+    "quote": "缺失或过期时明确要求先调用 `fetch_source`，不会隐式联网",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'run_read_source|cached is None|fetch_source first' multi_search_mcp/src/service.py multi_search_mcp/src/state/content_store.py",
+        "result": "5 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/service.py:120:def run_read_source(",
+          "multi_search_mcp/src/service.py:136:    if cached is None:",
+          "multi_search_mcp/src/service.py:138:            \"cached content is missing or expired; call fetch_source first\"",
+          "multi_search_mcp/src/service.py:238:    if cached is None:",
+          "multi_search_mcp/src/state/content_store.py:119:            if cached is None:"
+        ]
+      }
+    ],
+    "reasoning": "read只调用ContentStore.get，get清理过期对象；缺缓存立刻ValueError，没有scraper/HTTP分支。use_state=False明确拒绝。离线探针在所有网络边界禁止条件下同时读成功和未命中错误。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-13.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L120-L171",
+        "quote": "def run_read_source(\n    request: ReadSourceRequest | dict,\n    *,\n    state_store: StateStore | None = None,\n    content_store: ContentStore | None = None,\n) -> dict:\n    \"\"\"Read a bounded slice from ContentStore without accessing the network.\"\"\"\n    if isinstance(request, dict):\n        request = ReadSourceRequest(**request)",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/content_store.py",
+        "lines": "L138-L151",
+        "quote": "    def get(self, source_id: str) -> dict | None:\n        now = self.clock()\n        now_iso = now.isoformat()\n        with self.store.connect() as conn:\n            self._purge_expired_conn(conn, now)\n            row = self._lookup_conn(conn, source_id)\n            if row is None:\n                return None\n            conn.execute(",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/content_store.py",
+        "lines": "L215-L225",
+        "quote": "    def _purge_expired_conn(self, conn, now: datetime) -> int:\n        expired_rows = conn.execute(\n            \"SELECT source_id, content_hash FROM content_sources WHERE expires_at <= ?\",\n            (now.isoformat(),),\n        ).fetchall()\n        if not expired_rows:\n            return 0\n        conn.execute(\"DELETE FROM content_sources WHERE expires_at <= ?\", (now.isoformat(),))\n        for row in expired_rows:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-14",
+    "title": "full_content 覆盖max_chars并保留取得的全部正文",
+    "document": "README.md",
+    "location": "README.md:L345",
+    "quote": "设为 `True` 时覆盖 `max_chars`，一次返回全部已取得文本。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'full_content|max_chars|content_store.put' multi_search_mcp/src/service.py multi_search_mcp/src/state/content_store.py",
+        "result": "17 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/service.py:104:    max_chars: int = 20_000",
+          "multi_search_mcp/src/service.py:108:    full_content: bool = False",
+          "multi_search_mcp/src/service.py:228:    max_chars = None if request.full_content else max(1, min(int(request.max_chars), 20_000))",
+          "multi_search_mcp/src/service.py:259:            \"body\": str(cached[\"content\"])[:max_chars],",
+          "multi_search_mcp/src/service.py:266:            \"truncated\": max_chars is not None and len(str(cached[\"content\"])) > max_chars,",
+          "multi_search_mcp/src/service.py:297:        content_store.put(",
+          "multi_search_mcp/src/service.py:308:        \"body\": body[:max_chars],",
+          "multi_search_mcp/src/service.py:315:        \"truncated\": max_chars is not None and len(body) > max_chars,",
+          "multi_search_mcp/src/service.py:629:    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, \"scrape_chars\", 1200), 20_000))",
+          "multi_search_mcp/src/service.py:637:                    source_id=hit[\"source_id\"], full_content=True,",
+          "multi_search_mcp/src/service.py:667:        start = body_preview_start(body, hit[\"title\"], max_chars, hit.get(\"content\") or \"\")",
+          "multi_search_mcp/src/service.py:668:        end = min(len(body), start + max_chars)",
+          "multi_search_mcp/src/service.py:751:        ) + format_scrapes(response[\"scrapes\"], max_chars=plan.scrape_chars)",
+          "multi_search_mcp/src/service.py:782:        response[\"markdown\"] = format_scrapes([result], max_chars=scrape_chars)",
+          "multi_search_mcp/src/service.py:826:def _limit_scrape_row(row: dict, max_chars: int) -> dict:",
+          "multi_search_mcp/src/service.py:829:    if isinstance(markdown, str) and len(markdown) > max_chars:",
+          "multi_search_mcp/src/service.py:830:        limited[\"markdown\"] = markdown[:max_chars]"
+        ]
+      }
+    ],
+    "reasoning": "full_content将切片上限设None，缓存命中和新抓取均使用相同变量。原body先进行容量检查与put，再裁剪响应；超过容量抛错不静默截缓存。5510字探针先7字预览，再max_chars=1/full_content=True返回5510字。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-14.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L228-L268",
+        "quote": "    max_chars = None if request.full_content else max(1, min(int(request.max_chars), 20_000))\n\n    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None\n    cached = content_store.get(source_id) if content_store and source_id else None\n    if cached is not None and not retention.persist_body:\n        content_store.delete_source(source_id)\n        cached = None\n    cache_scope = \"\"\n    resolved_config = None",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L278-L315",
+        "quote": "                # Preview size must not truncate the cached acquisition.\n                scrape_chars=DEFAULT_MAX_OBJECT_BYTES,\n                timeout=request.timeout,\n                output=\"json\",\n                use_state=request.use_state,\n            ),\n            state_store=store,\n            scraper=scraper,\n            keys=runtime_keys,",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/content_store.py",
+        "lines": "L55-L69",
+        "quote": "        payload = content.encode(\"utf-8\")\n        content_bytes = len(payload)\n        if content_bytes > self.max_object_bytes:\n            raise ContentStoreError(\n                f\"content size {content_bytes} exceeds max object bytes {self.max_object_bytes}\"\n            )\n        if content_bytes > self.max_total_bytes:\n            raise ContentStoreError(\n                f\"content size {content_bytes} exceeds max total bytes {self.max_total_bytes}\"",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-15",
+    "title": "跨响应URL缓存复用不延长原TTL",
+    "document": "README.md",
+    "location": "README.md:L254",
+    "quote": "关联新 ID 不延长原正文 TTL",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'cache_scope|expires_at = min|reuse_for_url' multi_search_mcp/src/service.py multi_search_mcp/src/state/content_store.py",
+        "result": "21 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/service.py:235:    cache_scope = \"\"",
+          "multi_search_mcp/src/service.py:247:                cache_scope = hashlib.sha256(json.dumps({",
+          "multi_search_mcp/src/service.py:252:                cached = content_store.reuse_for_url(",
+          "multi_search_mcp/src/service.py:253:                    source_id, canonical_url=canonicalize_url(url), cache_scope=cache_scope,",
+          "multi_search_mcp/src/service.py:299:            canonical_url=canonicalize_url(url) if cache_scope else \"\",",
+          "multi_search_mcp/src/service.py:300:            cache_scope=cache_scope,",
+          "multi_search_mcp/src/state/content_store.py:46:        cache_scope: str = \"\",",
+          "multi_search_mcp/src/state/content_store.py:52:        if bool(canonical_url) != bool(cache_scope):",
+          "multi_search_mcp/src/state/content_store.py:53:            raise ContentStoreError(\"canonical_url and cache_scope must be provided together\")",
+          "multi_search_mcp/src/state/content_store.py:86:                canonical_url, cache_scope,",
+          "multi_search_mcp/src/state/content_store.py:94:    def reuse_for_url(self, source_id: str, *, canonical_url: str, cache_scope: str) -> dict | None:",
+          "multi_search_mcp/src/state/content_store.py:102:        if not source_id or not canonical_url or not cache_scope:",
+          "multi_search_mcp/src/state/content_store.py:103:            raise ContentStoreError(\"source_id, canonical_url and cache_scope are required\")",
+          "multi_search_mcp/src/state/content_store.py:113:                WHERE s.canonical_url = ? AND s.cache_scope = ? AND s.expires_at > ?",
+          "multi_search_mcp/src/state/content_store.py:117:                (canonical_url, cache_scope, now.isoformat()),",
+          "multi_search_mcp/src/state/content_store.py:123:            expires_at = min(",
+          "multi_search_mcp/src/state/content_store.py:129:                str(cached[\"created_at\"]), expires_at, canonical_url, cache_scope,",
+          "multi_search_mcp/src/state/content_store.py:173:        expires_at: str, canonical_url: str, cache_scope: str,",
+          "multi_search_mcp/src/state/content_store.py:182:              source_id, content_hash, created_at, expires_at, canonical_url, cache_scope",
+          "multi_search_mcp/src/state/content_store.py:189:              cache_scope = excluded.cache_scope",
+          "multi_search_mcp/src/state/content_store.py:191:            (source_id, content_hash, created_at, expires_at, canonical_url, cache_scope),"
+        ]
+      }
+    ],
+    "reasoning": "使用来源集合/显式后端顺序/keys序列化SHA256形成scope，仅同URL同scope命中；新binding expires=min(原expires,now+当前TTL)，created_at沿用原值，禁止legacy空scope。探针验证新ID与旧ID expires_at完全相同。当前同ID策略变更的完整迁移语义没有纳入这条。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-15.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L242-L254",
+        "quote": "        if not prefetched_body:\n            runtime_keys = load_keys() if keys is None else dict(keys)\n            if content_store and retention.persist_body:\n                # Hash the permission context; never persist credentials. Provider\n                # prefetches and older unscoped entries remain source-ID-only.\n                cache_scope = hashlib.sha256(json.dumps({\n                    \"providers\": sorted(source_providers),\n                    \"backends\": list(request.backends or []),\n                    \"keys\": runtime_keys,",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/content_store.py",
+        "lines": "L94-L136",
+        "quote": "    def reuse_for_url(self, source_id: str, *, canonical_url: str, cache_scope: str) -> dict | None:\n        \"\"\"Bind an eligible URL body to another response's source id.\n\n        The caller supplies an already canonical URL and an opaque scope covering\n        source, backend and authorization restrictions. It must also check current\n        retention permission before calling; empty legacy scopes never participate.\n        Reuse never renews the acquired body's expiration.\n        \"\"\"\n        if not source_id or not canonical_url or not cache_scope:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-16",
+    "title": "禁止正文持久化的provider策略优先",
+    "document": "README.md",
+    "location": "README.md:L252",
+    "quote": "provider 的 retention policy 可禁止保存结果、摘要或正文。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'persist_body|persist_content|persist_search_result' multi_search_mcp/src/search/capabilities.py multi_search_mcp/src/service.py",
+        "result": "15 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/service.py:232:    if cached is not None and not retention.persist_body:",
+          "multi_search_mcp/src/service.py:244:            if content_store and retention.persist_body:",
+          "multi_search_mcp/src/service.py:302:        if content_store and source_id and retention.persist_body",
+          "multi_search_mcp/src/service.py:459:            if not retention.persist_search_result:",
+          "multi_search_mcp/src/service.py:462:            if not retention.persist_content:",
+          "multi_search_mcp/src/service.py:487:            if not retention.persist_body:",
+          "multi_search_mcp/src/search/capabilities.py:91:    persist_search_result: bool = True",
+          "multi_search_mcp/src/search/capabilities.py:92:    persist_content: bool = True",
+          "multi_search_mcp/src/search/capabilities.py:93:    persist_body: bool = True",
+          "multi_search_mcp/src/search/capabilities.py:149:            \"persist_search_result\": self.retention.persist_search_result,",
+          "multi_search_mcp/src/search/capabilities.py:150:            \"persist_content\": self.retention.persist_content,",
+          "multi_search_mcp/src/search/capabilities.py:151:            \"persist_body\": self.retention.persist_body,",
+          "multi_search_mcp/src/search/capabilities.py:359:        persist_search_result=all(policy.persist_search_result for policy in policies),",
+          "multi_search_mcp/src/search/capabilities.py:360:        persist_content=all(policy.persist_content for policy in policies),",
+          "multi_search_mcp/src/search/capabilities.py:361:        persist_body=all(policy.persist_body for policy in policies),"
+        ]
+      }
+    ],
+    "reasoning": "合并provider策略对权限取all、TTL取min；候选注册受persist_search_result、摘要受persist_content、预取与fetch缓存写入受persist_body；已有缓存遇当前persist_body=False删除binding并重新取得。此条原子判定的是persist_body禁止开关，其他两种开关仅记录邻接调用，未展开第三方条款正确性。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-16.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/search/capabilities.py",
+        "lines": "L349-L365",
+        "quote": "def retention_policy_for_sources(names: list[str] | tuple[str, ...]) -> RetentionPolicy:\n    policies = []\n    for name in names:\n        capability = get_capability_optional(name)\n        policies.append(\n            capability.retention if capability is not None else DEFAULT_RETENTION_POLICY\n        )\n    if not policies:\n        policies = [DEFAULT_RETENTION_POLICY]",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L456-L466",
+        "quote": "    if store is not None:\n        for hit in hits:\n            retention = retention_policy_for_sources(list(hit.get(\"providers\") or []))\n            if not retention.persist_search_result:\n                continue\n            registry_hit = dict(hit)\n            if not retention.persist_content:\n                registry_hit[\"content\"] = \"\"\n            SourceRegistry(",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L484-L499",
+        "quote": "    if store is not None:\n        for hit in hits:\n            retention = retention_policy_for_sources(list(hit.get(\"providers\") or []))\n            if not retention.persist_body:\n                continue\n            body = selected_bodies.get(str(hit[\"canonical_url\"]))\n            if not body:\n                continue\n            try:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L230-L234",
+        "quote": "    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None\n    cached = content_store.get(source_id) if content_store and source_id else None\n    if cached is not None and not retention.persist_body:\n        content_store.delete_source(source_id)\n        cached = None",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L296-L303",
+        "quote": "    stored = (\n        content_store.put(\n            source_id, body,\n            canonical_url=canonicalize_url(url) if cache_scope else \"\",\n            cache_scope=cache_scope,\n        )\n        if content_store and source_id and retention.persist_body\n        else None",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-17",
+    "title": "use_state=false跳过SQLite及站点记忆",
+    "document": "docs/glossary.md",
+    "location": "docs/glossary.md:L88",
+    "quote": "`false` 时跳过 SQLite 状态、key 轮换、站点记忆",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'request.use_state|BasicKeyManager|site_memory' multi_search_mcp/src/service.py multi_search_mcp/src/state/key_state.py",
+        "result": "19 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/state/key_state.py:73:class BasicKeyManager:",
+          "multi_search_mcp/src/state/key_state.py:119:class SQLiteKeyManager(BasicKeyManager):",
+          "multi_search_mcp/src/service.py:15:from .state.key_state import BasicKeyManager, SQLiteKeyManager",
+          "multi_search_mcp/src/service.py:42:from .state.site_memory import SiteScraperMemory",
+          "multi_search_mcp/src/service.py:131:    if not request.use_state:",
+          "multi_search_mcp/src/service.py:192:    if not request.use_state and request.source_id and source_record is None:",
+          "multi_search_mcp/src/service.py:195:    store = (state_store or StateStore()) if request.use_state else None",
+          "multi_search_mcp/src/service.py:282:                use_state=request.use_state,",
+          "multi_search_mcp/src/service.py:363:        use_state=request.use_state,",
+          "multi_search_mcp/src/service.py:367:    store = (state_store or StateStore()) if request.use_state else None",
+          "multi_search_mcp/src/service.py:368:    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()",
+          "multi_search_mcp/src/service.py:622:    store = (state_store or StateStore()) if request.use_state else None",
+          "multi_search_mcp/src/service.py:638:                    timeout=remaining, use_state=request.use_state,",
+          "multi_search_mcp/src/service.py:708:            config_path=request.config_path, use_state=request.use_state,",
+          "multi_search_mcp/src/service.py:804:    store = (state_store or StateStore()) if request.use_state else None",
+          "multi_search_mcp/src/service.py:805:    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()",
+          "multi_search_mcp/src/service.py:806:    site_memory = SiteScraperMemory(store) if store else None",
+          "multi_search_mcp/src/service.py:817:        site_memory=site_memory,",
+          "multi_search_mcp/src/service.py:823:    return result, site_memory.consume_updates() if site_memory else [], scrape_chars"
+        ]
+      }
+    ],
+    "reasoning": "search/fetch/scrape由开关决定store=None、BasicKeyManager和site_memory=None；Basic无DB写入，固定key候选不做持久LRU。按IDfetch无state且无内部source_record时拒绝，read无state拒绝。端到端探针将默认StateStore构造设为异常，搜索prefetch依然成功。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-17.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L190-L195",
+        "quote": "    if bool(request.source_id) == bool(request.url):\n        raise ValueError(\"provide exactly one of source_id or url\")\n    if not request.use_state and request.source_id and source_record is None:\n        raise ValueError(\"source_id fetch requires state; provide an explicit URL\")\n\n    store = (state_store or StateStore()) if request.use_state else None",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L366-L368",
+        "quote": "    runtime_keys = load_keys() if keys is None else dict(keys)\n    store = (state_store or StateStore()) if request.use_state else None\n    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L621-L622",
+        "quote": "    runtime_keys = load_keys() if keys is None else dict(keys)\n    store = (state_store or StateStore()) if request.use_state else None",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L804-L823",
+        "quote": "    store = (state_store or StateStore()) if request.use_state else None\n    key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()\n    site_memory = SiteScraperMemory(store) if store else None\n    scraper_fn = scraper or scrape_url_smart\n    result = scraper_fn(\n        request.url,\n        timeout=timeout,\n        deadline=deadline,\n        backends=tuple(request.backends) if request.backends else None,",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/key_state.py",
+        "lines": "L73-L116",
+        "quote": "class BasicKeyManager:\n    \"\"\"Compatibility key manager using the existing random key pool.\"\"\"\n\n    def candidates(self, provider: str, key_value: Any) -> list[KeyCandidate]:\n        return [\n            KeyCandidate(key=key, key_id=key_id_for(provider, key), fingerprint=key_fingerprint(key))\n            for key in _ordered_key_pool(key_value)\n        ]\n",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-18",
+    "title": "搜索timeout是整批共享deadline",
+    "document": "README.md",
+    "location": "README.md:L339",
+    "quote": "搜索阶段整批 deadline",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "medium",
+    "searched": [
+      {
+        "where": "rg -n 'search_deadline|source_deadline|submit_before' multi_search_mcp/src/service.py multi_search_mcp/src/search/search_runner.py multi_search_mcp/src/support/concurrency.py",
+        "result": "13 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/support/concurrency.py:36:    def submit_before(",
+          "multi_search_mcp/src/search/search_runner.py:307:        source_deadline = time.monotonic() + timeout_seconds",
+          "multi_search_mcp/src/search/search_runner.py:309:            source_deadline = min(source_deadline, deadline)",
+          "multi_search_mcp/src/search/search_runner.py:316:                if time.monotonic() < source_deadline:",
+          "multi_search_mcp/src/search/search_runner.py:322:            remaining = source_deadline - time.monotonic()",
+          "multi_search_mcp/src/search/search_runner.py:328:                deadline=source_deadline,",
+          "multi_search_mcp/src/search/search_runner.py:346:                        deadline=source_deadline,",
+          "multi_search_mcp/src/search/search_runner.py:361:        if time.monotonic() >= source_deadline:",
+          "multi_search_mcp/src/search/search_runner.py:369:            future = _SEARCH_POOL.submit_before(source_deadline, call)",
+          "multi_search_mcp/src/search/search_runner.py:376:                remaining = source_deadline - time.monotonic()",
+          "multi_search_mcp/src/service.py:402:    search_deadline = time.monotonic() + plan.timeout",
+          "multi_search_mcp/src/service.py:404:        query_results[queries[0]] = runner.run(queries[0], deadline=search_deadline)",
+          "multi_search_mcp/src/service.py:410:                pool.submit(runner.run, query, deadline=search_deadline): query"
+        ]
+      }
+    ],
+    "reasoning": "所有expanded query共享service创建的绝对deadline；runner取min，提交池等待、provider context、结果等待都用同一时点。超时保留已publish_partial、为pending写timeout。运行中的线程可能继续，不把返回deadline解释成停止所有底层socket。未逐provider模拟慢DNS/所有SDK边界，因此confidence medium。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-18.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L402-L422",
+        "quote": "    search_deadline = time.monotonic() + plan.timeout\n    if len(queries) == 1:\n        query_results[queries[0]] = runner.run(queries[0], deadline=search_deadline)\n    else:\n        with concurrent.futures.ThreadPoolExecutor(\n            max_workers=min(len(queries), MAX_EXPAND_CONCURRENCY)\n        ) as pool:\n            futures = {\n                pool.submit(runner.run, query, deadline=search_deadline): query",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/search/search_runner.py",
+        "lines": "L302-L328",
+        "quote": "    def run(self, query: str, *, deadline: float | None = None) -> list[dict]:\n        results: list[dict] = []\n        jobs: list[tuple[str, Callable[[], list]]] = []\n        source_names = self.route_resolver(self.config.route)\n        timeout_seconds = max(0, self.config.timeout if self.config.timeout is not None else 60)\n        source_deadline = time.monotonic() + timeout_seconds\n        if deadline is not None:\n            source_deadline = min(source_deadline, deadline)\n        partial_results: dict[str, list[dict]] = {}",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/search/search_runner.py",
+        "lines": "L366-L407",
+        "quote": "        pending = {name for name, _ in jobs}\n        future_sources: dict[Future, str] = {}\n        for name, call in jobs:\n            future = _SEARCH_POOL.submit_before(source_deadline, call)\n            if future is not None:\n                future_sources[future] = name\n\n        while future_sources:\n            done = {future for future in future_sources if future.done()}",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/support/concurrency.py",
+        "lines": "L36-L48",
+        "quote": "    def submit_before(\n        self,\n        deadline: float,\n        fn: Callable[..., Any],\n        /,\n        *args,\n        **kwargs,\n    ) -> Future | None:\n        remaining = deadline - time.monotonic()",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-19",
+    "title": "正文超时保留排名结果及显式失败",
+    "document": "README.md",
+    "location": "README.md:L416",
+    "quote": "超时会保留 RRF 结果并显式报告正文失败。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'timeout_row|results|future.cancel' multi_search_mcp/src/scrape/stage.py multi_search_mcp/src/service.py",
+        "result": "44 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/service.py:14:from .support.format import body_preview_start, format_results, format_scrapes",
+          "multi_search_mcp/src/service.py:27:from .search.candidate import SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_results, make_source_id",
+          "multi_search_mcp/src/service.py:49:# Upper bound for the snippet shown in ``display_results``. Without this, scraped",
+          "multi_search_mcp/src/service.py:401:    query_results: dict[str, list[dict]] = {}",
+          "multi_search_mcp/src/service.py:404:        query_results[queries[0]] = runner.run(queries[0], deadline=search_deadline)",
+          "multi_search_mcp/src/service.py:416:                    query_results[query] = future.result()",
+          "multi_search_mcp/src/service.py:418:                    query_results[query] = [{",
+          "multi_search_mcp/src/service.py:422:    query_runs = [(query, query_results[query]) for query in queries]",
+          "multi_search_mcp/src/service.py:442:    hits = fuse_search_results(",
+          "multi_search_mcp/src/service.py:446:    primary_rows = query_results[query_plan.primary_query]",
+          "multi_search_mcp/src/service.py:447:    primary_has_candidates = bool(fuse_search_results(",
+          "multi_search_mcp/src/service.py:505:        \"results\": hits,",
+          "multi_search_mcp/src/service.py:650:        response[\"results\"], fetch=fetch, timeout=body_timeout, concurrency=concurrency,",
+          "multi_search_mcp/src/service.py:653:    for hit, body_result in zip(response[\"results\"], fetched[\"results\"]):",
+          "multi_search_mcp/src/service.py:680:        update for result in fetched[\"results\"]",
+          "multi_search_mcp/src/service.py:690:        body_fetch_count=len(response[\"results\"]),",
+          "multi_search_mcp/src/service.py:716:    results = response[\"results\"]",
+          "multi_search_mcp/src/service.py:723:        display_results=_display_results(results),",
+          "multi_search_mcp/src/service.py:726:        valid_result_count=len(results),",
+          "multi_search_mcp/src/service.py:737:            \"all final RRF results (at most 15) are fetched\"",
+          "multi_search_mcp/src/service.py:745:        response[\"markdown\"] = format_results(",
+          "multi_search_mcp/src/service.py:746:            results + [row for row in rows if row.get(\"source\") in ANSWER_SOURCES or row.get(\"error\") or is_empty_result(row)],",
+          "multi_search_mcp/src/service.py:915:def _route_degradation(route: str, results: list[dict], source_names: set[str] | None, meta: dict) -> dict | None:",
+          "multi_search_mcp/src/service.py:921:    rows = as_dicts(results)",
+          "multi_search_mcp/src/service.py:938:        \"reason\": \"primary providers unavailable or returned no usable results\",",
+          "multi_search_mcp/src/service.py:959:def _display_results(results: list[dict]) -> list[dict]:",
+          "multi_search_mcp/src/service.py:961:    for row in as_dicts(results):",
+          "multi_search_mcp/src/service.py:979:def _extract_summaries(results: list[dict]) -> list[dict]:",
+          "multi_search_mcp/src/service.py:981:    for row in as_dicts(results):",
+          "multi_search_mcp/src/service.py:1006:def _extract_source_briefs(results: list[dict], *, max_items_per_source: int = 3) -> list[dict]:",
+          "multi_search_mcp/src/service.py:1014:    rows = as_dicts(results)",
+          "multi_search_mcp/src/scrape/stage.py:1:\"\"\"Fetch the final ranked results under a shared deadline and bounded pool.\"\"\"",
+          "multi_search_mcp/src/scrape/stage.py:31:    results: list[dict | None] = [None] * len(hits)",
+          "multi_search_mcp/src/scrape/stage.py:42:    def timeout_row(hit: dict) -> dict:",
+          "multi_search_mcp/src/scrape/stage.py:48:            return timeout_row(hit)",
+          "multi_search_mcp/src/scrape/stage.py:51:            return timeout_row(hit)",
+          "multi_search_mcp/src/scrape/stage.py:60:            results[index] = future.result()",
+          "multi_search_mcp/src/scrape/stage.py:62:            results[index] = error_row(hits[index], str(exc) or type(exc).__name__)",
+          "multi_search_mcp/src/scrape/stage.py:90:            future.cancel()",
+          "multi_search_mcp/src/scrape/stage.py:91:    final_results = [",
+          "multi_search_mcp/src/scrape/stage.py:92:        result if result is not None else timeout_row(hit)",
+          "multi_search_mcp/src/scrape/stage.py:93:        for hit, result in zip(hits, results)",
+          "multi_search_mcp/src/scrape/stage.py:96:        \"results\": final_results,",
+          "multi_search_mcp/src/scrape/stage.py:97:        \"errors\": [result for result in final_results if result.get(\"error\")],"
+        ]
+      }
+    ],
+    "reasoning": "stage固定槽位按hit输入顺序收集；已完成成功保留，pending/未提交返回timeout行，晚返回也不伪装成功；service将body_error和errors stage=fetch填回而不重排结果。离线一快一慢示例约0.04s返回、原顺序保留且第二项显式错误。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-19.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/scrape/stage.py",
+        "lines": "L30-L96",
+        "quote": "    deadline = time.monotonic() + timeout\n    results: list[dict | None] = [None] * len(hits)\n    active: dict[Future, int] = {}\n    next_index = 0\n\n    def error_row(hit: dict, error: Any) -> dict:\n        return {\n            \"source_id\": hit.get(\"source_id\", \"\"),\n            \"url\": hit.get(\"url\", \"\"),",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L649-L687",
+        "quote": "    fetched = run_ranked_fetch_stage(\n        response[\"results\"], fetch=fetch, timeout=body_timeout, concurrency=concurrency,\n    )\n    scrapes = []\n    for hit, body_result in zip(response[\"results\"], fetched[\"results\"]):\n        page = normalize_scrape_result({\n            \"title\": hit[\"title\"], \"markdown\": body_result.get(\"body\"),\n            \"length\": body_result.get(\"content_length\"),\n            \"truncated\": bool(body_result.get(\"truncated\")),",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-20",
+    "title": "四个耗时MCP入口共享4槽且满载立即拒绝",
+    "document": "docs/mcp-dispatch.md",
+    "location": "docs/mcp-dispatch.md:L5",
+    "quote": "每个服务进程最多接受 **4 个尚未完成的耗时工具调用**，四个入口共享容量",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n '_TOOL_POOL|_run_tool|submit_nowait' multi_search_mcp/server.py multi_search_mcp/src/support/concurrency.py",
+        "result": "9 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/server.py:30:_TOOL_POOL = BoundedDaemonExecutor(max_workers=4, thread_name_prefix=\"mcp-tool\")",
+          "multi_search_mcp/server.py:33:async def _run_tool(fn: Callable[..., dict], *args) -> dict:",
+          "multi_search_mcp/server.py:34:    future = _TOOL_POOL.submit_nowait(contextvars.copy_context().run, fn, *args)",
+          "multi_search_mcp/server.py:80:    return await _run_tool(",
+          "multi_search_mcp/server.py:102:    return await _run_tool(",
+          "multi_search_mcp/server.py:148:    return await _run_tool(multi_search_tool, query, route, count, sources, scrape_top, scrape_chars,",
+          "multi_search_mcp/server.py:165:    return await _run_tool(scrape_url_tool, url, backends, scrape_chars, scrape_timeout, use_state, output)",
+          "multi_search_mcp/server.py:177:    return await _run_tool(doctor_tool, include_keys, include_network)",
+          "multi_search_mcp/src/support/concurrency.py:50:    def submit_nowait(self, fn: Callable[..., Any], /, *args, **kwargs) -> Future | None:"
+        ]
+      }
+    ],
+    "reasoning": "search_web/fetch_source/multi_search/scrape_url均走同一个_run_tool；专属pool max_workers=4；semaphore nonblocking admission失败立即返回原格式JSON error。队列对象无size但进入前已占全局slot，因此并非无界可接收队列。未运行真实FastMCP传输，此条静态确认工具注册及pool约束。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-20.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/server.py",
+        "lines": "L28-L40",
+        "quote": "# Separate from the provider/fetch pools: cancelled waiters must not free slots\n# while their synchronous Core calls are still running.\n_TOOL_POOL = BoundedDaemonExecutor(max_workers=4, thread_name_prefix=\"mcp-tool\")\n\n\nasync def _run_tool(fn: Callable[..., dict], *args) -> dict:\n    future = _TOOL_POOL.submit_nowait(contextvars.copy_context().run, fn, *args)\n    if future is None:\n        return {\"error\": \"MCP tool capacity exhausted; retry after active calls finish\",",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/server.py",
+        "lines": "L148-L166",
+        "quote": "    return await _run_tool(multi_search_tool, query, route, count, sources, scrape_top, scrape_chars,\n                           timeout, scrape_timeout, expand, use_state, output)\n\n\n@mcp.tool(name=\"scrape_url\")\nasync def scrape_url(url: str, backends: list[str] | None = None, scrape_chars: int | None = None,\n               scrape_timeout: int | None = None, use_state: bool = True,\n               output: str = \"both\") -> dict:\n    \"\"\"Fetch readable page content using state-aware scraper backend ordering.",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/support/concurrency.py",
+        "lines": "L23-L64",
+        "quote": "    def __init__(self, *, max_workers: int, thread_name_prefix: str):\n        if max_workers < 1:\n            raise ValueError(\"max_workers must be at least 1\")\n        self._max_workers = max_workers\n        self._thread_name_prefix = thread_name_prefix\n        self._tasks: queue.Queue = queue.Queue()\n        self._slots = threading.BoundedSemaphore(max_workers)\n        self._lock = threading.Lock()\n        self._threads: list[threading.Thread] = []",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-21",
+    "title": "MCP取消不能提前释放正在运行任务容量",
+    "document": "docs/mcp-dispatch.md",
+    "location": "docs/mcp-dispatch.md:L7",
+    "quote": "实际返回前始终占用调度槽位。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'wrap_future|set_running_or_notify_cancel|_slots.release' multi_search_mcp/server.py multi_search_mcp/src/support/concurrency.py",
+        "result": "5 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/support/concurrency.py:60:                self._slots.release()",
+          "multi_search_mcp/src/support/concurrency.py:101:        if not future.set_running_or_notify_cancel():",
+          "multi_search_mcp/src/support/concurrency.py:123:                    self._slots.release()",
+          "multi_search_mcp/src/support/concurrency.py:140:                self._slots.release()",
+          "multi_search_mcp/server.py:40:    return await asyncio.wrap_future(future)"
+        ]
+      }
+    ],
+    "reasoning": "await包裹concurrent Future，取消只能在set_running前成功；正在运行Future不能cancel。worker finally在fn结束后释放slot，异常同样释放。离线单槽事件探针证明运行中cancel=False且新提交拒绝，放行实际结束后可退出。未把此probe称为真实MCP取消协议验收。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-21.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/server.py",
+        "lines": "L33-L40",
+        "quote": "async def _run_tool(fn: Callable[..., dict], *args) -> dict:\n    future = _TOOL_POOL.submit_nowait(contextvars.copy_context().run, fn, *args)\n    if future is None:\n        return {\"error\": \"MCP tool capacity exhausted; retry after active calls finish\",\n                \"error_type\": \"runtime_error\"}\n    # Cancels queued work if possible, but cannot stop a running thread/network\n    # call. The executor retains its slot until actual completion.\n    return await asyncio.wrap_future(future)",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/support/concurrency.py",
+        "lines": "L98-L125",
+        "quote": "    @staticmethod\n    def _execute_task(task) -> None:\n        future, fn, args, kwargs = task\n        if not future.set_running_or_notify_cancel():\n            return\n        try:\n            future.set_result(fn(*args, **kwargs))\n        except BaseException as exc:\n            future.set_exception(exc)",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-22",
+    "title": "key选择优先未使用其次最久未用",
+    "document": "docs/glossary.md",
+    "location": "docs/glossary.md:L81",
+    "quote": "按「未用过优先 → 最久未用（LRU）」挑选。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'never_used|last_used_at|record_use' multi_search_mcp/src/state/key_state.py multi_search_mcp/src/search/search_runner.py multi_search_mcp/src/scrape/scrape.py",
+        "result": "9 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/scrape/scrape.py:115:            key_manager.record_use(provider, _candidate_for(provider, key))",
+          "multi_search_mcp/src/state/key_state.py:109:    def record_use(self, provider: str, candidate: KeyCandidate) -> None:",
+          "multi_search_mcp/src/state/key_state.py:156:            last_used_at = row.get(\"last_used_at\") or \"\"",
+          "multi_search_mcp/src/state/key_state.py:157:            never_used = 0 if not last_used_at else 1",
+          "multi_search_mcp/src/state/key_state.py:158:            usable.append((never_used, last_used_at, f\"{order:08d}\", cand))",
+          "multi_search_mcp/src/state/key_state.py:162:    def record_use(self, provider: str, candidate: KeyCandidate) -> None:",
+          "multi_search_mcp/src/state/key_state.py:168:            SET use_count = use_count + 1, last_used_at = ?, updated_at = ?",
+          "multi_search_mcp/src/search/search_runner.py:266:        if hasattr(manager, \"record_use\") and isinstance(candidate, KeyCandidate):",
+          "multi_search_mcp/src/search/search_runner.py:267:            manager.record_use(provider, candidate)"
+        ]
+      }
+    ],
+    "reasoning": "candidates按never_used/last_used_at/配置顺序排序；search与scrape在真正尝试前调用record_use递增次数、记录时刻。候选列表预取本身不算使用；并发请求可能取到同一key，不在文档中加上未承诺的互斥租约要求。探针用a后选择未使用b。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-22.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/state/key_state.py",
+        "lines": "L125-L171",
+        "quote": "    def candidates(self, provider: str, key_value: Any) -> list[KeyCandidate]:\n        raw = [\n            KeyCandidate(key=key, key_id=key_id_for(provider, key), fingerprint=key_fingerprint(key))\n            for key in _ordered_key_pool(key_value)\n        ]\n        now = _now()\n        rows = {\n            row[\"key_id\"]: row\n            for row in self.store.rows(",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/search/search_runner.py",
+        "lines": "L255-L268",
+        "quote": "    candidates = manager.candidates(provider, key_value)\n    if not candidates:\n        if key_value and not key_required:\n            return [{\"source\": source, \"error\": \"no usable API keys\"}]\n        return missing(source, \"missing API key\")\n    last_results: list[dict] = []\n    partial_rows: list[dict] = []\n    for idx, candidate in enumerate(candidates):\n        if deadline is not None and time.monotonic() >= deadline:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrape.py",
+        "lines": "L109-L123",
+        "quote": "def _scrape_with_key_pool(provider: str, keys: list[str], call, deadline: float | None = None, key_manager=None) -> dict | None:\n    last: dict | None = None\n    for key in keys:\n        if deadline is not None and time.monotonic() >= deadline:\n            break\n        if key_manager is not None:\n            key_manager.record_use(provider, _candidate_for(provider, key))\n        result = call(key)\n        _record_key_result(provider, key, result, key_manager)",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-23",
+    "title": "目标页面错误不改key健康状态、不轮换key",
+    "document": "docs/glossary.md",
+    "location": "docs/glossary.md:L62",
+    "quote": "明确的目标错误保留使用记录，但不轮换 key、不写密钥健康状态",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'error_origin|target|retryable' multi_search_mcp/src/scrape/scrape.py multi_search_mcp/src/state/key_state.py multi_search_mcp/src/support/auth.py",
+        "result": "24 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/state/key_state.py:9:from ..support.auth import is_key_retryable_error",
+          "multi_search_mcp/src/state/key_state.py:68:    retryable: bool",
+          "multi_search_mcp/src/state/key_state.py:86:            return KeyOutcome(success=True, retryable=False)",
+          "multi_search_mcp/src/state/key_state.py:89:        error_rows = [row for row in error_rows if row.get(\"error_origin\") != \"target\"]",
+          "multi_search_mcp/src/state/key_state.py:91:            return KeyOutcome(False, False, \"target\", message)",
+          "multi_search_mcp/src/state/key_state.py:104:        return KeyOutcome(False, is_key_retryable_error(error_rows), error_type, message)",
+          "multi_search_mcp/src/support/auth.py:16:def is_key_retryable_error(results: list | dict | None) -> bool:",
+          "multi_search_mcp/src/support/auth.py:25:        if row.get(\"error_origin\") == \"target\":",
+          "multi_search_mcp/src/scrape/scrape.py:4:from ..support.auth import is_key_retryable_error",
+          "multi_search_mcp/src/scrape/scrape.py:92:def _is_key_retryable_error(result: dict) -> bool:",
+          "multi_search_mcp/src/scrape/scrape.py:93:    return is_key_retryable_error(result)",
+          "multi_search_mcp/src/scrape/scrape.py:101:    # A target-page failure is neutral to credential health, including any",
+          "multi_search_mcp/src/scrape/scrape.py:103:    if key_manager is None or result.get(\"error_origin\") == \"target\":",
+          "multi_search_mcp/src/scrape/scrape.py:121:        if not _is_key_retryable_error(result):",
+          "multi_search_mcp/src/scrape/scrape.py:134:def _prepare_scrape_target(url: str, *, resolver=None) -> tuple[str, str]:",
+          "multi_search_mcp/src/scrape/scrape.py:204:        safe_url, scrape_target = _prepare_scrape_target(url, resolver=url_resolver)",
+          "multi_search_mcp/src/scrape/scrape.py:213:            return {\"url\": scrape_target, \"error\": \"scrape deadline exceeded\"}",
+          "multi_search_mcp/src/scrape/scrape.py:220:                        \"url\": scrape_target,",
+          "multi_search_mcp/src/scrape/scrape.py:224:                result = scrape_url_jina(scrape_target, \"\", timeout=_remaining_timeout(), **policy[\"jina\"])",
+          "multi_search_mcp/src/scrape/scrape.py:231:                    scrape_target,",
+          "multi_search_mcp/src/scrape/scrape.py:268:                        scrape_target,",
+          "multi_search_mcp/src/scrape/scrape.py:274:                return scrape_url_tavily(scrape_target, key, timeout=_remaining_timeout(), deadline=deadline)",
+          "multi_search_mcp/src/scrape/scrape.py:287:                lambda key: scrape_url_exa(scrape_target, key, timeout=_remaining_timeout(), max_chars=scrape_chars),",
+          "multi_search_mcp/src/scrape/scrape.py:296:                lambda key: scrape_url_firecrawl(scrape_target, key, timeout=_remaining_timeout()),"
+        ]
+      }
+    ],
+    "reasoning": "scrape循环先record_use；_record_key_result遇target立刻返回；is_key_retryable_error对明确target返回False，因此不改健康也不试下一key。探针对已有key row注入target401后整行健康记录不变。本条只判ScrapeResult明确标注target路径；所有adapter是否正确标target另未全查。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-23.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/scrape/scrape.py",
+        "lines": "L100-L123",
+        "quote": "def _record_key_result(provider: str, key: str, result: dict, key_manager) -> None:\n    # A target-page failure is neutral to credential health, including any\n    # auth failure another in-flight request may already have recorded.\n    if key_manager is None or result.get(\"error_origin\") == \"target\":\n        return\n    candidate = _candidate_for(provider, key)\n    key_manager.record_result(provider, candidate, key_manager.classify_result(provider, result))\n\n",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/key_state.py",
+        "lines": "L82-L104",
+        "quote": "    def classify_result(self, provider: str, results: list | dict | None) -> KeyOutcome:\n        rows = [results] if isinstance(results, dict) else list(results or [])\n        error_rows = [row for row in rows if isinstance(row, dict) and row.get(\"error\")]\n        if not error_rows:\n            return KeyOutcome(success=True, retryable=False)\n        message = \"; \".join(str(row.get(\"error\", \"\")) for row in error_rows)\n        # Target failures carry no evidence that a provider credential failed.\n        error_rows = [row for row in error_rows if row.get(\"error_origin\") != \"target\"]\n        if not error_rows:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/support/auth.py",
+        "lines": "L1-L34",
+        "quote": "\"\"\"Shared auth and retry helpers for provider adapters.\"\"\"\nfrom __future__ import annotations\n\n\nKEY_RETRY_PATTERNS = (\n    \"401\", \"403\", \"429\", \"unauthorized\", \"forbidden\", \"invalid api\",\n    \"invalid key\", \"api key expired\", \"api key disabled\", \"api key revoked\",\n    \"expired api key\", \"quota\", \"rate limit\", \"rate_limit\",\n    \"too many requests\", \"limit exceeded\", \"exceeded your\", \"credits\",",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  },
+  {
+    "requirementId": "REQ-24",
+    "title": "Jina自动exhausted必须先由余额接口确认",
+    "document": "README.md",
+    "location": "README.md:L217",
+    "quote": "只有余额接口确认 `wallet.total_balance <= 0` 时才会自动标记 exhausted。",
+    "force": "current-behavior promise",
+    "verdict": "undecidable",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'wallet|balance|exhausted|mark_config' multi_search_mcp/src/scrape/scrapers/jina.py multi_search_mcp/src/state/key_state.py multi_search_mcp/src/state/keys.py multi_search_mcp/src/state/mark_exhausted.py",
+        "result": "43 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/state/keys.py:65:    \"\"\"Normalize Jina config to list of {key, exhausted}.",
+          "multi_search_mcp/src/state/keys.py:67:    Supports: str, list[str], list[{key, exhausted}], single {key, exhausted}.",
+          "multi_search_mcp/src/state/keys.py:72:        return [{\"key\": value, \"exhausted\": False}] if value else []",
+          "multi_search_mcp/src/state/keys.py:75:        return [{\"key\": k, \"exhausted\": bool(value.get(\"exhausted\"))}] if k else []",
+          "multi_search_mcp/src/state/keys.py:81:                    out.append({\"key\": item, \"exhausted\": False})",
+          "multi_search_mcp/src/state/keys.py:85:                    out.append({\"key\": k, \"exhausted\": bool(item.get(\"exhausted\"))})",
+          "multi_search_mcp/src/state/keys.py:93:    Honors the config-level ``exhausted: true`` flag (a user/operator opt-out),",
+          "multi_search_mcp/src/state/keys.py:98:    return [e[\"key\"] for e in normalize_jina_config(value) if not e[\"exhausted\"]]",
+          "multi_search_mcp/src/state/keys.py:108:    active = sum(1 for e in entries if not e[\"exhausted\"])",
+          "multi_search_mcp/src/state/mark_exhausted.py:1:\"\"\"Statically disable a Jina key by setting ``exhausted: true`` in the config.",
+          "multi_search_mcp/src/state/mark_exhausted.py:16:def _mark_config_exhausted(key_to_mark: str) -> bool:",
+          "multi_search_mcp/src/state/mark_exhausted.py:37:                return {\"key\": val, \"exhausted\": True}",
+          "multi_search_mcp/src/state/mark_exhausted.py:40:            if val.get(\"key\") == key_to_mark and not val.get(\"exhausted\"):",
+          "multi_search_mcp/src/state/mark_exhausted.py:41:                val[\"exhausted\"] = True",
+          "multi_search_mcp/src/state/mark_exhausted.py:61:        print(\"Usage: python -m multi_search_mcp.src.state.mark_exhausted <jina-key>\", file=sys.stderr)",
+          "multi_search_mcp/src/state/mark_exhausted.py:65:        marked = _mark_config_exhausted(args[0].strip())",
+          "multi_search_mcp/src/state/mark_exhausted.py:70:        print(\"Marked Jina key as exhausted.\")",
+          "multi_search_mcp/src/state/key_state.py:16:QUOTA_EXHAUSTED = \"quota_exhausted\"",
+          "multi_search_mcp/src/state/key_state.py:92:        if any(row.get(\"exhausted\") or row.get(\"key_exhausted\") for row in error_rows):",
+          "multi_search_mcp/src/state/key_state.py:93:            return KeyOutcome(False, True, \"quota_exhausted\", message)",
+          "multi_search_mcp/src/state/key_state.py:101:            kind for kind in (\"invalid\", \"quota_exhausted\", \"rate_limit\", \"timeout\", \"network\")",
+          "multi_search_mcp/src/state/key_state.py:149:            exhausted_until = _parse_iso(row.get(\"exhausted_until\"))",
+          "multi_search_mcp/src/state/key_state.py:154:            if status == QUOTA_EXHAUSTED and exhausted_until and exhausted_until > now:",
+          "multi_search_mcp/src/state/key_state.py:192:        exhausted_until = None",
+          "multi_search_mcp/src/state/key_state.py:219:        elif error_type == \"quota_exhausted\":",
+          "multi_search_mcp/src/state/key_state.py:221:            exhausted_until = _iso(_now() + timedelta(hours=24))",
+          "multi_search_mcp/src/state/key_state.py:232:                cooldown_until = {cooldown_sql}, exhausted_until = ?, {strike_assignment}, updated_at = ?",
+          "multi_search_mcp/src/state/key_state.py:238:                exhausted_until, now, provider, candidate.key_id,",
+          "multi_search_mcp/src/state/key_state.py:259:        sql = \"UPDATE key_state SET status = ?, cooldown_until = NULL, exhausted_until = NULL, manually_disabled = 0, invalid_strikes = 0, updated_at = ?\"",
+          "multi_search_mcp/src/state/key_state.py:285:        return \"quota_exhausted\"",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:78:        or \"insufficient balance\" in text",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:79:        or \"insufficient_balance\" in text",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:85:def _jina_quota_exhausted(status_code: int | None, message: str) -> bool:",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:86:    \"\"\"True when the error indicates the *key* is out of quota/balance.\"\"\"",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:90:        or \"insufficient balance\" in text",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:91:        or \"insufficient_balance\" in text",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:129:    key_exhausted = False",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:176:                # blocking balance-API round-trip; the key-state store (and the",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:178:                if key and _jina_quota_exhausted(exc.code, message):",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:179:                    key_exhausted = True",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:194:    if key_exhausted:",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:195:        result[\"key_exhausted\"] = True",
+          "multi_search_mcp/src/scrape/scrapers/jina.py:196:        result[\"exhausted\"] = True"
+        ]
+      }
+    ],
+    "reasoning": "实际HTTP402直接产生result.exhausted/key_exhausted，并被状态manager写为24h quota_exhausted。探针只有1次模拟reader HTTP调用，无余额调用。反证：README紧邻的是配置对象exhausted软删除；该持久配置与SQLite运行态不是同一状态，自动HTTP路径并不调用mark_exhausted写配置。故不能得出永久禁用或业务bug，只能判文档没有明确exhausted指哪一层。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-24.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/scrape/scrapers/jina.py",
+        "lines": "L167-L197",
+        "quote": "        except urllib.error.HTTPError as exc:\n            message = _jina_error_message(exc)\n            last_error = f\"HTTP {exc.code}: {message}\"\n            limited = _jina_rate_limited(exc.code, message)\n            if limited:\n                rate_limited = True\n                if not key:\n                    _record_jina_anonymous_rate_limit()\n                # Classify exhaustion from the error itself instead of issuing a",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/key_state.py",
+        "lines": "L92-L95",
+        "quote": "        if any(row.get(\"exhausted\") or row.get(\"key_exhausted\") for row in error_rows):\n            return KeyOutcome(False, True, \"quota_exhausted\", message)\n        if any(row.get(\"rate_limited\") for row in error_rows):\n            return KeyOutcome(False, True, \"rate_limit\", message)",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/key_state.py",
+        "lines": "L219-L222",
+        "quote": "        elif error_type == \"quota_exhausted\":\n            status = QUOTA_EXHAUSTED\n            exhausted_until = _iso(_now() + timedelta(hours=24))\n            quota_inc = 1",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/keys.py",
+        "lines": "L90-L98",
+        "quote": "def jina_config_keys(value) -> list[str]:\n    \"\"\"Return configured Jina keys that are not statically disabled.\n\n    Honors the config-level ``exhausted: true`` flag (a user/operator opt-out),\n    but performs no shuffling and no runtime exhaustion bookkeeping. Live key\n    health (cooldown / quota / invalid) is owned by ``SQLiteKeyManager`` so that\n    Jina shares the same state-aware LRU rotation as the other providers.\n    \"\"\"\n    return [e[\"key\"] for e in normalize_jina_config(value) if not e[\"exhausted\"]]",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/state/mark_exhausted.py",
+        "lines": "L32-L52",
+        "quote": "    def _mark(val):\n        nonlocal changed\n        if isinstance(val, str):\n            if val == key_to_mark:\n                changed = True\n                return {\"key\": val, \"exhausted\": True}\n            return val\n        if isinstance(val, dict):\n            if val.get(\"key\") == key_to_mark and not val.get(\"exhausted\"):",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": [],
+    "documentProblem": "exhausted未区分配置软删除与运行期短期配额状态，不能据此裁定HTTP402处理违反配置软删除保证。",
+    "independentReview": "主代理已提出配置/运行态区分反证；最终独立记录由主代理输出，此处未冒称原Workflow双agent复核已完成。"
+  },
+  {
+    "requirementId": "REQ-25",
+    "title": "fetch目标URL统一执行SSRF输入校验",
+    "document": "docs/glossary.md",
+    "location": "docs/glossary.md:L73",
+    "quote": "目标 URL 统一执行 SSRF 校验。",
+    "force": "current-behavior promise",
+    "verdict": "implemented",
+    "confidence": "high",
+    "searched": [
+      {
+        "where": "rg -n 'validate_public_http_url|validate_scrape_url|_ensure_public_ip' multi_search_mcp/src/service.py multi_search_mcp/src/support/url_security.py multi_search_mcp/src/scrape/scrape.py",
+        "result": "10 hits in explicit evidence files",
+        "matches": [
+          "multi_search_mcp/src/scrape/scrape.py:8:    validate_scrape_url,",
+          "multi_search_mcp/src/scrape/scrape.py:135:    safe_url = validate_scrape_url(url, resolver=resolver)",
+          "multi_search_mcp/src/scrape/scrape.py:175:            safe_url = validate_scrape_url(url, resolver=url_resolver)",
+          "multi_search_mcp/src/support/url_security.py:19:def validate_public_http_url(url: str, *, resolver: Resolver | None = None) -> str:",
+          "multi_search_mcp/src/support/url_security.py:23:def validate_scrape_url(url: str, *, resolver: Resolver | None = None) -> str:",
+          "multi_search_mcp/src/support/url_security.py:50:        _ensure_public_ip(direct_ip, label=label, resolved=False)",
+          "multi_search_mcp/src/support/url_security.py:59:        _ensure_public_ip(ip, label=label, resolved=True)",
+          "multi_search_mcp/src/support/url_security.py:87:def _ensure_public_ip(",
+          "multi_search_mcp/src/service.py:40:from .support.url_security import validate_public_http_url",
+          "multi_search_mcp/src/service.py:206:    validate_public_http_url(url, resolver=url_resolver)"
+        ]
+      }
+    ],
+    "reasoning": "fetch无论source_id/url、cache hit/miss均在取正文前校验；通用scrape目标与重写目标也经校验。只接受http/https、禁userinfo、所有DNS答案需public；离线私网/元数据IP/unsafe scheme/凭据URL/混合DNS全部拒绝。此条确认入口校验，不能推导DNS绑定、远端provider重定向或所有外部SDK绝无SSRF。",
+    "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-25.md",
+    "evidence": [
+      {
+        "file": "multi_search_mcp/src/service.py",
+        "lines": "L199-L206",
+        "quote": "    if source is None and store and request.source_id:\n        source = SourceRegistry(store).get(request.source_id)\n    if request.source_id and source is None:\n        raise ValueError(\n            \"source_id is unknown or expired; call search_web again before fetch_source\"\n        )\n    url = str(request.url or source[\"url\"])\n    validate_public_http_url(url, resolver=url_resolver)",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/support/url_security.py",
+        "lines": "L31-L60",
+        "quote": "def _validate_url(url: str, *, label: str, resolver: Resolver | None) -> str:\n    candidate = str(url or \"\").strip()\n    try:\n        parts = urllib.parse.urlsplit(candidate)\n    except Exception as exc:\n        raise UrlSecurityError(f\"{label} is not a valid URL: {exc}\") from exc\n\n    scheme = (parts.scheme or \"\").lower()\n    if scheme not in {\"http\", \"https\"}:",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/support/url_security.py",
+        "lines": "L100-L117",
+        "quote": "def _unsafe_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:\n    if ip.is_unspecified:\n        return \"unspecified\"\n    if ip.is_loopback:\n        return \"loopback\"\n    if ip.is_link_local:\n        return \"link-local\"\n    if ip.is_multicast:\n        return \"multicast\"",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      },
+      {
+        "file": "multi_search_mcp/src/scrape/scrape.py",
+        "lines": "L134-L142",
+        "quote": "def _prepare_scrape_target(url: str, *, resolver=None) -> tuple[str, str]:\n    safe_url = validate_scrape_url(url, resolver=resolver)\n    return safe_url, safe_url\n\n\ndef scrape_url_smart(url: str, firecrawl_key: str | None = None,\n                     timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,\n                     exa_key: str = \"\", tavily_key: str = \"\",\n                     primary: str | None = None,",
+        "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+      }
+    ],
+    "refutations": []
+  }
+]

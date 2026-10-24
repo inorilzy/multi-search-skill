@@ -1,0 +1,57 @@
+{
+  "requirementId": "REQ-25",
+  "title": "fetch目标URL统一执行SSRF输入校验",
+  "document": "docs/glossary.md",
+  "location": "docs/glossary.md:L73",
+  "quote": "目标 URL 统一执行 SSRF 校验。",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'validate_public_http_url|validate_scrape_url|_ensure_public_ip' multi_search_mcp/src/service.py multi_search_mcp/src/support/url_security.py multi_search_mcp/src/scrape/scrape.py",
+      "result": "10 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/scrape/scrape.py:8:    validate_scrape_url,",
+        "multi_search_mcp/src/scrape/scrape.py:135:    safe_url = validate_scrape_url(url, resolver=resolver)",
+        "multi_search_mcp/src/scrape/scrape.py:175:            safe_url = validate_scrape_url(url, resolver=url_resolver)",
+        "multi_search_mcp/src/support/url_security.py:19:def validate_public_http_url(url: str, *, resolver: Resolver | None = None) -> str:",
+        "multi_search_mcp/src/support/url_security.py:23:def validate_scrape_url(url: str, *, resolver: Resolver | None = None) -> str:",
+        "multi_search_mcp/src/support/url_security.py:50:        _ensure_public_ip(direct_ip, label=label, resolved=False)",
+        "multi_search_mcp/src/support/url_security.py:59:        _ensure_public_ip(ip, label=label, resolved=True)",
+        "multi_search_mcp/src/support/url_security.py:87:def _ensure_public_ip(",
+        "multi_search_mcp/src/service.py:40:from .support.url_security import validate_public_http_url",
+        "multi_search_mcp/src/service.py:206:    validate_public_http_url(url, resolver=url_resolver)"
+      ]
+    }
+  ],
+  "reasoning": "fetch无论source_id/url、cache hit/miss均在取正文前校验；通用scrape目标与重写目标也经校验。只接受http/https、禁userinfo、所有DNS答案需public；离线私网/元数据IP/unsafe scheme/凭据URL/混合DNS全部拒绝。此条确认入口校验，不能推导DNS绑定、远端provider重定向或所有外部SDK绝无SSRF。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-25.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L199-L206",
+      "quote": "    if source is None and store and request.source_id:\n        source = SourceRegistry(store).get(request.source_id)\n    if request.source_id and source is None:\n        raise ValueError(\n            \"source_id is unknown or expired; call search_web again before fetch_source\"\n        )\n    url = str(request.url or source[\"url\"])\n    validate_public_http_url(url, resolver=url_resolver)",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/support/url_security.py",
+      "lines": "L31-L60",
+      "quote": "def _validate_url(url: str, *, label: str, resolver: Resolver | None) -> str:\n    candidate = str(url or \"\").strip()\n    try:\n        parts = urllib.parse.urlsplit(candidate)\n    except Exception as exc:\n        raise UrlSecurityError(f\"{label} is not a valid URL: {exc}\") from exc\n\n    scheme = (parts.scheme or \"\").lower()\n    if scheme not in {\"http\", \"https\"}:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/support/url_security.py",
+      "lines": "L100-L117",
+      "quote": "def _unsafe_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:\n    if ip.is_unspecified:\n        return \"unspecified\"\n    if ip.is_loopback:\n        return \"loopback\"\n    if ip.is_link_local:\n        return \"link-local\"\n    if ip.is_multicast:\n        return \"multicast\"",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/scrape/scrape.py",
+      "lines": "L134-L142",
+      "quote": "def _prepare_scrape_target(url: str, *, resolver=None) -> tuple[str, str]:\n    safe_url = validate_scrape_url(url, resolver=resolver)\n    return safe_url, safe_url\n\n\ndef scrape_url_smart(url: str, firecrawl_key: str | None = None,\n                     timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,\n                     exa_key: str = \"\", tavily_key: str = \"\",\n                     primary: str | None = None,",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

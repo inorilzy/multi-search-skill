@@ -1,0 +1,13 @@
+   Compiling multi-search-desktop v0.1.0 (D:\0-code-project\multi-search-skill\desktop\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.25s
+     Running tests\cookies.rs (target\debug\deps\cookies-30986522460f67c3.exe)
+
+running 5 tests
+test confirmation_precedes_io_and_legacy_status_is_read_only ... ok
+test invalid_and_oversized_maps_never_echo_or_persist ... ok
+test import_encrypts_without_touching_source_and_delete_never_falls_back ... ok
+test failed_import_rolls_back_row_and_mode_and_preserves_other_fields ... ok
+test rust_python_cookie_ciphertext_protocol_roundtrip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+

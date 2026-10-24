@@ -1,0 +1,46 @@
+{
+  "requirementId": "REQ-13",
+  "title": "read_source 缓存未命中不会隐式联网",
+  "document": "docs/glossary.md",
+  "location": "docs/glossary.md:L74",
+  "quote": "缺失或过期时明确要求先调用 `fetch_source`，不会隐式联网",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'run_read_source|cached is None|fetch_source first' multi_search_mcp/src/service.py multi_search_mcp/src/state/content_store.py",
+      "result": "5 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/service.py:120:def run_read_source(",
+        "multi_search_mcp/src/service.py:136:    if cached is None:",
+        "multi_search_mcp/src/service.py:138:            \"cached content is missing or expired; call fetch_source first\"",
+        "multi_search_mcp/src/service.py:238:    if cached is None:",
+        "multi_search_mcp/src/state/content_store.py:119:            if cached is None:"
+      ]
+    }
+  ],
+  "reasoning": "read只调用ContentStore.get，get清理过期对象；缺缓存立刻ValueError，没有scraper/HTTP分支。use_state=False明确拒绝。离线探针在所有网络边界禁止条件下同时读成功和未命中错误。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-13.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L120-L171",
+      "quote": "def run_read_source(\n    request: ReadSourceRequest | dict,\n    *,\n    state_store: StateStore | None = None,\n    content_store: ContentStore | None = None,\n) -> dict:\n    \"\"\"Read a bounded slice from ContentStore without accessing the network.\"\"\"\n    if isinstance(request, dict):\n        request = ReadSourceRequest(**request)",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/content_store.py",
+      "lines": "L138-L151",
+      "quote": "    def get(self, source_id: str) -> dict | None:\n        now = self.clock()\n        now_iso = now.isoformat()\n        with self.store.connect() as conn:\n            self._purge_expired_conn(conn, now)\n            row = self._lookup_conn(conn, source_id)\n            if row is None:\n                return None\n            conn.execute(",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/content_store.py",
+      "lines": "L215-L225",
+      "quote": "    def _purge_expired_conn(self, conn, now: datetime) -> int:\n        expired_rows = conn.execute(\n            \"SELECT source_id, content_hash FROM content_sources WHERE expires_at <= ?\",\n            (now.isoformat(),),\n        ).fetchall()\n        if not expired_rows:\n            return 0\n        conn.execute(\"DELETE FROM content_sources WHERE expires_at <= ?\", (now.isoformat(),))\n        for row in expired_rows:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

@@ -1,0 +1,98 @@
+{
+  "requirementId": "REQ-24",
+  "title": "Jina自动exhausted必须先由余额接口确认",
+  "document": "README.md",
+  "location": "README.md:L217",
+  "quote": "只有余额接口确认 `wallet.total_balance <= 0` 时才会自动标记 exhausted。",
+  "force": "current-behavior promise",
+  "verdict": "undecidable",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'wallet|balance|exhausted|mark_config' multi_search_mcp/src/scrape/scrapers/jina.py multi_search_mcp/src/state/key_state.py multi_search_mcp/src/state/keys.py multi_search_mcp/src/state/mark_exhausted.py",
+      "result": "43 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/state/keys.py:65:    \"\"\"Normalize Jina config to list of {key, exhausted}.",
+        "multi_search_mcp/src/state/keys.py:67:    Supports: str, list[str], list[{key, exhausted}], single {key, exhausted}.",
+        "multi_search_mcp/src/state/keys.py:72:        return [{\"key\": value, \"exhausted\": False}] if value else []",
+        "multi_search_mcp/src/state/keys.py:75:        return [{\"key\": k, \"exhausted\": bool(value.get(\"exhausted\"))}] if k else []",
+        "multi_search_mcp/src/state/keys.py:81:                    out.append({\"key\": item, \"exhausted\": False})",
+        "multi_search_mcp/src/state/keys.py:85:                    out.append({\"key\": k, \"exhausted\": bool(item.get(\"exhausted\"))})",
+        "multi_search_mcp/src/state/keys.py:93:    Honors the config-level ``exhausted: true`` flag (a user/operator opt-out),",
+        "multi_search_mcp/src/state/keys.py:98:    return [e[\"key\"] for e in normalize_jina_config(value) if not e[\"exhausted\"]]",
+        "multi_search_mcp/src/state/keys.py:108:    active = sum(1 for e in entries if not e[\"exhausted\"])",
+        "multi_search_mcp/src/state/mark_exhausted.py:1:\"\"\"Statically disable a Jina key by setting ``exhausted: true`` in the config.",
+        "multi_search_mcp/src/state/mark_exhausted.py:16:def _mark_config_exhausted(key_to_mark: str) -> bool:",
+        "multi_search_mcp/src/state/mark_exhausted.py:37:                return {\"key\": val, \"exhausted\": True}",
+        "multi_search_mcp/src/state/mark_exhausted.py:40:            if val.get(\"key\") == key_to_mark and not val.get(\"exhausted\"):",
+        "multi_search_mcp/src/state/mark_exhausted.py:41:                val[\"exhausted\"] = True",
+        "multi_search_mcp/src/state/mark_exhausted.py:61:        print(\"Usage: python -m multi_search_mcp.src.state.mark_exhausted <jina-key>\", file=sys.stderr)",
+        "multi_search_mcp/src/state/mark_exhausted.py:65:        marked = _mark_config_exhausted(args[0].strip())",
+        "multi_search_mcp/src/state/mark_exhausted.py:70:        print(\"Marked Jina key as exhausted.\")",
+        "multi_search_mcp/src/state/key_state.py:16:QUOTA_EXHAUSTED = \"quota_exhausted\"",
+        "multi_search_mcp/src/state/key_state.py:92:        if any(row.get(\"exhausted\") or row.get(\"key_exhausted\") for row in error_rows):",
+        "multi_search_mcp/src/state/key_state.py:93:            return KeyOutcome(False, True, \"quota_exhausted\", message)",
+        "multi_search_mcp/src/state/key_state.py:101:            kind for kind in (\"invalid\", \"quota_exhausted\", \"rate_limit\", \"timeout\", \"network\")",
+        "multi_search_mcp/src/state/key_state.py:149:            exhausted_until = _parse_iso(row.get(\"exhausted_until\"))",
+        "multi_search_mcp/src/state/key_state.py:154:            if status == QUOTA_EXHAUSTED and exhausted_until and exhausted_until > now:",
+        "multi_search_mcp/src/state/key_state.py:192:        exhausted_until = None",
+        "multi_search_mcp/src/state/key_state.py:219:        elif error_type == \"quota_exhausted\":",
+        "multi_search_mcp/src/state/key_state.py:221:            exhausted_until = _iso(_now() + timedelta(hours=24))",
+        "multi_search_mcp/src/state/key_state.py:232:                cooldown_until = {cooldown_sql}, exhausted_until = ?, {strike_assignment}, updated_at = ?",
+        "multi_search_mcp/src/state/key_state.py:238:                exhausted_until, now, provider, candidate.key_id,",
+        "multi_search_mcp/src/state/key_state.py:259:        sql = \"UPDATE key_state SET status = ?, cooldown_until = NULL, exhausted_until = NULL, manually_disabled = 0, invalid_strikes = 0, updated_at = ?\"",
+        "multi_search_mcp/src/state/key_state.py:285:        return \"quota_exhausted\"",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:78:        or \"insufficient balance\" in text",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:79:        or \"insufficient_balance\" in text",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:85:def _jina_quota_exhausted(status_code: int | None, message: str) -> bool:",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:86:    \"\"\"True when the error indicates the *key* is out of quota/balance.\"\"\"",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:90:        or \"insufficient balance\" in text",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:91:        or \"insufficient_balance\" in text",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:129:    key_exhausted = False",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:176:                # blocking balance-API round-trip; the key-state store (and the",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:178:                if key and _jina_quota_exhausted(exc.code, message):",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:179:                    key_exhausted = True",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:194:    if key_exhausted:",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:195:        result[\"key_exhausted\"] = True",
+        "multi_search_mcp/src/scrape/scrapers/jina.py:196:        result[\"exhausted\"] = True"
+      ]
+    }
+  ],
+  "reasoning": "实际HTTP402直接产生result.exhausted/key_exhausted，并被状态manager写为24h quota_exhausted。探针只有1次模拟reader HTTP调用，无余额调用。反证：README紧邻的是配置对象exhausted软删除；该持久配置与SQLite运行态不是同一状态，自动HTTP路径并不调用mark_exhausted写配置。故不能得出永久禁用或业务bug，只能判文档没有明确exhausted指哪一层。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-24.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/scrape/scrapers/jina.py",
+      "lines": "L167-L197",
+      "quote": "        except urllib.error.HTTPError as exc:\n            message = _jina_error_message(exc)\n            last_error = f\"HTTP {exc.code}: {message}\"\n            limited = _jina_rate_limited(exc.code, message)\n            if limited:\n                rate_limited = True\n                if not key:\n                    _record_jina_anonymous_rate_limit()\n                # Classify exhaustion from the error itself instead of issuing a",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/key_state.py",
+      "lines": "L92-L95",
+      "quote": "        if any(row.get(\"exhausted\") or row.get(\"key_exhausted\") for row in error_rows):\n            return KeyOutcome(False, True, \"quota_exhausted\", message)\n        if any(row.get(\"rate_limited\") for row in error_rows):\n            return KeyOutcome(False, True, \"rate_limit\", message)",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/key_state.py",
+      "lines": "L219-L222",
+      "quote": "        elif error_type == \"quota_exhausted\":\n            status = QUOTA_EXHAUSTED\n            exhausted_until = _iso(_now() + timedelta(hours=24))\n            quota_inc = 1",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/keys.py",
+      "lines": "L90-L98",
+      "quote": "def jina_config_keys(value) -> list[str]:\n    \"\"\"Return configured Jina keys that are not statically disabled.\n\n    Honors the config-level ``exhausted: true`` flag (a user/operator opt-out),\n    but performs no shuffling and no runtime exhaustion bookkeeping. Live key\n    health (cooldown / quota / invalid) is owned by ``SQLiteKeyManager`` so that\n    Jina shares the same state-aware LRU rotation as the other providers.\n    \"\"\"\n    return [e[\"key\"] for e in normalize_jina_config(value) if not e[\"exhausted\"]]",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/mark_exhausted.py",
+      "lines": "L32-L52",
+      "quote": "    def _mark(val):\n        nonlocal changed\n        if isinstance(val, str):\n            if val == key_to_mark:\n                changed = True\n                return {\"key\": val, \"exhausted\": True}\n            return val\n        if isinstance(val, dict):\n            if val.get(\"key\") == key_to_mark and not val.get(\"exhausted\"):",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": [],
+  "documentProblem": "exhausted未区分配置软删除与运行期短期配额状态，不能据此裁定HTTP402处理违反配置软删除保证。",
+  "independentReview": "主代理已提出配置/运行态区分反证；最终独立记录由主代理输出，此处未冒称原Workflow双agent复核已完成。"
+}

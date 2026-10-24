@@ -1,0 +1,76 @@
+{
+  "requirementId": "REQ-06",
+  "title": "两级 RRF 无中间截断且最终最多15",
+  "document": "skills/multi-search/references/search.md",
+  "location": "skills/multi-search/references/search.md:L55",
+  "quote": "Expanded queries fuse in two stages:",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'RRF_RANK_CONSTANT|ordered_urls|limit' multi_search_mcp/src/search/candidate.py multi_search_mcp/src/service.py",
+      "result": "35 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/service.py:116:    limit: int = 4_000",
+        "multi_search_mcp/src/service.py:143:    limit = max(1, min(int(request.limit), 8_000))",
+        "multi_search_mcp/src/service.py:159:    end = min(len(body), start + limit)",
+        "multi_search_mcp/src/service.py:441:    limit = SEARCH_RESULT_LIMIT",
+        "multi_search_mcp/src/service.py:443:        query_runs, response_id=response_id, limit=limit,",
+        "multi_search_mcp/src/service.py:448:        [(query_plan.primary_query, primary_rows)], response_id=response_id, limit=1,",
+        "multi_search_mcp/src/service.py:689:        result_limit=SEARCH_RESULT_LIMIT,",
+        "multi_search_mcp/src/service.py:735:        response[\"diagnostics\"][\"legacy_scrape_limits\"] = (",
+        "multi_search_mcp/src/service.py:736:            \"scrape_top and scrape_per_source no longer limit fetching; \"",
+        "multi_search_mcp/src/service.py:778:        \"result\": _limit_scrape_row(result, scrape_chars),",
+        "multi_search_mcp/src/service.py:826:def _limit_scrape_row(row: dict, max_chars: int) -> dict:",
+        "multi_search_mcp/src/service.py:827:    limited = dict(row)",
+        "multi_search_mcp/src/service.py:828:    markdown = limited.get(\"markdown\")",
+        "multi_search_mcp/src/service.py:830:        limited[\"markdown\"] = markdown[:max_chars]",
+        "multi_search_mcp/src/service.py:831:        limited[\"truncated\"] = True",
+        "multi_search_mcp/src/service.py:832:    return limited",
+        "multi_search_mcp/src/service.py:892:            \"https://api.github.com/rate_limit\",",
+        "multi_search_mcp/src/service.py:999:def _compact_text(value: Any, limit: int = 600) -> str:",
+        "multi_search_mcp/src/service.py:1001:    if len(text) <= limit:",
+        "multi_search_mcp/src/service.py:1003:    return text[: max(0, limit - 1)].rstrip() + \"…\"",
+        "multi_search_mcp/src/search/candidate.py:13:RRF_RANK_CONSTANT = 40",
+        "multi_search_mcp/src/search/candidate.py:80:def _compact(value: Any, limit: int = SEARCH_HIT_CONTENT_CHARS) -> str:",
+        "multi_search_mcp/src/search/candidate.py:82:    if len(text) <= limit:",
+        "multi_search_mcp/src/search/candidate.py:84:    return text[: max(0, limit - 1)].rstrip() + \"…\"",
+        "multi_search_mcp/src/search/candidate.py:226:                1.0 / (RRF_RANK_CONSTANT + int(row[\"provider_rank\"]))",
+        "multi_search_mcp/src/search/candidate.py:228:    ordered_urls = sorted(by_url, key=lambda url: (-scores[url], url))",
+        "multi_search_mcp/src/search/candidate.py:229:    return by_url, scores, ordered_urls",
+        "multi_search_mcp/src/search/candidate.py:236:    limit: int = SEARCH_RESULT_LIMIT,",
+        "multi_search_mcp/src/search/candidate.py:253:        _query, by_url, provider_scores, ordered_urls = per_query[0]",
+        "multi_search_mcp/src/search/candidate.py:261:            for url in ordered_urls[: max(0, int(limit))]",
+        "multi_search_mcp/src/search/candidate.py:267:    for query, by_url, _provider_scores, ordered_urls in per_query:",
+        "multi_search_mcp/src/search/candidate.py:268:        for rank, canonical_url in enumerate(ordered_urls, start=1):",
+        "multi_search_mcp/src/search/candidate.py:271:            contribution = weight / (RRF_RANK_CONSTANT + rank)",
+        "multi_search_mcp/src/search/candidate.py:278:    ordered_urls = sorted(contributions, key=lambda url: (-scores[url], url))",
+        "multi_search_mcp/src/search/candidate.py:287:        for url in ordered_urls[: max(0, int(limit))]"
+      ]
+    }
+  ],
+  "reasoning": "每 query _fuse_one_query 返回全部 ordered_urls；多query对全部列表 enumerate、默认权重1，再只在最终列表切片。单query也只在最终切片。离线例中首query rank20因第二query支持进入第一名。原生score仅附在diagnostic provider_ranks，不参与加分。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-06.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/search/candidate.py",
+      "lines": "L216-L229",
+      "quote": "def _fuse_one_query(\n    query: str, rows: list[dict]\n) -> tuple[dict[str, list[tuple[str, dict]]], dict[str, float], list[str]]:\n    provider_rows = _candidate_rows(query, rows)\n    by_url: dict[str, list[tuple[str, dict]]] = {}\n    scores: dict[str, float] = {}\n    for provider in sorted(provider_rows):\n        for canonical_url, row in provider_rows[provider].items():\n            by_url.setdefault(canonical_url, []).append((provider, row))",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/search/candidate.py",
+      "lines": "L249-L287",
+      "quote": "    per_query = [\n        (query, *_fuse_one_query(query, rows)) for query, rows in query_runs\n    ]\n    if len(per_query) == 1:\n        _query, by_url, provider_scores, ordered_urls = per_query[0]\n        return [\n            _public_hit(\n                response_id=response_id,\n                canonical_url=url,",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L440-L445",
+      "quote": "    response_id = f\"resp_{uuid.uuid4().hex}\"\n    limit = SEARCH_RESULT_LIMIT\n    hits = fuse_search_results(\n        query_runs, response_id=response_id, limit=limit,\n        primary_query=query_plan.primary_query, query_policy=query_policy,\n    )",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}
