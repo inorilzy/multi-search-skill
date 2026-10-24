@@ -3,7 +3,7 @@ import threading
 import time
 
 from multi_search_mcp.src.search.search_runner import ProviderSpec
-from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+from multi_search_mcp.src.service import SearchWebRequest, run_search_candidates
 
 
 def stable_hits(response):
@@ -25,7 +25,7 @@ class QueryIdentityTests(unittest.TestCase):
 
         started = time.monotonic()
         try:
-            response = _run_search_candidates(
+            response = run_search_candidates(
                 SearchWebRequest(query="primary", expand=["a", "b", "c", "d", "e"],
                                  sources=["brave"], timeout=1, use_state=False),
                 providers={"brave": ProviderSpec("brave", "brave", provider)},
@@ -52,7 +52,7 @@ class QueryIdentityTests(unittest.TestCase):
                 "source": "brave", "title": "Second", "url": "https://example.com/second",
             }]
 
-        response = _run_search_candidates(
+        response = run_search_candidates(
             SearchWebRequest(query=query, expand=None if expand is None else list(expand), sources=["brave"],
                              count=count, use_state=False),
             providers={"brave": ProviderSpec("brave", "brave", provider)},
@@ -154,7 +154,7 @@ class QueryIdentityTests(unittest.TestCase):
                 return [shared, {"source": "brave", "error": "429 quota exceeded"}]
             return [shared, dict(shared), {"source": "brave", "error": "upstream failed"}]
 
-        response = _run_search_candidates(
+        response = run_search_candidates(
             SearchWebRequest(query="primary", expand=["primary", "angle", "angle"],
                              sources=["brave"], use_state=False),
             providers={"brave": ProviderSpec("brave", "brave", provider, key_name="brave")},

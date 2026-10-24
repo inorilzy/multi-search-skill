@@ -27,7 +27,7 @@ class ExpandSemanticsTests(unittest.TestCase):
         kwargs = {"sources": ["hackernews"], "use_state": False}
         if expand is not mock.sentinel.omitted:
             kwargs["expand"] = expand
-        with mock.patch.object(service, "_load_config_safe", return_value=config), \
+        with mock.patch("multi_search_mcp.src.state.runtime.load_config_safe", return_value=config), \
                 mock.patch.object(registry, "build_provider_registry", return_value={
                     "hackernews": ProviderSpec("hackernews", "hackernews", provider),
                 }):
@@ -65,10 +65,10 @@ class ExpandSemanticsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = StateStore(Path(directory) / "state.sqlite")
             stdout, stderr = io.StringIO(), io.StringIO()
-            with mock.patch.object(service, "_load_config_safe", return_value={
+            with mock.patch("multi_search_mcp.src.state.runtime.load_config_safe", return_value={
                 "expand": ["configured extra"],
-            }), mock.patch.object(service, "load_keys", return_value={}), \
-                    mock.patch.object(service, "StateStore", return_value=store), \
+            }), mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}), \
+                    mock.patch("multi_search_mcp.src.search_web.StateStore", return_value=store), \
                     mock.patch.object(registry, "build_provider_registry", return_value={
                         "hackernews": ProviderSpec("hackernews", "hackernews", provider),
                     }):

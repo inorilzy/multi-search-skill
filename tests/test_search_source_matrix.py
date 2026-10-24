@@ -109,7 +109,7 @@ class SearchSourceMatrixTests(unittest.TestCase):
             "socket.getaddrinfo",
             side_effect=AssertionError("the matrix fixture must not resolve any host"),
         ), mock.patch(
-            "multi_search_mcp.src.service.scrape_url_smart",
+            "multi_search_mcp.src.scrape.service.scrape_url_smart",
             side_effect=AssertionError("the matrix fixture must not scrape the internet"),
         ):
             response = _search(

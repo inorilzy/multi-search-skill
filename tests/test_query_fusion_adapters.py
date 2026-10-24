@@ -36,12 +36,13 @@ class QueryFusionAdapterTests(unittest.TestCase):
                              "url": "https://example.test/" + name}]
 
                 with mock.patch.dict(os.environ, {"MULTI_SEARCH_CONFIG": str(config_path)}), \
-                        mock.patch.object(service, "load_keys", return_value={}), \
-                        mock.patch.object(service, "StateStore", return_value=store), \
+                        mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}), \
+                        mock.patch("multi_search_mcp.src.search_web.StateStore", return_value=store), \
+                        mock.patch("multi_search_mcp.src.read.StateStore", return_value=store), \
                         mock.patch.object(registry, "build_provider_registry", return_value={
                             "brave": ProviderSpec("brave", "brave", provider)}), \
-                        mock.patch.object(service, "validate_public_http_url", return_value=None), \
-                        mock.patch.object(service, "scrape_url_smart", side_effect=lambda url, **_: {"url": url, "markdown": "Attribution: original release. " * 20, "via": "fake"}):
+                        mock.patch("multi_search_mcp.src.scrape.fetch.validate_public_http_url", return_value=None), \
+                        mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", side_effect=lambda url, **_: {"url": url, "markdown": "Attribution: original release. " * 20, "via": "fake"}):
                     for variants in (["angle", "original", "angle"], []):
                         mcp_result = tools.search_web_tool("original", sources=["brave"], count=1, expand=variants)
                         output, errors = io.StringIO(), io.StringIO()

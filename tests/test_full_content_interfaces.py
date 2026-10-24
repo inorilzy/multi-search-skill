@@ -17,11 +17,9 @@ class FullContentInterfaceTests(unittest.TestCase):
     def setUp(self):
         stack = ExitStack()
         self.addCleanup(stack.close)
-        stack.enter_context(mock.patch.object(
-            service, "load_keys", side_effect=AssertionError("unexpected key loading"),
+        stack.enter_context(mock.patch("multi_search_mcp.src.state.runtime.load_keys", side_effect=AssertionError("unexpected key loading"),
         ))
-        stack.enter_context(mock.patch.object(
-            service, "load_config", side_effect=AssertionError("unexpected config loading"),
+        stack.enter_context(mock.patch("multi_search_mcp.src.state.runtime.load_config", side_effect=AssertionError("unexpected config loading"),
         ))
         stack.enter_context(mock.patch(
             "socket.getaddrinfo", side_effect=AssertionError("unexpected DNS"),

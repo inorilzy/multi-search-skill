@@ -26,7 +26,7 @@ class RuntimeSeamTests(unittest.TestCase):
         self.assertEqual(keys["exa"], "env-exa")
 
     def test_list_sources_skips_state_store_when_status_flags_are_disabled(self):
-        with mock.patch("multi_search_mcp.src.service.StateStore", side_effect=AssertionError("StateStore should not be constructed")):
+        with mock.patch("multi_search_mcp.src.diagnostics.StateStore", side_effect=AssertionError("StateStore should not be constructed")):
             data = list_sources(include_key_status=False, include_scraper_stats=False)
 
         self.assertIn("default", data["routes"])
@@ -39,8 +39,8 @@ class RuntimeSeamTests(unittest.TestCase):
         fake_manager = mock.Mock()
         fake_manager.status_rows.return_value = [{"provider": "exa"}]
 
-        with mock.patch("multi_search_mcp.src.service.StateStore", return_value=fake_store) as store_cls, \
-             mock.patch("multi_search_mcp.src.service.SQLiteKeyManager", return_value=fake_manager):
+        with mock.patch("multi_search_mcp.src.diagnostics.StateStore", return_value=fake_store) as store_cls, \
+             mock.patch("multi_search_mcp.src.diagnostics.SQLiteKeyManager", return_value=fake_manager):
             data = list_sources(include_key_status=True, include_scraper_stats=False)
 
         store_cls.assert_called_once_with()

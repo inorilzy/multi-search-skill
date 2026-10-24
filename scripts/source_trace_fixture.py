@@ -19,9 +19,8 @@ sys.path.insert(0, str(ROOT))
 
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.search.query_policy import QueryFusionPolicy
-from multi_search_mcp.src.search.resolve import resolve_active_sources, resolve_search_plan
+from multi_search_mcp.src.search.resolve import SearchPlanRequest, resolve_active_sources, resolve_search_plan
 from multi_search_mcp.src.service import (
-    MultiSearchRequest,
     SearchWebRequest,
     run_fetch_source,
     run_read_source,
@@ -90,10 +89,10 @@ def main() -> None:
                 raise ValueError("search count differs from the frozen display limit")
             arguments["count"] = frozen["limit"]
             request = SearchWebRequest(**arguments)
-            plan = resolve_search_plan(MultiSearchRequest(
-                query=request.query, route=request.route, count=request.count,
+            plan = resolve_search_plan(SearchPlanRequest(
+                route=request.route, count=request.count,
                 sources=request.sources, timeout=request.timeout, scrape_top=0,
-                output="json", config_path=request.config_path, use_state=request.use_state,
+                output="json",
             ), config)
             _selected, active = resolve_active_sources(plan.route, plan.sources, plan.disabled_sources)
             retrieval_config = {

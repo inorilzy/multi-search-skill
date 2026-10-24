@@ -105,7 +105,7 @@ class FingerprintStorageTests(unittest.TestCase):
         for candidate in manager.candidates("exa", list(KEYS)):
             manager.record_use("exa", candidate)
         rows = manager.status_rows("exa")
-        summary = service._summarize_key_status(rows)
+        summary = service.summarize_key_status(rows)
         for payload in (rows, summary):
             serialized = json.dumps(payload)
             for key in KEYS:

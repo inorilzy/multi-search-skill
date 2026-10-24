@@ -9,7 +9,7 @@ flowchart TB
     A["用户 / AI Agent<br/>Skill：工具选择与检索策略"]
     A --> M["MCP 入口 · stdio"]
     A --> L["CLI 入口 · multi-search"]
-    M --> C["共享 Core · service.py<br/>搜索 / 抓取 / 读取 / 诊断"]
+    M --> C["共享 Core<br/>service.py facade · search_web · fetch · read · diagnostics"]
     L --> C
 
     CFG["行为配置 + 凭据<br/>配置文件 / 环境变量 / keys 文件"] -.-> C
@@ -51,6 +51,6 @@ flowchart TB
 ## 代码入口
 
 - [Skill](../skills/multi-search/SKILL.md)、[MCP](../multi_search_mcp/server.py)、[CLI](../multi_search_mcp/cli.py)
-- [共享 Core](../multi_search_mcp/src/service.py)、[搜索源注册](../multi_search_mcp/src/search/registry.py)
+- [共享 Core facade](../multi_search_mcp/src/service.py)（[候选搜索](../multi_search_mcp/src/search/candidates.py)、[搜索与抓取编排](../multi_search_mcp/src/search_web.py)、[抓取](../multi_search_mcp/src/scrape/fetch.py)、[读取](../multi_search_mcp/src/read.py)、[诊断](../multi_search_mcp/src/diagnostics.py)）、[搜索源注册](../multi_search_mcp/src/search/registry.py)
 - [正文域名分派](../multi_search_mcp/src/scrape/scrape.py)、[Reddit 适配器](../multi_search_mcp/src/scrape/scrapers/reddit.py)
 - [SQLite 状态](../multi_search_mcp/src/state/state_store.py)

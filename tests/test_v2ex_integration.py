@@ -19,7 +19,7 @@ from multi_search_mcp.src.service import (
     FetchSourceRequest,
     ReadSourceRequest,
     SearchWebRequest,
-    _run_search_candidates,
+    run_search_candidates,
     list_sources,
     run_fetch_source,
     run_read_source,
@@ -135,11 +135,11 @@ class SOV2EXIntegrationTests(unittest.TestCase):
             "multi_search_mcp.src.search.searchers.sov2ex.urlopen_retry",
             return_value=api_response(hits),
         ), mock.patch(
-            "multi_search_mcp.src.service.load_keys",
+            "multi_search_mcp.src.state.runtime.load_keys",
             side_effect=AssertionError("test must not read user keys"),
         ):
             store = StateStore(Path(temp) / "state.sqlite")
-            response = _run_search_candidates(
+            response = run_search_candidates(
                 SearchWebRequest(query="python", sources=["sov2ex"], count=20),
                 keys={}, config={}, state_store=store,
                 query_runs_observer=query_runs.extend,
@@ -172,7 +172,7 @@ class SOV2EXIntegrationTests(unittest.TestCase):
             "multi_search_mcp.src.search.searchers.sov2ex.urlopen_retry",
             return_value=api_response(hits),
         ) as http, mock.patch(
-            "multi_search_mcp.src.service.load_keys",
+            "multi_search_mcp.src.state.runtime.load_keys",
             side_effect=AssertionError("test must not read user keys"),
         ), mock.patch(
             "multi_search_mcp.src.search.registry.search_firecrawl",

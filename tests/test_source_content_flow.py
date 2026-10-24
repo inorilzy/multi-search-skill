@@ -16,7 +16,7 @@ class FetchSourceCoreTests(unittest.TestCase):
             FetchSourceRequest,
             SearchWebRequest,
             run_fetch_source,
-            _run_search_candidates,
+            run_search_candidates,
         )
 
         provider = ProviderSpec(
@@ -44,7 +44,7 @@ class FetchSourceCoreTests(unittest.TestCase):
 
         with TemporaryDirectory() as tmp:
             store = StateStore(Path(tmp) / "state.sqlite")
-            search = _run_search_candidates(
+            search = run_search_candidates(
                 SearchWebRequest(
                     query="evidence",
                     sources=["brave"],
@@ -136,7 +136,7 @@ class FetchSourceCoreTests(unittest.TestCase):
             return {"url": url, "markdown": "configured body", "via": "fake"}
 
         with TemporaryDirectory() as tmp, mock.patch(
-            "multi_search_mcp.src.service.time.monotonic", side_effect=lambda: now[0],
+            "multi_search_mcp.src.scrape.fetch.time.monotonic", side_effect=lambda: now[0],
         ):
             config_path = Path(tmp) / "config.json"
             config_path.write_text('{"scrape_timeout": 7}', encoding="utf-8")
@@ -160,7 +160,7 @@ class FetchSourceCoreTests(unittest.TestCase):
             FetchSourceRequest,
             SearchWebRequest,
             run_fetch_source,
-            _run_search_candidates,
+            run_search_candidates,
         )
 
         provider = ProviderSpec(
@@ -180,7 +180,7 @@ class FetchSourceCoreTests(unittest.TestCase):
 
         with TemporaryDirectory() as tmp:
             store = StateStore(Path(tmp) / "state.sqlite")
-            search = _run_search_candidates(
+            search = run_search_candidates(
                 SearchWebRequest(
                     query="prefetched",
                     sources=["tavily"],
@@ -224,8 +224,8 @@ class FetchSourceCoreTests(unittest.TestCase):
         with mock.patch(
             "multi_search_mcp.src.search.registry.build_provider_registry",
             return_value={"tavily": provider},
-        ), mock.patch("multi_search_mcp.src.service.load_keys", return_value={}), \
-                mock.patch("multi_search_mcp.src.service.validate_public_http_url", return_value=None):
+        ), mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}), \
+                mock.patch("multi_search_mcp.src.scrape.fetch.validate_public_http_url", return_value=None):
             response = run_multi_search(
                 MultiSearchRequest(
                     query="prefetched",
@@ -252,7 +252,7 @@ class FetchSourceCoreTests(unittest.TestCase):
             SearchWebRequest,
             run_fetch_source,
             run_read_source,
-            _run_search_candidates,
+            run_search_candidates,
         )
 
         provider = ProviderSpec(
@@ -282,7 +282,7 @@ class FetchSourceCoreTests(unittest.TestCase):
             PROVIDER_CAPABILITIES, {"brave": no_body}
         ):
             store = StateStore(Path(tmp) / "state.sqlite")
-            search = _run_search_candidates(
+            search = run_search_candidates(
                 SearchWebRequest(
                     query="no retention", sources=["brave"], count=1
                 ),
@@ -536,13 +536,16 @@ class SourceContentToolTests(unittest.TestCase):
             )
             with (
                 mock.patch(
-                    "multi_search_mcp.src.service.StateStore", return_value=store
+                    "multi_search_mcp.src.scrape.fetch.StateStore", return_value=store
                 ),
                 mock.patch(
-                    "multi_search_mcp.src.service.load_keys", return_value={}
+                    "multi_search_mcp.src.read.StateStore", return_value=store
                 ),
                 mock.patch(
-                    "multi_search_mcp.src.service.scrape_url_smart",
+                    "multi_search_mcp.src.state.runtime.load_keys", return_value={}
+                ),
+                mock.patch(
+                    "multi_search_mcp.src.scrape.service.scrape_url_smart",
                     return_value={
                         "url": "https://93.184.216.34/tool-source",
                         "markdown": "tool needle body",

@@ -3,7 +3,7 @@ import threading
 from unittest import mock
 
 from multi_search_mcp.src.search.search_runner import ProviderSpec
-from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+from multi_search_mcp.src.service import SearchWebRequest, run_search_candidates
 
 
 EXPERIMENT = {"mode": "weighted", "primary_weight": 1.0, "variant_budget": 0.9}
@@ -22,7 +22,7 @@ def search(rows, expand, *, policy=EXPERIMENT, count=10):
             raise value
         return value
 
-    return _run_search_candidates(
+    return run_search_candidates(
         SearchWebRequest(query="primary", expand=expand, count=count,
                          sources=["brave"], use_state=False),
         providers={"brave": ProviderSpec("brave", "brave", call)},
@@ -115,7 +115,7 @@ class QueryWeightingTests(unittest.TestCase):
             with self.subTest(policy=policy):
                 provider = mock.Mock(return_value=[hit("found")])
                 with self.assertRaises(ConfigError):
-                    _run_search_candidates(
+                    run_search_candidates(
                         {"query": "primary", "expand": ["angle"], "sources": ["brave"], "use_state": False},
                         providers={"brave": ProviderSpec("brave", "brave", provider)},
                         keys={}, config={"query_fusion": policy},
@@ -137,7 +137,7 @@ class QueryWeightingTests(unittest.TestCase):
             return [hit(query)]
 
         try:
-            response = _run_search_candidates(
+            response = run_search_candidates(
                 {"query": "primary", "expand": ["angle"], "sources": ["brave"],
                  "timeout": 1, "use_state": False},
                 providers={"brave": ProviderSpec("brave", "brave", provider)},

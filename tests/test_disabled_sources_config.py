@@ -84,7 +84,7 @@ class DisabledSourcesConfigTests(unittest.TestCase):
             "socket.getaddrinfo",
             side_effect=AssertionError("the disabled-sources fixture must not resolve any host"),
         ), mock.patch(
-            "multi_search_mcp.src.service.scrape_url_smart",
+            "multi_search_mcp.src.scrape.service.scrape_url_smart",
             side_effect=AssertionError("the disabled-sources fixture must not scrape the internet"),
         ):
             response = self.search(config, sources=["baidu"])

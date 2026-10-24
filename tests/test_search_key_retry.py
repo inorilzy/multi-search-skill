@@ -15,7 +15,7 @@ from multi_search_mcp.src.search.search_runner import (
     run_keyed_source,
 )
 from multi_search_mcp.src.search.searchers import serpapi
-from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+from multi_search_mcp.src.service import SearchWebRequest, run_search_candidates
 from multi_search_mcp.src.state.key_state import BasicKeyManager, SQLiteKeyManager
 from multi_search_mcp.src.state.state_store import StateStore
 
@@ -202,7 +202,7 @@ class SearchKeyRetryTests(unittest.TestCase):
             use_state=False,
         )
         with mock.patch.object(serpapi, "urlopen_retry", side_effect=http):
-            response = _run_search_candidates(
+            response = run_search_candidates(
                 request,
                 keys={"serpapi": ["fixture-serp-1", "fixture-serp-2"]},
                 config={},

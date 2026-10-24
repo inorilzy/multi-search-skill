@@ -35,8 +35,7 @@ class GitHubKeyPoolTests(unittest.TestCase):
         self.store = StateStore(temp / "state.sqlite")
         self.manager = SQLiteKeyManager(self.store)
         self.environ = {}
-        self.stack.enter_context(mock.patch.object(
-            service, "load_keys",
+        self.stack.enter_context(mock.patch("multi_search_mcp.src.state.runtime.load_keys",
             side_effect=lambda: load_keys(self.keys_path, environ=self.environ),
         ))
         self.stack.enter_context(mock.patch(
@@ -106,7 +105,7 @@ class GitHubKeyPoolTests(unittest.TestCase):
                     HTTPError("https://api.github.com/search/repositories", status, "fixture failure", {}, None),
                     BytesIO(json.dumps(PAYLOAD).encode()),
                 ]
-                with mock.patch.object(service, "SQLiteKeyManager", side_effect=AssertionError("unexpected state")):
+                with mock.patch("multi_search_mcp.src.search.candidates.SQLiteKeyManager", side_effect=AssertionError("unexpected state")):
                     response = self._search({"github": ["fixture-token-one", "fixture-token-two", "fixture-token-three"]})
                 self.assertEqual(self._authorizations(), ["Bearer fixture-token-one", "Bearer fixture-token-two"])
                 self.assertEqual(response["errors"], [])
@@ -241,10 +240,10 @@ class GitHubKeyPoolTests(unittest.TestCase):
         self._search({"github": "fixture-token-one"}, use_state=True)
         expected = self.manager.status_rows("github")
         self.assertEqual(len(expected), 1)
-        with mock.patch.object(service, "StateStore", return_value=self.store), \
-             mock.patch.object(service, "load_config", return_value={}), \
-             mock.patch.object(
-                 service, "resolve_config_path_source", return_value=(self.keys_path.parent / "config.json", "user")
+        with mock.patch("multi_search_mcp.src.diagnostics.StateStore", return_value=self.store), \
+             mock.patch("multi_search_mcp.src.diagnostics.load_config", return_value={}), \
+             mock.patch(
+                 "multi_search_mcp.src.diagnostics.resolve_config_path_source", return_value=(self.keys_path.parent / "config.json", "user")
              ), \
              mock.patch.object(tools, "StateStore", return_value=self.store), \
              mock.patch.object(cli, "StateStore", return_value=self.store):

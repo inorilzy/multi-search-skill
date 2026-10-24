@@ -24,7 +24,7 @@ class ContentFlowRegressionTests(unittest.TestCase):
     def search(self, row):
         name = row["source"]
         provider = ProviderSpec(name=name, public_name=name, call=lambda *_args: [row])
-        return service._run_search_candidates(
+        return service.run_search_candidates(
             service.SearchWebRequest("evidence", sources=[name], count=1),
             providers={name: provider}, keys={}, config={}, state_store=self.store,
         )["results"][0]

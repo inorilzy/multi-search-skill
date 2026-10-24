@@ -304,9 +304,9 @@ class SearchWebCoreTests(unittest.TestCase):
         }
 
     def test_core_returns_compact_ranked_candidates_without_scraping(self):
-        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+        from multi_search_mcp.src.service import SearchWebRequest, run_search_candidates
 
-        response = _run_search_candidates(
+        response = run_search_candidates(
             SearchWebRequest(
                 query="compact search",
                 sources=["brave", "tavily"],
@@ -337,13 +337,13 @@ class SearchWebCoreTests(unittest.TestCase):
         self.assertNotIn("scraped_content", response["results"][0])
 
     def test_core_registers_source_ids_in_the_shared_state_store(self):
-        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+        from multi_search_mcp.src.service import SearchWebRequest, run_search_candidates
         from multi_search_mcp.src.state.source_registry import SourceRegistry
         from multi_search_mcp.src.state.state_store import StateStore
 
         with TemporaryDirectory() as tmp:
             store = StateStore(Path(tmp) / "state.sqlite")
-            response = _run_search_candidates(
+            response = run_search_candidates(
                 SearchWebRequest(
                     query="registered search",
                     sources=["brave", "tavily"],
@@ -363,7 +363,7 @@ class SearchWebCoreTests(unittest.TestCase):
         self.assertEqual(saved["providers"], ["brave", "tavily"])
 
     def test_expanded_search_keeps_partial_provider_failures_in_diagnostics(self):
-        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+        from multi_search_mcp.src.service import SearchWebRequest, run_search_candidates
 
         def brave(query, _config, _context, _key):
             suffix = "main" if query == "main angle" else "expanded"
@@ -390,7 +390,7 @@ class SearchWebCoreTests(unittest.TestCase):
                 }
             ]
 
-        response = _run_search_candidates(
+        response = run_search_candidates(
             SearchWebRequest(
                 query="main angle",
                 expand=["expanded angle"],
@@ -427,7 +427,7 @@ class SearchWebCoreTests(unittest.TestCase):
         self.assertEqual(len(response["results"]), 2)
 
     def test_expanded_search_reports_query_failures_when_an_angle_has_no_candidates(self):
-        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+        from multi_search_mcp.src.service import SearchWebRequest, run_search_candidates
 
         def brave(query, _config, _context, _key):
             if query == "main angle":
@@ -455,7 +455,7 @@ class SearchWebCoreTests(unittest.TestCase):
                 }
             ]
 
-        response = _run_search_candidates(
+        response = run_search_candidates(
             SearchWebRequest(
                 query="main angle",
                 expand=["expanded angle"],
@@ -488,12 +488,12 @@ class SearchWebCoreTests(unittest.TestCase):
         self.assertEqual(len(response["results"]), 1)
 
     def test_expanded_search_reports_all_failed_queries_separately(self):
-        from multi_search_mcp.src.service import SearchWebRequest, _run_search_candidates
+        from multi_search_mcp.src.service import SearchWebRequest, run_search_candidates
 
         def failing(_query, _config, _context, _key):
             raise RuntimeError("provider unavailable")
 
-        response = _run_search_candidates(
+        response = run_search_candidates(
             SearchWebRequest(
                 query="main angle",
                 expand=["expanded angle"],
@@ -560,7 +560,7 @@ class SearchWebToolTests(unittest.TestCase):
         self.assertIsNone(captured["request"].timeout)
 
     def test_mcp_tool_is_a_thin_contract_over_candidate_core(self):
-        from multi_search_mcp.src.service import _run_search_candidates
+        from multi_search_mcp.src.service import run_search_candidates
         from multi_search_mcp.tools import search_web_tool
 
         provider = ProviderSpec(
@@ -579,7 +579,7 @@ class SearchWebToolTests(unittest.TestCase):
         # Isolate argument forwarding from the public search body-fetch stage.
         with mock.patch(
             "multi_search_mcp.tools.run_search_web",
-            side_effect=lambda request: _run_search_candidates(
+            side_effect=lambda request: run_search_candidates(
                 request, providers={"brave": provider}, keys={}, config={},
             ),
         ):
