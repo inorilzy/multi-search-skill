@@ -29,10 +29,14 @@ class MigrationError(ValueError):
 
 
 def mask(key: str) -> str:
-    """Show only a short prefix and suffix. Keys shorter than 12 characters show nothing."""
-    if len(key) < 12:
-        return "***"
-    return f"{key[:5]}…{key[-4:]}"
+    """Irreversible preview identifier; contains no key characters at any length.
+
+    Same ``sha256:<8 hex>`` form as ``key_state.key_fingerprint``, so a migrated key
+    can be matched against ``keys status`` output without revealing any plaintext.
+    """
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(str(key).encode("utf-8")).hexdigest()[:8]
 
 
 def _read_keys_file(path: Path) -> dict[str, Any]:

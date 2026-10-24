@@ -573,9 +573,9 @@ mod migration_tests {
 
     #[test]
     fn plan_parse_keeps_preview_masked_and_ignores_unknown_fields() {
-        let json = r#"{"plan_token":"abc","items":[{"provider":"tavily","action":"migrate","preview":"synth…0001","extra":1}],"migratable":["tavily"],"skipped":[]}"#;
+        let json = r#"{"plan_token":"abc","items":[{"provider":"tavily","action":"migrate","preview":"sha256:1a2b3c4d","extra":1}],"migratable":["tavily"],"skipped":[]}"#;
         let plan: MigrationPlan = serde_json::from_str(json).unwrap();
-        assert_eq!(plan.items[0].preview, "synth…0001");
+        assert_eq!(plan.items[0].preview, "sha256:1a2b3c4d");
         assert_eq!(plan.migratable, vec!["tavily".to_string()]);
     }
 }

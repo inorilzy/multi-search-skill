@@ -169,6 +169,7 @@ class StateStore:
                 "last_used_at": "TEXT",
                 "invalid_strikes": "INTEGER NOT NULL DEFAULT 0",
             })
+            self._scrub_key_fingerprints(conn)
             self._ensure_columns(conn, "content_sources", {
                 "canonical_url": "TEXT NOT NULL DEFAULT ''",
                 "cache_scope": "TEXT NOT NULL DEFAULT ''",
@@ -177,6 +178,23 @@ class StateStore:
                 "CREATE INDEX IF NOT EXISTS idx_content_sources_url_scope "
                 "ON content_sources (canonical_url, cache_scope, expires_at)"
             )
+
+    @staticmethod
+    def _scrub_key_fingerprints(conn: sqlite3.Connection) -> None:
+        """Rewrite legacy plaintext fingerprints (``前4...后4 (sha8)``) in place.
+
+        ``key_id`` is ``<provider>:<sha256(key)[:16]>`` and the current fingerprint is
+        ``sha256:<sha256(key)[:8]>``, so the new value is derived from ``key_id``
+        without the key itself. Idempotent: already-current rows are untouched.
+        """
+        conn.execute(
+            """
+            UPDATE key_state
+            SET key_fingerprint = 'sha256:' || substr(key_id, -16, 8)
+            WHERE length(key_id) >= 17
+              AND key_fingerprint IS NOT 'sha256:' || substr(key_id, -16, 8)
+            """
+        )
 
     def _ensure_columns(self, conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
         existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
