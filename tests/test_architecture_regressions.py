@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 
 from multi_search_mcp.src import service
 from multi_search_mcp.src.search.search_runner import ProviderSpec
-from multi_search_mcp.src.state.content_store import ContentStore, ContentStoreError, DEFAULT_MAX_OBJECT_BYTES
+from multi_search_mcp.src.state.content_store import ContentStore, DEFAULT_MAX_OBJECT_BYTES
 from multi_search_mcp.src.state.source_registry import SourceRegistry
 from multi_search_mcp.src.state.state_store import StateStore
 
@@ -62,11 +62,16 @@ class ContentFlowRegressionTests(unittest.TestCase):
         def scraper(url, **_kwargs):
             return {"url": url, "markdown": "x" * (DEFAULT_MAX_OBJECT_BYTES + 1), "via": "fake"}
 
-        with self.assertRaises(ContentStoreError):
-            service.run_fetch_source(
-                service.FetchSourceRequest(url="https://evidence.example/large", max_chars=10),
-                scraper=scraper, **self.fetch_options,
-            )
+        # A short preview must not let an oversize body into the cache; the
+        # preview is still returned, explicitly marked as not persisted.
+        result = service.run_fetch_source(
+            service.FetchSourceRequest(url="https://evidence.example/large", max_chars=10),
+            scraper=scraper, **self.fetch_options,
+        )
+        self.assertEqual(result["body"], "x" * 10)
+        self.assertTrue(result["truncated"])
+        self.assertFalse(result["persisted"])
+        self.assertEqual(result["persist_error"]["reason"], "content_too_large")
         self.assertEqual(self.store.rows("SELECT * FROM content_objects"), [])
 
     def test_backend_acquisition_limit_is_independent_of_preview_size(self):

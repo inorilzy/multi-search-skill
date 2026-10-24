@@ -39,7 +39,13 @@ from .search.resolve import (
 )
 from .support.secrets import scrub_secrets
 from .support.url_security import validate_public_http_url
-from .state.content_store import ContentStore, ContentStoreError, DEFAULT_MAX_OBJECT_BYTES
+from .state.content_store import (
+    ContentStore,
+    ContentStoreError,
+    ContentTooLargeError,
+    DEFAULT_MAX_OBJECT_BYTES,
+    max_acquisition_chars,
+)
 from .state.site_memory import SiteScraperMemory
 from .state.source_registry import SourceRegistry
 from .state.state_store import StateStore
@@ -298,8 +304,11 @@ def run_fetch_source(
             ScrapeRequest(
                 url=url,
                 backends=request.backends,
-                # Preview size must not truncate the cached acquisition.
-                scrape_chars=DEFAULT_MAX_OBJECT_BYTES,
+                # Preview size must not truncate the cached acquisition. The
+                # character bound is derived from the cache's byte bound: no body
+                # longer than this can ever be stored, and the exact UTF-8 size
+                # is checked when persisting.
+                scrape_chars=max_acquisition_chars(DEFAULT_MAX_OBJECT_BYTES),
                 timeout=request.timeout,
                 output="json",
                 use_state=request.use_state,
@@ -317,16 +326,30 @@ def run_fetch_source(
     body = str(result.get("markdown") or "")
     if not body:
         raise ValueError("fetch_source returned empty body")
-    stored = (
-        content_store.put(
-            source_id, body,
-            canonical_url=canonicalize_url(url) if cache_scope else "",
-            cache_scope=cache_scope,
-        )
-        if content_store and source_id and retention.persist_body
-        else None
-    )
-    return {
+    stored = None
+    persist_error = None
+    if content_store and source_id and retention.persist_body:
+        try:
+            stored = content_store.put(
+                source_id, body,
+                canonical_url=canonicalize_url(url) if cache_scope else "",
+                cache_scope=cache_scope,
+            )
+        except ContentTooLargeError as exc:
+            # The cache limit is UTF-8 bytes, so a large CJK page can exceed it
+            # well below the character acquisition limit. The body is already
+            # acquired: return it unpersisted (nothing was written) instead of
+            # failing the whole fetch and discarding it.
+            persist_error = {
+                "reason": "content_too_large",
+                "content_bytes": exc.content_bytes,
+                "limit_bytes": exc.limit_bytes,
+                "message": (
+                    f"{exc}; body returned but not cached, so read_source and "
+                    "later fetches of this source_id cannot reuse it"
+                ),
+            }
+    response = {
         "source_id": source_id or None,
         "url": url,
         "body": body[:max_chars],
@@ -340,6 +363,9 @@ def run_fetch_source(
         "untrusted_content": True,
         "site_scraper_updates": updates,
     }
+    if persist_error is not None:
+        response["persist_error"] = persist_error
+    return response
 
 
 def _run_search_candidates(
@@ -705,6 +731,7 @@ def run_search_web(
         deadline=body_deadline,
     )
     scrapes = []
+    persist_failures = []
     for hit, body_result in zip(response["results"], fetched["results"]):
         page = normalize_scrape_result({
             "title": hit["title"], "markdown": body_result.get("body"),
@@ -730,6 +757,15 @@ def run_search_web(
             body_truncated=page["truncated"],
             body_backend=page["via"],
         )
+        if body_result.get("persist_error"):
+            # The preview is valid, but the full body was too large to cache.
+            page["persisted"] = False
+            page["persist_error"] = body_result["persist_error"]["message"]
+            hit["body_persisted"] = False
+            persist_failures.append({
+                "source_id": hit["source_id"], "url": hit["url"],
+                **body_result["persist_error"],
+            })
     response["scrapes"] = scrapes
     response["site_scraper_updates"] = [
         update for result in fetched["results"]
@@ -745,6 +781,7 @@ def run_search_web(
         body_fetch_count=len(response["results"]),
         body_success_count=sum(not row.get("error") for row in scrapes),
         body_failures=body_errors,
+        body_persist_failures=persist_failures,
     )
     return response
 

@@ -21,6 +21,31 @@ class ContentStoreError(ValueError):
     """Raised when content cannot be stored safely."""
 
 
+class ContentTooLargeError(ContentStoreError):
+    """Raised when one body exceeds the per-object or total UTF-8 byte limit.
+
+    Callers that already hold the body (fetch, provider prefetch) should return
+    it unpersisted instead of discarding it; nothing has been written.
+    """
+
+    def __init__(self, message: str, *, content_bytes: int, limit_bytes: int):
+        super().__init__(message)
+        self.content_bytes = content_bytes
+        self.limit_bytes = limit_bytes
+
+
+def max_acquisition_chars(max_object_bytes: int = DEFAULT_MAX_OBJECT_BYTES) -> int:
+    """Largest body, in characters, that can still fit ``max_object_bytes``.
+
+    Every character is at least one UTF-8 byte, so a body longer than the byte
+    limit in characters can never be stored, while a shorter one may (ASCII) or
+    may not (CJK is three bytes per character). Acquiring up to this many
+    characters therefore never discards a storable body; whether the acquired
+    body fits is decided in bytes by :meth:`ContentStore.put`.
+    """
+    return max(1, int(max_object_bytes))
+
+
 class ContentStore:
     def __init__(
         self,
@@ -55,12 +80,14 @@ class ContentStore:
         payload = content.encode("utf-8")
         content_bytes = len(payload)
         if content_bytes > self.max_object_bytes:
-            raise ContentStoreError(
-                f"content size {content_bytes} exceeds max object bytes {self.max_object_bytes}"
+            raise ContentTooLargeError(
+                f"content size {content_bytes} exceeds max object bytes {self.max_object_bytes}",
+                content_bytes=content_bytes, limit_bytes=self.max_object_bytes,
             )
         if content_bytes > self.max_total_bytes:
-            raise ContentStoreError(
-                f"content size {content_bytes} exceeds max total bytes {self.max_total_bytes}"
+            raise ContentTooLargeError(
+                f"content size {content_bytes} exceeds max total bytes {self.max_total_bytes}",
+                content_bytes=content_bytes, limit_bytes=self.max_total_bytes,
             )
 
         now = self.clock()

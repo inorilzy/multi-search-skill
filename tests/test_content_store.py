@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from multi_search_mcp.src.state.content_store import ContentStore, ContentStoreError
+from multi_search_mcp.src.state.content_store import ContentStore, ContentStoreError, ContentTooLargeError
 from multi_search_mcp.src.state.state_store import StateStore
 
 
@@ -76,6 +76,18 @@ class ContentStoreTests(unittest.TestCase):
             cache.put("source-1", "hello")
 
         self.assertEqual(self.store.rows("SELECT * FROM content_sources"), [])
+        self.assertEqual(self.store.rows("SELECT * FROM content_objects"), [])
+
+    def test_oversize_cjk_reports_utf8_bytes_with_a_typed_error(self):
+        cache = self.make_store(max_object_bytes=10, max_total_bytes=100)
+
+        # Four characters, twelve UTF-8 bytes: the limit is bytes, not characters.
+        with self.assertRaises(ContentTooLargeError) as raised:
+            cache.put("source-1", "中文正文")
+
+        self.assertIsInstance(raised.exception, ContentStoreError)
+        self.assertEqual(raised.exception.content_bytes, 12)
+        self.assertEqual(raised.exception.limit_bytes, 10)
         self.assertEqual(self.store.rows("SELECT * FROM content_objects"), [])
 
     def test_total_capacity_evicts_lru_object_and_sources(self):
