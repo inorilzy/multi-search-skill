@@ -240,9 +240,9 @@ pub(crate) fn test_config_json() -> String {
 
 /// Arguments for the isolated CLI test run. Key material is never included.
 pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
+    // Options first, then `--`: a query starting with `-` stays a query.
     vec![
         "search".into(),
-        query.into(),
         "--route".into(),
         "default".into(),
         "--source".into(),
@@ -251,6 +251,8 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
         "15".into(),
         "--format".into(),
         "json".into(),
+        "--".into(),
+        query.into(),
     ]
 }
 

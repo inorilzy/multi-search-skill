@@ -1,5 +1,6 @@
 """Reddit domain routing, content fidelity, and anonymous-session boundaries."""
 import copy
+import json
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
 import time
@@ -8,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
-from multi_search_mcp.src.scrape.scrapers import _eddrit, reddit
+from multi_search_mcp.src.scrape.scrapers import _reddit_transport, reddit
 from multi_search_mcp.src.service import FetchSourceRequest, run_fetch_source
 from multi_search_mcp.src.state.state_store import StateStore
 
@@ -31,12 +32,6 @@ def response_data():
             {"kind": "more", "data": {"count": 25}},
         ]}},
     ]
-
-
-def token_response(token="test-token", ttl=3600):
-    return mock.Mock(status_code=200,
-                     headers={"content-type": "application/json", "x-reddit-loid": "loid", "x-reddit-session": "session"},
-                     json=mock.Mock(return_value={"access_token": token, "expires_in": ttl}))
 
 
 class RedditRoutingTests(unittest.TestCase):
@@ -67,7 +62,7 @@ class RedditRoutingTests(unittest.TestCase):
                 generic.assert_called_once()
 
     def test_reddit_failure_is_not_hidden_by_generic_backend(self):
-        with mock.patch.object(reddit, "get_post_json", side_effect=_eddrit.EddritError("Reddit returned HTTP 403")), \
+        with mock.patch.object(reddit, "get_post_json", side_effect=_reddit_transport.RedditError("Reddit returned HTTP 403")), \
              mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina") as generic:
             result = scrape_url_smart(URL, url_resolver=PUBLIC)
         self.assertIn("403", result["error"])
@@ -135,7 +130,7 @@ class RedditContentTests(unittest.TestCase):
     def test_block_page_or_wrong_post_cannot_be_success(self):
         for data in ({"content": "You've been blocked by network security"}, [], response_data()):
             with self.subTest(data_type=type(data).__name__):
-                with self.assertRaises(_eddrit.EddritError):
+                with self.assertRaises(_reddit_transport.RedditError):
                     reddit._render(data, "differentid")
 
     def test_comment_count_is_bounded_and_marked(self):
@@ -162,96 +157,101 @@ class RedditContentTests(unittest.TestCase):
             fetch.assert_called_once()
 
 
-class AnonymousAuthTests(unittest.TestCase):
-    def test_concurrent_requests_share_one_token_exchange(self):
-        auth = _eddrit.AnonymousAuth()
-        def exchange(*args, **kwargs):
-            time.sleep(0.03)
-            return token_response()
-        session = mock.Mock(post=mock.Mock(side_effect=exchange))
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            values = list(pool.map(lambda _: auth.headers(session, time.monotonic()+2, None), range(4)))
-        self.assertTrue(all(value == values[0] for value in values))
-        session.post.assert_called_once()
+class FakeResponse:
+    def __init__(self, body, content_type="application/json"):
+        self.body = body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.headers = {"Content-Type": content_type}
+        self.read_sizes = []
 
-    def test_token_cache_reuses_identity_and_renews_after_expiry(self):
-        auth = _eddrit.AnonymousAuth()
-        session = mock.Mock()
-        session.post.return_value = token_response()
-        end = time.monotonic()+10
-        one = auth.headers(session, end, None)
-        two = auth.headers(session, end, None)
-        self.assertEqual(one, two)
-        session.post.assert_called_once()
-        one["Authorization"] = "changed caller copy"
-        self.assertNotEqual(auth.headers(session, end, None)["Authorization"], one["Authorization"])
-        auth._expires_at = 0
-        session.post.return_value = token_response("fresh-token")
-        self.assertEqual(auth.headers(session, end, None)["Authorization"], "Bearer fresh-token")
-        self.assertEqual(session.post.call_count, 2)
+    def read(self, size=-1):
+        self.read_sizes.append(size)
+        return self.body if size < 0 else self.body[:size]
 
-    def test_proxy_change_and_401_invalidation_discard_old_credentials(self):
-        auth = _eddrit.AnonymousAuth()
-        session = mock.Mock()
-        session.post.return_value = token_response()
-        end = time.monotonic()+10
-        auth.headers(session, end, None)
-        headers = auth.headers(session, end, "http://proxy.example")
-        self.assertEqual(session.post.call_count, 2)
-        auth.invalidate(headers, end)
-        auth.headers(session, end, "http://proxy.example")
-        self.assertEqual(session.post.call_count, 3)
+    def __enter__(self):
+        return self
 
-    def test_non_json_and_auth_error_never_cache_credentials(self):
-        for response in (mock.Mock(status_code=403, headers={}),
-                         mock.Mock(status_code=200, headers={"content-type": "text/html"}),
-                         token_response(ttl=-1)):
-            with self.subTest(status=response.status_code):
-                auth = _eddrit.AnonymousAuth()
-                session = mock.Mock(post=mock.Mock(return_value=response))
-                with self.assertRaises(_eddrit.EddritError):
-                    auth.headers(session, time.monotonic()+10, None)
-                self.assertFalse(auth._headers)
+    def __exit__(self, *exc):
+        return False
 
-    def test_deadline_includes_lock_wait(self):
-        auth = _eddrit.AnonymousAuth()
-        auth._lock.acquire()
-        session = mock.Mock()
-        try:
-            with self.assertRaises(TimeoutError):
-                auth.headers(session, time.monotonic()+0.02, None)
-        finally:
-            auth._lock.release()
-        session.post.assert_not_called()
 
-    def test_transport_validates_destination_and_does_not_follow_redirects(self):
-        from curl_cffi.requests import Session
-        with mock.patch("curl_cffi.requests.Session", autospec=Session) as factory, \
-             mock.patch.object(_eddrit, "_auth", _eddrit.AnonymousAuth()):
-            session = factory.return_value.__enter__.return_value
-            session.post.return_value = token_response()
-            session.get.return_value = mock.Mock(status_code=302, headers={"location": "https://attacker.invalid"})
-            with self.assertRaisesRegex(_eddrit.EddritError, "302"):
-                _eddrit.get_post_json("abc123", {}, time.monotonic()+10, resolver=PUBLIC)
-            self.assertFalse(factory.call_args.kwargs["allow_redirects"])
-            self.assertEqual(session.get.call_args.args[0], "https://oauth.reddit.com/comments/abc123.json")
-            self.assertEqual(session.get.call_args.kwargs["headers"]["Cookie"], "")
-            session.get.assert_called_once()
+class RedditTransportTests(unittest.TestCase):
+    def _get(self, response=None, side_effect=None):
+        with mock.patch.object(_reddit_transport, "urlopen_retry",
+                               return_value=response, side_effect=side_effect) as opened:
+            try:
+                data = _reddit_transport.get_post_json(
+                    "abc123", {"raw_json": 1, "limit": 100}, time.monotonic() + 10, resolver=PUBLIC,
+                )
+            except Exception as exc:  # returned for assertions below
+                data = exc
+        return data, opened
 
-    def test_401_invalidates_token_without_retrying_the_failed_request(self):
-        with mock.patch("curl_cffi.requests.Session") as factory, \
-             mock.patch.object(_eddrit, "_auth", _eddrit.AnonymousAuth()):
-            session = factory.return_value.__enter__.return_value
-            session.post.return_value = token_response()
-            session.get.side_effect = [mock.Mock(status_code=401, headers={}),
-                                      mock.Mock(status_code=200, headers={"content-type": "application/json"},
-                                                json=mock.Mock(return_value=response_data()))]
-            with self.assertRaisesRegex(_eddrit.EddritError, "401"):
-                _eddrit.get_post_json("abc123", {}, time.monotonic()+10, resolver=PUBLIC)
-            session.get.assert_called_once()
-            data = _eddrit.get_post_json("abc123", {}, time.monotonic()+10, resolver=PUBLIC)
-            self.assertEqual(data[0]["data"]["children"][0]["data"]["id"], "abc123")
-            self.assertEqual(session.post.call_count, 2)
+    def test_request_is_anonymous_and_identifies_this_tool(self):
+        data, opened = self._get(FakeResponse(response_data()))
+        self.assertEqual(data[0]["data"]["children"][0]["data"]["id"], "abc123")
+        opened.assert_called_once()
+        request = opened.call_args.args[0]
+        self.assertEqual(
+            request.full_url, "https://www.reddit.com/comments/abc123.json?raw_json=1&limit=100",
+        )
+        headers = {name.lower(): value for name, value in request.header_items()}
+        self.assertTrue(headers["user-agent"].startswith("multi-search/"))
+        for forbidden in ("authorization", "cookie", "x-reddit-loid", "x-reddit-session",
+                          "x-reddit-device-id", "client-vendor-id"):
+            self.assertNotIn(forbidden, headers)
+        self.assertNotIn("android", headers["user-agent"].lower())
+
+    def test_no_token_exchange_scope_or_official_client_identity_remains(self):
+        source = Path(_reddit_transport.__file__).read_text(encoding="utf-8")
+        for forbidden in ("pii", "scopes", "access-token", "ANDROID_CLIENT_ID", "ohXpoqrZYub1kg",
+                          "curl_cffi", 'environ.get("PROXY")'):
+            self.assertNotIn(forbidden, source)
+
+    def test_uses_the_shared_transport_deadline_and_redirect_validation(self):
+        end = time.monotonic() + 10
+        with mock.patch.object(_reddit_transport, "urlopen_retry",
+                               return_value=FakeResponse(response_data())) as opened:
+            _reddit_transport.get_post_json("abc123", {}, end, resolver=PUBLIC)
+        kwargs = opened.call_args.kwargs
+        self.assertEqual(kwargs["deadline"], end)
+        self.assertIs(kwargs["redirect_resolver"], PUBLIC)
+        # Proxy choice is the shared urllib opener's: HTTP(S)_PROXY / ALL_PROXY / NO_PROXY.
+        self.assertNotIn("extra_handlers", kwargs)
+
+    def test_http_errors_block_pages_and_bad_json_are_errors(self):
+        import email.message
+        import io
+        import urllib.error
+
+        http_error = urllib.error.HTTPError(
+            "https://www.reddit.com/comments/abc123.json", 429, "Too Many Requests",
+            email.message.Message(), io.BytesIO(b"secret body"),
+        )
+        cases = (
+            ({"side_effect": http_error}, "HTTP 429"),
+            ({"response": FakeResponse(b"<html>blocked</html>", "text/html")}, "non-JSON"),
+            ({"response": FakeResponse(b"{not json")}, "invalid JSON"),
+        )
+        for kwargs, message in cases:
+            with self.subTest(message=message):
+                error, _ = self._get(**kwargs)
+                self.assertIsInstance(error, _reddit_transport.RedditError)
+                self.assertIn(message, str(error))
+                self.assertNotIn("secret body", str(error))
+
+    def test_response_size_is_bounded(self):
+        response = FakeResponse(b"[" + b" " * _reddit_transport.MAX_RESPONSE_BYTES + b"]")
+        error, _ = self._get(response)
+        self.assertIsInstance(error, _reddit_transport.RedditError)
+        self.assertEqual(response.read_sizes, [_reddit_transport.MAX_RESPONSE_BYTES + 1])
+
+    def test_private_destination_is_rejected_before_any_request(self):
+        with mock.patch.object(_reddit_transport, "urlopen_retry") as opened:
+            with self.assertRaises(Exception):
+                _reddit_transport.get_post_json(
+                    "abc123", {}, time.monotonic() + 10, resolver=lambda host: ["127.0.0.1"],
+                )
+        opened.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -34,6 +34,30 @@ fn search_preserves_literal_arguments_and_reports_real_success() {
 }
 
 #[test]
+fn search_query_starting_with_a_dash_stays_a_query() {
+    let profile = common::Profile::new();
+    let manager = DesktopManager::new(profile.environment.clone());
+    let request = SearchOptions {
+        query: "--version".into(),
+        route: "dev".into(),
+        sources: vec!["hackernews".into()],
+        timeout: 5,
+    };
+    let id = manager.start_search(None, request).unwrap();
+    let started = Instant::now();
+    let result = loop {
+        let status = manager.execution(id).unwrap();
+        if status.status != "running" {
+            break status;
+        }
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(result.status, "success");
+    assert_eq!(result.payload.unwrap()["results"][0]["title"], "--version");
+}
+
+#[test]
 fn partial_failure_is_visible_and_known_credentials_are_redacted() {
     let mut profile = common::Profile::new();
     profile

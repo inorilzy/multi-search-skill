@@ -84,6 +84,21 @@ def _compact(value: Any, limit: int = SEARCH_HIT_CONTENT_CHARS) -> str:
     return text[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _provider_rank(row: dict) -> int | None:
+    """An adapter's explicit rank, or None when it is missing or not an integer.
+
+    A malformed rank from one adapter must not fail fusion for every provider;
+    such rows fall back to their position within that provider's results.
+    """
+    value = row.get("provider_rank")
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _candidate_rows(query: str, rows: list[dict]) -> dict[str, dict[str, dict]]:
     """Return one deterministic row per provider/canonical URL."""
     grouped: dict[str, dict[str, dict]] = {}
@@ -91,7 +106,7 @@ def _candidate_rows(query: str, rows: list[dict]) -> dict[str, dict[str, dict]]:
         (dict(row) for row in rows),
         key=lambda row: (
             str(row.get("source") or ""),
-            int(row["provider_rank"]) if row.get("provider_rank") else float("inf"),
+            _provider_rank(row) or float("inf"),
             canonicalize_url(str(row.get("url") or "")),
             str(row.get("title") or ""),
         ),
@@ -109,7 +124,7 @@ def _candidate_rows(query: str, rows: list[dict]) -> dict[str, dict[str, dict]]:
         ):
             continue
         inferred_ranks[source] = inferred_ranks.get(source, 0) + 1
-        rank = int(row.get("provider_rank") or inferred_ranks[source])
+        rank = _provider_rank(row) or inferred_ranks[source]
         if rank < 1:
             continue
         canonical_url = canonicalize_url(url)

@@ -106,9 +106,9 @@ X 搜索只取得候选列表，返回 URL、标题、正文摘要和互动数�
 
 `.full_text` 保留 X 响应已经提供的长推文文本，不代表整串对话或全部评论。评论达到上限、仍有未加载评论或分页失败时，Markdown 会明确标注；`truncated` 仍表示已取得文本的输出裁剪，`full_content=True` 读取全部已取得文本。首次详情请求失败会作为抓取错误返回，并保留搜索候选。
 
-Reddit 帖子抓取使用专用适配器，复用 [eddrit 0.19.0](https://github.com/corenting/eddrit) 的 MIT 许可访客认证流程。`fetch_source`、`scrape_url` 和搜索后的正文抓取遇到 `reddit.com`（含子域）或 `redd.it` 时自动使用它，返回 `via`/`backend=reddit`；这些 URL 不进入通用后端链，即使抓取计划传入了通用 backends。其他域名沿用原有规则，Reddit 没有重新加入搜索源。
+Reddit 帖子抓取使用专用适配器，读取 Reddit 公开的帖子 JSON（`https://www.reddit.com/comments/{id}.json`），不申请 Token、不带 Cookie、不冒充官方客户端，以 `multi-search/1.0` 标识自身。`fetch_source`、`scrape_url` 和搜索后的正文抓取遇到 `reddit.com`（含子域）或 `redd.it` 时自动使用它，返回 `via`/`backend=reddit`；这些 URL 不进入通用后端链，即使抓取计划传入了通用 backends。其他域名沿用原有规则，Reddit 没有重新加入搜索源。
 
-支持帖子/评论永久链接和 `redd.it/{post_id}`，正文与已加载评论输出为 Markdown，评论最多 100 条、8 层，并标注未展开部分。社区列表、wiki 和 `/s/` 分享跳转链接目前会明确报不支持。无需 Reddit 账号 Cookie、API key 或 Valkey；匿名 Token 仅缓存在进程内。网络使用 `HTTPS_PROXY`/`ALL_PROXY`，也兼容 eddrit 的 `PROXY`；不会自动配置本机代理。HTTP 拦截、限流或认证错误直接返回错误，不切换到通用 scraper。
+支持帖子/评论永久链接和 `redd.it/{post_id}`，正文与已加载评论输出为 Markdown，评论最多 100 条、8 层，并标注未展开部分。社区列表、wiki 和 `/s/` 分享跳转链接目前会明确报不支持。无需 Reddit 账号、Cookie、API key 或 Token。网络与其他 provider 走同一传输层：代理取自标准 `HTTP(S)_PROXY`/`ALL_PROXY`/`NO_PROXY`，不再读取非标准的 `PROXY`，重定向同样做目标校验。HTTP 拦截、限流或认证错误直接返回错误，不切换到通用 scraper。
 
 ## Agent 安装和使用
 
@@ -324,7 +324,7 @@ search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
 search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search "query"`、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `doctor`、`keys status`、`keys reset`。
+CLI 使用相同 Core：`multi-search search [选项] -- "query"`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `doctor`、`keys status`、`keys reset`。
 
 ## 配置和参数
 

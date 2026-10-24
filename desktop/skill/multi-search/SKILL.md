@@ -11,7 +11,8 @@ parameters. Read [references/cli.md](references/cli.md) before the first search.
 ## Workflow
 
 1. **Search** with the user's target and constraints in the query:
-   `multi-search search "<query>" --route dev --format json`.
+   `multi-search search --route dev --format json -- "<query>"`. Keep the query
+   after `--` so text starting with `-` is never read as an option.
 2. **Review** the returned candidates and their previews. Remove only clearly
    irrelevant ones. Keep uncertain ones in their original order.
 3. **Read full bodies** of candidates needed to confirm a match or support a claim:

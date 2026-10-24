@@ -58,7 +58,11 @@ fn main() {
         thread::sleep(Duration::from_secs(60));
         return;
     }
-    let query = args.get(1).map(String::as_str).unwrap_or("");
+    // The desktop passes `search [options] -- <query>`; older callers put the query second.
+    let query = match args.iter().position(|arg| arg == "--") {
+        Some(index) => args.get(index + 1).map(String::as_str).unwrap_or(""),
+        None => args.get(1).map(String::as_str).unwrap_or(""),
+    };
     if query == "hang" {
         let _child = Command::new(env::current_exe().unwrap())
             .arg("descendant")

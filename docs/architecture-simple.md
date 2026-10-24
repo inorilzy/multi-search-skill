@@ -20,7 +20,7 @@ flowchart TB
     C -->|已知 URL，直接抓取| F
 
     F -->|需要联网时| D{"按 URL 域名分派"}
-    D -->|Reddit| RE["Reddit 专用 scraper<br/>eddrit 匿名 Token → Reddit API<br/>帖子正文 + 已加载评论"]
+    D -->|Reddit| RE["Reddit 专用 scraper<br/>公开帖子 JSON（无 Token）<br/>帖子正文 + 已加载评论"]
     D -->|其他网站| G["通用 scraper<br/>Jina / Exa / Tavily / Firecrawl"]
 
     DB[("SQLite · state.sqlite<br/>来源记录 / 正文缓存<br/>Key 健康 / 站点抓取记忆")]

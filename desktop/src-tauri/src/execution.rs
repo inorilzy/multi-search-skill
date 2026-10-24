@@ -124,7 +124,6 @@ impl DesktopManager {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut args = vec![
             "search".into(),
-            options.query,
             "--route".into(),
             options.route,
             "--timeout".into(),
@@ -136,6 +135,9 @@ impl DesktopManager {
             args.push("--source".into());
             args.push(source);
         }
+        // Options first, then `--`: a query starting with `-` stays a query.
+        args.push("--".into());
+        args.push(options.query);
         let process = OwnedProcess::spawn(
             &cli,
             &args,

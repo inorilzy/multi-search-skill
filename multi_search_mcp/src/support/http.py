@@ -17,9 +17,23 @@ from .url_security import (
 )
 
 
+# Default verification and strict EOF handling: a TLS stream that ends without
+# close_notify is a truncation and must fail, not read as a complete body.
 _ssl_ctx = ssl.create_default_context()
-if hasattr(ssl, "OP_IGNORE_UNEXPECTED_EOF"):
-    _ssl_ctx.options |= ssl.OP_IGNORE_UNEXPECTED_EOF  # type: ignore[attr-defined]
+
+
+def _is_certificate_failure(exc: BaseException) -> bool:
+    """True for TLS verification failures, which no retry can fix."""
+    seen = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        # urllib wraps handshake errors as URLError(reason=<SSLError>).
+        reason = getattr(current, "reason", None)
+        current = reason if isinstance(reason, BaseException) else current.__cause__ or current.__context__
+    return False
 
 
 _CREDENTIAL_HEADERS = {
@@ -247,9 +261,13 @@ def urlopen_retry(
         try:
             return opener.open(request, timeout=_remaining(deadline))
         except (ssl.SSLEOFError, ssl.SSLError) as e:
+            if _is_certificate_failure(e):
+                raise
             last_exc = e
             continue
         except OSError as e:
+            if _is_certificate_failure(e):
+                raise
             msg = str(e)
             if "EOF" in msg or "SSL" in msg:
                 last_exc = e

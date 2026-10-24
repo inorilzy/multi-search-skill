@@ -7,8 +7,10 @@ parameter list. Do not guess flags that the help output does not show.
 
 ## Commands
 
-- `multi-search search "<query>" [--route ROUTE] [--source NAME]... [--expand TEXT]... [--count N] [--timeout S] [--format json|human|markdown]`
+- `multi-search search [--route ROUTE] [--source NAME]... [--expand TEXT]... [--count N] [--timeout S] [--format json|human|markdown] -- "<query>"`
   - Searches, ranks, and fetches bodies for the final 15 URLs.
+  - Put every option before `--` and the query after it. Without `--`, a query
+    that starts with `-` (for example `-v flag meaning`) is parsed as an option.
   - `--source` and `--expand` may repeat. `--count` sets per-provider recall, not the final count.
   - Routes: `default` (alias `web`), `fast`, `social`, `dev`, `all`.
 - `multi-search fetch <source_id> --full-content --format json`

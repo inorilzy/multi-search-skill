@@ -134,6 +134,14 @@ fn test_args_never_contain_key_material() {
 }
 
 #[test]
+fn test_args_pass_the_query_after_the_option_terminator() {
+    let args = fixture::test_args("--count=999");
+    let terminator = args.iter().position(|a| a.as_str() == "--").expect("query follows `--`");
+    assert_eq!(args[terminator + 1], "--count=999");
+    assert_eq!(terminator + 2, args.len(), "nothing may follow the query");
+}
+
+#[test]
 fn rust_reads_blob_written_by_python_store() {
     // Byte-for-byte output of multi_search_mcp CredentialStore.set("tavily", ..., saved_at=1700000001.5).
     let python_blob = br#"{"v":1,"key":"synthetic-roundtrip-key-0009","saved_at":1700000001.5}"#;
