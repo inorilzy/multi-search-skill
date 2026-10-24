@@ -23,5 +23,41 @@ fn main() {
     println!("cargo:rustc-env=MULTI_SEARCH_CLI_BUNDLE_ANCHOR={anchor}");
 
     #[cfg(feature = "native-window")]
-    tauri_build::build();
+    {
+        // Declaring the app manifest turns on ACL checks for app commands: the main window may only
+        // call what `capabilities/management.json` grants, and nothing outside this list exists.
+        let attributes = tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(APP_COMMANDS));
+        tauri_build::try_build(attributes).expect("failed to run tauri-build");
+    }
 }
+
+/// Every `#[tauri::command]` registered in `src/window.rs`. `desktop/tests/ipc-boundary.test.js` keeps this,
+/// the handler list and the capability file in step.
+#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
+const APP_COMMANDS: &[&str] = &[
+    "detect_cli",
+    "start_test_search",
+    "poll_execution",
+    "cancel_test_search",
+    "skill_plan",
+    "skill_install",
+    "install_plan",
+    "install_cli",
+    "skill_status",
+    "skill_update",
+    "skill_remove_plan",
+    "skill_remove",
+    "update_cli",
+    "uninstall_cli",
+    "user_path_plan",
+    "user_path_change",
+    "credential_status",
+    "credential_save",
+    "credential_delete",
+    "credential_test",
+    "migration_plan",
+    "migration_apply",
+    "settings_view",
+    "settings_save",
+];

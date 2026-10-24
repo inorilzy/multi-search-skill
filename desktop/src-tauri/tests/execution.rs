@@ -15,7 +15,7 @@ fn search_preserves_literal_arguments_and_reports_real_success() {
         sources: vec!["hackernews".into()],
         timeout: 5,
     };
-    let id = manager.start_search(None, request).unwrap();
+    let id = manager.start_search(request).unwrap();
     let started = Instant::now();
     let result = loop {
         let status = manager.execution(id).unwrap();
@@ -42,9 +42,7 @@ fn partial_failure_is_visible_and_known_credentials_are_redacted() {
         .insert("EXA_API_KEY".into(), "fixture-private-key".into());
     let manager = DesktopManager::new(profile.environment.clone());
     let id = manager
-        .start_search(
-            None,
-            SearchOptions {
+        .start_search(SearchOptions {
                 query: "partial".into(),
                 route: "default".into(),
                 sources: vec![],
@@ -73,9 +71,7 @@ fn zero_and_failed_searches_have_distinct_outcomes_and_failure_exit_code() {
     let manager = DesktopManager::new(profile.environment.clone());
     for (query, expected, code) in [("empty", "empty", 0), ("failure", "failed", 1)] {
         let id = manager
-            .start_search(
-                None,
-                SearchOptions {
+            .start_search(SearchOptions {
                     query: query.into(),
                     route: "dev".into(),
                     sources: vec![],
@@ -116,9 +112,7 @@ fn cancellation_stops_owned_descendants_but_not_unrelated_processes() {
         .unwrap();
     let manager = DesktopManager::new(profile.environment.clone());
     let id = manager
-        .start_search(
-            None,
-            SearchOptions {
+        .start_search(SearchOptions {
                 query: "hang".into(),
                 route: "dev".into(),
                 sources: vec![],
@@ -148,9 +142,7 @@ fn completion_cancellation_races_do_not_relabel_completed_runs_or_cancel_unknown
     let manager = DesktopManager::new(profile.environment.clone());
     for _ in 0..10 {
         let id = manager
-            .start_search(
-                None,
-                SearchOptions {
+            .start_search(SearchOptions {
                     query: "fixture".into(),
                     route: "dev".into(),
                     sources: vec![],
@@ -178,9 +170,7 @@ fn concurrent_completion_and_cancel_publish_one_terminal_state() {
     let manager = std::sync::Arc::new(DesktopManager::new(profile.environment.clone()));
     for _ in 0..20 {
         let id = manager
-            .start_search(
-                None,
-                SearchOptions {
+            .start_search(SearchOptions {
                     query: "fixture".into(),
                     route: "dev".into(),
                     sources: vec![],
@@ -201,9 +191,7 @@ fn shutdown_terminates_its_execution_without_disabling_the_standalone_cli() {
     let profile = common::Profile::new();
     let manager = DesktopManager::new(profile.environment.clone());
     let id = manager
-        .start_search(
-            None,
-            SearchOptions {
+        .start_search(SearchOptions {
                 query: "hang".into(),
                 route: "dev".into(),
                 sources: vec![],
@@ -214,9 +202,7 @@ fn shutdown_terminates_its_execution_without_disabling_the_standalone_cli() {
     manager.shutdown();
     assert_eq!(manager.execution(id).unwrap().status, "cancelled");
     assert!(manager
-        .start_search(
-            None,
-            SearchOptions {
+        .start_search(SearchOptions {
                 query: "fixture".into(),
                 route: "dev".into(),
                 sources: vec![],
@@ -233,4 +219,62 @@ fn shutdown_terminates_its_execution_without_disabling_the_standalone_cli() {
         String::from_utf8_lossy(&output.stdout).trim(),
         "multi-search 0.4.0"
     );
+}
+
+
+fn finished(manager: &DesktopManager, id: u64) -> multi_search_desktop::ExecutionStatus {
+    let started = Instant::now();
+    loop {
+        let status = manager.execution(id).unwrap();
+        if status.status != "running" {
+            return status;
+        }
+        assert!(started.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn child_env(manager: &DesktopManager, sources: &[&str], route: &str) -> Vec<String> {
+    let id = manager
+        .start_search(SearchOptions {
+            query: "env".into(),
+            route: route.into(),
+            sources: sources.iter().map(|s| s.to_string()).collect(),
+            timeout: 5,
+        })
+        .unwrap();
+    let status = finished(manager, id);
+    status.payload.unwrap()["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn child_process_gets_a_minimal_environment_with_only_the_needed_credentials() {
+    let mut profile = common::Profile::new();
+    for (name, value) in [
+        ("BRAVE_SEARCH_API_KEY", "synthetic-brave"),
+        ("GITHUB_TOKEN", "synthetic-github"),
+        ("SERPAPI_API_KEY", "synthetic-serpapi"),
+        ("AWS_SECRET_ACCESS_KEY", "synthetic-unrelated"),
+        ("UNRELATED_PASSWORD", "synthetic-unrelated"),
+        ("SystemRoot", "C:\\Windows"),
+    ] {
+        profile.environment.variables.insert(name.into(), value.into());
+    }
+    let manager = DesktopManager::new(profile.environment.clone());
+    let names = child_env(&manager, &["brave"], "default");
+    assert!(names.iter().any(|n| n == "BRAVE_SEARCH_API_KEY"), "the selected source's key is passed: {names:?}");
+    assert!(names.iter().any(|n| n.eq_ignore_ascii_case("SYSTEMROOT")), "OS plumbing is kept: {names:?}");
+    assert!(names.iter().any(|n| n == "USERPROFILE"));
+    for absent in ["GITHUB_TOKEN", "SERPAPI_API_KEY", "AWS_SECRET_ACCESS_KEY", "UNRELATED_PASSWORD"] {
+        assert!(!names.iter().any(|n| n == absent), "{absent} must not reach the child: {names:?}");
+    }
+    let dev = child_env(&manager, &[], "dev");
+    assert!(dev.iter().any(|n| n == "GITHUB_TOKEN"), "the dev route's GitHub source gets its token");
+    assert!(!dev.iter().any(|n| n == "BRAVE_SEARCH_API_KEY"), "dev route never receives Brave's key");
+    assert!(!dev.iter().any(|n| n == "AWS_SECRET_ACCESS_KEY"));
 }

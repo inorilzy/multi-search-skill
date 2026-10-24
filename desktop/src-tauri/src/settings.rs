@@ -467,7 +467,7 @@ pub fn view_with_dev_mode(
 /// is not installed, times out, or returns something that is not a JSON object.
 impl DesktopManager {
     pub(crate) fn doctor_config(&self) -> Option<Value> {
-        let cli = self.execution_cli(None).ok()?;
+        let cli = self.execution_cli().ok()?;
         let args = ["doctor", "--no-keys", "--format", "json"].map(str::to_string);
         let output = crate::process::bounded(
             &cli,

@@ -2,7 +2,10 @@ import { pages } from './pages.js';
 import { managementApi } from './api.js';
 const root = document.querySelector('#page');
 const nav = document.querySelector('[data-navigation]');
-const invoke = window.__TAURI__?.core?.invoke;
+// withGlobalTauri is off: no global Tauri API object is injected. Only the IPC bridge Tauri always
+// injects is used, and the capability file limits it to this app's own typed commands.
+const bridge = window.__TAURI_INTERNALS__;
+const invoke = typeof bridge?.invoke === 'function' ? (cmd, args) => bridge.invoke(cmd, args) : null;
 let mounted;
 async function select(page) {
   mounted?.dispose();

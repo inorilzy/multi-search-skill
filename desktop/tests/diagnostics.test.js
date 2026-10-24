@@ -7,7 +7,7 @@ test('overview distinguishes app invocation from user command discovery', async 
   const window = new Window();
   const root = window.document.createElement('main');
   window.document.body.append(root);
-  const api = { detect: async () => ({ app: { status: 'ready', path: 'C:\\fixture\\multi-search.exe', version: '0.4.0', reason: '' }, user: { status: 'missing', path: null, version: null, reason: 'not on user PATH' }, restart_required: false }) };
+  const api = { detect: async () => ({ app: { status: 'ready', path: 'C:\\fixture\\multi-search.exe', version: '0.4.0', reason: '' }, user: { status: 'missing', path: null, version: null, reason: 'not on user PATH' }, restart_required: false, execution: { status: 'ready', path: 'C:\\fixture\\multi-search.exe' }, managed: false }) };
   await mountDiagnostics(root, api);
   assert.match(root.textContent, /0\.4\.0/);
   assert.match(root.textContent, /C:\\fixture\\multi-search.exe/);
@@ -20,7 +20,7 @@ test('overview distinguishes app invocation from user command discovery', async 
 
 test('new user PATH enables immediate search while old app environment stays visibly missing', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
-  await mountDiagnostics(root, { detect: async () => ({ app: { status: 'missing' }, user: { status: 'ready' }, restart_required: true }) });
+  await mountDiagnostics(root, { detect: async () => ({ app: { status: 'missing' }, user: { status: 'ready' }, restart_required: true, execution: { status: 'ready' }, managed: false }) });
   assert.equal(root.querySelector('[data-status="app"]').textContent, '未发现');
   assert.equal(root.querySelector('[data-action="search"]').disabled, false);
   window.close();
@@ -31,7 +31,7 @@ test('a discovered outdated CLI suggests an update, not PATH changes, and refres
   let ready = false;
   const api = { detect: async () => {
     const row = { status: ready ? 'ready' : 'version_failed', path: 'C:\\fixture\\multi-search.exe', reason: ready ? '' : '退出码 2；请更新 CLI' };
-    return { app: row, user: row, restart_required: false };
+    return { app: row, user: row, restart_required: false, execution: row, managed: false };
   } };
   const page = await mountDiagnostics(root, api);
   assert.equal(root.querySelector('[data-action="search"]').disabled, true);
@@ -47,7 +47,7 @@ test('a discovered outdated CLI suggests an update, not PATH changes, and refres
 test('test search reflects partial execution and renders provider text without HTML', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
   const api = {
-    detect: async () => ({ app: { status: 'ready', version: '0.4.0', path: 'C:\\multi-search.exe' }, user: { status: 'ready' }, restart_required: false }),
+    detect: async () => ({ app: { status: 'ready', version: '0.4.0', path: 'C:\\multi-search.exe' }, user: { status: 'ready' }, restart_required: false, execution: { status: 'ready' } }),
     start: async () => 1,
     poll: async () => ({ id: 1, status: 'partial', exit_code: 0, payload: { results: [{ title: '<img src=x onerror=attack()>' }], errors: [{ source: 'brave', error: 'unavailable [REDACTED]' }] }, error: '' }),
   };
@@ -66,7 +66,7 @@ test('test search reflects partial execution and renders provider text without H
 
 test('failed execution retains a visible error and permits retry', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
-  const api = { detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' } }), start: async () => 1, poll: async () => ({ status: 'failed', error: 'provider unavailable [REDACTED]', payload: { errors: [{ source: 'brave' }] } }) };
+  const api = { detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }), start: async () => 1, poll: async () => ({ status: 'failed', error: 'provider unavailable [REDACTED]', payload: { errors: [{ source: 'brave' }] } }) };
   const page = await mountDiagnostics(root, api); root.querySelector('[data-field="query"]').value = 'failure'; root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(root.querySelector('[data-status="execution"]').textContent, '执行失败');
@@ -78,7 +78,7 @@ test('failed execution retains a visible error and permits retry', async () => {
 test('a late poll cannot overwrite a cancelled execution', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
   let finishPoll;
-  const api = { detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' } }), start: async () => 7, poll: () => new Promise(resolve => { finishPoll = resolve; }), cancel: async () => ({ status: 'cancelled' }) };
+  const api = { detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }), start: async () => 7, poll: () => new Promise(resolve => { finishPoll = resolve; }), cancel: async () => ({ status: 'cancelled' }) };
   const page = await mountDiagnostics(root, api);
   root.querySelector('[data-field="query"]').value = 'hang'; root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 5)); root.querySelector('[data-action="cancel"]').click();
@@ -92,7 +92,7 @@ test('a late poll cannot overwrite a cancelled execution', async () => {
 test('user can cancel the current execution and missing CLI disables start', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
   let cancelled = null;
-  const api = { detect: async () => ({ app: { status: 'ready' }, user: { status: 'missing' } }), start: async () => 42, poll: async () => ({ status: 'running' }), cancel: async id => { cancelled = id; return { status: 'cancelled' }; } };
+  const api = { detect: async () => ({ app: { status: 'ready' }, user: { status: 'missing' }, execution: { status: 'ready' } }), start: async () => 42, poll: async () => ({ status: 'running' }), cancel: async id => { cancelled = id; return { status: 'cancelled' }; } };
   const page = await mountDiagnostics(root, api, { pollInterval: 1000 });
   root.querySelector('[data-field="query"]').value = 'hang'; root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
@@ -103,6 +103,55 @@ test('user can cancel the current execution and missing CLI disables start', asy
   assert.equal(root.querySelector('[data-action="search"]').disabled, false);
   page.dispose();
   await mountDiagnostics(root, { detect: async () => ({ app: { status: 'missing' }, user: { status: 'missing' } }) });
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true);
+  window.close();
+});
+
+test('no executable path can be typed or sent: detect and start take no path', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const calls = [];
+  const api = {
+    detect: async (...args) => { calls.push(['detect', args]); return { app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready', path: 'C:\\Users\\u\\AppData\\Local\\MultiSearch\\cli\\bin\\multi-search.exe' }, managed: true }; },
+    start: async (...args) => { calls.push(['start', args]); return 1; },
+    poll: async () => ({ status: 'success', payload: {} }),
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 1 });
+  assert.equal(root.querySelector('[data-field="path"]'), null, 'the free-form CLI path input is gone');
+  assert.match(root.querySelector('[data-status="execution-cli"]').textContent, /受管安装/);
+  root.querySelector('[data-field="query"]').value = 'fixture';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.deepEqual(calls[0], ['detect', []]);
+  const start = calls.find(([name]) => name === 'start');
+  assert.equal(start[1].length, 1, 'start receives only search options');
+  assert.equal(typeof start[1][0], 'object');
+  assert.equal('path' in start[1][0], false);
+  page.dispose(); window.close();
+});
+
+test('appReady follows the backend execution row, not a stale app or user row', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let execution = { status: 'ready' };
+  const api = { detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, restart_required: false, execution, managed: false }) };
+  await mountDiagnostics(root, api);
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  // The managed install was removed or failed verification: app/user rows still look ready, but
+  // the CLI the backend would run is not, so search must be disabled after a refresh.
+  execution = { status: 'not_executable', reason: 'denied' };
+  root.querySelector('[data-action="refresh"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true);
+  assert.match(root.querySelector('[data-status="execution-cli"]').textContent, /无可用 CLI/);
+  execution = { status: 'ready' };
+  root.querySelector('[data-action="refresh"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  window.close();
+});
+
+test('a detection payload without an execution row never enables search', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  await mountDiagnostics(root, { detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' } }) });
   assert.equal(root.querySelector('[data-action="search"]').disabled, true);
   window.close();
 });

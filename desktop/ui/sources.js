@@ -228,7 +228,7 @@ export async function mountSources(root, api) {
       button.disabled = true;
       show({ kind: 'running', title: '正在测试', message: '' });
       try {
-        const outcome = await api.credentialTest(rec.entry.source, null);
+        const outcome = await api.credentialTest(rec.entry.source);
         show({ kind: outcome.result === 'success' ? 'success' : 'error', title: outcome.result === 'success' ? '测试成功' : '测试失败', message: outcome.message || outcome.result });
       } catch { show({ kind: 'error', title: '测试失败', message: '测试启动失败，请检查 CLI 后重试。' }); }
       finally { if (!stale && !disposed) button.disabled = false; }

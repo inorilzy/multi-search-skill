@@ -2,16 +2,17 @@ use crate::{CliStatus, DesktopManager, ExecutionStatus, RuntimeEnvironment, Sear
 use std::{path::PathBuf, sync::Arc};
 use tauri::Manager;
 
+// No command accepts an executable path from the frontend: every CLI run resolves the managed
+// install (then PATH) in the backend, so script running in the webview cannot pick a program.
 #[tauri::command]
 async fn detect_cli(
     manager: tauri::State<'_, Arc<DesktopManager>>,
-    path: Option<String>,
 ) -> Result<CliStatus, String> {
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut status = manager.detect_cli(path.map(PathBuf::from));
+        let mut status = manager.detect_cli();
         let secrets = crate::redaction::secrets(&manager.environment);
-        for row in [&mut status.app, &mut status.user] {
+        for row in [&mut status.app, &mut status.user, &mut status.execution] {
             row.path = row
                 .path
                 .take()
@@ -26,13 +27,10 @@ async fn detect_cli(
 #[tauri::command]
 async fn start_test_search(
     manager: tauri::State<'_, Arc<DesktopManager>>,
-    path: Option<String>,
     options: SearchOptions,
 ) -> Result<u64, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        manager.start_search(path.map(PathBuf::from), options)
-    })
+    tauri::async_runtime::spawn_blocking(move || manager.start_search(options))
     .await
     .map_err(|_| "Search worker failed")?
 }
@@ -184,12 +182,11 @@ async fn credential_delete(
 async fn credential_test(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
-    path: Option<String>,
 ) -> Result<crate::credential_commands::TestOutcome, String> {
     let entry = crate::credential_commands::resolve_test_source(&source)?;
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let cli = manager.execution_cli(path.map(PathBuf::from))?;
+        let cli = manager.execution_cli()?;
         manager.test_source(cli, entry, &format!("{} connectivity check", entry.name))
     })
     .await
@@ -199,13 +196,12 @@ async fn credential_test(
 #[tauri::command]
 async fn migration_plan(
     manager: tauri::State<'_, Arc<DesktopManager>>,
-    path: Option<String>,
 ) -> Result<crate::credential_commands::MigrationPlan, String> {
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let keys_file = crate::credential_commands::keys_file_path(&manager.environment.variables)
             .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
-        let cli = manager.execution_cli(path.map(PathBuf::from))?;
+        let cli = manager.execution_cli()?;
         manager.migration_plan(cli, &keys_file)
     })
     .await
@@ -217,14 +213,13 @@ async fn migration_apply(
     plan_token: String,
     approved: Vec<String>,
     choices: std::collections::BTreeMap<String, String>,
-    path: Option<String>,
 ) -> Result<crate::credential_commands::MigrationResult, String> {
     let request = crate::credential_commands::migration_request(&plan_token, &approved, &choices)?;
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let keys_file = crate::credential_commands::keys_file_path(&manager.environment.variables)
             .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
-        let cli = manager.execution_cli(path.map(PathBuf::from))?;
+        let cli = manager.execution_cli()?;
         manager.migration_apply(cli, &keys_file, &request)
     })
     .await

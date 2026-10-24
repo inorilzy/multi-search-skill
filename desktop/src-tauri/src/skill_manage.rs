@@ -387,7 +387,7 @@ impl DesktopManager {
             };
         }
         // Compatibility is checked by the same path as install; an incompatible CLI blocks the update.
-        let cli = self.detect_cli(None).user;
+        let cli = self.detect_cli().user;
         if cli.status != "ready" {
             return UpdateOutcome {
                 status: "blocked".into(),
@@ -629,7 +629,7 @@ impl DesktopManager {
     ) -> Result<SkillStatus, String> {
         let target = join_target(self, scope, project)?;
         let (state, installed_version, modified_files, unknown_entries, reason) = classify(&target);
-        let cli = self.detect_cli(None).user;
+        let cli = self.detect_cli().user;
         let compatibility = if cli.status == "ready" {
             self.check_compatibility(cli.path.as_deref().unwrap_or_default())
         } else {

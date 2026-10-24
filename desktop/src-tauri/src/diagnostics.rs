@@ -23,6 +23,12 @@ pub struct CliStatus {
     pub app: Discovery,
     pub user: Discovery,
     pub restart_required: bool,
+    /// The CLI the desktop itself will run for searches, tests and migration: the verified managed
+    /// install first, then the app PATH, then the fresh user PATH. The UI enables actions from this
+    /// row only, so its ready state always matches what will actually execute.
+    pub execution: Discovery,
+    /// True when `execution` is the verified managed install.
+    pub managed: bool,
 }
 
 fn find_cli(paths: &[PathBuf]) -> Option<PathBuf> {
@@ -53,8 +59,10 @@ impl DesktopManager {
         }
     }
 
-    pub fn detect_cli(&self, explicit_path: Option<PathBuf>) -> CliStatus {
-        let app = self.probe(explicit_path.or_else(|| find_cli(&self.environment.app_path)));
+    /// Discovery never takes a caller-supplied executable: the UI can only observe the managed
+    /// install and what the app and user PATH resolve to.
+    pub fn detect_cli(&self) -> CliStatus {
+        let app = self.probe(find_cli(&self.environment.app_path));
         let paths = self.current_user_paths();
         let mut user_environment = self.environment.clone();
         if let Ok(path) = std::env::join_paths(&paths) {
@@ -65,19 +73,26 @@ impl DesktopManager {
         let user_manager = Self::new(user_environment);
         let user = user_manager.probe(find_cli(&paths));
         let restart_required = app.status != "ready" && user.status == "ready";
+        let (execution, managed) = match self.managed_cli() {
+            // A verified managed install always wins, so a same-named file earlier on PATH
+            // cannot shadow it.
+            Some(path) => (self.probe(Some(path)), true),
+            None if app.status == "ready" => (app.clone(), false),
+            None if user.status == "ready" => (user.clone(), false),
+            None => (app.clone(), false),
+        };
         CliStatus {
             app,
             user,
             restart_required,
+            execution,
+            managed,
         }
     }
 
-    /// Keep diagnostics truthful about the old app PATH, while UI commands can use the
-    /// newly verified user PATH immediately. An explicitly selected bad executable never falls back.
-    pub fn execution_cli(&self, explicit_path: Option<PathBuf>) -> Result<PathBuf, String> {
-        let explicit = explicit_path.is_some();
-        let detected = self.detect_cli(explicit_path);
-        let selected = if detected.app.status == "ready" || explicit { detected.app } else { detected.user };
+    /// The executable every UI-triggered CLI run uses. Never chosen by the frontend.
+    pub fn execution_cli(&self) -> Result<PathBuf, String> {
+        let selected = self.detect_cli().execution;
         if selected.status != "ready" { return Err(selected.reason); }
         selected.path.map(PathBuf::from).ok_or_else(|| "CLI 路径不可用".into())
     }

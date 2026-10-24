@@ -3,24 +3,48 @@
   "productName": "Multi Search",
   "version": "0.1.0",
   "identifier": "local.multi-search.desktop",
-  "build": { "frontendDist": "../ui" },
+  "build": {
+    "frontendDist": "../ui"
+  },
   "app": {
-    "withGlobalTauri": true,
-    "windows": [{ "title": "Multi Search · 本机搜索管理", "width": 1080, "height": 880, "minWidth": 760, "minHeight": 600 }],
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "Multi Search · 本机搜索管理",
+        "width": 1080,
+        "height": 880,
+        "minWidth": 760,
+        "minHeight": 600
+      }
+    ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'",
-      "capabilities": [{ "identifier": "management", "windows": ["main"], "permissions": [] }]
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'"
     }
   },
   "bundle": {
     "active": true,
     "useLocalToolsDir": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"],
-    "resources": { "resources/cli-bundle/": "cli-bundle/" },
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "resources/cli-bundle/": "cli-bundle/"
+    },
     "windows": {
-      "webviewInstallMode": { "type": "skip" },
-      "nsis": { "installMode": "currentUser", "languages": ["English", "SimpChinese"], "displayLanguageSelector": true }
+      "webviewInstallMode": {
+        "type": "skip"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "English",
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": true
+      }
     }
   }
 }

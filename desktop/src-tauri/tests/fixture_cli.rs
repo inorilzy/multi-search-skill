@@ -68,6 +68,13 @@ fn main() {
             .unwrap();
         thread::sleep(Duration::from_secs(60));
     }
+    if query == "env" {
+        // Report which variable names reached the child, so tests can assert the minimal environment.
+        let mut names: Vec<String> = env::vars().map(|(name, _)| name).collect();
+        names.sort();
+        println!("{{\"outcome\":\"success\",\"results\":[],\"errors\":[],\"env\":{:?}}}", names);
+        return;
+    }
     if query == "empty" { println!("{{\"outcome\":\"empty\",\"results\":[],\"errors\":[]}}"); return; }
     if query == "failure" { eprintln!("provider unavailable"); println!("{{\"outcome\":\"failed\",\"results\":[],\"errors\":[{{\"source\":\"brave\",\"error\":\"provider unavailable\"}}]}}"); std::process::exit(1); }
     if query == "partial" {

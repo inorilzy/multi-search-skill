@@ -46,7 +46,7 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `key
 
 ## Windows 桌面管理（本地开发候选）
 
-`desktop/` 是 Tauri 2 管理窗口，仅检测已安装的 `multi-search.exe`、显示版本/实际路径，并运行或取消一次测试搜索；尚不提供 UI 安装、凭据编辑或 Skill 安装。CLI 新增 `--version`。检测区区分应用继承的 PATH 与 Windows 用户/机器持久化 PATH，新终端可发现不意味着已打开的终端或 Agent 已刷新环境。也可指定已安装 CLI 的绝对路径。
+`desktop/` 是 Tauri 2 管理窗口，仅检测已安装的 `multi-search.exe`、显示版本/实际路径，并运行或取消一次测试搜索；尚不提供 UI 安装、凭据编辑或 Skill 安装。CLI 新增 `--version`。检测区区分应用继承的 PATH 与 Windows 用户/机器持久化 PATH，新终端可发现不意味着已打开的终端或 Agent 已刷新环境。桌面端只运行受管安装目录（`%LOCALAPPDATA%\MultiSearch\cli`，验证通过时优先于 PATH 中的同名文件）或 PATH 中发现的 CLI，前端不能指定可执行路径；子进程只拿到非敏感的基础环境变量和本次所需的 key。
 
 已有 Node、Rust/MSVC 与 WebView2 的 Windows 开发环境中：
 

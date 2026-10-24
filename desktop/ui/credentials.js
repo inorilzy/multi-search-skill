@@ -214,7 +214,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     const testedSource = sourceText(current);
     reportTest('running', '正在测试');
     try {
-      const outcome = await api.credentialTest(source, null);
+      const outcome = await api.credentialTest(source);
       if (testedGeneration !== generation) return;
       reportTest(outcome.result === 'success' ? 'success' : 'error', testText(outcome.result, label, testedSource), outcome.message || '');
     } catch (error) {
