@@ -76,9 +76,13 @@ original previews, makes the final selection, and fetches necessary bodies.
 
 ```sh
 multi-search doctor --no-keys --format human
-multi-search search 'Python TaskGroup cancellation' --source hackernews --count 3 --format json
-multi-search search 'Python TaskGroup cancellation' --route dev --expand 'TaskGroup ExceptionGroup' --expand 'TaskGroup cancellation semantics' --format json
+multi-search search --source hackernews --count 3 --format json -- 'Python TaskGroup cancellation'
+multi-search search --route dev --expand 'TaskGroup ExceptionGroup' --expand 'TaskGroup cancellation semantics' --format json -- 'Python TaskGroup cancellation'
 ```
+
+Put options first and the query after `--` (`multi-search search [options] -- '<query>'`).
+Without `--`, a query that starts with `-` is parsed as an option and the
+command fails with a usage error (exit 2) or, worse, changes the search.
 
 `--source` and `--expand` can repeat. `--count` controls each provider's recall;
 Core ranks and fetches up to 15 final URLs. Keep configured timeouts unless the

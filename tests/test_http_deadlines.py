@@ -103,6 +103,24 @@ class HttpDeadlineTests(unittest.TestCase):
         self.assertEqual(opened.call_count, 1)
         self.assertAlmostEqual(self.clock.now, 1)
 
+    def test_certificate_verification_failure_is_not_retried(self):
+        failures = (
+            ssl.SSLCertVerificationError("synthetic certificate verify failed"),
+            urllib.error.URLError(ssl.SSLCertVerificationError("synthetic certificate verify failed")),
+        )
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                with mock.patch.object(http._shared_opener, "open", side_effect=failure) as opened:
+                    with self.assertRaises(type(failure)):
+                        http.urlopen_retry("https://93.184.216.34/", timeout=1)
+                self.assertEqual(opened.call_count, 1)
+
+    def test_tls_context_rejects_truncated_streams_and_verifies_certificates(self):
+        if hasattr(ssl, "OP_IGNORE_UNEXPECTED_EOF"):
+            self.assertFalse(http._ssl_ctx.options & ssl.OP_IGNORE_UNEXPECTED_EOF)
+        self.assertEqual(http._ssl_ctx.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(http._ssl_ctx.check_hostname)
+
     def _socket(self, *, status="200 OK", chunked=False, slow=True):
         framing = "Transfer-Encoding: chunked" if chunked else "Content-Length: 6"
         chunks = [(0.1, f"HTTP/1.1 {status}\r\n{framing}\r\n\r\n".encode())]

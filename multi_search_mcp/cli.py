@@ -45,6 +45,22 @@ def _add_format_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _bounded_int(minimum: int, maximum: int | None):
+    """argparse type: an integer within [minimum, maximum], else a usage error."""
+    def parse(raw: str) -> int:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise argparse.ArgumentTypeError(f"expected an integer, got {raw!r}") from None
+        if value < minimum or (maximum is not None and value > maximum):
+            bounds = f"{minimum}-{maximum}" if maximum is not None else f"{minimum} or more"
+            raise argparse.ArgumentTypeError(f"must be {bounds}, got {value}")
+        return value
+
+    parse.__name__ = "integer"
+    return parse
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _ArgumentParser(prog="multi-search", description="Thin CLI for the shared multi-search core.")
     try:
@@ -54,8 +70,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"multi-search {installed_version}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    search_parser = subparsers.add_parser("search", help="RRF search followed by body fetches for the final 15 URLs")
-    search_parser.add_argument("query")
+    search_parser = subparsers.add_parser(
+        "search",
+        help="RRF search followed by body fetches for the final 15 URLs",
+        description=(
+            "RRF search followed by body fetches for the final 15 URLs. "
+            "Put options first and pass the query after `--` "
+            "(`multi-search search [options] -- <query>`) so a query that starts "
+            "with `-` is never read as an option."
+        ),
+    )
+    search_parser.add_argument(
+        "query",
+        help="search text; use `search [options] -- <query>` when it may start with `-`",
+    )
     search_parser.add_argument("--route")
     search_parser.add_argument("--source", action="append", dest="sources", default=[])
     search_parser.add_argument("--count", type=int, help="per-provider recall count; final output is at most 15")
@@ -77,7 +105,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="read the URL from a UTF-8 file, or from stdin with '-'",
     )
     fetch_parser.add_argument("--backend", action="append", dest="backends", default=[])
-    fetch_parser.add_argument("--max-chars", type=int, default=20_000)
+    fetch_parser.add_argument(
+        "--max-chars", type=_bounded_int(1, None), default=20_000,
+        help="preview size in characters, at least 1; values above 20000 use 20000 (default 20000)",
+    )
     fetch_parser.add_argument("--timeout", type=int)
     fetch_parser.add_argument(
         "--full-content", action="store_true",
@@ -89,8 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
     read_parser = subparsers.add_parser("read", help="read cached content for one source")
     read_parser.add_argument("source_id")
     read_parser.add_argument("--keyword")
-    read_parser.add_argument("--offset", type=int, default=0)
-    read_parser.add_argument("--limit", type=int, default=4_000)
+    read_parser.add_argument(
+        "--offset", type=_bounded_int(0, None), default=0,
+        help="character offset, 0 or more (relative to the match with --keyword)",
+    )
+    read_parser.add_argument(
+        "--limit", type=_bounded_int(1, None), default=4_000,
+        help="characters to return, at least 1; values above 8000 use 8000 (default 4000)",
+    )
     _add_format_argument(read_parser)
     read_parser.set_defaults(handler=_handle_read)
 

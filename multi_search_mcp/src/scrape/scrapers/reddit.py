@@ -1,4 +1,4 @@
-"""Reddit-only post scraping using eddrit's anonymous Android authentication."""
+"""Reddit-only post scraping over Reddit's public, unauthenticated post JSON."""
 from __future__ import annotations
 
 import html
@@ -7,7 +7,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 
 from ...support.url_security import UrlSecurityError, validate_scrape_url
-from ._eddrit import EddritError, get_post_json, remaining
+from ._reddit_transport import RedditError, get_post_json, remaining
 
 
 _POST_PATH = re.compile(r"^/(?:r/[^/]+/|user/[^/]+/)?comments/([a-z0-9]+)(?:/([^/]*)(?:/([a-z0-9]+))?)?/?$", re.I)
@@ -28,7 +28,7 @@ def is_reddit_url(url: str) -> bool:
 def _post_target(url: str) -> tuple[str, dict]:
     parts = urlsplit(url)
     if not is_reddit_url(url) or parts.port not in {None, 80, 443}:
-        raise EddritError("Reddit scraper only accepts Reddit post URLs")
+        raise RedditError("Reddit scraper only accepts Reddit post URLs")
     path = parts.path.removesuffix(".json").rstrip("/")
     if (parts.hostname or "").lower().rstrip(".") == "redd.it":
         match = re.fullmatch(r"/([a-z0-9]+)", path, re.I)
@@ -37,7 +37,7 @@ def _post_target(url: str) -> tuple[str, dict]:
         match = _POST_PATH.fullmatch(path)
         post_id, comment_id = (match[1], match[3]) if match else (None, None)
     if not post_id:
-        raise EddritError("Unsupported Reddit URL; use a post/comment permalink or redd.it post link")
+        raise RedditError("Unsupported Reddit URL; use a post/comment permalink or redd.it post link")
     params = {"raw_json": 1, "limit": 100, "depth": 8}
     query = parse_qs(parts.query)
     if query.get("sort", [None])[0] in _SORTS:
@@ -70,7 +70,7 @@ def _render(data, post_id: str) -> tuple[str, str]:
         if post["id"].lower() != post_id or not isinstance(post["title"], str) or not isinstance(comments, list):
             raise ValueError()
     except (KeyError, IndexError, TypeError, AttributeError, ValueError):
-        raise EddritError("Reddit returned an invalid post/comment response") from None
+        raise RedditError("Reddit returned an invalid post/comment response") from None
     title = html.unescape(post["title"])
     chunks = [f"# {title}"]
     text = post.get("selftext") or ""
@@ -84,13 +84,13 @@ def _render(data, post_id: str) -> tuple[str, str]:
     while stack:
         item, depth = stack.pop()
         if not isinstance(item, dict) or not isinstance(item.get("data"), dict):
-            raise EddritError("Reddit returned an invalid comment")
+            raise RedditError("Reddit returned an invalid comment")
         comment = item["data"]
         if item.get("kind") == "more":
             omitted = True
             continue
         if item.get("kind") != "t1" or not isinstance(comment.get("body"), str):
-            raise EddritError("Reddit returned an invalid comment")
+            raise RedditError("Reddit returned an invalid comment")
         if loaded >= 100 or depth >= 8:
             omitted = True
             continue
@@ -123,10 +123,8 @@ def scrape_url_reddit(url: str, timeout: float = 60, *, deadline: float | None =
         title, markdown = _render(data, post_id)
         return {"url": safe_url, "title": title, "markdown": markdown,
                 "length": len(markdown), "via": "reddit"}
-    except (EddritError, UrlSecurityError, TimeoutError) as exc:
+    except (RedditError, UrlSecurityError, TimeoutError) as exc:
         return {"url": url, "error": str(exc)}
-    except ImportError:
-        return {"url": url, "error": "Reddit scraper requires curl-cffi; install project dependencies"}
     except Exception as exc:
-        # Curl errors may embed proxy credentials; expose the type only.
+        # Transport errors may embed proxy credentials; expose the type only.
         return {"url": url, "error": f"Reddit scrape failed ({type(exc).__name__})"}

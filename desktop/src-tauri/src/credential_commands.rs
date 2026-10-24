@@ -226,9 +226,9 @@ pub(crate) const TEST_TIMEOUT: Duration =
 /// budget, contacts no scraper, and writes no body cache. `--timeout` must stay
 /// the same budget [`TEST_TIMEOUT`] was derived from.
 pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
+    // Options first, then `--`: a query starting with `-` stays a query.
     vec![
         "search".into(),
-        query.into(),
         "--route".into(),
         "default".into(),
         "--source".into(),
@@ -238,6 +238,8 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
         TEST_SEARCH_TIMEOUT_SECS.to_string(),
         "--format".into(),
         "json".into(),
+        "--".into(),
+        query.into(),
     ]
 }
 

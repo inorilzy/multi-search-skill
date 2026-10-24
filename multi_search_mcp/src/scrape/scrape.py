@@ -13,7 +13,6 @@ from .scrapers.exa import scrape_url_exa
 from .scrapers.firecrawl import scrape_url_firecrawl
 from .scrapers.jina import (
     _jina_anonymous_cooling_down,
-    _record_jina_anonymous_rate_limit,
     _reset_jina_anonymous_rate_limit,
     scrape_url_jina,
 )
@@ -242,10 +241,9 @@ def scrape_url_smart(url: str, firecrawl_key: str | None = None,
                         "error": "Jina: anonymous rate limit cooldown active",
                         "rate_limited": True,
                     }
-                result = scrape_url_jina(scrape_target, "", timeout=call_timeout, **policy["jina"])
-                if "error" in result and result.get("rate_limited"):
-                    _record_jina_anonymous_rate_limit()
-                return result
+                # scrape_url_jina records an anonymous rate limit itself; record
+                # it in exactly one place so a cooldown is never applied twice.
+                return scrape_url_jina(scrape_target, "", timeout=call_timeout, **policy["jina"])
 
             def _scrape_keyed(key: str) -> dict:
                 call_timeout = _remaining_timeout()

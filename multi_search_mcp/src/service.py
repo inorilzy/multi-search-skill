@@ -137,6 +137,16 @@ class ReadSourceRequest:
     use_state: bool = True
 
 
+def _request_int(value: Any, field: str) -> int:
+    """Parse an integer request field, naming the field when it is not one."""
+    if isinstance(value, bool):
+        raise ValueError(f"{field} must be an integer, got {value!r}")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be an integer, got {value!r}") from None
+
+
 def run_read_source(
     request: ReadSourceRequest | dict,
     *,
@@ -150,6 +160,9 @@ def run_read_source(
         raise ValueError("source_id is required")
     if not request.use_state:
         raise ValueError("read_source requires state")
+    # Validate the request before touching state, so bad input is reported as such.
+    offset = max(0, _request_int(request.offset, "offset"))
+    limit = max(1, min(_request_int(request.limit, "limit"), 8_000))
     store = state_store or (content_store.store if content_store else StateStore())
     cache = content_store or ContentStore(store)
     cached = cache.get(request.source_id)
@@ -159,8 +172,6 @@ def run_read_source(
         )
 
     body = str(cached["content"])
-    offset = max(0, int(request.offset))
-    limit = max(1, min(int(request.limit), 8_000))
     match_offset = None
     if request.keyword:
         lower_match_offset = body.lower().find(str(request.keyword).lower())
@@ -210,6 +221,8 @@ def run_fetch_source(
         request = FetchSourceRequest(**request)
     if bool(request.source_id) == bool(request.url):
         raise ValueError("provide exactly one of source_id or url")
+    # Validate before any network or state access, so bad input is reported as such.
+    requested_max_chars = _request_int(request.max_chars, "max_chars")
     if not request.use_state and request.source_id and source_record is None:
         raise ValueError("source_id fetch requires state; provide an explicit URL")
 
@@ -258,7 +271,7 @@ def run_fetch_source(
                 "body_available": False,
             }])
         source = {"providers": ["direct"]}
-    max_chars = None if request.full_content else max(1, min(int(request.max_chars), 20_000))
+    max_chars = None if request.full_content else max(1, min(requested_max_chars, 20_000))
 
     content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None
     cached = content_store.get(source_id) if content_store and source_id else None
