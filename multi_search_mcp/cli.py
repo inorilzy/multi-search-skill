@@ -71,6 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_parser = subparsers.add_parser("fetch", help="fetch one source body")
     fetch_parser.add_argument("source_id", nargs="?")
     fetch_parser.add_argument("--url")
+    fetch_parser.add_argument(
+        "--url-file",
+        metavar="PATH",
+        help="read the URL from a UTF-8 file, or from stdin with '-'",
+    )
     fetch_parser.add_argument("--backend", action="append", dest="backends", default=[])
     fetch_parser.add_argument("--max-chars", type=int, default=20_000)
     fetch_parser.add_argument("--timeout", type=int)
@@ -198,13 +203,43 @@ def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
+def _read_url_file(path: str) -> str:
+    """Read one URL without letting the shell see or interpret it."""
+    if path == "-":
+        stream = sys.stdin
+        buffer = getattr(stream, "buffer", None)
+        try:
+            raw = buffer.read().decode("utf-8-sig") if buffer is not None else stream.read()
+        except UnicodeDecodeError as exc:
+            raise CLIUsageError(f"cannot decode --url-file from stdin as UTF-8: {exc}") from exc
+    else:
+        try:
+            raw = Path(path).expanduser().read_text(encoding="utf-8-sig")
+        except OSError as exc:
+            raise CLIUsageError(f"cannot read --url-file: {exc}") from exc
+    url = raw.strip()
+    if not url:
+        raise CLIUsageError("--url-file is empty")
+    if "\n" in url or "\r" in url:
+        raise CLIUsageError("--url-file must contain exactly one URL")
+    return url
+
+
 def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
-    if bool(args.source_id) == bool(args.url):
-        raise CLIUsageError("provide exactly one of source_id or --url")
+    provided = [
+        name for name, present in (
+            ("source_id", bool(args.source_id)),
+            ("--url", bool(args.url)),
+            ("--url-file", args.url_file is not None),
+        ) if present
+    ]
+    if len(provided) != 1:
+        raise CLIUsageError("provide exactly one of source_id, --url, or --url-file")
+    url = args.url if args.url_file is None else _read_url_file(args.url_file)
     return run_fetch_source(
         FetchSourceRequest(
             source_id=args.source_id,
-            url=args.url,
+            url=url,
             backends=list(args.backends or []),
             max_chars=args.max_chars,
             timeout=args.timeout,

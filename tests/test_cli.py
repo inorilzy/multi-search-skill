@@ -1,5 +1,7 @@
 import io
 import json
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -156,6 +158,80 @@ class CliTests(unittest.TestCase):
         self.assertEqual(captured["request"].url, "https://example.com/article")
         self.assertEqual(captured["request"].max_chars, 1200)
 
+    def test_fetch_reads_url_from_file_verbatim(self):
+        captured = {}
+        shell_hostile = "https://example.com/a?q=$(touch /tmp/pwned)&r=`id`"
+
+        def fake_run(request):
+            captured["request"] = request
+            return {"source_id": "generated", "url": request.url, "body": "body"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            url_file = Path(directory) / "url.txt"
+            url_file.write_text("  " + shell_hostile + "\n", encoding="utf-8")
+            with mock.patch.object(cli, "run_fetch_source", side_effect=fake_run):
+                code, stdout, stderr = self.run_cli(["fetch", "--url-file", str(url_file)])
+
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(captured["request"].url, shell_hostile)
+        self.assertIsNone(captured["request"].source_id)
+        self.assertEqual(json.loads(stdout)["url"], shell_hostile)
+
+    def test_fetch_reads_url_from_stdin_with_dash(self):
+        captured = {}
+
+        def fake_run(request):
+            captured["request"] = request
+            return {"source_id": "generated", "url": request.url, "body": "body"}
+
+        with mock.patch.object(sys, "stdin", io.StringIO("https://example.com/stdin\n")), \
+             mock.patch.object(cli, "run_fetch_source", side_effect=fake_run):
+            code, _stdout, stderr = self.run_cli(["fetch", "--url-file", "-"])
+
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(captured["request"].url, "https://example.com/stdin")
+
+    def test_fetch_rejects_url_file_with_more_than_one_url(self):
+        with tempfile.TemporaryDirectory() as directory:
+            url_file = Path(directory) / "url.txt"
+            url_file.write_text("https://example.com/one\nhttps://example.com/two\n", encoding="utf-8")
+            code, stdout, stderr = self.run_cli(["fetch", "--url-file", str(url_file)])
+
+        self.assertEqual(code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("--url-file must contain exactly one URL", stderr)
+
+    def test_fetch_rejects_empty_or_unreadable_url_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "empty.txt"
+            empty.write_text(" \n", encoding="utf-8")
+            missing = Path(directory) / "missing.txt"
+            for path, message in ((empty, "--url-file is empty"), (missing, "cannot read --url-file")):
+                with self.subTest(path=path.name):
+                    code, stdout, stderr = self.run_cli(["fetch", "--url-file", str(path)])
+                    self.assertEqual(code, 2)
+                    self.assertEqual(stdout, "")
+                    self.assertIn(message, stderr)
+
+    def test_fetch_rejects_url_file_combined_with_other_inputs(self):
+        for arguments in (
+            ["fetch", "src-1", "--url-file", "url.txt"],
+            ["fetch", "--url", "https://example.com", "--url-file", "url.txt"],
+        ):
+            with self.subTest(arguments=arguments):
+                code, stdout, stderr = self.run_cli(arguments)
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn("provide exactly one of source_id, --url, or --url-file", stderr)
+
+    def test_fetch_help_lists_url_file_for_skill_compatibility(self):
+        stdout = io.StringIO()
+        with mock.patch.object(sys, "stdout", stdout), self.assertRaises(SystemExit) as exited:
+            cli.main(["fetch", "--help"])
+
+        self.assertEqual(exited.exception.code, 0)
+        self.assertIn("--url-file", stdout.getvalue())
+
     def test_read_passes_keyword_offset_and_limit(self):
         captured = {}
 
@@ -249,7 +325,7 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(code, 2)
         self.assertEqual(stdout, "")
-        self.assertIn("provide exactly one of source_id or --url", stderr)
+        self.assertIn("provide exactly one of source_id, --url, or --url-file", stderr)
 
     def test_pyproject_registers_multi_search_console_script(self):
         pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")

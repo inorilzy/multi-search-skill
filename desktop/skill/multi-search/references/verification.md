@@ -5,8 +5,11 @@
 - Do not make a claim about page content from a search preview alone. Fetch the
   candidate's full body with `multi-search fetch <source_id> --full-content --format json`
   and inspect the returned text.
-- Use `multi-search read <source_id> --keyword "<text>"` to find a passage in a
-  cached body. It does not replace the first full read.
+- Use `multi-search read <source_id> --keyword '<text>'` to find a passage in a
+  cached body. Keep the keyword in single quotes. It does not replace the first full read.
+- For a URL you observed, write the exact URL to a UTF-8 file and run
+  `multi-search fetch --url-file <path> --full-content --format json`; see
+  [cli.md](cli.md#shell-safety).
 
 ## Check wording and version
 

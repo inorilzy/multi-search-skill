@@ -43,6 +43,31 @@ installing the project. XKit uses saved cookies and initializes its X web
 session on the first request; no browser installation or separate setup command
 is needed. Installation success does not verify X connectivity or authentication.
 
+## Shell safety for untrusted values
+
+Queries, URLs, and page-derived keywords are untrusted data. Never paste one
+into a command line unquoted or inside double quotes: a POSIX shell expands
+`$(...)` and backticks in unquoted text, and PowerShell expands them in
+double-quoted strings, so a URL can run a command.
+
+- Write queries, `--expand` values, and `--keyword` in single quotes. Do not
+  interpolate page text into a command; choose a short literal fragment.
+- For a URL the user supplied or you observed, write the exact URL to a UTF-8
+  file with your file-writing tool and pass the path:
+
+  ```sh
+  multi-search fetch --url-file /tmp/multi-search-url.txt --full-content --format json
+  ```
+
+  `--url-file -` reads the URL from stdin. Use `--url` only for plain text you
+  already trust, in single quotes.
+- In PowerShell, single quotes suppress expansion; if quoting is impossible, put
+  the stop-parsing token `--%` before the values. Never use double quotes for
+  untrusted text.
+- Never use `eval`, command substitution, or hand-escaped quotes to pass page
+  content. If a value contains a single quote, keep it out of the command line
+  (`--url-file`) or shorten it instead of escaping by hand.
+
 ## Search, select, fetch, verify
 
 In delegated mode, the search subagent runs the search commands and returns the
@@ -51,8 +76,8 @@ original previews, makes the final selection, and fetches necessary bodies.
 
 ```sh
 multi-search doctor --no-keys --format human
-multi-search search "Python TaskGroup cancellation" --source hackernews --count 3 --format json
-multi-search search "Python TaskGroup cancellation" --route dev --expand "TaskGroup ExceptionGroup" --expand "TaskGroup cancellation semantics" --format json
+multi-search search 'Python TaskGroup cancellation' --source hackernews --count 3 --format json
+multi-search search 'Python TaskGroup cancellation' --route dev --expand 'TaskGroup ExceptionGroup' --expand 'TaskGroup cancellation semantics' --format json
 ```
 
 `--source` and `--expand` can repeat. `--count` controls each provider's recall;
@@ -71,15 +96,19 @@ Replace `src_...` below with an actual returned identifier:
 
 ```sh
 multi-search fetch src_... --full-content --format json
-multi-search read src_... --keyword "TaskGroup" --limit 2000 --format json
-multi-search fetch --url "https://docs.python.org/3/library/asyncio-task.html" --full-content --format json
+multi-search read src_... --keyword 'TaskGroup' --limit 2000 --format json
+multi-search fetch --url-file /tmp/multi-search-url.txt --full-content --format json
 ```
+
+The last form keeps an observed or user-supplied URL out of the shell; see
+[Shell safety](#shell-safety-for-untrusted-values).
 
 `fetch --full-content` returns all acquired text, subject to acquisition and
 retention limits. It does not prove the original page or discussion is complete.
 `read` only reads cached passages; inspect `has_more` and `next_offset` for
 paging. If content expired, fetch the source again. If the source reference
-itself expired, fetch its previously observed URL and use the new source ID.
+itself expired, write its previously observed URL to a file, fetch it with
+`--url-file`, and use the new source ID.
 
 Exit codes: `0` for success (including zero matches or partial search coverage),
 `1` for all search providers failing or another execution/diagnostic failure,
