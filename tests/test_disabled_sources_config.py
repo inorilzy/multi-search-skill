@@ -31,6 +31,18 @@ def _row(name):
     }
 
 
+def _resolver(_host):
+    """Fixture URLs resolve to a public literal, so the fetch stage never uses DNS."""
+
+    return ["93.184.216.34"]
+
+
+def _scraper(url, **_kwargs):
+    """Synthetic body so the fetch stage never contacts a real backend."""
+
+    return {"url": url, "markdown": "fixture body", "via": "fixture"}
+
+
 class DisabledSourcesConfigTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -59,7 +71,26 @@ class DisabledSourcesConfigTests(unittest.TestCase):
         request = {"query": "fixture", "use_state": False, "count": 1}
         if sources:
             request["sources"] = sources
-        return run_search_web(request, keys=dict(SYNTHETIC_KEYS), config=config)
+        return run_search_web(
+            request, keys=dict(SYNTHETIC_KEYS), config=config,
+            url_resolver=_resolver, scraper=_scraper,
+        )
+
+    def test_body_stage_stays_injected_and_never_resolves_dns(self):
+        """Regression for the isolation violations this module used to trigger."""
+
+        config = self.write_desktop_config({"type": "default", "disabled_sources": ["brave"]})
+        with mock.patch(
+            "socket.getaddrinfo",
+            side_effect=AssertionError("the disabled-sources fixture must not resolve any host"),
+        ), mock.patch(
+            "multi_search_mcp.src.service.scrape_url_smart",
+            side_effect=AssertionError("the disabled-sources fixture must not scrape the internet"),
+        ):
+            response = self.search(config, sources=["baidu"])
+
+        self.assertEqual(response["diagnostics"]["body_failures"], [])
+        self.assertEqual([row["markdown"] for row in response["scrapes"]], ["fixture body"])
 
     def test_disabled_sources_are_not_called_and_partial_results_survive(self):
         disabled = sorted(DEFAULT_ROUTE_SOURCES - {"baidu", "brave"})

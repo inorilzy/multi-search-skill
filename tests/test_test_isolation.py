@@ -18,6 +18,7 @@ from scripts.test_isolation import (
     NetworkIsolationError,
     active_guard,
     isolated_test_environment,
+    set_current_test,
 )
 
 
@@ -286,6 +287,120 @@ else:
             self.assertEqual(completed.returncode, 0)
             with self.assertRaises(NetworkIsolationError):
                 isolation.assert_clean()
+
+    @unittest.skipUnless(
+        hasattr(urllib.request, "getproxies_macosx_sysconf"),
+        "macOS system proxy API is unavailable",
+    )
+    def test_macos_system_proxy_is_ignored_by_the_guard(self):
+        """Regression: a host proxy must not re-route "external" test traffic."""
+
+        host_proxy = {"https": "http://127.0.0.1:7890", "http": "http://127.0.0.1:7890"}
+        with mock.patch.object(
+            urllib.request, "getproxies_macosx_sysconf", return_value=host_proxy,
+        ):
+            with isolated_test_environment(source_root=ROOT) as isolation:
+                self.assertEqual(urllib.request.getproxies(), {})
+                with self.assertRaises(NetworkIsolationError) as error:
+                    urllib.request.build_opener().open(
+                        "https://outside.invalid/proxy?token=host-proxy-secret",
+                    )
+                self.assertNotIn("urllib.proxy", str(error.exception))
+                self.assertNotIn("host-proxy-secret", str(error.exception))
+
+                script = r'''
+import urllib.request
+from scripts.test_isolation import NetworkIsolationError
+
+proxies = urllib.request.getproxies()
+assert proxies == {}, proxies
+try:
+    urllib.request.build_opener().open("https://outside.invalid/child?token=child-proxy-secret")
+except NetworkIsolationError as exc:
+    assert "urllib.proxy" not in str(exc), str(exc)
+else:
+    raise AssertionError("child external HTTP was not blocked")
+print("macos proxy isolation ok")
+'''
+                completed = subprocess.run(
+                    [sys.executable, "-B", "-c", script],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn("macos proxy isolation ok", completed.stdout or "")
+                self.assertNotIn(
+                    "child-proxy-secret", (completed.stdout or "") + (completed.stderr or ""),
+                )
+                with self.assertRaises(NetworkIsolationError):
+                    isolation.assert_clean()
+
+    def test_violation_report_names_the_running_test(self):
+        with isolated_test_environment(source_root=ROOT) as isolation:
+            set_current_test("tests.test_fixture.Case.test_case")
+            try:
+                with self.assertRaises(NetworkIsolationError):
+                    urllib.request.build_opener().open("https://outside.invalid/id?token=id-secret")
+            finally:
+                set_current_test("")
+            report = isolation.paths.report.read_text(encoding="utf-8")
+            self.assertIn("tests.test_fixture.Case.test_case: ", report)
+            self.assertIn("socket.", report.splitlines()[0])
+            with self.assertRaises(NetworkIsolationError) as error:
+                isolation.assert_clean()
+            self.assertIn("tests.test_fixture.Case.test_case", str(error.exception))
+            self.assertIn("socket.", str(error.exception))
+            self.assertNotIn("id-secret", str(error.exception))
+
+    def test_child_process_inherits_the_running_test_id(self):
+        script = r'''
+import urllib.request
+from scripts.test_isolation import NetworkIsolationError
+
+try:
+    urllib.request.build_opener().open("https://outside.invalid/child?token=child-id-secret")
+except NetworkIsolationError:
+    pass
+'''
+        with isolated_test_environment(source_root=ROOT) as isolation:
+            set_current_test("tests.test_fixture.Child.test_spawns")
+            try:
+                completed = subprocess.run(
+                    [sys.executable, "-B", "-c", script],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            finally:
+                set_current_test("")
+            self.assertEqual(completed.returncode, 0)
+            report = isolation.paths.report.read_text(encoding="utf-8")
+            self.assertIn("tests.test_fixture.Child.test_spawns: ", report)
+            self.assertNotIn("child-id-secret", report)
+            with self.assertRaises(NetworkIsolationError) as error:
+                isolation.assert_clean()
+            self.assertIn("tests.test_fixture.Child.test_spawns", str(error.exception))
+
+    def test_runner_report_attributes_violations_to_the_test(self):
+        from scripts.run_tests import _IsolationAwareRunner
+
+        class Probe(unittest.TestCase):
+            def test_probe(self):
+                with self.assertRaises(NetworkIsolationError):
+                    urllib.request.build_opener().open("https://outside.invalid/runner")
+
+        with isolated_test_environment(source_root=ROOT) as isolation:
+            suite = unittest.defaultTestLoader.loadTestsFromTestCase(Probe)
+            result = _IsolationAwareRunner(verbosity=0, stream=io.StringIO()).run(suite)
+            self.assertTrue(result.wasSuccessful(), result.errors + result.failures)
+            report = isolation.paths.report.read_text(encoding="utf-8")
+            self.assertIn("Probe.test_probe: socket.", report)
+            with self.assertRaises(NetworkIsolationError) as error:
+                isolation.assert_clean()
+            self.assertIn("Probe.test_probe", str(error.exception))
 
 
 if __name__ == "__main__":
