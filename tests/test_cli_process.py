@@ -187,6 +187,13 @@ class CliProcessTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("loopback", json.loads(result.stdout)["error"])
 
+    def test_url_file_input_reaches_validation_without_the_shell(self):
+        url_file = self.isolation.root / "observed-url.txt"
+        url_file.write_text("http://127.0.0.1/private\n", encoding="utf-8")
+        result = self.run_cli("fetch", "--url-file", str(url_file))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("loopback", json.loads(result.stdout)["error"])
+
     def test_zero_partial_and_all_failed_searches_have_distinct_outcomes(self):
         cases = (("empty", ["hackernews"], "empty", 0),
                  ("fixture", ["hackernews", "brave"], "partial", 0),

@@ -44,7 +44,7 @@ fn main() {
         match args.first().map(String::as_str) {
             Some("search") if stale => println!("usage: multi-search search [--route ROUTE] [--format FORMAT] query"),
             Some("search") => println!("usage: multi-search search [--route ROUTE] [--expand EXPAND] [--format FORMAT] [--source NAME] [--count N] [--timeout S] query"),
-            Some("fetch") => println!("usage: multi-search fetch [--full-content] [--format FORMAT] [--url URL] [source_id]"),
+            Some("fetch") => println!("usage: multi-search fetch [--full-content] [--format FORMAT] [--url URL] [--url-file PATH] [source_id]"),
             Some("read") => println!("usage: multi-search read [--keyword KEYWORD] [--offset OFFSET] [--limit N] [--format FORMAT] source_id"),
             Some("doctor") => println!("usage: multi-search doctor [--no-keys] [--format FORMAT]"),
             _ => {}

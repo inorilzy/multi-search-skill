@@ -7,18 +7,36 @@ parameter list. Do not guess flags that the help output does not show.
 
 ## Commands
 
-- `multi-search search "<query>" [--route ROUTE] [--source NAME]... [--expand TEXT]... [--count N] [--timeout S] [--format json|human|markdown]`
+- `multi-search search '<query>' [--route ROUTE] [--source NAME]... [--expand TEXT]... [--count N] [--timeout S] [--format json|human|markdown]`
   - Searches, ranks, and fetches bodies for the final 15 URLs.
   - `--source` and `--expand` may repeat. `--count` sets per-provider recall, not the final count.
   - Routes: `default` (alias `web`), `fast`, `social`, `dev`, `all`.
 - `multi-search fetch <source_id> --full-content --format json`
   - Returns the whole body acquired for that source. It does not prove the original page is complete.
-- `multi-search fetch --url "<url>" --full-content --format json`
-  - Use for a URL the user gave you or a URL you observed.
+- `multi-search fetch --url-file PATH --full-content --format json`
+  - Use for a URL the user gave you or a URL you observed. Write the exact URL
+    to a UTF-8 file first, so the shell never parses it. `PATH` may be `-` to
+    read the URL from stdin.
+- `multi-search fetch --url '<url>' --full-content --format json`
+  - Only for a URL that is already trusted plain text; keep it in single quotes.
 - `multi-search read <source_id> [--keyword TEXT] [--offset N] [--limit N] --format json`
   - Reads cached passages only. Check `has_more` and `next_offset` to page through.
 - `multi-search doctor --no-keys --format human`
   - Shows local configuration and key health when a search fails for a setup reason.
+
+## Shell safety
+
+Queries, URLs, and page-derived keywords are untrusted shell input.
+
+- Write queries, `--expand` values, and `--keyword` in single quotes; never use
+  double quotes or leave them unquoted. A POSIX shell and PowerShell expand
+  `$(...)` and backticks, so a URL can run a command.
+- For any URL the user gave you or you observed, use `--url-file`. The URL never
+  appears in the command line, so quotes, backticks, and `$(...)` stay inert.
+- Never interpolate page text into a command, and never use `eval`, command
+  substitution, or hand-escaped quotes. In PowerShell, single quotes suppress
+  expansion; if quoting is impossible, put the stop-parsing token `--%` before
+  the values.
 
 ## Reading search output
 
