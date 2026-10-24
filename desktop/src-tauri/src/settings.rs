@@ -327,7 +327,7 @@ pub fn save_with_dev_mode(
     let existing = match read_source_with(environment, dev, allow_dev) {
         (ReadSource::Env, _) => read_object(&path)?,
         (ReadSource::User, Some(user)) => read_object(&user)?,
-        (ReadSource::DevFallback, Some(dev)) => read_object(dev)?,
+        (ReadSource::DevFallback, Some(dev)) => read_object(&dev)?,
         _ => Map::new(),
     };
     let merged = merge(existing, &valid);
