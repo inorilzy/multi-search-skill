@@ -1,0 +1,73 @@
+name: Signed Windows release
+
+# Builds the signed desktop installer. Manual only: it needs the signing secrets and the
+# separately verified xkit-py checkout (out of scope here; see scripts/build_inputs.py).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "CLI version the bundle reports (e.g. 0.4.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      # Signing is mandatory here: an unsigned launcher, app or installer fails the build.
+      WINDOWS_SIGN_REQUIRED: "1"
+      WINDOWS_SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
+      WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+      WINDOWS_SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_SIGN_TIMESTAMP_URL }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      # rustup reads rust-toolchain.toml; build_cli_release.py refuses any other rustc version.
+      - name: Install the pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Build the project wheel and record its hash in this pipeline
+        shell: pwsh
+        run: |
+          python -m pip install build
+          python -m build --wheel --outdir dist/wheel
+          $wheel = Get-ChildItem dist/wheel/*.whl | Select-Object -First 1
+          "WHEEL=$($wheel.FullName)" >> $env:GITHUB_ENV
+          "WHEEL_SHA256=$((Get-FileHash $wheel.FullName -Algorithm SHA256).Hash.ToLower())" >> $env:GITHUB_ENV
+      - name: Download the locked CPython archive
+        shell: pwsh
+        run: |
+          $lock = Get-Content scripts/build-inputs.lock.json | ConvertFrom-Json
+          New-Item -ItemType Directory -Force dist/inputs | Out-Null
+          Invoke-WebRequest $lock.python.url -OutFile "dist/inputs/$($lock.python.archive)"
+          "PYTHON_ARCHIVE=$(Resolve-Path "dist/inputs/$($lock.python.archive)")" >> $env:GITHUB_ENV
+      # xkit-py is verified by its author separately (out of scope for this workflow); the job
+      # needs that verified checkout and stops clearly when it is absent.
+      - name: Require the separately verified xkit-py checkout
+        shell: pwsh
+        run: |
+          if (-not $env:XKIT_SOURCE -or -not (Test-Path $env:XKIT_SOURCE)) {
+            Write-Error "XKIT_SOURCE must point at the separately verified xkit-py checkout"
+            exit 1
+          }
+        env:
+          XKIT_SOURCE: ${{ vars.XKIT_SOURCE }}
+      - name: Build, verify and sign the CLI bundle
+        shell: pwsh
+        run: >
+          python scripts/build_cli_release.py --require-signing
+          --python-archive "$env:PYTHON_ARCHIVE"
+          --wheel "$env:WHEEL" --wheel-sha256 "$env:WHEEL_SHA256"
+          --xkit-source "$env:XKIT_SOURCE" --version "${{ inputs.version }}"
+        env:
+          XKIT_SOURCE: ${{ vars.XKIT_SOURCE }}
+      - name: Build the signed installer
+        shell: pwsh
+        working-directory: desktop
+        run: |
+          $env:MULTI_SEARCH_SIGN_SCRIPT = (Resolve-Path ../scripts/sign_windows.py).Path
+          npm ci
+          npm run build

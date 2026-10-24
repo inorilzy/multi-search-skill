@@ -13,7 +13,7 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 const ARTIFACT: &str = "multi-search.exe";
@@ -428,9 +428,7 @@ fn step(steps: &mut Vec<InstallStep>, name: &str, ok: bool, detail: &str) {
 
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), Failure> {
     let text = serde_json::to_string_pretty(value).map_err(|_| ("failed", "无法序列化安装状态".into()))?;
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, text).map_err(|e| ("failed", format!("无法写入安装状态：{e}")))?;
-    fs::rename(&tmp, path).map_err(|e| ("failed", format!("无法提交安装状态：{e}")))
+    crate::secure_temp::replace_file(path, text.as_bytes()).map_err(|e| ("failed", format!("无法写入安装状态：{e}")))
 }
 
 /// Cleanup is tied to a directory exclusively created by this call, never a filename-prefix scan.
@@ -519,10 +517,9 @@ fn remove_entry(path: &Path) -> Result<(), Failure> {
 /// directory, and if any rename is refused (for example a file in use) the moved entries are
 /// restored, so a locked file never leaves a half-removed install behind.
 fn remove_owned_entries(root: &Path, names: &[String]) -> Result<(), Failure> {
-    let holding = root.join(format!("removing-{}", std::process::id()));
-    if fs::create_dir(&holding).is_err() {
+    let Ok(holding) = crate::secure_temp::create_dir(root, "removing-") else {
         return Err(("failed", "无法创建卸载暂存目录，未做任何修改".into()));
-    }
+    };
     let mut moved = Vec::new();
     for name in names {
         if let Err(failure) = move_file(root, &holding, name) {
@@ -619,9 +616,8 @@ fn perform_update(
     if manifest.version == active.version {
         return Err(("already_installed", format!("已安装 CLI {}，无需更新", active.version)));
     }
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let staging = root.join(format!("staging-{nonce}"));
-    fs::create_dir(&staging).map_err(|e| ("failed", format!("无法创建暂存目录：{e}")))?;
+    // Random, exclusively created name: a pre-created staging directory is never adopted.
+    let staging = crate::secure_temp::create_dir(root, "staging-").map_err(|e| ("failed", format!("无法创建暂存目录：{e}")))?;
     let _staging_cleanup = StagingCleanup(staging.clone());
     for file in &manifest.files {
         let from = resolve(source, &file.path)?;
@@ -649,8 +645,7 @@ fn perform_update(
     let mut old_names = read_manifest_names(root, &active.manifest_sha256);
     check_destinations(root, &names, &old_names)?;
     old_names.push(ACTIVE.into());
-    let backup = root.join(format!("backup-{nonce}"));
-    fs::create_dir(&backup).map_err(|e| ("failed", format!("无法创建回滚目录：{e}")))?;
+    let backup = crate::secure_temp::create_dir(root, "backup-").map_err(|e| ("failed", format!("无法创建回滚目录：{e}")))?;
     let mut moved = Vec::new();
     for name in &old_names {
         if let Err((_, reason)) = move_file(root, &backup, name) {
@@ -714,12 +709,7 @@ fn perform(
     }
     step(steps, "创建安装目录", true, &root.to_string_lossy());
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let staging = root.join(format!("staging-{nonce}"));
-    fs::create_dir(&staging).map_err(|e| ("failed", format!("无法创建暂存目录：{e}")))?;
+    let staging = crate::secure_temp::create_dir(root, "staging-").map_err(|e| ("failed", format!("无法创建暂存目录：{e}")))?;
     let _staging_cleanup = StagingCleanup(staging.clone());
     for file in &manifest.files {
         let from = resolve(source, &file.path)?;

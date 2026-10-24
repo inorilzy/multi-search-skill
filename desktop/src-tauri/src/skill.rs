@@ -5,14 +5,12 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 
 pub(crate) const SKILL_NAME: &str = "multi-search";
 pub(crate) const SKILL_VERSION: &str = "1";
 pub(crate) const MARKER: &str = ".multi-search-install.json";
-pub(crate) static STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Files shipped with this product release, embedded so the desktop app never reads a loose copy.
 pub(crate) const FILES: [(&str, &str); 3] = [
@@ -66,9 +64,8 @@ pub(crate) fn record_target(environment: &RuntimeEnvironment, target: &Path, pre
     if present { targets.push(target.to_path_buf()); }
     let path = registry_path(environment)?;
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("Cannot record managed Skill: {e}"))?;
-    let temp = path.with_extension("tmp");
-    fs::write(&temp, serde_json::to_vec(&targets).unwrap()).map_err(|e| format!("Cannot record managed Skill: {e}"))?;
-    fs::rename(temp, path).map_err(|e| format!("Cannot commit managed Skill registry: {e}"))
+    crate::secure_temp::replace_file(&path, &serde_json::to_vec(&targets).unwrap())
+        .map_err(|e| format!("Cannot commit managed Skill registry: {e}"))
 }
 
 fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requirements, String> {
@@ -287,14 +284,10 @@ impl DesktopManager {
         let Some(base) = target.parent().and_then(Path::parent) else {
             return failed("Invalid target directory".into());
         };
-        let staging = base.join(format!(
-            ".multi-search-staging-{}-{}",
-            std::process::id(),
-            STAGING_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        if let Err(error) = fs::create_dir_all(&staging) {
-            return failed(format!("Cannot prepare the install folder: {error}"));
-        }
+        let staging = match crate::secure_temp::create_dir(base, ".multi-search-staging-") {
+            Ok(staging) => staging,
+            Err(error) => return failed(format!("Cannot prepare the install folder: {error}")),
+        };
         if let Err(reason) = write_directory(&staging) {
             let _ = fs::remove_dir_all(&staging);
             return failed(reason);

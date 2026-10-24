@@ -8,6 +8,7 @@ mod execution;
 mod install;
 mod process;
 mod redaction;
+mod secure_temp;
 mod skill;
 mod skill_manage;
 pub mod user_path;

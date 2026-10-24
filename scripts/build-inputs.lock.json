@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "python": {
+    "version": "3.12.10",
+    "archive": "python-3.12.10-embed-amd64.zip",
+    "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+    "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+    "provenance": "Matches messageSignature.messageDigest in the python.org Sigstore bundle python-3.12.10-embed-amd64.zip.sigstore (signer thomas@python.org, 3.12 release manager). Update both together."
+  }
+}
