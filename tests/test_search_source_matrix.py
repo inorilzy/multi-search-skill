@@ -47,14 +47,32 @@ def _fake_row(name: str) -> dict:
     }
 
 
+def _resolver(_host: str) -> list[str]:
+    """Resolve fixture URLs to a public literal so the fetch stage never uses DNS."""
+
+    return ["93.184.216.34"]
+
+
+def _scraper(url: str, **_kwargs) -> dict:
+    """Return a synthetic body for the fetch stage without touching the network."""
+
+    return {"url": url, "markdown": "fixture body", "via": "fixture"}
+
+
+def _search(request: dict, keys: dict) -> dict:
+    from multi_search_mcp.src.service import run_search_web
+
+    return run_search_web(
+        request, keys=keys, config={}, url_resolver=_resolver, scraper=_scraper,
+    )
+
+
 class SearchSourceMatrixTests(unittest.TestCase):
     def test_matrix_covers_every_searchable_source(self):
         self.assertEqual(sorted(name for name, _ in MATRIX), sorted(ALL_SOURCE_NAMES))
         self.assertEqual(len(MATRIX), 12)
 
     def test_every_source_reaches_its_own_searcher_with_controlled_fake(self):
-        from multi_search_mcp.src.service import run_search_web
-
         for name, searcher in MATRIX:
             with self.subTest(source=name):
                 calls: list[str] = []
@@ -68,18 +86,42 @@ class SearchSourceMatrixTests(unittest.TestCase):
                 if _requires_key(name) and _key_pool_name(name):
                     keys[_key_pool_name(name)] = "synthetic-matrix-key"
                 with mock.patch(f"multi_search_mcp.src.search.registry.{searcher}", fake):
-                    response = run_search_web(
+                    response = _search(
                         {"query": "fixture", "sources": [name], "count": 1, "use_state": False},
-                        keys=keys,
-                        config={},
+                        keys,
                     )
                 self.assertEqual(calls, [name], "the source must call its own searcher exactly once")
                 titles = [hit.get("title") for hit in response.get("results", [])]
                 self.assertIn(f"{name}-hit", titles)
 
-    def test_key_required_source_without_key_is_not_called(self):
-        from multi_search_mcp.src.service import run_search_web
+    def test_fixture_flow_resolves_nothing_and_runs_no_real_scraper(self):
+        """Regression for the isolation violations: the fetch stage stays injected."""
 
+        calls: list[str] = []
+
+        def fake(*_args, **_kwargs):
+            calls.append("hackernews")
+            return [_fake_row("hackernews")]
+
+        with mock.patch(
+            "multi_search_mcp.src.search.registry.search_hackernews", fake,
+        ), mock.patch(
+            "socket.getaddrinfo",
+            side_effect=AssertionError("the matrix fixture must not resolve any host"),
+        ), mock.patch(
+            "multi_search_mcp.src.service.scrape_url_smart",
+            side_effect=AssertionError("the matrix fixture must not scrape the internet"),
+        ):
+            response = _search(
+                {"query": "fixture", "sources": ["hackernews"], "count": 1, "use_state": False},
+                {},
+            )
+
+        self.assertEqual(calls, ["hackernews"])
+        self.assertEqual(response["diagnostics"]["body_failures"], [])
+        self.assertEqual([row["markdown"] for row in response["scrapes"]], ["fixture body"])
+
+    def test_key_required_source_without_key_is_not_called(self):
         for name, searcher in MATRIX:
             if not _requires_key(name) or not _key_pool_name(name):
                 continue
@@ -91,10 +133,9 @@ class SearchSourceMatrixTests(unittest.TestCase):
                     return []
 
                 with mock.patch(f"multi_search_mcp.src.search.registry.{searcher}", fake):
-                    run_search_web(
+                    _search(
                         {"query": "fixture", "sources": [name], "count": 1, "use_state": False},
-                        keys={},
-                        config={},
+                        {},
                     )
                 self.assertEqual(calls, [], "a key-required source with no key must not reach its searcher")
 

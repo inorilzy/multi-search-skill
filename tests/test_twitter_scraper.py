@@ -1,6 +1,7 @@
 """X detail fetching: real XKit text fields, partial replies, and URL safety."""
 import asyncio
 import json
+import subprocess
 import sys
 import tempfile
 import time
@@ -9,9 +10,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from twikit.tweet import Tweet
+try:  # xkit-py provides twikit; the suite must still load without the optional dependency.
+    from twikit.tweet import Tweet
+except ImportError:  # pragma: no cover - exercised by installs without xkit-py
+    Tweet = None
 
 from multi_search_mcp.src.scrape.scrapers import twitter
+
+
+TWIKIT_AVAILABLE = Tweet is not None
+REQUIRES_TWIKIT = unittest.skipUnless(
+    TWIKIT_AVAILABLE, "twikit (installed with xkit-py) is not available",
+)
 
 
 URL = "https://x.com/fixture/status/12345"
@@ -55,6 +65,7 @@ def client_fixture(full=None):
     )
 
 
+@REQUIRES_TWIKIT
 class TwitterScraperTests(unittest.TestCase):
     def fetch(self, full=None, *, client=None, **kwargs):
         client = client or client_fixture(full)
@@ -325,6 +336,42 @@ class TwitterScraperTests(unittest.TestCase):
                 load.assert_not_called()
                 with self.assertRaises(twitter.UrlSecurityError):
                     twitter.validate_twitter_url(url)
+
+
+class TwitterScraperOptionalDependencyTests(unittest.TestCase):
+    """Regression: no xkit-py must mean a skip, not a loader error."""
+
+    def test_module_skips_instead_of_failing_when_twikit_is_unavailable(self):
+        script = r'''
+import io
+import sys
+import unittest
+
+class NoTwikit:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "twikit" or fullname.startswith("twikit."):
+            raise ImportError("twikit is not installed")
+        return None
+
+sys.meta_path.insert(0, NoTwikit())
+suite = unittest.TestLoader().loadTestsFromName(
+    "tests.test_twitter_scraper.TwitterScraperTests",
+)
+result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)
+assert not result.errors, result.errors
+assert not result.failures, result.failures
+assert result.skipped, "the module must skip its tests instead of failing to import"
+print("twikit-skip-ok")
+'''
+        completed = subprocess.run(
+            [sys.executable, "-B", "-c", script],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("twikit-skip-ok", completed.stdout or "")
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ from unittest.mock import patch
 
 ISOLATION_ENV = "MULTI_SEARCH_TEST_ISOLATION"
 REPORT_ENV = "MULTI_SEARCH_TEST_ISOLATION_REPORT"
+TEST_ID_ENV = "MULTI_SEARCH_TEST_ISOLATION_TEST_ID"
 
 KEY_ENV_NAMES = (
     "BRAVE_SEARCH_API_KEY", "BRAVE_API_KEY", "PARALLEL_API_KEY",
@@ -62,6 +63,29 @@ class IsolationPaths:
 
 _ACTIVE_GUARD: "NetworkGuard | None" = None
 _CHILD_GUARD: "NetworkGuard | None" = None
+_CURRENT_TEST_ID = ""
+_CURRENT_TEST_LOCK = threading.Lock()
+
+
+def set_current_test(test_id: str | None) -> None:
+    """Remember which test is running so a violation can name it.
+
+    The id is process-global rather than thread-local because product code runs
+    network calls in worker threads.  The runner sets it from ``startTest``; the
+    value is also forwarded to child processes spawning under the guard.
+    """
+
+    global _CURRENT_TEST_ID
+    with _CURRENT_TEST_LOCK:
+        _CURRENT_TEST_ID = str(test_id or "")
+
+
+def current_test_id() -> str:
+    """Return the test id reported by the runner, or the inherited child id."""
+
+    with _CURRENT_TEST_LOCK:
+        current = _CURRENT_TEST_ID
+    return current or os.environ.get(TEST_ID_ENV, "")
 
 
 def active_guard() -> "NetworkGuard | None":
@@ -248,6 +272,14 @@ class NetworkGuard:
             self._patchers.append(
                 patch.object(urllib.request, "getproxies_registry", lambda: {})
             )
+        # macOS reads the system proxy from SystemConfiguration, which is not
+        # visible in the environment.  A loopback proxy there would silently
+        # re-route "external" test traffic before the socket guard sees it, so
+        # the guard must also report no proxies to urllib.
+        if hasattr(urllib.request, "getproxies_macosx_sysconf"):
+            self._patchers.append(
+                patch.object(urllib.request, "getproxies_macosx_sysconf", lambda: {})
+            )
         if hasattr(socket.socket, "sendmsg"):
             original_sendmsg = socket.socket.sendmsg
 
@@ -297,29 +329,58 @@ class NetworkGuard:
         _ACTIVE_GUARD = self._previous_guard
 
     def assert_clean(self) -> None:
-        report_violations = self._report_violations()
-        count = report_violations if self.report_path is not None else len(self._violations)
-        if count:
+        entries = (
+            self._report_entries() if self.report_path is not None
+            else list(self._violations)
+        )
+        if entries:
             raise NetworkIsolationError(
-                f"test isolation blocked {count} unexpected network operation(s)"
+                f"test isolation blocked {len(entries)} unexpected network "
+                f"operation(s): {self._summarize(entries)}"
             )
 
-    def _report_violations(self) -> int:
+    def _report_entries(self) -> list[str]:
         if self.report_path is None or not self.report_path.exists():
-            return 0
+            return []
         try:
-            return sum(1 for line in self.report_path.read_text(encoding="utf-8").splitlines() if line)
+            return [
+                line for line in
+                self.report_path.read_text(encoding="utf-8").splitlines()
+                if line
+            ]
         except OSError as exc:
             raise NetworkIsolationError("test isolation could not read its violation report") from exc
 
+    def _report_violations(self) -> int:
+        return len(self._report_entries())
+
+    @staticmethod
+    def _summarize(entries: list[str]) -> str:
+        """Group recorded ``<test id>: <boundary>`` entries for the failure message."""
+
+        counts: dict[tuple[str, str], int] = {}
+        for entry in entries:
+            test_id, separator, boundary = entry.partition(": ")
+            if not separator:
+                test_id, boundary = "unknown test", entry
+            counts[(test_id, boundary)] = counts.get((test_id, boundary), 0) + 1
+        return ", ".join(
+            f"{test_id} [{boundary}] x{count}"
+            for (test_id, boundary), count in sorted(
+                counts.items(), key=lambda item: (-item[1], item[0]),
+            )
+        )
+
     def _record(self, boundary: str) -> None:
-        self._violations.append(boundary)
+        test_id = current_test_id() or "unknown test"
+        entry = f"{test_id}: {boundary}"
+        self._violations.append(entry)
         if self.report_path is None:
             return
         try:
             with self._report_lock:
                 with self.report_path.open("a", encoding="utf-8", newline="\n") as report:
-                    report.write(boundary + "\n")
+                    report.write(entry + "\n")
         except OSError as exc:
             raise NetworkIsolationError("test isolation could not record a network violation") from exc
 
@@ -361,6 +422,11 @@ class NetworkGuard:
         child_env[ISOLATION_ENV] = "1"
         if self.report_path is not None:
             child_env[REPORT_ENV] = str(self.report_path)
+        test_id = current_test_id()
+        if test_id:
+            child_env[TEST_ID_ENV] = test_id
+        else:
+            child_env.pop(TEST_ID_ENV, None)
 
 
 @dataclass(frozen=True)
