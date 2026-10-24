@@ -121,7 +121,15 @@ export async function mountMigration(root, api, { number = '06' } = {}) {
         `失败：${result.failed.join('、') || '无'}`,
         `未完成：${result.not_done.join('、') || '无'}`,
       ];
-      text('[data-info="result"]', result.complete ? `迁移完成。${parts.join('；')}` : `迁移未全部完成。${parts.join('；')}`);
+      let message = result.complete ? `迁移完成。${parts.join('；')}` : `迁移未全部完成。${parts.join('；')}`;
+      if (result.legacy_file_has_plaintext) {
+        // The CLI never edits or deletes the source file; the key material stays there in plaintext.
+        message += ` 旧文件仍含明文 Key：${result.legacy_file}。确认已迁移后请手动删除，或执行 chmod 600 收紧权限。`;
+      }
+      if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+        message += ` 提示：${result.warnings.join('；')}`;
+      }
+      text('[data-info="result"]', message);
       // A plan token is single-use; require a fresh preview before another apply.
       plan = null;
     } catch {

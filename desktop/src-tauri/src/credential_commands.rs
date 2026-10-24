@@ -375,6 +375,15 @@ pub struct MigrationResult {
     pub failed: Vec<String>,
     pub not_done: Vec<String>,
     pub complete: bool,
+    /// Absolute path of the legacy plaintext file. The CLI never edits or deletes it.
+    #[serde(default)]
+    pub legacy_file: String,
+    /// True when that file still contains plaintext secrets after the migration.
+    #[serde(default)]
+    pub legacy_file_has_plaintext: bool,
+    /// Advisory warnings, e.g. a POSIX keys file readable by other users.
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 /// Request file contents for `apply`. Holds only provider names, choices, and the plan token.

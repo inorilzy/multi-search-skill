@@ -131,50 +131,65 @@ class SQLiteKeyManager(BasicKeyManager):
             for key in _ordered_key_pool(key_value)
         ]
         now = _now()
-        rows = {
-            row["key_id"]: row
-            for row in self.store.rows(
-                "SELECT * FROM key_state WHERE provider = ?",
-                (provider,),
-            )
-        }
-        usable: list[tuple[int, str, str, KeyCandidate]] = []
-        for order, cand in enumerate(raw):
-            row = rows.get(cand.key_id)
-            if not row:
-                self._ensure_row(provider, cand)
-                usable.append((0, "", f"{order:08d}", cand))
-                continue
-            status = row.get("status") or ACTIVE
-            if row.get("manually_disabled") or status in {DISABLED, INVALID}:
-                continue
-            cooldown_until = _parse_iso(row.get("cooldown_until"))
-            exhausted_until = _parse_iso(row.get("exhausted_until"))
-            if status == COOLDOWN and cooldown_until and cooldown_until > now:
-                continue
-            if status == TRANSIENT_INVALID and cooldown_until and cooldown_until > now:
-                continue
-            if status == QUOTA_EXHAUSTED and exhausted_until and exhausted_until > now:
-                continue
-            last_used_at = row.get("last_used_at") or ""
-            never_used = 0 if not last_used_at else 1
-            usable.append((never_used, last_used_at, f"{order:08d}", cand))
+        # One connection and one transaction: the rows read here decide which
+        # candidates are usable, and missing rows are registered on that same
+        # snapshot instead of overwriting a concurrent writer's state.
+        with self.store.transaction():
+            rows = {
+                row["key_id"]: row
+                for row in self.store.rows(
+                    "SELECT * FROM key_state WHERE provider = ?",
+                    (provider,),
+                )
+            }
+            usable: list[tuple[int, str, str, KeyCandidate]] = []
+            for order, cand in enumerate(raw):
+                row = rows.get(cand.key_id)
+                if not row:
+                    self._ensure_row(provider, cand)
+                    usable.append((0, "", f"{order:08d}", cand))
+                    continue
+                status = row.get("status") or ACTIVE
+                if row.get("manually_disabled") or status in {DISABLED, INVALID}:
+                    continue
+                cooldown_until = _parse_iso(row.get("cooldown_until"))
+                exhausted_until = _parse_iso(row.get("exhausted_until"))
+                if status == COOLDOWN and cooldown_until and cooldown_until > now:
+                    continue
+                if status == TRANSIENT_INVALID and cooldown_until and cooldown_until > now:
+                    continue
+                if status == QUOTA_EXHAUSTED and exhausted_until and exhausted_until > now:
+                    continue
+                last_used_at = row.get("last_used_at") or ""
+                never_used = 0 if not last_used_at else 1
+                usable.append((never_used, last_used_at, f"{order:08d}", cand))
         usable.sort(key=lambda item: (item[0], item[1], item[2]))
         return [cand for *_unused, cand in usable]
 
     def record_use(self, provider: str, candidate: KeyCandidate) -> None:
-        self._ensure_row(provider, candidate)
-        now = _iso()
-        self.store.execute(
-            """
-            UPDATE key_state
-            SET use_count = use_count + 1, last_used_at = ?, updated_at = ?
-            WHERE provider = ? AND key_id = ?
-            """,
-            (now, now, provider, candidate.key_id),
-        )
+        # Registering the row and incrementing the counter are one write: no
+        # second process can observe a registered key with no use recorded.
+        with self.store.transaction():
+            self._ensure_row(provider, candidate)
+            now = _iso()
+            self.store.execute(
+                """
+                UPDATE key_state
+                SET use_count = use_count + 1, last_used_at = ?, updated_at = ?
+                WHERE provider = ? AND key_id = ?
+                """,
+                (now, now, provider, candidate.key_id),
+            )
 
     def record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:
+        # Row registration, the read-modify-write decision (invalid strikes,
+        # cooldown, quota) and the counters commit as one transaction. Two
+        # processes can no longer interleave between the ensure-row write and the
+        # outcome update, and a crash leaves no half-applied key health.
+        with self.store.transaction():
+            self._record_result(provider, candidate, outcome)
+
+    def _record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:
         self._ensure_row(provider, candidate)
         now = _iso()
         if outcome.success:

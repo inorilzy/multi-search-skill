@@ -2,9 +2,66 @@
 import json
 import os
 import random
+import stat
 import sys
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
+
+
+KEYS_FILE_MODE = 0o600
+
+
+def write_keys_file_atomic(path: str | Path, data: dict) -> None:
+    """Replace the keys file atomically, created with owner-only permissions.
+
+    The new contents go to a sibling temporary file that is fsynced and then
+    renamed over the target, so a crash or a failed write leaves either the old
+    complete file or the new complete file. On POSIX the temporary file is 0600
+    before the rename, so the plaintext secrets are never briefly world-readable
+    and the mode survives the replacement.
+    """
+    path = Path(path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(data, indent=2, ensure_ascii=False)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if os.name == "posix":
+            os.chmod(temporary, KEYS_FILE_MODE)
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def keys_file_permission_warning(path: str | Path) -> str | None:
+    """Return a warning when a plaintext keys file is accessible by other users.
+
+    Only meaningful on POSIX; Windows ACLs are not inspected. Returns ``None``
+    when the file is absent, unreadable, or already owner-only.
+    """
+    if os.name != "posix":
+        return None
+    path = Path(path).expanduser()
+    try:
+        mode = stat.S_IMODE(path.stat().st_mode)
+    except OSError:
+        return None
+    if mode & 0o077:
+        return (
+            f"{path} is readable by other users (mode {mode:04o}); "
+            f"it stores keys in plaintext. Run: chmod 600 {path}"
+        )
+    return None
 
 
 class KeysError(ValueError):

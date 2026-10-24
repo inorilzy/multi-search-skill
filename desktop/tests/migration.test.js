@@ -176,3 +176,28 @@ test('preview shows a loading state and ignores repeated clicks', async () => {
   mounted.dispose();
   window.close();
 });
+
+test('apply result warns about plaintext legacy file and wide permissions', async () => {
+  const { window, root } = setup();
+  const api = {
+    migrationPlan: async () => plan(),
+    migrationApply: async () => ({
+      written: ['tavily'], kept: [], unchanged: [], failed: [], not_done: [], complete: true,
+      legacy_file: '/home/synthetic/.search-keys.json',
+      legacy_file_has_plaintext: true,
+      warnings: ['/home/synthetic/.search-keys.json is readable by other users (mode 0644)'],
+    }),
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  root.querySelector('[data-approve="tavily"]').checked = true;
+  root.querySelector('[data-action="apply"]').click();
+  await flush();
+  const result = root.querySelector('[data-info="result"]').textContent;
+  assert.match(result, /迁移完成/);
+  assert.match(result, /旧文件仍含明文 Key：\/home\/synthetic\/\.search-keys\.json/);
+  assert.match(result, /readable by other users/);
+  mounted.dispose();
+  window.close();
+});

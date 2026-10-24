@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-from .keys import KeysError
+from .keys import KeysError, write_keys_file_atomic
 
 
 def _mark_config_exhausted(key_to_mark: str) -> bool:
@@ -49,7 +49,9 @@ def _mark_config_exhausted(key_to_mark: str) -> bool:
     if not changed:
         return False
     try:
-        keys_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        # Atomic replace: a crash mid-write must never truncate the only copy of
+        # every configured key, and the new file is owner-only on POSIX.
+        write_keys_file_atomic(keys_file, data)
         return True
     except Exception:
         return False

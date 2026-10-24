@@ -8,6 +8,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .support.config import (
@@ -18,7 +19,10 @@ from .support.config import (
 )
 from .support.format import body_preview_start, format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager, classify_error
-from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, key_sources, load_keys
+from .state.keys import (
+    KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, key_sources, load_keys,
+    keys_file_permission_warning,
+)
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content
 from .scrape.scrape import scrape_url_smart
 from .scrape.scrapers.twitter import is_twitter_url, validate_twitter_url
@@ -951,6 +955,15 @@ def list_sources(include_key_status: bool = False, include_scraper_stats: bool =
     return response
 
 
+def _keys_file_warnings() -> list[str]:
+    """Advisory warnings about the plaintext keys file (POSIX permissions)."""
+    try:
+        warning = keys_file_permission_warning(Path.home() / ".search-keys.json")
+    except OSError:
+        return []
+    return [warning] if warning else []
+
+
 def doctor_data(include_keys: bool = True, include_network: bool = False) -> dict:
     keys: dict = {}
     keys_error: str | None = None
@@ -990,6 +1003,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
             "state": str(store.path),
         },
         "routes": available_routes(),
+        "keys_file_warnings": _keys_file_warnings(),
         "network_checked": False,
         "network_ok": None,
         "network_checks": [],
