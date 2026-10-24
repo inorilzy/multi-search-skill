@@ -15,7 +15,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal }
       <p data-info="restart" class="note"></p><p data-info="error" role="alert"></p></section>
     <section class="panel test-search"><div class="section-title"><h2>一次测试搜索</h2><span class="eyebrow">ON DEMAND / NO SERVICE</span></div>
       <form data-search-form><label>搜索词<input data-field="query" required maxlength="2000" placeholder="例如：Python SQLite 缓存"></label>
-      <div class="search-options"><label>路由<select data-field="route">${routeOptions}</select></label><label>搜索源<select data-field="sources">${sourceOptions}</select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="60" value="15"></label></div>
+      <div class="search-options"><label>路由<select data-field="route">${routeOptions}</select></label><label>搜索源<select data-field="sources">${sourceOptions}</select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="90" value="15"></label></div>
       <div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
       <p data-execution-error role="alert"></p><pre data-results tabindex="0" aria-label="搜索结果">结果会显示在这里。</pre></section>`;
   let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false;

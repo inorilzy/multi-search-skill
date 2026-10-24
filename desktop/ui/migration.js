@@ -28,6 +28,23 @@ export async function mountMigration(root, api) {
 
   const text = (selector, value) => { root.querySelector(selector).textContent = value; };
   let plan = null;
+  let busy = false;
+  let disposed = false;
+  const previewButton = root.querySelector('[data-action="preview"]');
+  // One request at a time: while a preview or apply runs, both buttons are disabled and the
+  // running one shows a loading label, so a double click cannot send a second migration.
+  function setBusy(next, action) {
+    busy = next;
+    previewButton.disabled = next;
+    previewButton.textContent = next && action === 'preview' ? '预览中…' : '预览旧文件';
+    previewButton.setAttribute('aria-busy', String(next && action === 'preview'));
+    const applyButton = root.querySelector('[data-action="apply"]');
+    if (applyButton) {
+      applyButton.disabled = next || plan === null;
+      applyButton.textContent = next && action === 'apply' ? '迁移中…' : '确认并迁移已选项';
+      applyButton.setAttribute('aria-busy', String(next && action === 'apply'));
+    }
+  }
 
   function renderPlan(result) {
     plan = result;
@@ -68,13 +85,19 @@ export async function mountMigration(root, api) {
   }
 
   async function preview() {
+    if (busy || disposed) return;
     text('[data-info="error"]', '');
-    try { renderPlan(await api.migrationPlan()); }
-    catch { text('[data-info="error"]', '无法预览旧文件，请检查 CLI 或文件。'); }
+    setBusy(true, 'preview');
+    try {
+      const result = await api.migrationPlan();
+      if (!disposed) renderPlan(result);
+    } catch {
+      if (!disposed) text('[data-info="error"]', '无法预览旧文件，请检查 CLI 或文件。');
+    } finally { if (!disposed) setBusy(false); }
   }
 
   async function apply() {
-    if (!plan) return;
+    if (!plan || busy || disposed) return;
     const { approved, choices } = selections();
     const missingChoice = plan.items.find(item => item.action === 'conflict'
       && approved.includes(sourceOf(item.provider)) && !choices[sourceOf(item.provider)]);
@@ -86,8 +109,11 @@ export async function mountMigration(root, api) {
       text('[data-info="result"]', '未选择任何要迁移的项。');
       return;
     }
+    setBusy(true, 'apply');
+    text('[data-info="result"]', '迁移中…');
     try {
       const result = await api.migrationApply(plan.plan_token, approved, choices);
+      if (disposed) return;
       const parts = [
         `已写入：${result.written.join('、') || '无'}`,
         `保留：${result.kept.join('、') || '无'}`,
@@ -96,11 +122,13 @@ export async function mountMigration(root, api) {
         `未完成：${result.not_done.join('、') || '无'}`,
       ];
       text('[data-info="result"]', result.complete ? `迁移完成。${parts.join('；')}` : `迁移未全部完成。${parts.join('；')}`);
+      // A plan token is single-use; require a fresh preview before another apply.
+      plan = null;
     } catch {
-      text('[data-info="result"]', '迁移未完成：旧文件或凭据库可能已变化，请重新预览。');
-    }
+      if (!disposed) text('[data-info="result"]', '迁移未完成：旧文件或凭据库可能已变化，请重新预览。');
+    } finally { if (!disposed) setBusy(false); }
   }
 
-  root.querySelector('[data-action="preview"]').addEventListener('click', preview);
-  return { dispose() {} };
+  previewButton.addEventListener('click', preview);
+  return { dispose() { disposed = true; } };
 }

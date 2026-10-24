@@ -158,14 +158,119 @@ test('a rejected save keeps the form and shows the error without writing a statu
   const { window, root } = setup();
   const api = {
     settingsView: async () => view(),
-    settingsSave: async () => { throw '超时时间必须在 1 到 60 秒之间'; },
+    settingsSave: async () => { throw '超时时间必须在 1 到 90 秒之间'; },
   };
   await mountSettings(root, api);
-  root.querySelector('[data-field="timeout"]').value = '99';
+  root.querySelector('[data-field="timeout"]').value = '45';
   root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await flush();
-  assert.equal(root.querySelector('[data-info="error"]').textContent, '超时时间必须在 1 到 60 秒之间');
+  assert.equal(root.querySelector('[data-info="error"]').textContent, '超时时间必须在 1 到 90 秒之间');
   assert.equal(root.querySelector('[data-status="save"]').textContent, '');
-  assert.equal(root.querySelector('[data-field="timeout"]').value, '99');
+  assert.equal(root.querySelector('[data-field="timeout"]').value, '45');
+  window.close();
+});
+
+test('save shows a loading state and a double submit writes exactly once', async () => {
+  const { window, root } = setup();
+  let release;
+  const sent = [];
+  await mountSettings(root, {
+    settingsView: async () => view(),
+    settingsSave: input => { sent.push(input); return new Promise(resolve => { release = resolve; }); },
+  });
+  const form = root.querySelector('[data-settings-form]');
+  form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.length, 1);
+  const button = root.querySelector('[data-action="save"]');
+  assert.equal(button.disabled, true);
+  assert.equal(button.getAttribute('aria-busy'), 'true');
+  assert.equal(root.querySelector('[data-action="refresh"]').disabled, true);
+  release(view());
+  await flush();
+  assert.equal(button.disabled, false);
+  assert.equal(root.querySelector('[data-status="save"]').textContent, '已保存。');
+  window.close();
+});
+
+test('a failed settings read blocks saving and never submits timeout 0 or defaults', async () => {
+  const { window, root } = setup();
+  let ok = false;
+  const sent = [];
+  await mountSettings(root, {
+    settingsView: async () => { if (!ok) throw 'offline'; return view({ timeout: 42 }); },
+    settingsSave: async input => { sent.push(input); return view(input); },
+  });
+  const button = root.querySelector('[data-action="save"]');
+  assert.equal(button.disabled, true);
+  assert.match(root.querySelector('[data-info="error"]').textContent, /无法读取搜索设置/);
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.length, 0, 'nothing is written from placeholder values');
+
+  ok = true;
+  root.querySelector('[data-action="refresh"]').click();
+  await flush();
+  assert.equal(button.disabled, false);
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].timeout, null, 'an unedited timeout is not rewritten');
+
+  ok = false;
+  root.querySelector('[data-action="refresh"]').click();
+  await flush();
+  assert.equal(button.disabled, true, 'a later failed refresh blocks saving again');
+  window.close();
+});
+
+test('an unreadable config disables saving', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, { settingsView: async () => view({ status: 'config_unreadable', timeout: 60 }) });
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+  window.close();
+});
+
+test('timeout range follows the backend (90 for the all route) and an edited value is validated', async () => {
+  const { window, root } = setup();
+  const sent = [];
+  await mountSettings(root, {
+    settingsView: async () => view({ route: 'all', timeout: 90, timeout_configured: false, timeout_min: 1, timeout_max: 90 }),
+    settingsSave: async input => { sent.push(input); return view({ ...input, timeout: input.timeout ?? 90, timeout_max: 90 }); },
+  });
+  const field = root.querySelector('[data-field="timeout"]');
+  assert.equal(field.max, '90');
+  assert.equal(field.value, '90');
+  assert.match(root.querySelector('[data-label="timeout"]').textContent, /1 到 90/);
+  assert.match(root.querySelector('[data-info="timeout"]').textContent, /CLI 默认值/);
+  const form = root.querySelector('[data-settings-form]');
+  field.value = '91';
+  form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.length, 0);
+  assert.match(root.querySelector('[data-info="error"]').textContent, /1 到 90/);
+  field.value = '75';
+  form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent[0].timeout, 75);
+  window.close();
+});
+
+test('an out-of-range stored timeout and unknown disabled entries are shown and not rewritten', async () => {
+  const { window, root } = setup();
+  const sent = [];
+  await mountSettings(root, {
+    settingsView: async () => view({ timeout: 120, timeout_configured: true, timeout_out_of_range: true, timeout_max: 90, disabled_sources: ['exa'], unknown_disabled_sources: ['future_source'] }),
+    settingsSave: async input => { sent.push(input); return view(); },
+  });
+  assert.equal(root.querySelector('[data-field="timeout"]').value, '120');
+  assert.match(root.querySelector('[data-info="timeout"]').textContent, /原样保留/);
+  assert.match(root.querySelector('[data-info="env"]').textContent, /future_source/);
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].timeout, null);
+  assert.deepEqual(sent[0].disabled_sources, ['exa']);
   window.close();
 });

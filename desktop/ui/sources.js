@@ -108,7 +108,8 @@ export async function mountSources(root, api, { signal } = {}) {
       if (disposed) return;
       const disabled = new Set(view.disabled_sources || []);
       if (enabled) disabled.delete(rec.entry.source); else disabled.add(rec.entry.source);
-      const saved = await api.settingsSave({ route: view.route, timeout: view.timeout, disabled_sources: [...disabled], twitter_cookies_path: view.twitter_cookies_path ?? '' });
+      // timeout: null keeps the stored timeout untouched; a toggle never rewrites it.
+      const saved = await api.settingsSave({ route: view.route, timeout: null, disabled_sources: [...disabled], twitter_cookies_path: view.twitter_cookies_path ?? '' });
       if (!disposed) applySettings(saved);
     } catch (err) {
       if (disposed) return;

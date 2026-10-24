@@ -278,3 +278,24 @@ fn child_process_gets_a_minimal_environment_with_only_the_needed_credentials() {
     assert!(!dev.iter().any(|n| n == "BRAVE_SEARCH_API_KEY"), "dev route never receives Brave's key");
     assert!(!dev.iter().any(|n| n == "AWS_SECRET_ACCESS_KEY"));
 }
+
+#[test]
+fn test_search_timeout_range_matches_the_cli_route_maximum() {
+    let profile = common::Profile::new();
+    let manager = DesktopManager::new(profile.environment.clone());
+    for timeout in [0, 91] {
+        let error = manager
+            .start_search(
+                SearchOptions { query: "fixture".into(), route: "all".into(), sources: vec![], timeout },
+            )
+            .unwrap_err();
+        assert_eq!(error, "Unsupported search options", "timeout {timeout} must be rejected before spawning");
+    }
+    // 90 s is the `all` route default in the CLI, so the desktop must accept it.
+    let id = manager
+        .start_search(
+            SearchOptions { query: "fixture".into(), route: "all".into(), sources: vec![], timeout: 90 },
+        )
+        .unwrap();
+    manager.cancel_search(id).unwrap();
+}

@@ -55,7 +55,7 @@ impl Drop for Sandbox {
 fn input(route: &str, timeout: u32, disabled: &[&str]) -> SettingsInput {
     SettingsInput {
         route: route.into(),
-        timeout,
+        timeout: Some(timeout),
         disabled_sources: disabled.iter().map(|s| s.to_string()).collect(),
         twitter_cookies_path: None,
     }
@@ -107,7 +107,8 @@ fn invalid_input_is_rejected_before_any_write_and_keeps_the_old_file_byte_for_by
     let bad_inputs = [
         input("nope", 20, &[]),
         input("dev", 0, &[]),
-        input("dev", 61, &[]),
+        input("dev", 91, &[]),
+        input("all", 1000, &[]),
         input("dev", 20, &["jina"]),
         input("dev", 20, &["../../etc"]),
         input("dev", 20, &["tavily/../brave"]),
@@ -391,4 +392,67 @@ fn an_unusable_doctor_payload_leaves_the_local_path_rules_in_place() {
         Some(user_text.as_str()),
         "an unrecognised doctor payload must not override the save target"
     );
+}
+
+fn timeout_range_covers_every_cli_route_default() {
+    // ROUTE_META in search_runner.py: default/social/dev 60, fast 45, all 90.
+    for (route, expected) in [("default", 60), ("fast", 45), ("all", 90), ("social", 60), ("dev", 60)] {
+        assert_eq!(fixture::route_default_timeout(route), expected, "{route}");
+        assert!((fixture::TIMEOUT_MIN..=fixture::TIMEOUT_MAX).contains(&expected), "{route} default must be savable");
+    }
+    assert_eq!(fixture::TIMEOUT_MIN, 1);
+    assert_eq!(fixture::TIMEOUT_MAX, 90);
+    let sandbox = Sandbox::new("timeout-90");
+    let env = sandbox.env(&[]);
+    let view = save_h(&sandbox, &env, &input("all", 90, &[])).unwrap();
+    assert_eq!(view.timeout, 90);
+    assert!(view.timeout_configured);
+    assert!(!view.timeout_out_of_range);
+    assert!(save_h(&sandbox, &env, &input("all", 91, &[])).is_err());
+}
+
+#[test]
+fn an_absent_timeout_reports_the_route_default_and_is_never_written_when_not_edited() {
+    let sandbox = Sandbox::new("timeout-absent");
+    let env = sandbox.env(&[]);
+    std::fs::create_dir_all(sandbox.user_config().parent().unwrap()).unwrap();
+    std::fs::write(sandbox.user_config(), r#"{"type": "all"}"#).unwrap();
+    let view = fixture::view_with_dev(&env, &sandbox.absent_dev());
+    assert_eq!(view.timeout, 90, "the all route default, not a desktop invention");
+    assert!(!view.timeout_configured);
+    let request = SettingsInput { timeout: None, ..input("all", 1, &["brave"]) };
+    save_h(&sandbox, &env, &request).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
+    assert!(json.get("timeout").is_none(), "an unedited timeout must not be materialised");
+}
+
+#[test]
+fn an_out_of_range_stored_timeout_is_shown_as_is_and_preserved_when_not_edited() {
+    let sandbox = Sandbox::new("timeout-wide");
+    let env = sandbox.env(&[]);
+    std::fs::create_dir_all(sandbox.user_config().parent().unwrap()).unwrap();
+    std::fs::write(sandbox.user_config(), r#"{"type": "default", "timeout": 120}"#).unwrap();
+    let view = fixture::view_with_dev(&env, &sandbox.absent_dev());
+    assert_eq!(view.timeout, 120, "no silent rewrite to 60");
+    assert!(view.timeout_configured);
+    assert!(view.timeout_out_of_range);
+    let request = SettingsInput { timeout: None, ..input("dev", 1, &[]) };
+    save_h(&sandbox, &env, &request).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
+    assert_eq!(json["timeout"], 120);
+    assert_eq!(json["type"], "dev");
+}
+
+#[test]
+fn unknown_disabled_entries_are_reported_and_kept_through_a_save() {
+    let sandbox = Sandbox::new("unknown-disabled");
+    let env = sandbox.env(&[]);
+    std::fs::create_dir_all(sandbox.user_config().parent().unwrap()).unwrap();
+    std::fs::write(sandbox.user_config(), r#"{"disabled_sources": ["future_source", "exa", 7]}"#).unwrap();
+    let view = fixture::view_with_dev(&env, &sandbox.absent_dev());
+    assert_eq!(view.disabled_sources, vec!["exa"]);
+    assert_eq!(view.unknown_disabled_sources, vec!["future_source", "7"]);
+    save_h(&sandbox, &env, &input("default", 30, &["brave"])).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
+    assert_eq!(json["disabled_sources"], serde_json::json!(["brave", "future_source", 7]), "known edits apply; unknown entries survive");
 }

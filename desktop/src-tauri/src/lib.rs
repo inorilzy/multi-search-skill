@@ -24,8 +24,9 @@ pub use skill_manage::{InstallState, RemoveOutcome, RemovePlan, SkillStatus, Upd
 #[doc(hidden)]
 pub mod settings_fixture {
     pub use crate::settings::{
-        config_path, save, save_with_dev, save_with_dev_mode, validate, view, view_with_doctor, view_with_dev,
-        view_with_dev_mode, SettingsInput, SettingsView, Validated,
+        config_path, route_default_timeout, save, save_with_dev, save_with_dev_mode, validate, view,
+        view_with_doctor, view_with_dev, view_with_dev_mode, SettingsInput, SettingsView, Validated,
+        TIMEOUT_MAX, TIMEOUT_MIN,
     };
     /// Whether the execution allowlist accepts a `--source` name.
     pub fn is_allowed_source(name: &str) -> bool {

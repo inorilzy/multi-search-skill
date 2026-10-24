@@ -108,7 +108,7 @@ impl DesktopManager {
             return Err("Enter a query of 1–2000 bytes".into());
         }
         if crate::source_catalog::catalog().route(&options.route).is_none()
-            || !(1..=60).contains(&options.timeout)
+            || !(crate::settings::TIMEOUT_MIN..=crate::settings::TIMEOUT_MAX).contains(&options.timeout)
             || options.sources.len() > 16
             || options.sources.iter().any(|s| !is_allowed_source(s))
         {

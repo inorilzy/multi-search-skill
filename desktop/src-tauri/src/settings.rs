@@ -26,12 +26,29 @@ pub(crate) fn route_sources(route: &str) -> &'static [String] {
         .map(|entry| entry.sources.as_slice())
         .unwrap_or(&[])
 }
+/// Mirrors the per-route `timeout` defaults in `ROUTE_META` (search_runner.py). The CLI uses
+/// these when the config has no `timeout`; the desktop reports them so it never invents a value.
+pub fn route_default_timeout(route: &str) -> u32 {
+    match route {
+        "fast" => 45,
+        "all" => 90,
+        _ => 60,
+    }
+}
+/// Smallest timeout the desktop accepts.
+pub const TIMEOUT_MIN: u32 = 1;
+/// Largest timeout the desktop accepts: the longest route default the CLI itself uses (`all`).
+/// Keep equal to `max(ROUTE_META[*]["timeout"])`; a Python contract test checks the two agree.
+pub const TIMEOUT_MAX: u32 = 90;
 const MAX_PATH_BYTES: usize = 1024;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SettingsInput {
     pub route: String,
-    pub timeout: u32,
+    /// `None` keeps the stored `timeout` exactly as it is (including absent), so a caller that
+    /// did not edit the timeout can never rewrite it.
+    #[serde(default)]
+    pub timeout: Option<u32>,
     #[serde(default)]
     pub disabled_sources: Vec<String>,
     /// Empty or absent clears the reference. Never a cookie body.
@@ -42,7 +59,7 @@ pub struct SettingsInput {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Validated {
     pub route: String,
-    pub timeout: u32,
+    pub timeout: Option<u32>,
     pub disabled_sources: Vec<String>,
     pub twitter_cookies_path: Option<String>,
 }
@@ -59,8 +76,18 @@ pub struct SettingsView {
     /// saving creates the user file, which the CLI then uses instead of the dev file.
     pub save_creates_override: bool,
     pub route: String,
+    /// The stored `timeout` when the file sets one, otherwise the CLI's route default.
     pub timeout: u32,
+    /// True when the file sets `timeout`; false means `timeout` is the route default.
+    pub timeout_configured: bool,
+    /// True when the stored timeout is outside `TIMEOUT_MIN..=TIMEOUT_MAX`. It is still shown
+    /// and preserved unchanged; only an edited value must be in range.
+    pub timeout_out_of_range: bool,
+    pub timeout_min: u32,
+    pub timeout_max: u32,
     pub disabled_sources: Vec<String>,
+    /// Entries in `disabled_sources` the desktop does not recognise. Never dropped on save.
+    pub unknown_disabled_sources: Vec<String>,
     pub twitter_cookies_path: Option<String>,
     /// True when TWITTER_COOKIES_PATH is set: it wins over the saved reference.
     pub twitter_env_overrides: bool,
@@ -187,8 +214,10 @@ pub(crate) fn route_name(raw: &str) -> Option<&'static str> {
 /// Validate before any file access. Errors never echo the rejected value.
 pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
     let route = route_name(&input.route).ok_or_else(|| "不支持的搜索路由".to_string())?;
-    if !(1..=60).contains(&input.timeout) {
-        return Err("超时时间必须在 1 到 60 秒之间".into());
+    if let Some(timeout) = input.timeout {
+        if !(TIMEOUT_MIN..=TIMEOUT_MAX).contains(&timeout) {
+            return Err(format!("超时时间必须在 {TIMEOUT_MIN} 到 {TIMEOUT_MAX} 秒之间"));
+        }
     }
     let mut disabled = Vec::new();
     for raw in &input.disabled_sources {
@@ -228,14 +257,36 @@ fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
     }
 }
 
+/// Existing `disabled_sources` entries the desktop cannot map to a known source (a newer CLI's
+/// source, a typo, a non-string). They are kept verbatim so a save never re-enables them.
+fn unknown_disabled(existing: &Map<String, Value>) -> Vec<Value> {
+    existing
+        .get("disabled_sources")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.as_str().map_or(true, |raw| source_name(raw).is_err()))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn merge(existing: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
+    let unknown = unknown_disabled(&existing);
     let mut map = existing;
     map.insert("type".into(), Value::String(valid.route.clone()));
-    map.insert("timeout".into(), Value::from(valid.timeout));
-    map.insert(
-        "disabled_sources".into(),
-        Value::Array(valid.disabled_sources.iter().cloned().map(Value::String).collect()),
-    );
+    if let Some(timeout) = valid.timeout {
+        map.insert("timeout".into(), Value::from(timeout));
+    }
+    let mut disabled: Vec<Value> = valid.disabled_sources.iter().cloned().map(Value::String).collect();
+    for item in unknown {
+        if !disabled.contains(&item) {
+            disabled.push(item);
+        }
+    }
+    map.insert("disabled_sources".into(), Value::Array(disabled));
     match &valid.twitter_cookies_path {
         Some(path) => {
             map.insert("twitter_cookies_path".into(), Value::String(path.clone()));
@@ -377,8 +428,13 @@ pub fn view_with_dev_mode(
             read_source: read.as_str().into(),
             save_creates_override,
             route: "default".into(),
-            timeout: 60,
+            timeout: route_default_timeout("default"),
+            timeout_configured: false,
+            timeout_out_of_range: false,
+            timeout_min: TIMEOUT_MIN,
+            timeout_max: TIMEOUT_MAX,
             disabled_sources: vec![],
+            unknown_disabled_sources: vec![],
             twitter_cookies_path: None,
             twitter_env_overrides,
             active_sources: vec![],
@@ -392,12 +448,16 @@ pub fn view_with_dev_mode(
         .and_then(route_name)
         .unwrap_or("default")
         .to_string();
-    let timeout = object
+    let stored_timeout = object
         .get("timeout")
         .and_then(Value::as_u64)
-        .filter(|t| (1..=60).contains(t))
-        .map(|t| t as u32)
-        .unwrap_or(60);
+        .map(|t| u32::try_from(t).unwrap_or(u32::MAX));
+    let timeout = stored_timeout.unwrap_or_else(|| route_default_timeout(&route));
+    let timeout_out_of_range = stored_timeout.is_some_and(|t| !(TIMEOUT_MIN..=TIMEOUT_MAX).contains(&t));
+    let unknown_disabled_sources: Vec<String> = unknown_disabled(&object)
+        .iter()
+        .map(|item| item.as_str().map(str::to_string).unwrap_or_else(|| item.to_string()))
+        .collect();
     let disabled_sources: Vec<String> = object
         .get("disabled_sources")
         .and_then(Value::as_array)
@@ -438,7 +498,12 @@ pub fn view_with_dev_mode(
         save_creates_override,
         route,
         timeout,
+        timeout_configured: stored_timeout.is_some(),
+        timeout_out_of_range,
+        timeout_min: TIMEOUT_MIN,
+        timeout_max: TIMEOUT_MAX,
         disabled_sources,
+        unknown_disabled_sources,
         twitter_cookies_path,
         twitter_env_overrides,
         active_sources,
