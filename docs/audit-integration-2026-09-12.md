@@ -1,6 +1,6 @@
 # 审查修复集成验收 · 2026-09-12
 
-十张票均已在独立 worktree、`codex/audit-*` 分支和独立 Session 完成实现、提交、复核并合入本地 `main`。原[审查报告](project-audit-2026-09-12.md)保留修复前基准语境；[当前架构](current-architecture.html)已同步最终代码。
+十张票均已在独立 worktree、`codex/audit-*` 分支和独立 Session 完成实现、提交、复核并合入本地 `main`。原[审查报告](project-audit-2026-09-12.md)保留修复前基准语境；[当前架构（已归档）](history/current-architecture.html)已同步最终代码。
 
 起始基准为 `b429580`（代码基于 `19323b0`）。九项代码票集成提交为 `6775ab0`，十票集成提交为 `a38e06c`。未执行 push、发布或线上部署；十个分支及工作树保留，交付时均干净。
 

@@ -1,5 +1,7 @@
 # 搜索排序与正文获取发布说明
 
+> **历史发布说明（0.4.0），不再代表当前实现。** 本文写于去 MCP 迁移之前：MCP `server.py` 入口已删除，现行形态是一个 Skill + 共享 Core + 按需 CLI，见 [仓库 README](../README.md)。
+
 发布版本：`0.4.0`（[版本源码](https://github.com/inorilzy/multi-search-skill/tree/v0.4.0)）。本版本包含下述默认搜索行为变化；实际客户端联调需分别验证。
 
 当前契约统一为：搜索取得候选，全部有效排名参与两级 RRF，最终取前 15 条并自动获取正文；已有 URL 直接用 `fetch_source` / `scrape_url`。`search_web` 和 `multi_search` 共用流程，MCP 和 CLI 保留各自的参数及展示入口。本文件沿用原路径，内容描述当前发布契约。
