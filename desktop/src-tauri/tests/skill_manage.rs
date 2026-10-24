@@ -1,5 +1,5 @@
 mod common;
-use multi_search_desktop::{DesktopManager, RuntimeEnvironment};
+use multi_search_desktop::{skill_version, DesktopManager, RuntimeEnvironment};
 use std::{fs, path::PathBuf};
 
 fn manager(profile: &common::Profile) -> DesktopManager {
@@ -25,7 +25,13 @@ fn release_06_marker_without_hashes_remains_managed() {
     let profile = common::Profile::new();
     install_global(&profile);
     let target = skill_dir(&profile.root);
-    fs::write(target.join(".multi-search-install.json"), r#"{"managed_by":"multi-search-desktop","skill":"multi-search","skill_version":"1","files":["SKILL.md","references/cli.md","references/verification.md"]}"#).unwrap();
+    fs::write(
+        target.join(".multi-search-install.json"),
+        format!(
+            r#"{{"managed_by":"multi-search-desktop","skill":"multi-search","skill_version":"{}","files":["SKILL.md","agents/interface.yaml","references/cli.md","references/search.md","references/subagents.md","references/verification.md"]}}"#, skill_version()
+        ),
+    )
+    .unwrap();
     assert_eq!(
         manager(&profile)
             .skill_status("global", None)
@@ -61,7 +67,10 @@ fn outdated_skill_updates_without_confirmation_when_unmodified() {
     install_global(&profile);
     // Simulate an older release: same content, older marker version, unmodified files.
     let marker = skill_dir(&profile.root).join(".multi-search-install.json");
-    let text = read(&marker).replace("\"skill_version\":\"1\"", "\"skill_version\":\"0\"");
+    let text = read(&marker).replace(
+        &format!("\"skill_version\":\"{}\"", skill_version()),
+        "\"skill_version\":\"0\"",
+    );
     fs::write(&marker, text).unwrap();
     let status = manager(&profile).skill_status("global", None).unwrap();
     assert_eq!(status.state, multi_search_desktop::InstallState::Outdated);
@@ -73,14 +82,14 @@ fn outdated_skill_updates_without_confirmation_when_unmodified() {
     let installed = read(&skill_dir(&profile.root).join("SKILL.md"));
     assert!(installed.contains("multi-search search"));
     assert!(!installed.contains("MCP"));
-    assert_eq!(installed, include_str!("../../skill/multi-search/SKILL.md"));
+    assert_eq!(installed, include_str!("../../../skills/multi-search/SKILL.md"));
     assert_eq!(
         read(&skill_dir(&profile.root).join("references/cli.md")),
-        include_str!("../../skill/multi-search/references/cli.md")
+        include_str!("../../../skills/multi-search/references/cli.md")
     );
     assert_eq!(
         read(&skill_dir(&profile.root).join("references/verification.md")),
-        include_str!("../../skill/multi-search/references/verification.md")
+        include_str!("../../../skills/multi-search/references/verification.md")
     );
 }
 
@@ -191,7 +200,10 @@ fn filesystem_update_failure_keeps_old_skill_and_retry_succeeds() {
     let marker = target.join(".multi-search-install.json");
     fs::write(
         &marker,
-        read(&marker).replace("\"skill_version\":\"1\"", "\"skill_version\":\"0\""),
+        read(&marker).replace(
+            &format!("\"skill_version\":\"{}\"", skill_version()),
+            "\"skill_version\":\"0\"",
+        ),
     )
     .unwrap();
     let before = read(&target.join("SKILL.md"));
@@ -225,7 +237,10 @@ fn failed_update_keeps_the_old_usable_skill() {
     install_global(&profile);
     let target = skill_dir(&profile.root);
     let marker = target.join(".multi-search-install.json");
-    let text = read(&marker).replace("\"skill_version\":\"1\"", "\"skill_version\":\"0\"");
+    let text = read(&marker).replace(
+        &format!("\"skill_version\":\"{}\"", skill_version()),
+        "\"skill_version\":\"0\"",
+    );
     fs::write(&marker, text).unwrap();
     // Make the CLI incompatible so the update is refused before any write happens.
     let mut environment: RuntimeEnvironment = profile.environment.clone();
@@ -250,7 +265,10 @@ fn retry_after_failed_update_does_not_misreport_completion() {
     install_global(&profile);
     let target = skill_dir(&profile.root);
     let marker = target.join(".multi-search-install.json");
-    let text = read(&marker).replace("\"skill_version\":\"1\"", "\"skill_version\":\"0\"");
+    let text = read(&marker).replace(
+        &format!("\"skill_version\":\"{}\"", skill_version()),
+        "\"skill_version\":\"0\"",
+    );
     fs::write(&marker, text).unwrap();
     let mut environment: RuntimeEnvironment = profile.environment.clone();
     environment

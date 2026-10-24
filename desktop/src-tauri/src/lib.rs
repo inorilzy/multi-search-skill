@@ -17,7 +17,7 @@ pub mod user_path;
 mod window;
 pub use diagnostics::{CliStatus, DesktopManager, Discovery, RuntimeEnvironment};
 pub use execution::{ExecutionStatus, SearchOptions};
-pub use skill::{SkillInstall, SkillPlan};
+pub use skill::{skill_version, SkillInstall, SkillPlan};
 pub use skill_manage::{InstallState, RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome, UpdatePlan};
 
 /// Test seam for the settings writer. Not a supported public API.
