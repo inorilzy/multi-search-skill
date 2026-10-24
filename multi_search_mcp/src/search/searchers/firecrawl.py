@@ -11,6 +11,7 @@ def search_firecrawl(
     api_key: str,
     count: int = 10,
     timeout: float = 60,
+    deadline: float | None = None,
     include_domains: list[str] | tuple[str, ...] | None = None,
     source: str = "firecrawl",
     want_content: bool = False,
@@ -36,7 +37,7 @@ def search_firecrawl(
         method="POST",
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(resp.read())
     except Exception as e:
         return [{"source": source, "error": scrub_secrets(e, api_key)}]

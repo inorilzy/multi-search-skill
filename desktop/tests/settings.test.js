@@ -415,3 +415,13 @@ test('SQLite is the only displayed configuration source and old sources are not 
   assert.equal(root.querySelector('[data-field="twitter"]').value, 'C:/cookies.json');
   window.close();
 });
+
+
+test('cookie import stays explicit and Escape cancels inside the settings page', async () => {
+  const { window, root } = setup(); let imports = 0;
+  const mounted = await mountSettings(root, withProviders({ settingsView: async () => view(), cookieStatus: async () => ({ present: false, mode: 'file', supported: true }), cookieImport: async () => { imports++; return { present: true, mode: 'managed', supported: true }; } }));
+  assert.equal(imports, 0); root.querySelector('[data-cookie-path]').value = 'cookies.json'; root.querySelector('[data-cookie-import]').click(); await flush();
+  root.querySelector('[data-cookie-confirm-yes]').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(imports, 0); assert.equal(root.querySelector('[data-cookie-confirm]').childElementCount, 0);
+  mounted.dispose(); window.close();
+});

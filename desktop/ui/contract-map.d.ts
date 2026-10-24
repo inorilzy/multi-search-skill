@@ -10,6 +10,9 @@ import type * as T from './types';
 // Dedicated command arguments: scraping never round-trips search settings.
 export interface ScrapeSettingsSaveArgs { backends: string[] }
 export interface CommandContracts {
+  cookie_status: { args: Record<string, never>; result: T.CookieStatus };
+  cookie_import: { args: { path: string; confirmed: boolean }; result: T.CookieStatus };
+  cookie_delete: { args: { confirmed: boolean }; result: T.CookieStatus };
   scrape_settings_save: { args: ScrapeSettingsSaveArgs; result: T.SettingsView };
 }
 
@@ -32,6 +35,7 @@ export interface ContractMap {
   PathValue: T.PathValue;
   PathReceipt: T.PathReceipt;
   PathPlan: T.PathPlan;
+  CookieStatus: T.CookieStatus;
   CredentialStatus: T.CredentialStatus;
   CredentialOverview: T.CredentialOverview;
   CredentialValue: T.CredentialValue;

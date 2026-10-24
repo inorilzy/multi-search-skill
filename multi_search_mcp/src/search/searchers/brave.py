@@ -1,10 +1,9 @@
 """Brave Search API."""
-import gzip
 import json
 import urllib.parse
 import urllib.request
 
-from ...support.http import urlopen_retry
+from ...support.http import gunzip_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 
 
@@ -14,6 +13,7 @@ def search_brave(
     count: int = 10,
     timeout: float = 15,
     search_depth: str = "normal",
+    deadline: float | None = None,
 ) -> list:
     """Call Brave Search API.
     Uses extra_snippets=true: returns up to 5 additional excerpts per result (free, no extra cost).
@@ -33,10 +33,10 @@ def search_brave(
         },
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             raw = resp.read()
             if resp.headers.get("Content-Encoding") == "gzip":
-                raw = gzip.decompress(raw)
+                raw = gunzip_limited(raw)
             data = json.loads(raw)
     except Exception as e:
         return [{"source": "brave", "error": scrub_secrets(e, api_key)}]

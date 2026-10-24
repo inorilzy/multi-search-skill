@@ -24,6 +24,15 @@ def load_config_safe(path: str | None) -> dict:
 
 def load_runtime_keys(config: dict | None = None) -> dict:
     """Load keys, adding the config's non-secret Twitter cookie path reference."""
+    mode = config_str(config or {}, "twitter_cookies_mode") if "twitter_cookies_mode" in (config or {}) else "file"
+    if mode not in {"file", "managed"}:
+        from ..state.keys import KeysError
+        raise KeysError("unsupported Twitter cookies mode")
+    if mode == "managed":
+        from ..providers.xkit import ManagedTwitterCookies
+        keys = load_keys()
+        keys["twitter_cookies_path"] = ManagedTwitterCookies()
+        return keys
     reference = config_str(config or {}, "twitter_cookies_path") or None
     if reference is None:
         # Keep the original call shape when config carries no Twitter reference.

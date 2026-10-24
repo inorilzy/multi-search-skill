@@ -1,12 +1,11 @@
 """Stack Overflow question search via the Stack Exchange API."""
-import gzip
 import html
 import json
 import urllib.parse
 import urllib.request
 import zlib
 
-from ...support.http import urlopen_retry
+from ...support.http import gunzip_limited, urlopen_retry
 
 
 def _content_encoding(resp) -> str:
@@ -30,15 +29,17 @@ def _decode_response(resp) -> bytes:
     if _looks_like_json(body):
         return body
     if encoding == "gzip":
-        return gzip.decompress(body)
+        return gunzip_limited(body)
     if encoding == "deflate":
-        return zlib.decompress(body)
+        # Bound zlib output instead of trusting a compressed body's expansion.
+        limit = 8 * 1024 * 1024
+        return zlib.decompressobj().decompress(body, limit)
     if encoding == "identity":
         return body
     raise ValueError(f"unsupported Content-Encoding: {encoding}")
 
 
-def search_stackoverflow(query: str, count: int = 10, timeout: float = 20) -> list:
+def search_stackoverflow(query: str, count: int = 10, timeout: float = 20, deadline: float | None = None) -> list:
     """Search Stack Overflow questions by relevance."""
     params = {
         "order": "desc",
@@ -56,7 +57,7 @@ def search_stackoverflow(query: str, count: int = 10, timeout: float = 20) -> li
         },
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(_decode_response(resp))
             if not isinstance(data, dict):
                 raise ValueError("Stack Exchange response must be a JSON object")

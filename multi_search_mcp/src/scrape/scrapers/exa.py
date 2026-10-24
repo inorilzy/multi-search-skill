@@ -28,7 +28,7 @@ _EXA_HTTP_ERROR_KINDS = {
 
 
 def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
-                   max_chars: int | None = None) -> dict:
+                   max_chars: int | None = None, deadline: float | None = None) -> dict:
     """Fetch page content via Exa /contents API. Returns full text."""
     if not _safe_http_url(url):
         return {"url": url, "error": "rejected non-http(s) URL"}
@@ -46,7 +46,7 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
         method="POST",
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, **({"deadline": deadline} if deadline is not None else {})) as resp:
             data = json.loads(resp.read())
         statuses = data.get("statuses") or []
         if statuses and statuses[0].get("status") != "success":

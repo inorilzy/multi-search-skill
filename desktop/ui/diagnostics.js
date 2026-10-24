@@ -6,7 +6,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
   const doc = root.ownerDocument;
   root.innerHTML = `<section class="heading"><p class="eyebrow">01 / LOCAL RUNTIME</p><h1>搜索，从本机开始</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
     <section class="runtime panel"><div class="section-title"><h2>CLI 概览</h2><button type="button" data-action="refresh">重新检测</button></div>
-      <label class="path-input">指定已安装的 CLI <input data-field="path" placeholder="可选：C:\\…\\multi-search.exe" spellcheck="false"></label>
+      <label class="path-input">指定已发现的 CLI <input data-field="path" placeholder="可选：PATH 或本工具安装的 multi-search.exe" spellcheck="false" aria-describedby="path-scope-note"><small id="path-scope-note">仅接受 PATH 实际发现或受管安装路径；自由文件路径会被拒绝。</small></label>
       <div class="discovery-grid"><article><span class="eyebrow">APP INVOCATION</span><h3>应用调用</h3><strong class="status-text" data-status="app">检测中</strong><p data-info="app"></p></article><article><span class="eyebrow">FRESH USER ENVIRONMENT</span><h3>用户命令发现</h3><strong class="status-text" data-status="user">检测中</strong><p data-info="user"></p></article></div>
       <p data-info="restart" class="note"></p><p data-info="error" class="error-message"></p></section>
     <section class="panel test-search"><div class="section-title"><h2>一次测试搜索</h2><span class="eyebrow">ON DEMAND / NO SERVICE</span></div>

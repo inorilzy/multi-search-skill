@@ -89,7 +89,7 @@ const ENV_ALLOWED_PREFIXES: &[&str] = &["MULTI_SEARCH_"];
 
 /// Substrings that mark a variable as secret material. Checked
 /// case-insensitively against names that matched the allowlist.
-const ENV_SECRET_MARKERS: &[&str] = &[
+pub(crate) const ENV_SECRET_MARKERS: &[&str] = &[
     "API_KEY",
     "APIKEY",
     "TOKEN",
@@ -99,6 +99,8 @@ const ENV_SECRET_MARKERS: &[&str] = &[
     "PRIVATE_KEY",
     "ACCESS_KEY",
     "CREDENTIAL",
+    "JINA_KEY",
+    "SERPAPI_KEY",
 ];
 
 /// Test-only environment names.
@@ -271,6 +273,7 @@ pub(crate) struct Output {
     pub stdout: String,
     pub stderr: String,
     pub timed_out: bool,
+    pub truncated: bool,
 }
 pub(crate) struct OwnedProcess {
     child: Child,
@@ -279,11 +282,13 @@ pub(crate) struct OwnedProcess {
     stdout: Arc<Mutex<Vec<u8>>>,
     stderr: Arc<Mutex<Vec<u8>>>,
     readers: Vec<thread::JoinHandle<()>>,
+    truncated: Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn reader(
     mut pipe: impl Read + Send + 'static,
     buffer: Arc<Mutex<Vec<u8>>>,
+    truncated: Arc<std::sync::atomic::AtomicBool>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut chunk = [0; 8192];
@@ -291,8 +296,9 @@ fn reader(
             if count == 0 {
                 break;
             }
-            let mut bytes = buffer.lock().unwrap();
+            let mut bytes = buffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let remaining = OUTPUT_LIMIT.saturating_sub(bytes.len());
+            if count > remaining { truncated.store(true, std::sync::atomic::Ordering::Relaxed); }
             bytes.extend_from_slice(&chunk[..count.min(remaining)]);
         }
     })
@@ -328,9 +334,10 @@ impl OwnedProcess {
         };
         let stdout = Arc::new(Mutex::new(Vec::new()));
         let stderr = Arc::new(Mutex::new(Vec::new()));
+        let truncated = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let readers = vec![
-            reader(child.stdout.take().unwrap(), stdout.clone()),
-            reader(child.stderr.take().unwrap(), stderr.clone()),
+            reader(child.stdout.take().unwrap(), stdout.clone(), truncated.clone()),
+            reader(child.stderr.take().unwrap(), stderr.clone(), truncated.clone()),
         ];
         Ok(Self {
             child,
@@ -339,6 +346,7 @@ impl OwnedProcess {
             stdout,
             stderr,
             readers,
+            truncated,
         })
     }
     pub(crate) fn terminate(&mut self) {
@@ -346,6 +354,8 @@ impl OwnedProcess {
         self.job.terminate();
         #[cfg(not(windows))]
         {
+            // Non-Windows fallback kills only the direct child, not descendants.
+            // Production Windows uses a Job Object for tree-wide termination.
             let _ = self.child.kill();
         }
     }
@@ -361,8 +371,9 @@ impl OwnedProcess {
         Output {
             code,
             timed_out,
-            stdout: String::from_utf8_lossy(&self.stdout.lock().unwrap()).into_owned(),
-            stderr: String::from_utf8_lossy(&self.stderr.lock().unwrap()).into_owned(),
+            truncated: self.truncated.load(std::sync::atomic::Ordering::Relaxed),
+            stdout: String::from_utf8_lossy(&self.stdout.lock().unwrap_or_else(std::sync::PoisonError::into_inner)).into_owned(),
+            stderr: String::from_utf8_lossy(&self.stderr.lock().unwrap_or_else(std::sync::PoisonError::into_inner)).into_owned(),
         }
     }
 }
@@ -389,5 +400,20 @@ pub(crate) fn bounded(
             return Ok(process.finish(None, true));
         }
         thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+    #[test]
+    fn reader_recovers_poison_and_marks_truncation() {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let poison = buffer.clone();
+        let _ = thread::spawn(move || { let _guard = poison.lock().unwrap(); panic!("synthetic poison"); }).join();
+        let truncated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        reader(std::io::Cursor::new(vec![b'x'; OUTPUT_LIMIT + 1]), buffer.clone(), truncated.clone()).join().unwrap();
+        assert!(truncated.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(buffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(), OUTPUT_LIMIT);
     }
 }

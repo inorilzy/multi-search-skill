@@ -3,6 +3,8 @@ import type { JsonValue } from "./serde_json/JsonValue";
 
 export type CliStatus = { app: Discovery, user: Discovery, restart_required: boolean, };
 
+export type CookieStatus = { present: boolean, supported: boolean, mode: string, };
+
 export type CredentialOverview = { source: string, store: CredentialStatus, 
 /**
  * sqlite | none | unavailable, or a new value added later; UI must fall back to a raw string.
@@ -15,7 +17,16 @@ export type CredentialStatus = {
  */
 state: string, saved_at: number | null, error: string, };
 
-export type CredentialValue = { value: string, };
+export type CredentialValue = { 
+/**
+ * `credential_read` masks every row (first 4 + last 4, fully masked at <= 8);
+ * `credential_reveal` returns the editable plaintext on explicit request only.
+ */
+value: string, 
+/**
+ * SHA-256 of the plaintext editor snapshot; pass it back to `credential_remove`.
+ */
+snapshot: string, };
 
 export type Discovery = { 
 /**
@@ -64,7 +75,12 @@ export type PathPlan = {
 /**
  * owned | existing | absent | added | removed | unchanged | blocked | failed, or a new value added later; UI must fall back to a raw string.
  */
-status: string, directory: string, reason: string, can_add: boolean, can_remove: boolean, };
+status: string, directory: string, reason: string, 
+/**
+ * Non-fatal follow-up (for example, Explorer was not notified); the PATH
+ * write already succeeded when this is non-empty.
+ */
+warning: string, can_add: boolean, can_remove: boolean, };
 
 export type PathReceipt = { before: PathValue, after: PathValue, entry: string, };
 

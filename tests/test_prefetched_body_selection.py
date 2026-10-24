@@ -240,7 +240,7 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
             self.assertGreaterEqual(expires, before + timedelta(seconds=30))
             self.assertLessEqual(expires, after + timedelta(seconds=30))
 
-    def test_oversize_selected_body_is_rejected_without_storing_a_shorter_alternative(self):
+    def test_oversize_selected_body_is_truncated_to_the_byte_limit(self):
         # Limits apply to UTF-8 bytes, not the one-character response preview.
         rows = {"twitter": {"primary": [
             _row("twitter", "证据" * 3), _row("twitter", "Alpha"),
@@ -248,10 +248,12 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
         with mock.patch("multi_search_mcp.src.core.runtime.ContentStore", side_effect=lambda store, **options: ContentStore(
             store, max_object_bytes=10, **options,
         )):
-            response = self._search(rows, use_state=True, scrape_chars=1, expected_errors=1)
-        self.assertIn("exceeds max object bytes", response["errors"][0]["error"])
-        self.assertEqual(len(response["diagnostics"]["content_store_errors"]), 1)
-        self.assertIsNone(ContentStore(self.store).get(response["results"][0]["source_id"]))
+            response = self._search(rows, use_state=True, scrape_chars=1)
+        self.assertEqual(response["errors"], [])
+        stored = ContentStore(self.store).get(response["results"][0]["source_id"])
+        self.assertIsNotNone(stored)
+        self.assertLessEqual(len(stored["content"].encode("utf-8")), 10)
+        self.assertTrue(response["scrapes"][0]["truncated"])
 
     def test_total_capacity_keeps_eviction_without_changing_selection(self):
         rows = {"twitter": {"primary": [

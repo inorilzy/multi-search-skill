@@ -30,10 +30,10 @@ KEY_RETRY_ERROR_KINDS = frozenset({
 KEY_RETRY_ERROR_TYPES = KEY_RETRY_ERROR_KINDS
 
 
-def _row_kind(row: dict) -> str:
+def row_kind(row: dict) -> str:
     """Best-effort kind for an error row.
 
-    ``kind`` is the new unified field. ``error_type`` is accepted as a
+    ``kind`` is the single unified field. ``error_type`` is accepted as a
     transitional alias so pre-kind rows still classify; both are absent only
     for unclassified internal errors, which never signal key health.
     """
@@ -53,7 +53,7 @@ def _row_kind(row: dict) -> str:
     return ""
 
 
-def _row_origin(row: dict) -> str:
+def row_origin(row: dict) -> str:
     if not isinstance(row, dict):
         return ""
     origin = row.get("origin")
@@ -62,8 +62,7 @@ def _row_origin(row: dict) -> str:
     legacy = row.get("error_origin")
     if isinstance(legacy, str) and legacy:
         return legacy
-    kind = _row_kind(row)
-    if kind == ERROR_KIND_TARGET:
+    if row_kind(row) == ERROR_KIND_TARGET:
         return ERROR_ORIGIN_TARGET
     return ""
 
@@ -77,9 +76,9 @@ def is_key_retryable_error(results: list | dict | None) -> bool:
     if not error_rows:
         return False
     for row in error_rows:
-        if _row_origin(row) == ERROR_ORIGIN_TARGET:
+        if row_origin(row) == ERROR_ORIGIN_TARGET:
             continue
-        kind = _row_kind(row)
+        kind = row_kind(row)
         if kind:
             if kind in KEY_RETRY_ERROR_KINDS:
                 return True

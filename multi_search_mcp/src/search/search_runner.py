@@ -9,10 +9,9 @@ from threading import Lock
 from typing import Any, Callable
 
 from .capabilities import PROVIDER_CAPABILITIES
-from ..support.concurrency import BoundedDaemonExecutor
-from ..support.auth import is_key_retryable_error
+from ..support.concurrency import BoundedDaemonExecutor, pool_size_from_env
+from ..support.auth import row_origin
 from ..state.key_state import BasicKeyManager, KeyCandidate, rotate_keys
-from ..state.keys import key_pool
 from ..support.models import ANSWER_SOURCES, as_dicts, empty_result_row, is_empty_result
 from ..support.secrets import scrub_secrets
 from .candidate import canonicalize_url
@@ -307,7 +306,7 @@ def run_keyed_source(
     error_rows = [row for row in last_results if "error" in row]
     # Prefer a provider-origin row: target failures are not evidence about the key.
     chosen = next(
-        (row for row in error_rows if _row_origin(row) != "target"),
+        (row for row in error_rows if row_origin(row) != "target"),
         error_rows[0] if error_rows else {},
     )
     err = chosen.get("error", "key pool exhausted") if chosen else "key pool exhausted"
@@ -321,20 +320,10 @@ def run_keyed_source(
     return _merge_partial_rows(source, partial_rows, [error]) if partial_rows else [error]
 
 
-def _row_origin(row: dict) -> str:
-    if not isinstance(row, dict):
-        return ""
-    origin = row.get("origin")
-    if isinstance(origin, str) and origin:
-        return origin
-    legacy = row.get("error_origin")
-    if isinstance(legacy, str) and legacy:
-        return legacy
-    return ""
-
-
 _SEARCH_POOL = BoundedDaemonExecutor(
-    max_workers=max(1, len(ALL_SOURCE_NAMES)),
+    max_workers=pool_size_from_env(
+        "MULTI_SEARCH_SEARCH_CONCURRENCY", max(1, len(ALL_SOURCE_NAMES)),
+    ),
     thread_name_prefix="multi-search-search",
 )
 
@@ -342,11 +331,15 @@ _SEARCH_POOL = BoundedDaemonExecutor(
 class SearchRunner:
     """Run configured searchers in parallel under a shared deadline."""
 
-    def __init__(self, config: SearchRunnerConfig, providers: dict[str, ProviderSpec], route_resolver=None, key_manager=None):
+    def __init__(self, config: SearchRunnerConfig, providers: dict[str, ProviderSpec], route_resolver=None, key_manager=None, executor=None):
         self.config = config
         self.providers = providers
         self.route_resolver = route_resolver or resolve_route
         self.key_manager = key_manager or BasicKeyManager()
+        # Runtime-injected capacity: embedders and tests can supply their own
+        # bounded executor instead of the process-wide default. ``None`` keeps
+        # the module-level pool (looked up per run so it stays patchable).
+        self.executor = executor
 
     def run(self, query: str, *, deadline: float | None = None) -> list[dict]:
         results: list[dict] = []
@@ -420,7 +413,8 @@ class SearchRunner:
         pending = {name for name, _ in jobs}
         future_sources: dict[Future, str] = {}
         for name, call in jobs:
-            future = _SEARCH_POOL.submit_before(source_deadline, call)
+            executor = self.executor or _SEARCH_POOL
+            future = executor.submit_before(source_deadline, call)
             if future is not None:
                 future_sources[future] = name
 

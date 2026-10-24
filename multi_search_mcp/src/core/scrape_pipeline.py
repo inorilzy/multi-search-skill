@@ -5,7 +5,8 @@ import time
 
 from ..scrape.scrape import ScrapeContext, scrape_url_smart
 from ..scrape.scrapers.twitter import is_twitter_url
-from ..search.resolve import _resolve_int, _resolve_nonnegative, resolve_scrape_backends
+from ..search.resolve import resolve_scrape_backends
+from ..support.config import resolve_int, resolve_nonnegative
 from ..state.site_memory import SiteScraperMemory
 from ..support.format import format_scrapes
 from ..support.models import normalize_scrape_result
@@ -61,14 +62,14 @@ def run_scrape_raw(
     # Public timeout/config values stay integer seconds; the fetch stage passes
     # its already-resolved floating remainder through this private path.
     if runtime_timeout is None:
-        timeout = _resolve_nonnegative(request.timeout, resolved_config, "scrape_timeout", 60)
+        timeout = resolve_nonnegative(request.timeout, resolved_config, "scrape_timeout", 60)
     else:
         timeout = max(0.0, float(runtime_timeout))
     if deadline is None:
         deadline = time.monotonic() + timeout
     else:
         timeout = min(timeout, max(0.0, deadline - time.monotonic()))
-    scrape_chars = max(1, _resolve_int(request.scrape_chars, resolved_config, "scrape_chars", 1200))
+    scrape_chars = max(1, resolve_int(request.scrape_chars, resolved_config, "scrape_chars", 1200))
     store = (state_store or runtime.new_state_store()) if request.use_state else None
     key_manager = runtime.key_manager_for(store)
     site_memory = SiteScraperMemory(store) if store else None
@@ -89,8 +90,11 @@ def run_scrape_raw(
         timeout=timeout,
         backends=explicit_backends or tuple(resolve_scrape_backends(resolved_config)),
         strict_backends=explicit_backends is not None,
-        **({"twitter_cookies": runtime_keys.get("twitter") or runtime_keys.get("twitter_cookies", "")}
-           if is_twitter_url(request.url) else {}),
+        **({"twitter_cookies": (
+            runtime_keys.get("twitter_cookies_path")
+            or runtime_keys.get("twitter")
+            or runtime_keys.get("twitter_cookies", "")
+        )} if is_twitter_url(request.url) else {}),
     )
     result = scraper_fn(request.url, ctx=ctx)
     result = normalize_scrape_result(result, url=request.url)

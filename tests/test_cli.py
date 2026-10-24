@@ -213,6 +213,24 @@ class CliTests(unittest.TestCase):
         store_cls.assert_called_once_with()
         fake_manager.reset.assert_called_once_with(provider="tavily", key_id="tavily:abcd")
 
+    def test_keys_reset_requires_a_selection_or_all(self):
+        with mock.patch.object(cli, "StateStore", return_value=object()), \
+             mock.patch.object(cli, "SQLiteKeyManager") as manager_cls:
+            code, stdout, stderr = self.run_cli(["keys", "reset"])
+        self.assertEqual(code, 2)
+        self.assertIn("--all", stderr)
+        manager_cls.assert_not_called()
+
+    def test_keys_reset_all_clears_every_row(self):
+        fake_manager = mock.Mock()
+        fake_manager.reset.return_value = 7
+        with mock.patch.object(cli, "StateStore", return_value=object()), \
+             mock.patch.object(cli, "SQLiteKeyManager", return_value=fake_manager):
+            code, stdout, stderr = self.run_cli(["keys", "reset", "--all"])
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(json.loads(stdout)["updated"], 7)
+        fake_manager.reset.assert_called_once_with(provider=None, key_id=None)
+
     def test_service_error_is_reported_to_stderr_with_nonzero_exit(self):
         with mock.patch.object(cli, "run_search_web", side_effect=ValueError("bad query")):
             code, stdout, stderr = self.run_cli(["search", "oops"])
@@ -220,6 +238,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(stdout), {"error": "bad query", "error_type": "invalid_request"})
         self.assertIn("bad query", stderr)
+
+    def test_service_exception_output_is_secret_scrubbed(self):
+        with mock.patch.object(
+            cli, "run_search_web",
+            side_effect=ValueError("failed with Authorization: Bearer super-secret-token"),
+        ):
+            code, stdout, stderr = self.run_cli(["search", "oops"])
+        self.assertEqual(code, 1)
+        self.assertNotIn("super-secret-token", stdout + stderr)
+        self.assertIn("<redacted>", stdout)
 
     def test_usage_error_returns_exit_code_2(self):
         code, stdout, stderr = self.run_cli([

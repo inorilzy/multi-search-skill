@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from multi_search_mcp.src.state import keys as keys_module
 from multi_search_mcp.src.state.keys import KeysError, key_sources, load_keys
 from multi_search_mcp.src.support.credential_store import (
     CredentialStore,
@@ -128,14 +127,12 @@ class LoadKeysPriorityTests(unittest.TestCase):
 
     def test_process_store_is_not_consulted_under_test_isolation(self):
         env = {"MULTI_SEARCH_TEST_ISOLATION": "1"}
-        with mock.patch.object(keys_module.sys, "platform", "win32"), \
-                mock.patch("multi_search_mcp.src.support.credential_store.default_store") as default:
+        with mock.patch("multi_search_mcp.src.support.credential_store.default_store") as default:
             load_keys(self.keys_file, environ=env)
         default.assert_not_called()
 
-    def test_process_store_disabled_off_windows(self):
-        with mock.patch.object(keys_module.sys, "platform", "linux"), \
-                mock.patch("multi_search_mcp.src.support.credential_store.default_store") as default:
+    def test_process_store_is_not_consulted_when_a_keys_file_is_supplied(self):
+        with mock.patch("multi_search_mcp.src.support.credential_store.default_store") as default:
             load_keys(self.keys_file, environ={})
         default.assert_not_called()
 

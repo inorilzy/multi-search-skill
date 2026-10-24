@@ -1,8 +1,6 @@
 """Load API keys from authoritative SQLite, or an explicitly supplied keys file."""
 import json
 import os
-import random
-import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -35,31 +33,6 @@ KEY_ENV_PAIRS = (
 )
 
 KEY_ENV_NAMES = [env_name for env_name, _key_name in KEY_ENV_PAIRS]
-
-
-def pick_key(value) -> str:
-    """Return a single key string. If `value` is a list, pick one at random.
-
-    Tolerates None / "" / str / list[str]. Empty lists or falsy values -> "".
-    """
-    if not value:
-        return ""
-    if isinstance(value, list):
-        choices = [v for v in value if v]
-        return random.choice(choices) if choices else ""
-    return str(value)
-
-
-def key_pool(value) -> list[str]:
-    """Return a shuffled list of candidate keys for fallback retry."""
-    if not value:
-        return []
-    if isinstance(value, list):
-        choices = [str(v) for v in value if v]
-    else:
-        choices = [str(value)]
-    random.shuffle(choices)
-    return choices
 
 
 def normalize_jina_config(value) -> list[dict]:
@@ -154,6 +127,9 @@ def load_keys(
             if value:
                 keys[provider] = value
     if twitter_cookies_path:
+        # Canonical credential name; ``twitter`` remains as a compatibility
+        # alias for older adapters and keys files.
+        keys["twitter_cookies_path"] = twitter_cookies_path
         keys["twitter"] = twitter_cookies_path
     return keys
 

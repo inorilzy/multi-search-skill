@@ -9,10 +9,10 @@ from typing import Iterator
 
 DEFAULT_STATE_PATH = Path.home() / ".multi-search" / "state.sqlite"
 
-# Bump when adding an entry to _DATA_MIGRATIONS. Schema objects themselves are
-# still created idempotently (CREATE IF NOT EXISTS / ADD COLUMN), but one-shot
-# data rewrites must run exactly once and are guarded by ``PRAGMA user_version``.
-STATE_SCHEMA_VERSION = 1
+# Bump when changing SCHEMA or adding an entry to _DATA_MIGRATIONS. Both schema
+# creation and one-shot data rewrites are guarded by ``PRAGMA user_version`` so a
+# second process does not need to take the write lock on every start.
+STATE_SCHEMA_VERSION = 2
 
 
 SCHEMA = (
@@ -129,7 +129,8 @@ SCHEMA = (
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       canonical_url TEXT NOT NULL DEFAULT '',
-      cache_scope TEXT NOT NULL DEFAULT ''
+      cache_scope TEXT NOT NULL DEFAULT '',
+      truncated INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
@@ -156,6 +157,10 @@ class StateStore:
         conn = sqlite3.connect(str(self.path), timeout=10)
         conn.row_factory = sqlite3.Row
         try:
+            # WAL lets readers proceed while another process writes; the busy
+            # timeout covers short write contention instead of failing fast.
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=10000")
             yield conn
             conn.commit()
         except Exception:
@@ -165,8 +170,16 @@ class StateStore:
             conn.close()
 
     def migrate(self) -> None:
+        if self._schema_is_current():
+            # Fast path: no write lock needed when the schema is already at
+            # the expected version and every required column exists.
+            return
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            # Re-check under the write lock: another process may have migrated
+            # while this one waited.
+            if self._schema_is_current_conn(conn):
+                return
             for statement in SCHEMA:
                 conn.execute(statement)
             self._ensure_columns(conn, "key_state", {
@@ -177,12 +190,39 @@ class StateStore:
             self._ensure_columns(conn, "content_sources", {
                 "canonical_url": "TEXT NOT NULL DEFAULT ''",
                 "cache_scope": "TEXT NOT NULL DEFAULT ''",
+                "truncated": "INTEGER NOT NULL DEFAULT 0",
             })
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_content_sources_url_scope "
                 "ON content_sources (canonical_url, cache_scope, expires_at)"
             )
             self._migrate_data(conn)
+
+    def _schema_is_current(self) -> bool:
+        if not self.path.exists():
+            return False
+        try:
+            with self.connect() as conn:
+                return self._schema_is_current_conn(conn)
+        except sqlite3.Error:
+            return False
+
+    @staticmethod
+    def _schema_is_current_conn(conn: sqlite3.Connection) -> bool:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < STATE_SCHEMA_VERSION:
+            return False
+        required = {
+            "key_state": {"use_count", "last_used_at", "invalid_strikes"},
+            "content_sources": {"canonical_url", "cache_scope", "truncated"},
+        }
+        for table, columns in required.items():
+            existing = {
+                row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not columns.issubset(existing):
+                return False
+        return True
 
     def _migrate_data(self, conn: sqlite3.Connection) -> None:
         """Run one-shot data migrations exactly once, guarded by user_version.

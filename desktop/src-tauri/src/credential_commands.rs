@@ -7,7 +7,6 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use ts_rs::TS;
 
 /// Source-side view of a provider manifest row, used by credential commands and
 /// tests that address sources by `cli_source` (the `--source` / UI spelling).
@@ -61,8 +60,9 @@ pub(crate) fn resolve_source(name: &str) -> Result<SourceEntry, String> {
 pub(crate) fn resolve_test_source(name: &str) -> Result<SourceEntry, String> {
     find_source(name, false)
 }
-#[derive(Clone, Debug, Serialize, PartialEq, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct CredentialOverview {
     pub source: String,
     pub store: CredentialStatus,
@@ -93,12 +93,17 @@ pub(crate) fn overview(
         key_application_available: application_url(entry.source).is_some(),
     }
 }
-#[derive(Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct CredentialValue {
+    /// `credential_read` masks every row (first 4 + last 4, fully masked at <= 8);
+    /// `credential_reveal` returns the editable plaintext on explicit request only.
     pub value: String,
+    /// SHA-256 of the plaintext editor snapshot; pass it back to `credential_remove`.
+    pub snapshot: String,
 }
-pub(crate) fn read(
+pub(crate) fn reveal(
     backend: &dyn CredentialBackend,
     variables: &BTreeMap<String, String>,
     entry: &SourceEntry,
@@ -119,7 +124,17 @@ pub(crate) fn read(
             .get("key").and_then(Value::as_str).unwrap_or_default().to_string(),
         Some(_) => return Err("此凭据结构不能作为 API Key 编辑".into()),
     };
-    Ok(CredentialValue { value })
+    let snapshot = credential::snapshot(&value);
+    Ok(CredentialValue { value, snapshot })
+}
+pub(crate) fn read(backend: &dyn CredentialBackend, variables: &BTreeMap<String, String>, entry: &SourceEntry) -> Result<CredentialValue, String> {
+    let mut result = reveal(backend, variables, entry)?;
+    result.value = result.value.lines().map(|line| {
+        let chars: Vec<char> = line.chars().collect();
+        if chars.len() <= 8 { "********".to_string() }
+        else { format!("{}********{}", chars[..4].iter().collect::<String>(), chars[chars.len()-4..].iter().collect::<String>()) }
+    }).collect::<Vec<_>>().join("\n");
+    Ok(result)
 }
 pub(crate) fn save(
     backend: &dyn CredentialBackend,
@@ -219,16 +234,22 @@ pub(crate) fn with_native<T>(
     }
 }
 
-// User has not supplied application URLs. This is the sole fixed mapping; never accept UI URLs.
+// Fixed provider consoles only; never accept a URL from the WebView.
+// Baidu's Qianfan AI Search key is created on the official Baidu Cloud IAM
+// API Key page: https://cloud.baidu.com/doc/qianfan-docs/s/Fm9l6ocai
 const APPLICATION_URLS: &[(&str, Option<&str>)] = &[
-    ("baidu", None),
-    ("brave", None),
-    ("parallel", None),
-    ("tavily", None),
-    ("exa", None),
-    ("firecrawl", None),
-    ("serpapi", None),
-    ("github-repos", None),
+    (
+        "baidu",
+        Some("https://console.bce.baidu.com/iam/#/iam/apikey/list"),
+    ),
+    ("jina", Some("https://jina.ai/")),
+    ("brave", Some("https://api.search.brave.com/app/keys")),
+    ("parallel", Some("https://platform.parallel.ai/")),
+    ("tavily", Some("https://app.tavily.com/")),
+    ("exa", Some("https://dashboard.exa.ai/api-keys")),
+    ("firecrawl", Some("https://www.firecrawl.dev/app/api-keys")),
+    ("serpapi", Some("https://serpapi.com/manage-api-key")),
+    ("github-repos", Some("https://github.com/settings/tokens")),
 ];
 fn application_url(source: &str) -> Option<&'static str> {
     APPLICATION_URLS
@@ -286,8 +307,9 @@ fn open_browser(_: &str) -> Result<(), String> {
     Err("系统浏览器入口仅支持 Windows".into())
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct TestOutcome {
     /// success | auth_failed | quota | rate_limited | network | timeout | missing_key | cli_failed | error, or a new value added later; UI must fall back to a raw string.
     pub result: String,
@@ -448,6 +470,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_read_masks_keys_and_returns_nonsecret_revision() {
+        struct Memory;
+        impl CredentialBackend for Memory {
+            fn read(&self, _: &str) -> Result<Option<Vec<u8>>, credential::CredentialError> {
+                Ok(Some(credential::encode_blob(&serde_json::json!(["abcd-secret-wxyz", "tiny"]), 1.0)))
+            }
+            fn write(&self, _: &str, _: &[u8]) -> Result<(), credential::CredentialError> { unreachable!() }
+            fn delete(&self, _: &str) -> Result<bool, credential::CredentialError> { unreachable!() }
+        }
+        let entry = resolve_source("tavily").unwrap();
+        let value = read(&Memory, &BTreeMap::new(), &entry).unwrap();
+        assert_eq!(value.value, "abcd********wxyz\n********");
+        assert_eq!(value.snapshot, credential::snapshot("abcd-secret-wxyz\ntiny"));
+        assert_eq!(reveal(&Memory, &BTreeMap::new(), &entry).unwrap().value, "abcd-secret-wxyz\ntiny");
+    }
+
+    #[test]
     fn storage_capability_rejects_old_cli() {
         assert!(!supports_storage(&serde_json::json!({})));
         assert!(supports_storage(
@@ -484,6 +523,28 @@ mod tests {
         ] {
             assert!(open_application_with("tavily", |_| Some(url.into()), |_| panic!()).is_err());
         }
-        assert_eq!(open_application("tavily").unwrap_err(), "申请链接待配置");
+        assert!(application_url("tavily").unwrap().starts_with("https://"));
+    }
+
+    #[test]
+    fn baidu_application_link_is_the_official_iam_key_page() {
+        // Baidu's own Qianfan SDK doc points "how to get an API Key" at this page:
+        // https://cloud.baidu.com/doc/qianfan-docs/s/Fm9l6ocai
+        let expected = "https://console.bce.baidu.com/iam/#/iam/apikey/list";
+        assert_eq!(application_url("baidu"), Some(expected));
+        let mut opened = String::new();
+        open_application_with(
+            "baidu",
+            |s| {
+                assert_eq!(s, "baidu");
+                application_url(s).map(str::to_string)
+            },
+            |url| {
+                opened = url.into();
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(opened, expected);
     }
 }

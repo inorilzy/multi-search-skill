@@ -19,6 +19,7 @@ from .src.service import (
     run_search_web,
 )
 from .src.support.format import format_scrapes
+from .src.support.secrets import scrub_secrets
 from .src.state.key_state import SQLiteKeyManager
 from .src.state.state_store import StateStore
 
@@ -102,6 +103,10 @@ def build_parser() -> argparse.ArgumentParser:
     keys_reset_parser = keys_subparsers.add_parser("reset", help="reset key health rows")
     keys_reset_parser.add_argument("--provider")
     keys_reset_parser.add_argument("--key-id")
+    keys_reset_parser.add_argument(
+        "--all", action="store_true",
+        help="reset every key row (required when no --provider/--key-id is given)",
+    )
     _add_format_argument(keys_reset_parser)
     keys_reset_parser.set_defaults(handler=_handle_keys_reset)
 
@@ -122,11 +127,9 @@ def main(
         args = parser.parse_args(list(argv) if argv is not None else None)
         payload = args.handler(args)
         _write_payload(payload, args.format, stdout)
-        if args.command == "search":
-            statuses = payload.get("provider_status") or []
-            if statuses and all(row.get("status") == "error" for row in statuses):
-                stderr.write("error: all selected search providers failed\n")
-                return 1
+        if args.command == "search" and payload.get("outcome") == "failed":
+            stderr.write("error: all selected search providers failed\n")
+            return 1
         if args.command == "doctor" and (
             payload.get("config_error") or payload.get("keys_error")
             or payload.get("network_ok") is False
@@ -138,33 +141,39 @@ def main(
         stderr.write(f"usage error: {exc}\n")
         return 2
     except ValueError as exc:
+        message = scrub_secrets(exc)
         if args is not None:
             _write_payload({
-                "error": str(exc),
+                "error": message,
                 "error_type": "invalid_request",
             }, args.format, stdout)
-        stderr.write(f"error: {exc}\n")
+        stderr.write(f"error: {message}\n")
         return 1
     except Exception as exc:  # noqa: BLE001 - CLI boundary should be explicit and terse
+        message = scrub_secrets(exc)
         if args is not None:
             _write_payload({
-                "error": str(exc),
+                "error": message,
                 "error_type": "runtime_error",
             }, args.format, stdout)
-        stderr.write(f"error: {exc}\n")
+        stderr.write(f"error: {message}\n")
         return 1
 
 
 def entrypoint() -> None:
     if sys.platform == "win32":
-        for stream in (sys.stdout, sys.stderr):
-            if isinstance(stream, io.TextIOWrapper) and not stream.isatty():
-                stream.reconfigure(encoding="utf-8", errors=stream.errors)
+        # stdout is data (replace keeps lone surrogates from aborting output);
+        # stderr stays lossless with backslashreplace for diagnostics.
+        if isinstance(sys.stdout, io.TextIOWrapper) and not sys.stdout.isatty():
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if isinstance(sys.stderr, io.TextIOWrapper) and not sys.stderr.isatty():
+            sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     raise SystemExit(main())
 
 
 def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
-    payload = run_search_web(
+    # The core owns the business outcome; the CLI only maps it to an exit code.
+    return run_search_web(
         SearchWebRequest(
             query=args.query,
             route=args.route,
@@ -175,13 +184,6 @@ def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
             no_scrape=args.no_scrape,
         )
     )
-    statuses = payload.get("provider_status") or []
-    payload["outcome"] = (
-        "failed" if statuses and all(row.get("status") == "error" for row in statuses)
-        else "partial" if payload.get("errors")
-        else "success" if payload.get("results") else "empty"
-    )
-    return payload
 
 
 def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
@@ -220,6 +222,8 @@ def _handle_keys_status(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _handle_keys_reset(args: argparse.Namespace) -> dict[str, Any]:
+    if not (args.all or args.provider or args.key_id):
+        raise CLIUsageError("keys reset requires --all or a --provider/--key-id selection")
     manager = SQLiteKeyManager(StateStore())
     return {"updated": manager.reset(provider=args.provider, key_id=args.key_id)}
 

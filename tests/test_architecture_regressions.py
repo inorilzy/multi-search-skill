@@ -60,16 +60,19 @@ class ContentFlowRegressionTests(unittest.TestCase):
         self.assertEqual(rest["content_length"], 1000)
         self.assertEqual(len(calls), 1)
 
-    def test_short_preview_does_not_bypass_content_store_capacity(self):
+    def test_short_preview_truncates_at_the_content_store_byte_limit(self):
         def scraper(url, **_kwargs):
             return {"url": url, "markdown": "x" * (DEFAULT_MAX_OBJECT_BYTES + 1), "via": "fake"}
 
-        with self.assertRaises(ContentStoreError):
-            service.run_fetch_source(
-                service.FetchSourceRequest(url="https://evidence.example/large", max_chars=10),
-                scraper=scraper, **self.fetch_options,
-            )
-        self.assertEqual(self.store.rows("SELECT * FROM content_objects"), [])
+        fetched = service.run_fetch_source(
+            service.FetchSourceRequest(url="https://evidence.example/large", max_chars=10),
+            scraper=scraper, **self.fetch_options,
+        )
+        self.assertEqual(fetched["body"], "x" * 10)
+        self.assertTrue(fetched["truncated"])
+        self.assertTrue(fetched["persisted"])
+        cached = ContentStore(self.store).get(fetched["source_id"])
+        self.assertEqual(len(cached["content"].encode("utf-8")), DEFAULT_MAX_OBJECT_BYTES)
 
     def test_backend_acquisition_limit_is_independent_of_preview_size(self):
         body = "complete acquired body" * 100

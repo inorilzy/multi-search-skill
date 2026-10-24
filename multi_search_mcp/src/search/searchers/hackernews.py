@@ -18,7 +18,7 @@ def _hackernews_item_url(object_id) -> str:
     return f"https://news.ycombinator.com/item?id={object_id}"
 
 
-def search_hackernews(query: str, count: int = 10, timeout: float = 20) -> list:
+def search_hackernews(query: str, count: int = 10, timeout: float = 20, deadline: float | None = None) -> list:
     """Search Hacker News stories.
 
     The Hacker News Algolia API powers practical keyword search for Hacker News.
@@ -36,7 +36,7 @@ def search_hackernews(query: str, count: int = 10, timeout: float = 20) -> list:
         headers={"User-Agent": "multi-search/1.0"},
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(resp.read())
     except Exception as e:
         return [{"source": "hackernews", "error": str(e)[:300]}]

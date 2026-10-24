@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import ipaddress
+import os
 import socket
 import time
 import urllib.parse
@@ -14,7 +15,19 @@ from .concurrency import BoundedDaemonExecutor
 
 Resolver = Callable[[str], Iterable[str]]
 _CGNAT_V4_NETWORK = ipaddress.ip_network("100.64.0.0/10")
-_DNS_MAX_WORKERS = 8
+# Clash/TUN proxies answer A queries with benchmark addresses in 198.18.0.0/15
+# (RFC 2544). Those are private for ipaddress, but the real destination is the
+# trusted local proxy. Opt-in only via env so the default policy stays strict.
+_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+FAKE_IP_ENV = "MULTI_SEARCH_ALLOW_FAKE_IP"
+# IPv4-translatable / transition prefixes that embed a v4 destination:
+#   NAT64 well-known prefix 64:ff9b::/96
+#   6to4 2002::/16
+_NAT64_WKP = ipaddress.ip_network("64:ff9b::/96")
+_6TO4 = ipaddress.ip_network("2002::/16")
+# Align DNS capacity with the scrape pool: DNS is fast, and a smaller pool
+# turns a slow resolver into spurious request failures.
+_DNS_MAX_WORKERS = 32
 _DNS_POOL = BoundedDaemonExecutor(
     max_workers=_DNS_MAX_WORKERS,
     thread_name_prefix="multi-search-dns",
@@ -31,24 +44,42 @@ class DnsResolutionError(OSError):
 
 def validate_public_http_url(
     url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
+    allow_fake_ip: bool | None = None,
 ) -> str:
-    return _validate_url(url, label="URL", resolver=resolver, deadline=deadline)
+    return _validate_url(
+        url, label="URL", resolver=resolver, deadline=deadline,
+        allow_fake_ip=allow_fake_ip,
+    )
 
 
 def validate_scrape_url(
     url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
+    allow_fake_ip: bool | None = None,
 ) -> str:
-    return _validate_url(url, label="scrape URL", resolver=resolver, deadline=deadline)
+    return _validate_url(
+        url, label="scrape URL", resolver=resolver, deadline=deadline,
+        allow_fake_ip=allow_fake_ip,
+    )
 
 
 def validate_redirect_target(
     url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
+    allow_fake_ip: bool | None = None,
 ) -> str:
-    return _validate_url(url, label="redirect target", resolver=resolver, deadline=deadline)
+    return _validate_url(
+        url, label="redirect target", resolver=resolver, deadline=deadline,
+        allow_fake_ip=allow_fake_ip,
+    )
+
+
+def allow_fake_ip_default() -> bool:
+    """Fake-IP (198.18.0.0/15) answers are accepted only when explicitly opted in."""
+    return os.environ.get(FAKE_IP_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _validate_url(
     url: str, *, label: str, resolver: Resolver | None, deadline: float | None,
+    allow_fake_ip: bool | None = None,
 ) -> str:
     candidate = str(url or "").strip()
     try:
@@ -71,6 +102,7 @@ def _validate_url(
         _ensure_deadline(deadline, label)
         _ensure_public_ip(direct_ip, label=label, resolved=False)
         return candidate
+    accept_fake_ip = allow_fake_ip_default() if allow_fake_ip is None else bool(allow_fake_ip)
     resolve = resolver or _resolve_host_ips
     try:
         if deadline is None:
@@ -87,8 +119,34 @@ def _validate_url(
         ip = _parse_ip(answer)
         if ip is None:
             raise UrlSecurityError(f"{label} host resolved to a non-IP value")
-        _ensure_public_ip(ip, label=label, resolved=True)
+        _ensure_public_ip(
+            ip, label=label, resolved=True, allow_fake_ip=accept_fake_ip,
+        )
     return candidate
+
+
+def resolve_validated_addresses(
+    host: str, port: int, *, deadline: float | None = None,
+    allow_fake_ip: bool | None = None,
+) -> list[tuple]:
+    """Resolve and validate every socket destination.
+
+    ``http`` uses the result directly for the connect call so the address that
+    was checked is the address that is dialled (no second, unchecked lookup).
+    """
+    addresses = resolve_host_addresses(host, port, deadline=deadline)
+    accept_fake_ip = allow_fake_ip_default() if allow_fake_ip is None else bool(allow_fake_ip)
+    for family, _socktype, _proto, _canonname, sockaddr in addresses:
+        if family not in {socket.AF_INET, socket.AF_INET6}:
+            continue
+        ip = _parse_ip(str(sockaddr[0]))
+        if ip is None:
+            raise UrlSecurityError("HTTP DNS resolution returned a non-IP address")
+        _ensure_public_ip(
+            ip, label="HTTP connection", resolved=True,
+            allow_fake_ip=accept_fake_ip,
+        )
+    return addresses
 
 
 def _resolve_host_ips(host: str) -> list[str]:
@@ -124,11 +182,13 @@ def _run_bounded_dns(fn: Callable[[], Iterable], *, deadline: float, label: str 
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise DnsResolutionError(f"{label} deadline exceeded")
-    future = _DNS_POOL.submit_nowait(fn)
+    # Block for a slot only within the request's own deadline instead of
+    # failing immediately when every worker is momentarily busy.
+    future = _DNS_POOL.submit_before(deadline, fn)
     if future is None:
         raise DnsResolutionError(f"{label} capacity exhausted")
     try:
-        result = future.result(timeout=remaining)
+        result = future.result(timeout=max(0.0, deadline - time.monotonic()))
     except concurrent.futures.TimeoutError as exc:
         # A running resolver cannot be cancelled safely.  BoundedDaemonExecutor
         # retains its slot until that resolver returns, so repeated request
@@ -157,7 +217,12 @@ def _ensure_public_ip(
     *,
     label: str,
     resolved: bool,
+    allow_fake_ip: bool = False,
 ) -> None:
+    if allow_fake_ip and resolved and ip in _FAKE_IP_NETWORK:
+        # Opted-in local TUN proxy: the checked address is the proxy's fake-IP
+        # answer, not an internet destination. Literal IPs never take this path.
+        return
     reason = _unsafe_reason(ip)
     if reason is None:
         return
@@ -165,7 +230,35 @@ def _ensure_public_ip(
     raise UrlSecurityError(f"unsafe {label}: {address_kind} is {reason}")
 
 
+def ensure_public_ip(
+    value: str, *, label: str = "connection", resolved: bool = True,
+    allow_fake_ip: bool = False,
+) -> None:
+    """Raise ``UrlSecurityError`` when an address is not internet-routable."""
+    ip = _parse_ip(str(value))
+    if ip is None:
+        raise UrlSecurityError(f"unsafe {label}: address is not an IP")
+    _ensure_public_ip(
+        ip, label=label, resolved=resolved, allow_fake_ip=allow_fake_ip,
+    )
+
+
+def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """Extract the v4 destination embedded in NAT64/6to4 transition addresses."""
+    if ip in _NAT64_WKP:
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    if ip in _6TO4:
+        return ipaddress.IPv4Address((int(ip) >> 80) & 0xFFFFFFFF)
+    return None
+
+
 def _unsafe_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
+    if isinstance(ip, ipaddress.IPv6Address):
+        embedded = _embedded_ipv4(ip)
+        if embedded is not None:
+            # Judge the tunnel by its destination; a global-looking wrapper
+            # must not smuggle a private v4 target past the SSRF check.
+            return _unsafe_reason(embedded)
     if ip.is_unspecified:
         return "unspecified"
     if ip.is_loopback:

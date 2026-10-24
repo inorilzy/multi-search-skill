@@ -10,7 +10,6 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
-use ts_rs::TS;
 
 pub const CONFIG_ENV: &str = crate::config_db::DB_ENV;
 
@@ -87,16 +86,18 @@ fn scrape_chain(object: &Map<String, Value>) -> (Vec<String>, bool) {
     }
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct ScrapeBackendOption {
     pub name: String,
     pub label: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(deny_unknown_fields)]
-#[ts(export_to = "types.d.ts")]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct RouteConfig {
     pub label: String,
     pub sources: Vec<String>,
@@ -166,8 +167,9 @@ pub fn builtin_routes() -> RouteMap {
     ])
 }
 
-#[derive(Clone, Debug, Deserialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct SettingsInput {
     pub route: String,
     pub timeout: u32,
@@ -192,8 +194,9 @@ pub struct Validated {
     pub scrape_backends: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct SettingsView {
     pub config_path: Option<String>,
     pub path_source: String,
@@ -442,6 +445,29 @@ pub fn save(
     transaction
         .commit()
         .map_err(|_| "保存失败，原设置未改变".to_string())?;
+    Ok(view(environment))
+}
+
+/// Patch only scrape_backends while holding the database write lock.
+pub fn save_scrape_backends(environment: &RuntimeEnvironment, backends: &[String]) -> Result<SettingsView, String> {
+    let mut chain: Vec<String> = Vec::new();
+    for raw in backends {
+        let name = raw.trim();
+        if !SCRAPE_BACKENDS.contains(&name) { return Err(format!("不支持的抓取后端：{name}")); }
+        if !chain.iter().any(|saved| saved == name) { chain.push(name.to_string()); }
+    }
+    if chain.is_empty() { return Err("抓取顺序至少要保留一个后端".into()); }
+    let path = config_path(environment).ok_or("无法定位配置数据库")?;
+    let mut connection = crate::config_db::open(&path)?;
+    let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|_| "配置数据库事务失败".to_string())?;
+    let mut existing = read_object(&transaction)?;
+    config_routes(&existing)?;
+    existing.insert("scrape_backends".into(), serde_json::json!(chain));
+    let body = serde_json::to_string(&existing).map_err(|_| "无法序列化设置".to_string())?;
+    transaction.execute("INSERT INTO settings(id,data) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data", [body])
+        .map_err(|_| "保存失败，原设置未改变".to_string())?;
+    transaction.commit().map_err(|_| "保存失败，原设置未改变".to_string())?;
     Ok(view(environment))
 }
 

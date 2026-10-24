@@ -11,7 +11,6 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
-use ts_rs::TS;
 
 pub(crate) static STAGING_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -42,7 +41,7 @@ pub(crate) fn record_target(environment: &RuntimeEnvironment, target: &Path, pre
     if present { targets.push(target.to_path_buf()); }
     let path = registry_path(environment)?;
     fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("Cannot record managed Skill: {e}"))?;
-    let temp = path.with_extension("tmp");
+    let temp = path.with_extension(format!("{}-{}.tmp", std::process::id(), STAGING_ID.fetch_add(1, Ordering::Relaxed)));
     fs::write(&temp, serde_json::to_vec(&targets).unwrap()).map_err(|e| format!("Cannot record managed Skill: {e}"))?;
     fs::rename(temp, path).map_err(|e| format!("Cannot commit managed Skill registry: {e}"))
 }
@@ -81,8 +80,9 @@ fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requiremen
     Ok(required)
 }
 
-#[derive(Clone, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct SkillPlan {
     pub host: String,
     pub scope: String,
@@ -94,8 +94,9 @@ pub struct SkillPlan {
     pub can_install: bool,
 }
 
-#[derive(Clone, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct SkillInstall {
     /// installed | blocked | failed, or a new value added later; UI must fall back to a raw string.
     pub status: String,
@@ -131,6 +132,9 @@ impl SkillManager<'_> {
             Err(reason) => return blocked_plan(scope, "invalid_scope", reason, None),
         };
         let target_text = target.to_string_lossy().into_owned();
+        if !skill_common::safe_managed_paths(&target) {
+            return blocked_plan(scope, "invalid_scope", "Unsafe linked managed path".into(), Some(target_text));
+        }
         // symlink_metadata also sees dangling links, which a rename would not replace either.
         if fs::symlink_metadata(&target).is_ok() {
             return blocked_plan(
@@ -182,6 +186,9 @@ impl SkillManager<'_> {
             reason,
             files: file_names(),
         };
+        if !skill_common::safe_managed_paths(&target) {
+            return blocked("Unsafe linked managed path".into());
+        }
         // Staging sits beside skills/, not inside it, so a half-written folder never appears as a skill.
         let Some(base) = target.parent().and_then(Path::parent) else {
             return failed("Invalid target directory".into());

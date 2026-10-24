@@ -434,3 +434,24 @@ fn shutdown_terminates_its_execution_without_disabling_the_standalone_cli() {
         "multi-search 0.4.0"
     );
 }
+
+#[test]
+fn option_like_queries_remain_literal_after_terminator() {
+    let profile = common::Profile::new();
+    let manager = DesktopManager::new(profile.environment.clone());
+    for query in ["--source=untrusted", "--help", " -x", "--"] {
+        let id = manager.start_search(None, SearchOptions {
+            query: query.into(), route: "default".into(), sources: vec![], timeout: 5,
+        }).unwrap();
+        let start = Instant::now();
+        loop {
+            let status = manager.execution(id).unwrap();
+            if status.status != "running" {
+                assert_eq!(status.payload.unwrap()["results"][0]["title"], query);
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}

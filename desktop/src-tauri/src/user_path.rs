@@ -6,10 +6,10 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use ts_rs::TS;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct PathValue {
     pub text: String,
     pub kind: u32,
@@ -24,8 +24,9 @@ impl PathValue {
         }
     }
 }
-#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct PathReceipt {
     before: PathValue,
     after: PathValue,
@@ -35,6 +36,7 @@ pub struct PathReceipt {
 /// re-read immediately before writing, and reject a changed value instead of clobbering it.
 pub trait PathStore: Send + Sync {
     fn read(&self) -> Result<PathValue, String>;
+    fn notify_change(&self) -> Result<(), String> { Ok(()) }
     fn receipt(&self) -> Result<Option<PathReceipt>, String>;
     fn compare_write(
         &self,
@@ -77,13 +79,17 @@ impl PathStore for MemoryPathStore {
         Ok(())
     }
 }
-#[derive(Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct PathPlan {
     /// owned | existing | absent | added | removed | unchanged | blocked | failed, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub directory: String,
     pub reason: String,
+    /// Non-fatal follow-up (for example, Explorer was not notified); the PATH
+    /// write already succeeded when this is non-empty.
+    pub warning: String,
     pub can_add: bool,
     pub can_remove: bool,
 }
@@ -124,6 +130,7 @@ impl UserPathManager<'_> {
         Ok(PathPlan {
             status: if owned { "owned" } else if found { "existing" } else { "absent" }.into(),
             directory,
+            warning: String::new(),
             reason: "仅修改当前用户 PATH；系统 PATH 不变。完成后重新检查，并重启终端或 Agent 宿主。原有或已修改的项目不会被认领或移除。".into(),
             can_add: !found && matches!(install.status.as_str(), "installed" | "update_available"),
             can_remove: owned,
@@ -171,6 +178,7 @@ impl UserPathManager<'_> {
             store.compare_write(&current, &desired, Some(&receipt))?;
             plan.status = "added".into();
         }
+        if let Err(warning) = store.notify_change() { plan.warning = warning; }
         Ok(plan)
     }
 }
@@ -212,6 +220,18 @@ fn decode(bytes: &[u8]) -> Result<String, String> {
 }
 #[cfg(windows)]
 impl PathStore for NativePathStore {
+    fn notify_change(&self) -> Result<(), String> {
+        if self.subkey != "Environment" { return Ok(()); }
+        // Broadcast off the caller thread. SMTO_ABORTIFHUNG skips unresponsive
+        // windows instead of waiting indefinitely; a failed notification does
+        // not roll back the already committed registry write.
+        std::thread::spawn(|| {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG};
+            let name: Vec<u16> = "Environment".encode_utf16().chain(Some(0)).collect();
+            let sent = unsafe { SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, name.as_ptr() as isize, SMTO_ABORTIFHUNG, 1000, std::ptr::null_mut()) };
+            if sent == 0 { Err("用户 PATH 已保存，但通知新进程失败；请重新登录或重启宿主后检查".into()) } else { Ok(()) }
+        }).join().unwrap_or_else(|_| Err("用户 PATH 已保存，但通知线程失败".into()))
+    }
     fn read(&self) -> Result<PathValue, String> {
         match self.get("Path")? {
             None => Ok(PathValue {
@@ -271,13 +291,6 @@ impl PathStore for NativePathStore {
                 .as_ref()
                 .and_then(|r| serde_json::to_string(r).ok());
             let _ = self.set("MultiSearchPathOwnership", old.as_deref().map(|s| (1, s)));
-        } else if self.subkey == "Environment" {
-            // Notify Explorer so subsequently launched terminals inherit the updated user PATH.
-            // Isolated acceptance keys never broadcast a global environment change.
-            use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG};
-            let name: Vec<u16> = "Environment".encode_utf16().chain(Some(0)).collect();
-            let sent = unsafe { SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, name.as_ptr() as isize, SMTO_ABORTIFHUNG, 1000, std::ptr::null_mut()) };
-            if sent == 0 { return Err("用户 PATH 已保存，但通知新进程失败；请重新登录或重启宿主后检查".into()); }
         }
         result
     }

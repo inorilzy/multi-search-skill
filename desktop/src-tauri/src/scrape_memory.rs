@@ -8,13 +8,13 @@ use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use ts_rs::TS;
 
 /// 仅用于桌面测试隔离的 state.sqlite 覆盖入口；Python 侧不读取该变量。
 const STATE_DB_ENV: &str = "MULTI_SEARCH_STATE_DB";
 
-#[derive(Clone, Debug, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct ScrapeMemoryRow {
     pub site: String,
     pub scraper: String,
@@ -35,8 +35,9 @@ pub struct ScrapeMemoryRow {
     pub in_cooldown: bool,
 }
 
-#[derive(Clone, Debug, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct ScrapeMemoryView {
     /// state.sqlite 是否可读（存在且含记忆表）。
     pub available: bool,
@@ -70,6 +71,15 @@ pub fn state_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
         return Some(PathBuf::from(value));
     }
     home_path(environment)
+}
+
+fn validate_site(site: &str) -> Result<(), String> {
+    // Exact categories emitted by Python site_memory.site_key; never arbitrary paths.
+    if matches!(site, "github.com/repo" | "github.com/issues" | "github.com/pull" | "github.com/discussions") { return Ok(()); }
+    if site.to_ascii_lowercase() != site || site.len() > 253 || site.is_empty() || site.split('.').any(|label| label.is_empty() || label.len() > 63 || label.starts_with('-') || label.ends_with('-') || !label.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')) {
+        return Err("站点必须为有效主机名，不含 URL、路径或端口".into());
+    }
+    Ok(())
 }
 
 fn now_epoch() -> i64 {
@@ -109,6 +119,9 @@ fn read_only(path: &Path) -> Result<Connection, String> {
     connection
         .busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|_| "抓取状态数据库不可用".to_string())?;
+    let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))
+        .map_err(|_| "抓取状态数据库无法读取".to_string())?;
+    if !matches!(version, 1 | 2) { return Err("不支持的抓取状态数据库版本".into()); }
     Ok(connection)
 }
 
@@ -122,6 +135,9 @@ fn read_write(path: &Path) -> Result<Connection, String> {
     connection
         .busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|_| "抓取状态数据库不可用".to_string())?;
+    let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0))
+        .map_err(|_| "抓取状态数据库无法读取".to_string())?;
+    if !matches!(version, 1 | 2) { return Err("不支持的抓取状态数据库版本".into()); }
     Ok(connection)
 }
 
@@ -262,10 +278,10 @@ fn read_rows(
     now: i64,
 ) -> Result<Vec<ScrapeMemoryRow>, String> {
     let sql = if site.is_some() {
-        "SELECT * FROM site_scraper_stats WHERE site = ?1 \
+        "SELECT site, scraper, success_count, failure_count, blocked_count, timeout_count, avg_content_length, last_success_at, last_failure_at, last_error_type, last_error_message, cooldown_until, sample_url, manually_pinned, manual_priority FROM site_scraper_stats WHERE site = ?1 \
          ORDER BY site, manually_pinned DESC, success_count DESC, scraper"
     } else {
-        "SELECT * FROM site_scraper_stats \
+        "SELECT site, scraper, success_count, failure_count, blocked_count, timeout_count, avg_content_length, last_success_at, last_failure_at, last_error_type, last_error_message, cooldown_until, sample_url, manually_pinned, manual_priority FROM site_scraper_stats \
          ORDER BY site, manually_pinned DESC, success_count DESC, scraper"
     };
     let mut statement = connection
@@ -286,6 +302,9 @@ fn read_rows(
 
 /// 读取站点记忆；`site` 为 Some 时精确匹配。
 pub fn view(environment: &RuntimeEnvironment, site: Option<&str>) -> ScrapeMemoryView {
+    if let Some(site) = site {
+        if let Err(reason) = validate_site(site) { return unavailable(None, &reason); }
+    }
     let path = match state_path(environment) {
         Some(path) => path,
         None => return missing(None),
@@ -295,7 +314,7 @@ pub fn view(environment: &RuntimeEnvironment, site: Option<&str>) -> ScrapeMemor
     }
     let connection = match read_only(&path) {
         Ok(connection) => connection,
-        Err(_) => return unavailable(Some(path), "抓取状态数据库无法读取"),
+        Err(reason) => return unavailable(Some(path), &reason),
     };
     match table_present(&connection) {
         Ok(true) => {}
@@ -324,6 +343,7 @@ pub fn pin(
     site: &str,
     scraper: &str,
 ) -> Result<ScrapeMemoryView, String> {
+    validate_site(site)?;
     let scraper = scraper.trim();
     if !SCRAPE_BACKENDS.contains(&scraper) {
         return Err(format!("不支持的抓取后端：{scraper}"));
@@ -378,6 +398,7 @@ pub fn pin(
 /// 删除指定站点记忆；缺少站点时拒绝写入，不提供全库清空入口。
 pub fn reset(environment: &RuntimeEnvironment, site: Option<&str>) -> Result<ScrapeMemoryView, String> {
     let site = site.filter(|site| !site.trim().is_empty()).ok_or("必须指定要清除的站点")?;
+    validate_site(site)?;
     let path = state_path(environment).ok_or("无法定位抓取状态数据库")?;
     if !path.is_file() {
         return Ok(missing(Some(path)));

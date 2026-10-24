@@ -21,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use ts_rs::TS;
 
 const MARKER: &str = "multi-search-install.json";
 const OWNER: &str = "multi-search-desktop";
@@ -38,8 +37,9 @@ struct Marker {
     schema: u32,
 }
 
-#[derive(Clone, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct InstallPlan {
     /// One of `ready`, `installed`, `update_available`, `prerequisite_missing`, `integrity_failed`, `unknown_existing`, `unverified`, `not_installed`, `uninstalled`, `unavailable`, `already_installed`, `failed`, or a new value added later; UI must fall back to a raw string.
     pub status: String,
@@ -57,16 +57,18 @@ pub struct InstallPlan {
     pub path_hint: String,
 }
 
-#[derive(Clone, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct InstallStep {
     pub name: String,
     pub ok: bool,
     pub detail: String,
 }
 
-#[derive(Clone, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct InstallOutcome {
     /// Same status vocabulary as `InstallPlan`; UI must fall back to a raw string for unknown values.
     pub status: String,
@@ -232,13 +234,7 @@ fn row(status: &str, root: &Path, version: Option<String>, reason: &str) -> Inst
 
 /// Skill directory for the current user, the one `skill_common` installs into; `None` without a profile.
 fn kept_skill_directory(environment: &RuntimeEnvironment) -> Option<PathBuf> {
-    environment
-        .variables
-        .get("USERPROFILE")
-        .or_else(|| environment.variables.get("HOME"))
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .map(|home| home.join(".claude").join("skills").join("multi-search"))
+    crate::skill_common::target_directory(environment, "global", None).ok()
 }
 
 fn outcome(
@@ -315,7 +311,7 @@ fn stage_verify_probe(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let staging = root.join(format!("staging-{nonce}"));
+    let staging = root.join(format!("staging-{}-{nonce}", std::process::id()));
     fs::create_dir_all(&staging)
         .map_err(|e| ("failed", format!("无法创建暂存目录：{e}")))?;
     let guard = StagingCleanup(staging.clone());
@@ -401,7 +397,7 @@ fn perform_update(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let backup = root.join(format!("backup-{nonce}"));
+    let backup = root.join(format!("backup-{}-{nonce}", std::process::id()));
     fs::create_dir(&backup).map_err(|e| ("failed", format!("无法创建回滚目录：{e}")))?;
     let mut moved = Vec::new();
     for name in &old_names {
@@ -601,12 +597,14 @@ impl InstallManager<'_> {
         self.install_plan_from(None)
     }
 
+    #[allow(dead_code)]
     pub fn install(&self) -> InstallOutcome {
         self.install_from(None)
     }
 
     /// Replaces an owned, active install with a newer verified bundle. The previous CLI is kept as
     /// `backup-<version>` until the new CLI passes its probe; any failure restores it.
+    #[allow(dead_code)]
     pub fn update(&self) -> InstallOutcome {
         self.update_from(None)
     }

@@ -114,10 +114,20 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                             self.assertEqual(row, serial.status_rows("exa")[0])
                             self.assertEqual(row["failure_count"], 3 if reset.success else 4)
                             self.assertEqual(row["success_count"], int(reset.success))
-                            self.assertEqual(row["invalid_strikes"], 1 if reset_first else 0)
-                            self.assertEqual(row["status"], TRANSIENT_INVALID if reset_first else ACTIVE)
+                            if reset.success and reset_first:
+                                self.assertEqual(row["invalid_strikes"], 1)
+                                self.assertEqual(row["status"], TRANSIENT_INVALID)
+                            elif reset.success:
+                                self.assertEqual(row["invalid_strikes"], 0)
+                                self.assertEqual(row["status"], ACTIVE)
+                            else:
+                                # The timeout is neutral: it neither resets the
+                                # two existing strikes nor the stored verdict,
+                                # so a 401 escalates the key in either order.
+                                self.assertEqual(row["invalid_strikes"], 3)
+                                self.assertEqual(row["status"], INVALID)
 
-    def test_non_invalid_results_clear_strikes_and_success_preserves_quota_expiry(self):
+    def test_credential_results_update_state_and_neutral_errors_preserve_it(self):
         now = datetime(2026, 9, 12, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as temp, mock.patch(
             "multi_search_mcp.src.state.key_state._now", return_value=now
@@ -136,8 +146,10 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                  0, 4, 1, 1, 1, None, (now + timedelta(hours=24)).isoformat()),
                 (invalid, TRANSIENT_INVALID,
                  1, 5, 1, 1, 1, (now + timedelta(minutes=15)).isoformat(), None),
-                (KeyOutcome(False, False, "network", "connection error"), ACTIVE,
-                 0, 6, 1, 1, 1, None, None),
+                # A neutral timeout/network failure records the failure but must
+                # not clear the stronger state another request just wrote.
+                (KeyOutcome(False, False, "network", "connection error"), TRANSIENT_INVALID,
+                 1, 6, 1, 1, 1, (now + timedelta(minutes=15)).isoformat(), None),
             )
             fields = ("status", "invalid_strikes", "failure_count", "success_count",
                       "rate_limit_count", "quota_error_count", "cooldown_until", "exhausted_until")
@@ -168,7 +180,56 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                     self.assertEqual(manager.status_rows("exa")[0]["manually_disabled"], 1)
                     self.assertEqual(manager.candidates("exa", "fixture-key"), [])
             self.assertEqual(manager.reset("exa", candidate.key_id), 1)
-            self.assertEqual(manager.candidates("exa", "fixture-key"), [candidate])
+            # Reset clears health state but must never re-enable a key the user
+            # disabled by hand.
+            self.assertEqual(manager.status_rows("exa")[0]["manually_disabled"], 1)
+            self.assertEqual(manager.candidates("exa", "fixture-key"), [])
+
+    def test_success_after_permanent_invalid_is_a_verified_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            manager = SQLiteKeyManager(StateStore(Path(temp) / "state.sqlite"))
+            candidate = manager.candidates("exa", "fixture-key")[0]
+            invalid = KeyOutcome(False, True, "invalid", "HTTP 401 unauthorized")
+            for _ in range(3):
+                manager.record_result("exa", candidate, invalid)
+            self.assertEqual(manager.status_rows("exa")[0]["status"], INVALID)
+            manager.record_result("exa", candidate, KeyOutcome(True, False))
+            row = manager.status_rows("exa")[0]
+            self.assertEqual((row["status"], row["invalid_strikes"]), (ACTIVE, 0))
+            self.assertEqual(
+                [cand.key for cand in manager.candidates("exa", "fixture-key")],
+                ["fixture-key"],
+            )
+
+    def test_concurrent_success_and_invalid_respects_causal_generation(self):
+        # A success entered before the invalid failure may not clear it (the
+        # failure happened while the request was in flight). Only the serial
+        # order where the success starts after the failure recovers the key.
+        invalid = KeyOutcome(False, True, "invalid", "HTTP 401 unauthorized")
+        success = KeyOutcome(True, False)
+        with tempfile.TemporaryDirectory() as temp:
+            manager = SQLiteKeyManager(StateStore(Path(temp) / "state.sqlite"))
+            candidate = manager.candidates("exa", "fixture-key")[0]
+            manager.record_result("exa", candidate, invalid)
+            manager.record_result("exa", candidate, invalid)
+
+            # Every causally-consistent interleaving:
+            #   failure commits during the success call -> INVALID 3 preserved;
+            #   success starts after the failure -> normal recovery -> ACTIVE 0;
+            #   success clears the seed strikes first, then a newer failure ->
+            #   a fresh single strike -> TRANSIENT_INVALID 1.
+            expected = {("invalid", 3), ("active", 0), ("transient_invalid", 1)}
+
+            managers = [SQLiteKeyManager(manager.store), SQLiteKeyManager(manager.store)]
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(managers[0].record_result, "exa", candidate, success),
+                    pool.submit(managers[1].record_result, "exa", candidate, invalid),
+                ]
+                for future in futures:
+                    future.result(timeout=10)
+            row = manager.status_rows("exa")[0]
+            self.assertIn((row["status"], row["invalid_strikes"]), expected)
 
     def test_existing_database_without_strikes_migrates_and_preserves_counts(self):
         with tempfile.TemporaryDirectory() as temp:

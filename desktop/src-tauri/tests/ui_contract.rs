@@ -48,6 +48,7 @@ fn config() -> ts_rs::Config {
 macro_rules! for_each_contract_type {
     ($macro:ident) => {
         $macro!(
+            contract::CookieStatus,
             contract::Discovery,
             contract::CliStatus,
             contract::SearchOptions,
@@ -98,8 +99,9 @@ fn generated_declarations() -> BTreeMap<String, String> {
 
 /// Write `desktop/ui/types.d.ts`. Run when the Rust contract changes.
 #[test]
+#[ignore = "explicit code generation only"]
 fn emit_types_d_ts() {
-    let _guard = CONTRACT_FILE.lock().unwrap();
+    let _guard = CONTRACT_FILE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let out_dir = ui_dir();
     std::fs::create_dir_all(&out_dir).unwrap();
     let cfg = config().with_out_dir(&out_dir);
@@ -124,7 +126,7 @@ fn emit_types_d_ts() {
 /// that forgot to regenerate `types.d.ts` fails here.
 #[test]
 fn types_d_ts_is_up_to_date() {
-    let _guard = CONTRACT_FILE.lock().unwrap();
+    let _guard = CONTRACT_FILE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let committed = std::fs::read_to_string(ui_dir().join("types.d.ts"))
         .expect("desktop/ui/types.d.ts must be committed");
 
@@ -305,7 +307,7 @@ fn is_union_type(decl: &str) -> bool {
 /// the Rust payload serialises, with matching primitive kind and nullability.
 #[test]
 fn payloads_js_matches_rust_field_types() {
-    let _guard = CONTRACT_FILE.lock().unwrap();
+    let _guard = CONTRACT_FILE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let payloads = std::fs::read_to_string(ui_dir().join("payloads.js"))
         .expect("desktop/ui/payloads.js must be committed");
     let js_schemas = parse_payloads_js(&payloads);
@@ -339,4 +341,49 @@ fn payloads_js_matches_rust_field_types() {
             );
         }
     }
+}
+
+/// Deliberately parses the small fixed command/invoke declaration grammar;
+/// unsupported syntax fails instead of silently dropping a command.
+#[test]
+fn ipc_commands_arguments_and_capability_match() {
+    use std::collections::{BTreeMap, BTreeSet};
+    let window = include_str!("../src/window.rs");
+    let api = std::fs::read_to_string(ui_dir().join("api.js")).unwrap();
+    let handler: BTreeSet<_> = window.split("tauri::generate_handler![").nth(1).unwrap()
+        .split(']').next().unwrap().split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let mut rust = BTreeMap::new();
+    for part in window.split("#[tauri::command]").skip(1) {
+        let function = part.split("fn ").nth(1).unwrap();
+        let (name, tail) = function.split_once('(').unwrap();
+        let parameters = tail.split(") ->").next().unwrap();
+        let fields: BTreeSet<String> = parameters.lines().filter_map(|line| {
+            let (name, ty) = line.trim().split_once(':')?;
+            if ty.contains("tauri::State") { return None; }
+            let mut chunks = name.split('_');
+            let mut camel = chunks.next().unwrap().to_string();
+            for chunk in chunks { let mut chars = chunk.chars(); if let Some(c) = chars.next() { camel.extend(c.to_uppercase()); camel.extend(chars); } }
+            Some(camel)
+        }).collect();
+        // One-line no-state application command has one parameter.
+        let fields = if name == "credential_application_open" { BTreeSet::from(["source".to_string()]) } else { fields };
+        rust.insert(name, fields);
+    }
+    assert_eq!(handler, rust.keys().copied().collect());
+    let mut js = BTreeMap::new();
+    for part in api.split("invoke('").skip(1) {
+        let (name, tail) = part.split_once('\'').unwrap();
+        let tail = tail.trim_start();
+        let fields = if tail.starts_with(',') {
+            tail.split_once('{').expect("invoke args must be object").1.split('}').next().unwrap()
+                .split(',').map(|s| s.trim().split(':').next().unwrap().to_string()).filter(|s| !s.is_empty()).collect()
+        } else { BTreeSet::new() };
+        assert!(js.insert(name, fields).is_none(), "duplicate invoke {name}");
+    }
+    assert_eq!(rust, js);
+    let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let permissions: BTreeSet<_> = config["app"]["security"]["capabilities"][0]["permissions"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    assert_eq!(permissions, handler.iter().map(|name| format!("allow-{}", name.replace('_', "-"))).collect());
+    let build = include_str!("../build.rs");
+    for name in handler { assert!(build.contains(&format!("\"{name}\"")), "missing manifest command {name}"); }
 }

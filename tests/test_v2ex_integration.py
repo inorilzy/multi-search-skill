@@ -108,7 +108,7 @@ class SOV2EXIntegrationTests(unittest.TestCase):
             spec = build_provider_registry()["sov2ex"]
             self.assertIsNone(spec.key_name)
             self.assertEqual(spec.call("python", cfg, ctx, None), [])
-        search.assert_called_once_with("python", 7, timeout=4)
+        search.assert_called_once_with("python", 7, timeout=4, deadline=100)
         self.assertEqual(PROVIDER_CAPABILITIES["sov2ex"].count_key, "sov2ex")
         self.assertIsNone(PROVIDER_CAPABILITIES["sov2ex"].operation.key_name)
         self.assertFalse(PROVIDER_CAPABILITIES["sov2ex"].output.returns_content)

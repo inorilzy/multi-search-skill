@@ -7,7 +7,9 @@ calls (single dict row).
 """
 from __future__ import annotations
 
+import ipaddress
 import time
+import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,7 +20,7 @@ from ..support.models import (
 )
 from ..support.url_security import (
     UrlSecurityError,
-    validate_scrape_url,
+    ensure_public_ip,
 )
 from ..state.key_state import (
     KeyCandidate,
@@ -30,9 +32,9 @@ from .scrapers import _DEFAULT_SCRAPE_TIMEOUT_SECONDS
 from .scrapers.exa import scrape_url_exa
 from .scrapers.firecrawl import scrape_url_firecrawl
 from .scrapers.jina import (
-    _jina_anonymous_cooling_down,
-    _record_jina_anonymous_rate_limit,
-    _reset_jina_anonymous_rate_limit,
+    jina_anonymous_cooling_down,
+    record_jina_anonymous_rate_limit,
+    reset_jina_anonymous_rate_limit,
     scrape_url_jina,
 )
 from .scrapers.tavily import scrape_url_tavily
@@ -40,6 +42,14 @@ from .scrapers.reddit import is_reddit_url, scrape_url_reddit
 from .scrapers.twitter import is_twitter_url, scrape_url_twitter, validate_twitter_url
 from .url_classify import is_zhihu_blocked_text, is_zhihu_url
 from ..state.site_memory import ScrapeAttempt
+
+
+# Backwards-compatible module aliases: the anonymous Jina cooldown is patched
+# by existing tests through this module, so keep the historical private names
+# bound here while importing only the public scraper API.
+_jina_anonymous_cooling_down = jina_anonymous_cooling_down
+_record_jina_anonymous_rate_limit = record_jina_anonymous_rate_limit
+_reset_jina_anonymous_rate_limit = reset_jina_anonymous_rate_limit
 
 
 # ---------------------------------------------------------------------------
@@ -233,11 +243,35 @@ def _scrape_with_optional_key_pool(
     return call("")
 
 
-def _prepare_scrape_target(
-    url: str, *, resolver=None, deadline: float | None = None,
-) -> tuple[str, str]:
-    safe_url = validate_scrape_url(url, resolver=resolver, deadline=deadline)
-    return safe_url, safe_url
+def _validate_delegated_url(url: str) -> str:
+    """Validate a URL handed to a third-party fetch service.
+
+    The provider resolves the URL on its own network, so a local DNS check adds
+    no SSRF protection (and rejects fake-IP/TUN routing). Literal private/local
+    destinations are still rejected outright.
+    """
+    candidate = str(url or "").strip()
+    try:
+        parts = urllib.parse.urlsplit(candidate)
+    except ValueError as exc:
+        raise UrlSecurityError(f"scrape URL is not a valid URL: {exc}") from exc
+    if (parts.scheme or "").lower() not in {"http", "https"}:
+        raise UrlSecurityError(
+            f"scrape URL uses unsupported URL scheme: {parts.scheme or '<missing>'}"
+        )
+    host = (parts.hostname or "").lower().rstrip(".")
+    if not host:
+        raise UrlSecurityError("scrape URL is missing host")
+    if parts.username is not None or parts.password is not None:
+        raise UrlSecurityError("scrape URL must not include credentials")
+    if host == "localhost" or host.endswith(".localhost"):
+        raise UrlSecurityError("unsafe scrape URL: localhost is not allowed")
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return candidate
+    ensure_public_ip(host, label="scrape URL", resolved=False)
+    return candidate
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +294,7 @@ def _scrape_jina(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
                 "error": "Jina: anonymous rate limit cooldown active",
                 "kind": ERROR_KIND_RATE_LIMIT,
             }
-        result = scrape_url_jina(target, "", timeout=call_timeout, **policy["jina"])
+        result = scrape_url_jina(target, "", timeout=call_timeout, deadline=ctx.deadline, **policy["jina"])
         if "error" in result and result.get("kind") == ERROR_KIND_RATE_LIMIT:
             _record_jina_anonymous_rate_limit()
         return result
@@ -270,7 +304,7 @@ def _scrape_jina(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
         if call_timeout <= 0:
             return {"url": target, "error": "scrape deadline exceeded"}
         return scrape_url_jina(
-            target, key, timeout=call_timeout, skip_anonymous=True, **policy["jina"],
+            target, key, timeout=call_timeout, deadline=ctx.deadline, skip_anonymous=True, **policy["jina"],
         )
 
     keyed_pool = lambda: _scrape_with_key_candidates(  # noqa: E731
@@ -325,7 +359,7 @@ def _scrape_exa(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
         call_timeout = ctx.remaining_timeout()
         if call_timeout <= 0:
             return {"url": target, "error": "scrape deadline exceeded"}
-        return scrape_url_exa(target, key, timeout=call_timeout, max_chars=ctx.scrape_chars)
+        return scrape_url_exa(target, key, timeout=call_timeout, deadline=ctx.deadline, max_chars=ctx.scrape_chars)
 
     return _scrape_with_key_candidates(
         "exa", candidates, _call_one,
@@ -340,7 +374,7 @@ def _scrape_firecrawl(target: str, ctx: ScrapeContext, policy: dict) -> dict | N
         call_timeout = ctx.remaining_timeout()
         if call_timeout <= 0:
             return {"url": target, "error": "scrape deadline exceeded"}
-        return scrape_url_firecrawl(target, key, timeout=call_timeout)
+        return scrape_url_firecrawl(target, key, timeout=call_timeout, deadline=ctx.deadline)
 
     return _scrape_with_optional_key_pool(
         "firecrawl", candidates, _call_one,
@@ -380,9 +414,9 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
             if backend == "twitter":
                 safe_url = validate_twitter_url(url)
             else:
-                safe_url = validate_scrape_url(
-                    url, resolver=ctx.url_resolver, deadline=ctx.deadline,
-                )
+                # Reddit post URLs are parsed for an id; the request itself goes
+                # to fixed Reddit endpoints, so no DNS precheck is warranted.
+                safe_url = str(url or "").strip()
         except ValueError as exc:
             return normalize_scrape_result({"error": str(exc)}, url=url, via=backend)
         started = time.monotonic()
@@ -418,11 +452,14 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                 )
 
     try:
-        safe_url, scrape_target = _prepare_scrape_target(
-            url, resolver=ctx.url_resolver, deadline=ctx.deadline,
-        )
+        # Generic backends delegate the fetch to a third-party service, which
+        # resolves the URL from its own network. Only local destinations that
+        # are literal IPs/localhost are meaningful here; DNS prechecks would
+        # reject fake-IP/TUN setups without protecting any local connection.
+        scrape_target = _validate_delegated_url(url)
     except UrlSecurityError as exc:
         return normalize_scrape_result({"error": str(exc)}, url=url)
+    safe_url = scrape_target
 
     policy = _resolve_scrape_policy(safe_url, backends)
 

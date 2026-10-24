@@ -1,7 +1,6 @@
 use crate::user_path::PathStore;
 use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
-use ts_rs::TS;
 
 /// Explicit system boundary: production snapshots the environment; tests supply a disposable one.
 #[derive(Clone)]
@@ -12,8 +11,9 @@ pub struct RuntimeEnvironment {
     pub cwd: PathBuf,
 }
 
-#[derive(Clone, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct Discovery {
     /// One of `ready`, `missing`, `not_executable`, `version_failed`, `unavailable`, or a new value added later; UI must fall back to a raw string.
     pub status: String,
@@ -22,8 +22,9 @@ pub struct Discovery {
     pub reason: String,
 }
 
-#[derive(Clone, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct CliStatus {
     pub app: Discovery,
     pub user: Discovery,
@@ -56,8 +57,22 @@ impl<'a> CliDiscovery<'a> {
         }
     }
 
+    /// UI-selected paths may only select the discovered CLI or the managed executable.
+    pub(crate) fn validate_explicit(&self, path: &std::path::Path) -> Result<(), String> {
+        let selected = path.canonicalize().map_err(|_| "CLI path is unavailable")?;
+        let mut candidates = vec![find_cli(&self.environment.app_path), find_cli(&self.current_user_paths())];
+        if let Some(base) = self.environment.variables.get("LOCALAPPDATA") {
+            candidates.push(Some(PathBuf::from(base).join("MultiSearch/cli/bin/multi-search.exe")));
+        }
+        if candidates.into_iter().flatten().any(|p| p.canonicalize().ok().as_ref() == Some(&selected)) { Ok(()) }
+        else { Err("Select the PATH-resolved or managed multi-search.exe".into()) }
+    }
+
     pub(crate) fn detect(&self, explicit_path: Option<PathBuf>) -> CliStatus {
-        let app = self.probe(explicit_path.or_else(|| find_cli(&self.environment.app_path)));
+        let secrets = crate::redaction::secrets(self.environment);
+        let app = if let Some(reason) = explicit_path.as_ref().and_then(|p| self.validate_explicit(p).err()) {
+            Discovery { status: "unavailable".into(), path: None, version: None, reason }
+        } else { self.probe(explicit_path.or_else(|| find_cli(&self.environment.app_path)), &secrets) };
         let paths = self.current_user_paths();
         let mut user_environment = self.environment.clone();
         if let Ok(path) = std::env::join_paths(&paths) {
@@ -65,7 +80,7 @@ impl<'a> CliDiscovery<'a> {
                 .variables
                 .insert("PATH".into(), path.to_string_lossy().into_owned());
         }
-        let user = CliDiscovery::new(&user_environment, None).probe(find_cli(&paths));
+        let user = CliDiscovery::new(&user_environment, None).probe(find_cli(&paths), &secrets);
         let restart_required = app.status != "ready" && user.status == "ready";
         CliStatus {
             app,
@@ -109,7 +124,7 @@ impl<'a> CliDiscovery<'a> {
         paths
     }
 
-    fn probe(&self, path: Option<PathBuf>) -> Discovery {
+    fn probe(&self, path: Option<PathBuf>, secrets: &[String]) -> Discovery {
         let Some(path) = path else {
             return Discovery {
                 status: "missing".into(),
@@ -160,7 +175,7 @@ impl<'a> CliDiscovery<'a> {
                     result.version = version.map(|value| {
                         crate::redaction::scrub(
                             &value,
-                            &crate::redaction::secrets(self.environment),
+                            secrets,
                         )
                     });
                 } else {
@@ -170,7 +185,7 @@ impl<'a> CliDiscovery<'a> {
                     } else {
                         let detail = crate::redaction::scrub(
                             output.stderr.trim(),
-                            &crate::redaction::secrets(self.environment),
+                            secrets,
                         );
                         let detail: String = detail.chars().take(400).collect();
                         format!(

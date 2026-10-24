@@ -20,11 +20,8 @@ fn strings(value: &Value, out: &mut Vec<String>) {
 pub(crate) fn secrets(environment: &RuntimeEnvironment) -> Vec<String> {
     let mut values = Vec::new();
     for (name, value) in &environment.variables {
-        if !value.is_empty()
-            && (name.ends_with("API_KEY")
-                || name.ends_with("TOKEN")
-                || name == "JINA_KEY"
-                || name == "SERPAPI_KEY")
+        if value.chars().count() >= 8
+            && crate::process::ENV_SECRET_MARKERS.iter().any(|marker| name.to_ascii_uppercase().contains(marker))
         {
             values.push(value.clone());
         }
@@ -42,27 +39,30 @@ pub(crate) fn secrets(environment: &RuntimeEnvironment) -> Vec<String> {
             }
         }
     }
-    if let Some(path) = environment.variables.get("TWITTER_COOKIES_PATH") {
+    let settings = crate::settings::view(environment);
+    for path in environment.variables.get("TWITTER_COOKIES_PATH").into_iter().chain(settings.twitter_cookies_path.as_ref()) {
+        values.push(path.clone());
         if let Ok(text) = std::fs::read_to_string(path) {
-            if let Ok(data) = serde_json::from_str::<Value>(&text) {
+            if let Ok(data) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
                 strings(&data, &mut values);
             }
         }
     }
     if let Some(path) = crate::config_db::path(&environment.variables).filter(|p| p.exists()) {
         let backend = crate::credential::SqliteCredentialBackend { path };
-        for provider in crate::credential::STORE_PROVIDERS {
+        for provider in crate::credential::STORE_PROVIDERS.iter().copied().chain(std::iter::once(crate::cookie::PROVIDER)) {
             if let Ok(Some((value, _))) = crate::credential::load(&backend, "", provider) {
                 strings(&value, &mut values);
             }
         }
     }
+    values.retain(|s| s.chars().count() >= 8);
     values.sort_by_key(|s| std::cmp::Reverse(s.len()));
     values.dedup();
     values
 }
 pub(crate) fn scrub(text: &str, secrets: &[String]) -> String {
-    secrets.iter().fold(text.to_string(), |value, secret| {
+    secrets.iter().filter(|s| s.chars().count() >= 8).fold(text.to_string(), |value, secret| {
         value.replace(secret, "[REDACTED]")
     })
 }
@@ -82,5 +82,13 @@ pub(crate) fn scrub_json(value: &mut Value, secrets: &[String]) {
             }
         }
         _ => (),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn short_values_never_destroy_normal_output() {
+        assert_eq!(super::scrub("a token abcdefgh", &["a".into(), "abcdefgh".into()]), "a token [REDACTED]");
     }
 }

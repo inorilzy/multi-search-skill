@@ -2,7 +2,6 @@
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 use serde_json::Value;
-use ts_rs::TS;
 
 pub(crate) const MAX_KEY_LENGTH: usize = 1024;
 #[allow(dead_code)]
@@ -41,6 +40,10 @@ pub(crate) trait CredentialBackend: Send + Sync {
     fn read(&self, provider: &str) -> Result<Option<Vec<u8>>, CredentialError>;
     fn write(&self, provider: &str, blob: &[u8]) -> Result<(), CredentialError>;
     fn delete(&self, provider: &str) -> Result<bool, CredentialError>;
+    fn save_jina(&self, value: Value, saved_at: f64) -> Result<(), CredentialError> {
+        let _ = (value, saved_at);
+        Err(CredentialError::Unavailable("atomic Jina save is not supported by this backend".into()))
+    }
     /// Per-row append against the CURRENT stored value.
     fn append(&self, provider: &str, keys: &[String], saved_at: f64) -> Result<(), CredentialError> {
         // Row mutations must be atomic: only backends that can run a real
@@ -81,6 +84,7 @@ pub(crate) fn target(_: &str, provider: &str) -> String {
     provider.to_string()
 }
 fn validate_value(provider: &str, value: &Value) -> bool {
+    if provider == crate::cookie::PROVIDER { return crate::cookie::valid(value); }
     match value {
         Value::String(s) => validate_key(s).is_ok(),
         Value::Array(items) => !items.is_empty() && items.iter().all(|v| (v.is_string() || provider == "jina" && v.is_object()) && validate_value(provider,v)),
@@ -98,6 +102,10 @@ fn editor_value(text: &str) -> Result<Value, CredentialError> {
     } else {
         serde_json::json!(keys)
     })
+}
+pub(crate) fn snapshot(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 pub(crate) fn encode_blob(key: &Value, saved_at: f64) -> Vec<u8> {
     serde_json::json!({"v":1,"key":key,"saved_at":saved_at})
@@ -132,7 +140,7 @@ pub(crate) fn load(
 /// matches a stored structured entry keeps that entry verbatim (including
 /// `exhausted` and any extra metadata); a new/changed line is saved as a plain
 /// key string; a removed line drops its entry. Other providers are unaffected.
-fn merge_jina_metadata(edited: Value, previous: Option<&Value>) -> Value {
+pub(crate) fn merge_jina_metadata(edited: Value, previous: Option<&Value>) -> Value {
     let Some(previous) = previous else { return edited };
     let mut stored: Vec<&Value> = match previous {
         Value::Array(items) => items.iter().collect(),
@@ -175,13 +183,9 @@ pub(crate) fn save(
     key: &str,
     saved_at: f64,
 ) -> Result<f64, CredentialError> {
-    let mut value = editor_value(key)?;
-    if provider == "jina" {
-        // Fail closed if existing metadata cannot be read; never silently clear it.
-        let previous = load(backend, namespace, provider)?.map(|(v, _)| v);
-        value = merge_jina_metadata(value, previous.as_ref());
-    }
-    backend.write(&target(namespace, provider), &encode_blob(&value, saved_at))?;
+    let value = editor_value(key)?;
+    if provider == "jina" { backend.save_jina(value, saved_at)?; }
+    else { backend.write(&target(namespace, provider), &encode_blob(&value, saved_at))?; }
     Ok(saved_at)
 }
 pub(crate) fn remove(
@@ -256,7 +260,7 @@ fn remove_row_at(provider: &str, stored: &Value, index: usize, expected: &str) -
         .map(row_editor_line)
         .collect::<Result<Vec<_>, _>>()?
         .join("\n");
-    if snapshot != expected {
+    if self::snapshot(&snapshot) != expected {
         return Err(CredentialError::Invalid("credential rows changed; refresh and retry"));
     }
     if index >= rows.len() {
@@ -348,6 +352,9 @@ impl SqliteCredentialBackend {
 }
 
 impl CredentialBackend for SqliteCredentialBackend {
+    fn save_jina(&self, value: Value, saved_at: f64) -> Result<(), CredentialError> {
+        self.mutate_rows("jina", saved_at, |stored| Ok(Some(merge_jina_metadata(value, stored))))
+    }
     fn read(&self, provider: &str) -> Result<Option<Vec<u8>>, CredentialError> {
         if self.path.as_os_str().is_empty() {
             return Err(CredentialError::Unavailable("无法定位配置数据库".into()));
@@ -399,6 +406,9 @@ impl CredentialBackend for SqliteCredentialBackend {
         })
     }
 }
+// No optional entropy: protocol v1 interoperates with the Python CLI.
+// DPAPI binds blobs to this Windows user, not against other same-user processes.
+// Adding entropy requires a cross-language storage migration.
 #[cfg(windows)]
 pub(crate) fn crypt(bytes: &[u8], encrypt: bool) -> Result<Vec<u8>, CredentialError> {
     use windows_sys::Win32::{
@@ -462,8 +472,9 @@ pub(crate) fn crypt(_: &[u8], _: bool) -> Result<Vec<u8>, CredentialError> {
     ))
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct CredentialStatus {
     /// present | absent | unreadable | unavailable, or a new value added later; UI must fall back to a raw string.
     pub state: String,

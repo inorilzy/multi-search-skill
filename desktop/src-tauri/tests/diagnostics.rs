@@ -96,3 +96,15 @@ fn version_timeout_is_bounded() {
     assert_eq!(status.app.status, "version_failed");
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }
+
+#[test]
+fn explicit_unmanaged_executable_is_not_probed() {
+    let profile = common::Profile::new();
+    let outside = profile.root.join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::copy(profile.root.join("multi-search.exe"), outside.join("multi-search.exe")).unwrap();
+    let manager = DesktopManager::new(profile.environment.clone());
+    let status = manager.detect_cli(Some(outside.join("multi-search.exe")));
+    assert_eq!(status.app.status, "unavailable");
+    assert!(status.app.reason.contains("PATH-resolved"));
+}

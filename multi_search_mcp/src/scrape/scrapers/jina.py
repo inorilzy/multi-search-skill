@@ -25,13 +25,13 @@ _JINA_ANON_RATE_LIMITED_UNTIL = 0.0
 _JINA_ANON_LOCK = threading.Lock()
 
 
-def _jina_anonymous_cooling_down(now: float | None = None) -> bool:
+def jina_anonymous_cooling_down(now: float | None = None) -> bool:
     current = time.monotonic() if now is None else now
     with _JINA_ANON_LOCK:
         return current < _JINA_ANON_RATE_LIMITED_UNTIL
 
 
-def _record_jina_anonymous_rate_limit(now: float | None = None) -> None:
+def record_jina_anonymous_rate_limit(now: float | None = None) -> None:
     global _JINA_ANON_RATE_LIMITED_UNTIL
     current = time.monotonic() if now is None else now
     with _JINA_ANON_LOCK:
@@ -41,7 +41,7 @@ def _record_jina_anonymous_rate_limit(now: float | None = None) -> None:
         )
 
 
-def _reset_jina_anonymous_rate_limit() -> None:
+def reset_jina_anonymous_rate_limit() -> None:
     global _JINA_ANON_RATE_LIMITED_UNTIL
     with _JINA_ANON_LOCK:
         _JINA_ANON_RATE_LIMITED_UNTIL = 0.0
@@ -123,6 +123,7 @@ def scrape_url_jina(
     skip_anonymous: bool = False,
     respond_with: str = "markdown",
     extra_headers: dict | None = None,
+    deadline: float | None = None,
 ) -> dict:
     """Fetch page content via Jina Reader."""
     if not _safe_http_url(url):
@@ -147,7 +148,7 @@ def scrape_url_jina(
                     respond_with=respond_with,
                     extra_headers=extra_headers,
                 ),
-                timeout=timeout,
+                timeout=timeout, deadline=deadline,
             ) as resp:
                 data = json.loads(resp.read())
             page = data.get("data") if isinstance(data, dict) else data
@@ -176,7 +177,7 @@ def scrape_url_jina(
             limited = _jina_rate_limited(exc.code, message)
             if limited:
                 if not key:
-                    _record_jina_anonymous_rate_limit()
+                    record_jina_anonymous_rate_limit()
                     kind = kind or ERROR_KIND_RATE_LIMIT
                 # Classify exhaustion from the error itself instead of issuing a
                 # blocking balance-API round-trip; the key-state store (and the

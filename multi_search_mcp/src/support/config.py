@@ -1,11 +1,7 @@
 """Load non-secret defaults from SQLite or an explicitly supplied JSON file."""
 import json
-import os
 from pathlib import Path
 from typing import Any
-
-
-CONFIG_ENV_VAR = "MULTI_SEARCH_CONFIG"
 
 
 def resolve_config_path() -> Path:
@@ -79,3 +75,22 @@ def config_list(config: dict, key: str) -> list[str]:
             raise ConfigError(f"{key} requires a list of strings")
         return [v for v in value if v]
     raise ConfigError(f"{key} requires a list of strings")
+
+
+def resolve_value(request_value: Any, config: dict, key: str, default: Any) -> Any:
+    """Request override > config value > default."""
+    if request_value is not None:
+        return request_value
+    if key in config and config.get(key) is not None:
+        return config.get(key)
+    return default
+
+
+def resolve_int(request_value: Any, config: dict, key: str, default: int) -> int:
+    return config_int(resolve_value(request_value, config, key, default), key)
+
+
+def resolve_nonnegative(
+    request_value: Any, config: dict, key: str, default: int,
+) -> int:
+    return max(0, resolve_int(request_value, config, key, default))

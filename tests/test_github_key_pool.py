@@ -258,7 +258,10 @@ class GitHubKeyPoolTests(unittest.TestCase):
                 {"updated": SQLiteKeyManager(self.store).reset(provider="github", key_id=None)},
                 {"updated": 1},
             )
-            self.assertEqual(len(self.manager.candidates("github", "fixture-token-one")), 1)
+            # Reset clears health state but preserves the manual disable, so the
+            # key stays out of rotation until a human re-enables it.
+            self.assertEqual(self.manager.candidates("github", "fixture-token-one"), [])
+            self.assertEqual(len(self.manager.status_rows("github")), 1)
 
 
 if __name__ == "__main__":

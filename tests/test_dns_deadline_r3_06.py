@@ -86,26 +86,29 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertIn("deadline", str(error.exception))
         self.assertTrue(finished.wait(timeout=1))
 
-    def test_scrape_core_does_not_dispatch_after_url_preflight_deadline(self):
+    def test_scrape_core_does_not_resolve_delegated_urls_locally(self):
         finished = threading.Event()
-        start = time.monotonic()
 
-        with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl") as scraper:
+        with mock.patch(
+            "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl",
+            return_value={"url": "https://slow.example/path", "error": "delegated backend error"},
+        ) as scraper:
             result = scrape_url_smart(
                 "https://slow.example/path",
                 context(
                     primary="firecrawl",
                     backends=("firecrawl",),
-                    deadline=time.monotonic() + 0.01,
+                    deadline=time.monotonic() + 1,
                     url_resolver=self._slow_resolver(finished),
                 ),
             )
-        elapsed = time.monotonic() - start
 
-        self.assertLess(elapsed, 0.06)
-        self.assertIn("DNS", result["error"])
-        scraper.assert_not_called()
-        self.assertTrue(finished.wait(timeout=1))
+        self.assertEqual(result["via"], "firecrawl")
+        self.assertIn("delegated backend error", result["error"])
+        # A delegated backend resolves the URL on its own network; no local DNS
+        # preflight (and no fake-IP false failure) happens here.
+        self.assertFalse(finished.is_set())
+        scraper.assert_called_once()
 
     def test_http_hostname_uses_resolved_address_for_normal_connection(self):
         class SocketProbe:
@@ -282,20 +285,23 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertIn("deadline", str(error.exception))
         self.assertTrue(finished.wait(timeout=1))
 
-    def test_direct_reddit_scraper_timeout_bounds_second_url_preflight(self):
+    def test_direct_reddit_scraper_does_not_dns_preflight_the_post_url(self):
         finished = threading.Event()
-        start = time.monotonic()
 
-        result = scrape_url_reddit(
-            "https://www.reddit.com/r/test/comments/abc123/title",
-            timeout=0.01,
-            url_resolver=self._slow_resolver(finished),
-        )
+        with mock.patch(
+            "multi_search_mcp.src.scrape.scrapers.reddit.get_post_json",
+            return_value=[{"data": {"children": [{"kind": "t3", "data": {
+                "id": "abc123", "title": "T", "selftext": "body", "is_self": True,
+            }}]}}, {"data": {"children": []}}],
+        ):
+            result = scrape_url_reddit(
+                "https://www.reddit.com/r/test/comments/abc123/title",
+                timeout=1,
+                url_resolver=self._slow_resolver(finished),
+            )
 
-        elapsed = time.monotonic() - start
-        self.assertLess(elapsed, 0.06)
-        self.assertIn("DNS", result["error"])
-        self.assertTrue(finished.wait(timeout=1))
+        self.assertNotIn("error", result)
+        self.assertFalse(finished.is_set())
 
     def test_redirect_dns_preflight_uses_original_http_deadline(self):
         finished = threading.Event()
@@ -349,16 +355,30 @@ class DnsDeadlineTests(unittest.TestCase):
                 self.assertTrue(started.wait(timeout=1))
                 self.assertFalse(finished.is_set())
 
-                for _ in range(4):
-                    with self.assertRaises(UrlSecurityError) as saturated:
-                        url_security.validate_public_http_url(
-                            "https://full.example/path",
-                            resolver=lambda _host: [PUBLIC_IP],
-                            deadline=time.monotonic() + 1,
-                        )
-                    self.assertIn("capacity", str(saturated.exception))
+                # An already-expired deadline cannot wait for a slot.
+                with self.assertRaises(UrlSecurityError) as saturated:
+                    url_security.validate_public_http_url(
+                        "https://full.example/path",
+                        resolver=lambda _host: [PUBLIC_IP],
+                        deadline=time.monotonic() - 1,
+                    )
+                self.assertIn("deadline", str(saturated.exception))
 
+                # A live deadline blocks for the slot instead of rejecting a
+                # request just because the resolver is briefly slow.
+                waiter = threading.Thread(target=lambda: self.assertEqual(
+                    url_security.validate_public_http_url(
+                        "https://waiting.example/path",
+                        resolver=lambda _host: [PUBLIC_IP],
+                        deadline=time.monotonic() + 1,
+                    ),
+                    "https://waiting.example/path",
+                ))
+                waiter.start()
+                time.sleep(0.05)
                 released.set()
+                waiter.join(2)
+                self.assertFalse(waiter.is_alive())
                 self.assertTrue(finished.wait(timeout=1))
                 self.assertEqual(
                     url_security.validate_public_http_url(

@@ -14,16 +14,17 @@ QIANFAN_BASE = "https://qianfan.baidubce.com"
 
 
 def search_baidu(query: str, api_key: str, count: int = 10,
-                 timeout: float = 30) -> list[dict[str, Any]]:
+                 timeout: float = 30, deadline: float | None = None) -> list[dict[str, Any]]:
     """Search via Baidu AI Search.
 
     Uses the high-performance web_summary endpoint, which returns an answer
     plus per-reference summaries without enable_full_content.
     """
-    return _search_baidu_summary(query, api_key, count, timeout)
+    return _search_baidu_summary(query, api_key, count, timeout, deadline)
 
 
-def _search_baidu_summary(query: str, api_key: str, count: int, timeout: float) -> list[dict[str, Any]]:
+def _search_baidu_summary(query: str, api_key: str, count: int, timeout: float,
+                          deadline: float | None = None) -> list[dict[str, Any]]:
     payload = {
         "messages": [{"role": "user", "content": query}],
         "resource_type_filter": [{"type": "web", "top_k": count}],
@@ -31,11 +32,12 @@ def _search_baidu_summary(query: str, api_key: str, count: int, timeout: float) 
         "temperature": 0.1,
         "top_p": 0.5,
     }
-    data = _post_json("/v2/ai_search/web_summary", api_key, payload, timeout)
+    data = _post_json("/v2/ai_search/web_summary", api_key, payload, timeout, deadline)
     return _rows_from_response(data, endpoint="/v2/ai_search/web_summary", max_references=count)
 
 
-def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float,
+               deadline: float | None = None) -> dict[str, Any]:
     req = urllib.request.Request(
         f"{QIANFAN_BASE}{path}",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -46,7 +48,7 @@ def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float)
         method="POST",
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         return {"error": scrub_secrets(exc, api_key)}

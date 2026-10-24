@@ -78,8 +78,12 @@ fn rust_provider_manifest_matches_python_registries() {
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
-    // Scraper-only providers also need desktop credential management.
-    assert_eq!(rust_keyed, python_providers, "keyed provider drift");
+    // Cookie custody shares encrypted storage, but is deliberately not an API-key
+    // editor/rotation provider. All remaining providers must still match exactly.
+    assert!(python_providers.contains("twitter_cookies"));
+    assert!(!rust_keyed.contains("twitter_cookies"));
+    let python_keyed = python_providers.into_iter().filter(|name| name != "twitter_cookies").collect();
+    assert_eq!(rust_keyed, python_keyed, "keyed provider drift");
 
     // Every Python source alias must resolve to the same canonical row in
     // Rust. The inverse is also true: Rust must not accept an alias that

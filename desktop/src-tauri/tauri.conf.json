@@ -9,7 +9,7 @@
     "windows": [{ "title": "Multi Search · 本机搜索管理", "width": 1080, "height": 880, "minWidth": 760, "minHeight": 600 }],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'",
-      "capabilities": [{ "identifier": "management", "windows": ["main"], "permissions": [] }]
+      "capabilities": [{ "identifier": "management", "windows": ["main"], "permissions": ["allow-cookie-status", "allow-cookie-import", "allow-cookie-delete", "allow-detect-cli", "allow-start-test-search", "allow-poll-execution", "allow-cancel-test-search", "allow-skill-plan", "allow-skill-install", "allow-install-plan", "allow-install-cli", "allow-skill-status", "allow-skill-update", "allow-skill-remove-plan", "allow-skill-remove", "allow-update-cli", "allow-uninstall-cli", "allow-user-path-plan", "allow-user-path-change", "allow-credential-status", "allow-credential-read", "allow-credential-reveal", "allow-credential-application-open", "allow-credential-save", "allow-credential-delete", "allow-credential-test", "allow-credential-append", "allow-credential-remove", "allow-settings-view", "allow-settings-save", "allow-scrape-settings-save", "allow-provider-list", "allow-scrape-memory-view", "allow-scrape-memory-pin", "allow-scrape-memory-reset"] }]
     }
   },
   "bundle": {

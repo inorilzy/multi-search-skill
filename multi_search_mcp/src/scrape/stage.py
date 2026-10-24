@@ -5,12 +5,12 @@ import time
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from typing import Any, Callable
 
-from ..support.concurrency import BoundedDaemonExecutor
+from ..support.concurrency import BoundedDaemonExecutor, pool_size_from_env
 from ..support.secrets import scrub_secrets
 
 
 _SCRAPE_POOL = BoundedDaemonExecutor(
-    max_workers=30,
+    max_workers=pool_size_from_env("MULTI_SEARCH_SCRAPE_CONCURRENCY", 30),
     thread_name_prefix="multi-search-scrape",
 )
 
@@ -18,6 +18,7 @@ _SCRAPE_POOL = BoundedDaemonExecutor(
 def run_ranked_fetch_stage(
     hits: list[dict], *, fetch: Callable[[dict, float], dict],
     timeout: float, concurrency: int = 5, deadline: float | None = None,
+    executor: BoundedDaemonExecutor | None = None,
 ) -> dict:
     """Fetch already-ranked hits under one deadline without changing their order.
 
@@ -33,6 +34,7 @@ def run_ranked_fetch_stage(
     results: list[dict | None] = [None] * len(hits)
     active: dict[Future, int] = {}
     next_index = 0
+    pool = executor or _SCRAPE_POOL
 
     def error_row(hit: dict, error: Any) -> dict:
         return {
@@ -65,7 +67,7 @@ def run_ranked_fetch_stage(
 
     while next_index < len(hits) or active:
         while next_index < len(hits) and len(active) < concurrency:
-            future = _SCRAPE_POOL.submit_before(deadline, fetch_hit, hits[next_index])
+            future = pool.submit_before(deadline, fetch_hit, hits[next_index])
             if future is None:
                 break
             active[future] = next_index

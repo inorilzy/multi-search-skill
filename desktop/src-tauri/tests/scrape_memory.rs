@@ -30,7 +30,7 @@ impl Sandbox {
     fn create(&self) {
         let c = rusqlite::Connection::open(self.db()).unwrap();
         c.execute_batch(
-            "CREATE TABLE site_scraper_stats (
+            "PRAGMA user_version=1; CREATE TABLE site_scraper_stats (
                site TEXT NOT NULL, scraper TEXT NOT NULL,
                success_count INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0,
                blocked_count INTEGER NOT NULL DEFAULT 0, timeout_count INTEGER NOT NULL DEFAULT 0,
@@ -92,7 +92,7 @@ fn missing_table_reports_unavailable_with_reason() {
     let s = Sandbox::new("no-table");
     rusqlite::Connection::open(s.db())
         .unwrap()
-        .execute_batch("CREATE TABLE unrelated(value TEXT);")
+        .execute_batch("PRAGMA user_version=1; CREATE TABLE unrelated(value TEXT);")
         .unwrap();
     let view = scrape_memory::view(&s.env(), None);
     assert!(!view.available);
@@ -297,4 +297,64 @@ fn state_path_prefers_env_then_userprofile_then_home() {
         scrape_memory::state_path(&home).unwrap(),
         s.0.join(".multi-search/state.sqlite")
     );
+}
+
+#[test]
+fn future_schema_and_invalid_site_never_mutate_memory() {
+    let s = Sandbox::new("schema-site");
+    s.create();
+    for site in ["", "https://example.com/path", "a..b", "-bad.example", "example.com:443", "bad\n.example"] {
+        assert!(scrape_memory::pin(&s.env(), site, "jina").is_err());
+    }
+    let c = rusqlite::Connection::open(s.db()).unwrap();
+    c.pragma_update(None, "user_version", 99).unwrap();
+    assert!(!scrape_memory::view(&s.env(), None).available);
+    assert!(scrape_memory::pin(&s.env(), "example.com", "jina").is_err());
+    assert!(scrape_memory::reset(&s.env(), Some("example.com")).is_err());
+    assert_eq!(s.count("SELECT count(*) FROM site_scraper_stats"), 0);
+}
+
+#[test]
+fn python_v2_creation_and_v1_migration_support_category_view_pin_reset() {
+    for migrate in [false, true] {
+        let s = Sandbox::new(if migrate { "python-migrate" } else { "python-create" });
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+        let script = r#"
+import sys, json, sqlite3
+from multi_search_mcp.src.state.state_store import StateStore
+from multi_search_mcp.src.state.site_memory import site_key
+path=sys.argv[1]
+StateStore(path)
+if sys.argv[2]=='true':
+    with sqlite3.connect(path) as conn:
+        conn.execute('ALTER TABLE content_sources DROP COLUMN truncated')
+        conn.execute('PRAGMA user_version=1')
+    StateStore(path)
+urls=['https://github.com/a/b','https://github.com/a/b/issues/1','https://github.com/a/b/pull/2','https://github.com/a/b/discussions/3']
+keys=[site_key(u) for u in urls]
+with sqlite3.connect(path) as conn:
+    assert conn.execute('PRAGMA user_version').fetchone()[0]==2
+    for key in keys:
+        conn.execute("INSERT INTO site_scraper_stats(site,scraper,created_at,updated_at) VALUES(?, 'jina','2026-01-01','2026-01-01')",(key,))
+print(json.dumps(keys))
+"#;
+        let out = std::process::Command::new("python").args(["-B", "-c", script]).arg(s.db()).arg(migrate.to_string())
+            .env("PYTHONPATH", &root).env("HOME", &s.0).env("USERPROFILE", &s.0).current_dir(&s.0).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let keys: Vec<String> = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(keys, ["github.com/repo","github.com/issues","github.com/pull","github.com/discussions"]);
+        for key in keys {
+            let view = scrape_memory::view(&s.env(), Some(&key));
+            assert!(view.available, "{}",view.reason); assert_eq!(view.rows.len(),1);
+            assert!(scrape_memory::pin(&s.env(), &key, "exa").unwrap().available);
+            assert_eq!(scrape_memory::view(&s.env(),Some(&key)).rows.len(),2);
+            scrape_memory::reset(&s.env(),Some(&key)).unwrap();
+            assert!(scrape_memory::view(&s.env(),Some(&key)).rows.is_empty());
+        }
+        for invalid in ["github.com/../repo","github.com/repo/extra","github.com/%2frepo","github.com/arbitrary","https://github.com/repo"] {
+            assert!(scrape_memory::pin(&s.env(), invalid, "jina").is_err());
+            assert!(scrape_memory::reset(&s.env(),Some(invalid)).is_err());
+            assert!(!scrape_memory::view(&s.env(),Some(invalid)).available);
+        }
+    }
 }

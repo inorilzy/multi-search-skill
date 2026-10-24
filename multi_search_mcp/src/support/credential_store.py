@@ -12,6 +12,8 @@ import sys
 import time
 import math
 import sqlite3
+import re
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 from dataclasses import dataclass
@@ -143,7 +145,7 @@ def validate_key(key: object) -> str:
 
 CONFIG_DB_ENV = "MULTI_SEARCH_CONFIG_DB"
 SCHEMA_VERSION = 1
-PROVIDERS = ("baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github", "jina")
+PROVIDERS = ("baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github", "jina", "twitter_cookies")
 
 
 def config_db_path(environ=None) -> Path:
@@ -158,8 +160,31 @@ def config_db_path(environ=None) -> Path:
     return (Path(home) if home else Path.home()) / ".multi-search" / "config.sqlite"
 
 
+def validate_twitter_cookies(value: Any) -> dict:
+    """Validate the desktop's independent cookie-map secret, never echo values."""
+    if not isinstance(value, dict) or not 1 <= len(value) <= 128:
+        raise ValueError("invalid managed Twitter cookie map")
+    for name, item in value.items():
+        if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_]{1,128}", name)
+                or not isinstance(item, str) or not item
+                or any(unicodedata.category(ch) == "Cc" for ch in item)):
+            raise ValueError("invalid managed Twitter cookie entry")
+        try:
+            if len(item.encode("utf-8")) > 4096:
+                raise ValueError("managed Twitter cookie value exceeds limit")
+        except UnicodeError:
+            raise ValueError("invalid managed Twitter cookie encoding") from None
+    if not value.get("auth_token", "").strip() or not value.get("ct0", "").strip():
+        raise ValueError("managed Twitter cookies require auth_token and ct0")
+    if len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 65536:
+        raise ValueError("managed Twitter cookie map exceeds limit")
+    return dict(value)
+
+
 def validate_value(provider: str, value: Any) -> Any:
     """Keep single/list/Jina JSON shapes, validating each key without echoing it."""
+    if provider == "twitter_cookies":
+        return validate_twitter_cookies(value)
     if isinstance(value, str):
         return validate_key(value)
     if isinstance(value, list) and value and all(isinstance(item, str) or (provider == "jina" and isinstance(item, dict)) for item in value):

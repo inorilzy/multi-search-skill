@@ -23,5 +23,7 @@ fn main() {
     println!("cargo:rustc-env=MULTI_SEARCH_CLI_BUNDLE_ANCHOR={anchor}");
 
     #[cfg(feature = "native-window")]
-    tauri_build::build();
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&["cookie_status", "cookie_import", "cookie_delete", "detect_cli", "start_test_search", "poll_execution", "cancel_test_search", "skill_plan", "skill_install", "install_plan", "install_cli", "skill_status", "skill_update", "skill_remove_plan", "skill_remove", "update_cli", "uninstall_cli", "user_path_plan", "user_path_change", "credential_status", "credential_read", "credential_reveal", "credential_application_open", "credential_save", "credential_delete", "credential_test", "credential_append", "credential_remove", "settings_view", "settings_save", "scrape_settings_save", "provider_list", "scrape_memory_view", "scrape_memory_pin", "scrape_memory_reset"])
+    )).expect("Tauri build failed");
 }

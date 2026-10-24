@@ -15,6 +15,7 @@ def search_tavily(
     max_results: int = 10,
     timeout: float = 15,
     want_content: bool = False,
+    deadline: float | None = None,
 ) -> list:
     """Call Tavily Search API."""
     include_answer: bool | str = "basic"
@@ -41,7 +42,7 @@ def search_tavily(
         method="POST",
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
         message, kind = tavily_http_error(e, api_key)

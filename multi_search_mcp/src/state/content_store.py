@@ -44,6 +44,7 @@ class ContentStore:
         *,
         canonical_url: str = "",
         cache_scope: str = "",
+        truncated: bool = False,
     ) -> dict:
         if not source_id:
             raise ContentStoreError("source_id is required")
@@ -83,7 +84,7 @@ class ContentStore:
             )
             self._bind_source_conn(
                 conn, source_id, content_hash, now_iso, expires_at,
-                canonical_url, cache_scope,
+                canonical_url, cache_scope, truncated,
             )
             self._evict_lru(conn, protected_hash=content_hash)
             row = self._lookup_conn(conn, source_id)
@@ -107,7 +108,7 @@ class ContentStore:
             self._purge_expired_conn(conn, now)
             cached = conn.execute(
                 """
-                SELECT s.content_hash, s.created_at, s.expires_at, o.content_bytes
+                SELECT s.content_hash, s.created_at, s.expires_at, s.truncated, o.content_bytes
                 FROM content_sources AS s
                 JOIN content_objects AS o ON o.content_hash = s.content_hash
                 WHERE s.canonical_url = ? AND s.cache_scope = ? AND s.expires_at > ?
@@ -127,6 +128,7 @@ class ContentStore:
             self._bind_source_conn(
                 conn, source_id, str(cached["content_hash"]),
                 str(cached["created_at"]), expires_at, canonical_url, cache_scope,
+                bool(cached["truncated"]),
             )
             conn.execute(
                 "UPDATE content_objects SET last_access_at = ? WHERE content_hash = ?",
@@ -170,7 +172,7 @@ class ContentStore:
 
     def _bind_source_conn(
         self, conn, source_id: str, content_hash: str, created_at: str,
-        expires_at: str, canonical_url: str, cache_scope: str,
+        expires_at: str, canonical_url: str, cache_scope: str, truncated: bool = False,
     ) -> None:
         previous = conn.execute(
             "SELECT content_hash FROM content_sources WHERE source_id = ?",
@@ -179,16 +181,17 @@ class ContentStore:
         conn.execute(
             """
             INSERT INTO content_sources (
-              source_id, content_hash, created_at, expires_at, canonical_url, cache_scope
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              source_id, content_hash, created_at, expires_at, canonical_url, cache_scope, truncated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_id) DO UPDATE SET
               content_hash = excluded.content_hash,
               created_at = excluded.created_at,
               expires_at = excluded.expires_at,
               canonical_url = excluded.canonical_url,
-              cache_scope = excluded.cache_scope
+              cache_scope = excluded.cache_scope,
+              truncated = excluded.truncated
             """,
-            (source_id, content_hash, created_at, expires_at, canonical_url, cache_scope),
+            (source_id, content_hash, created_at, expires_at, canonical_url, cache_scope, int(truncated)),
         )
         if previous and previous["content_hash"] != content_hash:
             self._drop_unreferenced_object(conn, str(previous["content_hash"]))
@@ -200,6 +203,7 @@ class ContentStore:
               s.source_id,
               s.expires_at,
               s.cache_scope,
+              s.truncated,
               o.content_hash,
               o.content,
               o.content_bytes,

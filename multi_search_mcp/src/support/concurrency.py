@@ -1,6 +1,7 @@
 """Bounded daemon worker pool for deadline-driven provider calls."""
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
@@ -9,6 +10,16 @@ from typing import Any, Callable
 
 
 _STOP = object()
+
+
+def pool_size_from_env(name: str, default: int, minimum: int = 1) -> int:
+    """Read a positive integer pool capacity from the environment."""
+    text = os.environ.get(name, "").strip()
+    try:
+        value = int(text)
+    except ValueError:
+        return max(minimum, int(default))
+    return max(minimum, value)
 
 
 class BoundedDaemonExecutor:
@@ -101,21 +112,29 @@ class BoundedDaemonExecutor:
             if not pending:
                 break
             timeout = max(0.0, deadline - time.monotonic())
-            done, _ = (
-                wait(tuple(pending), timeout=timeout, return_when=FIRST_COMPLETED)
-                if timeout > 0 else (set(), set())
-            )
+            if timeout <= 0:
+                # Admission is closed. Only already-finished work can be
+                # collected without blocking; anything still running keeps its
+                # slot but must not hold the caller past the deadline.
+                break
+            done, _ = wait(tuple(pending), timeout=timeout, return_when=FIRST_COMPLETED)
             if not done:
-                # Admission is closed at the deadline, but already-running work
-                # is expected to bound itself by the same deadline. Join it so
-                # its result (typically a timeout row) is not silently dropped.
-                done = set(pending)
+                break
             for future in done:
                 item = pending.pop(future)
                 try:
                     results[id(item)] = future.result()
                 except Exception as exc:  # task boundary
                     results[id(item)] = exc
+        for future, item in pending.items():
+            if future.done():
+                try:
+                    results[id(item)] = future.result()
+                except Exception as exc:  # task boundary
+                    results[id(item)] = exc
+            else:
+                future.cancel()
+                results[id(item)] = on_admission_failure(item)
         return results
 
     def shutdown(self, *, wait: bool = True, cancel_futures: bool = False) -> None:

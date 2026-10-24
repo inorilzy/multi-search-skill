@@ -57,6 +57,10 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         config_error = scrub_secrets(exc, keys)
     data = {
         "server": "multi-search",
+        "twitter_cookie_storage": {
+            "mode": doctor_config.get("twitter_cookies_mode", "file"),
+            "boundary": "Windows DPAPI; decrypted only for X calls" if doctor_config.get("twitter_cookies_mode") == "managed" else "legacy plaintext cookie file; not encrypted by multi-search",
+        },
         "config_storage": {"backend": "sqlite-dpapi", "schema_version": 1},
         "state_path": str(store.path),
         "config_path": str(config_path),

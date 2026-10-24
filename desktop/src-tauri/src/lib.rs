@@ -1,6 +1,7 @@
 //! Native management boundary; the CLI remains the search implementation.
 pub(crate) mod config_db;
 pub mod credential;
+pub mod cookie;
 pub mod credential_commands;
 pub mod diagnostics;
 mod environment;
@@ -35,6 +36,7 @@ pub use skill_manage::{
 /// the same Rust types each `#[tauri::command]` already returns or accepts;
 /// no new public surface is added beyond what the IPC layer exposes.
 pub mod contract {
+    pub use crate::cookie::CookieStatus;
     pub use crate::credential::CredentialStatus;
     pub use crate::credential_commands::{CredentialOverview, CredentialValue, TestOutcome};
     pub use crate::diagnostics::{CliStatus, Discovery};
@@ -53,6 +55,7 @@ pub mod contract {
 }
 
 /// Test seam for the settings writer. Not a supported public API.
+#[cfg(any(test, feature = "test-fixtures"))]
 #[doc(hidden)]
 pub mod settings_fixture {
     pub use crate::settings::{
@@ -73,6 +76,7 @@ pub mod settings_fixture {
 }
 
 /// Test seam for the CLI child-process environment boundary. Not a supported public API.
+#[cfg(any(test, feature = "test-fixtures"))]
 #[doc(hidden)]
 pub mod process_fixture {
     use std::collections::BTreeMap;
@@ -109,6 +113,7 @@ pub mod process_fixture {
 }
 
 /// Test seam for the Tavily credential store. Not a supported public API.
+#[cfg(any(test, feature = "test-fixtures"))]
 #[doc(hidden)]
 pub mod credential_fixture {
     use crate::credential::{CredentialBackend, CredentialError};
@@ -124,6 +129,12 @@ pub mod credential_fixture {
     }
     struct Adapter<'a, B: Backend + Sync + ?Sized>(&'a B);
     impl<B: Backend + Sync + ?Sized> CredentialBackend for Adapter<'_, B> {
+        // Fixture-only in-memory adapter; native production uses an IMMEDIATE transaction.
+        fn save_jina(&self, value: Value, saved_at: f64) -> Result<(), CredentialError> {
+            let previous = crate::credential::load(self, "", "jina")?.map(|(v, _)| v);
+            let merged = crate::credential::merge_jina_metadata(value, previous.as_ref());
+            self.write("jina", &crate::credential::encode_blob(&merged, saved_at))
+        }
         fn read(&self, t: &str) -> Result<Option<Vec<u8>>, CredentialError> {
             self.0.read(t).map_err(CredentialError::Unavailable)
         }
@@ -177,7 +188,7 @@ pub mod credential_fixture {
         source: &str,
     ) -> Result<String, String> {
         let entry = credential_commands::resolve_source(source)?;
-        Ok(credential_commands::read(&Adapter(backend), variables, &entry)?.value)
+        Ok(credential_commands::reveal(&Adapter(backend), variables, &entry)?.value)
     }
     pub fn save_for<B: Backend + Sync + ?Sized>(
         backend: &B,
@@ -312,7 +323,7 @@ pub mod credential_fixture {
         credential::SqliteCredentialBackend {
             path: path.to_path_buf(),
         }
-        .remove_row(provider, index, expected, now)
+        .remove_row(provider, index, &credential::snapshot(expected), now)
         .map_err(|e| e.to_string())
     }
     pub fn resolve(source: &str) -> Result<(&'static str, &'static str), String> {

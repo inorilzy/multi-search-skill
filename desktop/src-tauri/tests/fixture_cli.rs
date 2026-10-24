@@ -94,7 +94,7 @@ fn main() {
         );
         std::fs::write(path, body).unwrap();
     }
-    let query = args.get(1).map(String::as_str).unwrap_or("");
+    let query = args.iter().position(|arg| arg == "--").and_then(|i| args.get(i+1)).or_else(|| args.get(1)).map(String::as_str).unwrap_or("");
     if query == "hang" {
         let _child = Command::new(env::current_exe().unwrap())
             .arg("descendant")

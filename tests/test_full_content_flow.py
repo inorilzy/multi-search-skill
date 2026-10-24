@@ -104,13 +104,22 @@ class FullContentFlowTests(unittest.TestCase):
                     self.assertTrue(page["cache_hit"])
                 self.assertEqual(self.scraper.call_count, 15)
 
-    def test_full_content_does_not_bypass_existing_cache_capacity_errors(self):
+    def test_oversized_body_is_truncated_to_the_cache_byte_limit(self):
+        # The store caps objects by UTF-8 bytes; acquire over the limit must
+        # truncate and mark it, not fail the whole fetch.
         self.scraper.side_effect = None
         self.scraper.return_value = {
             "url": URL, "markdown": "x" * (DEFAULT_MAX_OBJECT_BYTES + 1), "via": "fixture",
         }
-        with self.assertRaisesRegex(ContentStoreError, "exceeds max object bytes"):
-            self.fetch(url=URL, full_content=True)
+        fetched = self.fetch(url=URL, full_content=True)
+        self.assertEqual(len(fetched["body"].encode("utf-8")), DEFAULT_MAX_OBJECT_BYTES)
+        self.assertTrue(fetched["truncated"])
+        self.assertTrue(fetched["persisted"])
+        self.assertEqual(fetched["content_length"], DEFAULT_MAX_OBJECT_BYTES)
+        cached = self.fetch(source_id=fetched["source_id"], full_content=True)
+        self.assertTrue(cached["cache_hit"])
+        self.assertTrue(cached["truncated"])
+        self.assertEqual(len(cached["body"].encode("utf-8")), DEFAULT_MAX_OBJECT_BYTES)
 
 
 if __name__ == "__main__":

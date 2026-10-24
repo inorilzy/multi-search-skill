@@ -6,7 +6,7 @@ import re
 import time
 from urllib.parse import parse_qs, urlsplit
 
-from ...support.url_security import UrlSecurityError, validate_scrape_url
+from ...support.url_security import UrlSecurityError
 from ._eddrit import EddritError, get_post_json, remaining
 
 
@@ -29,6 +29,11 @@ def _post_target(url: str) -> tuple[str, dict]:
     parts = urlsplit(url)
     if not is_reddit_url(url) or parts.port not in {None, 80, 443}:
         raise EddritError("Reddit scraper only accepts Reddit post URLs")
+    if parts.username is not None or parts.password is not None:
+        raise EddritError("Reddit post URL must not include credentials")
+    # A post URL is parsed for its identifier only; the network request goes to
+    # fixed Reddit endpoints. A DNS precheck of the user URL would therefore add
+    # no SSRF protection but would reject fake-IP/TUN environments.
     path = parts.path.removesuffix(".json").rstrip("/")
     if (parts.hostname or "").lower().rstrip(".") == "redd.it":
         match = re.fullmatch(r"/([a-z0-9]+)", path, re.I)
@@ -115,9 +120,9 @@ def scrape_url_reddit(url: str, timeout: float = 60, *, deadline: float | None =
         end = min(end, deadline)
     try:
         remaining(end)
-        safe_url = validate_scrape_url(
-            url, resolver=url_resolver, deadline=end,
-        )
+        safe_url = str(url or "").strip()
+        if any(ord(char) < 32 or ord(char) == 127 for char in safe_url):
+            raise EddritError("Reddit post URL must not contain control characters")
         post_id, params = _post_target(safe_url)
         data = get_post_json(post_id, params, end, resolver=url_resolver)
         title, markdown = _render(data, post_id)

@@ -88,7 +88,7 @@ def _read_http_error_payload(exc: urllib.error.HTTPError) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def scrape_url_firecrawl(url: str, api_key: str = "", timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS) -> dict:
+def scrape_url_firecrawl(url: str, api_key: str = "", timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS, deadline: float | None = None) -> dict:
     """Fetch main page markdown via Firecrawl /v2/scrape."""
     if not _safe_http_url(url):
         return {"url": url, "error": "rejected non-http(s) URL"}
@@ -108,7 +108,7 @@ def scrape_url_firecrawl(url: str, api_key: str = "", timeout: int = _DEFAULT_SC
         method="POST",
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, **({"deadline": deadline} if deadline is not None else {})) as resp:
             data = json.loads(resp.read())
         if not isinstance(data, dict):
             return {"url": url, "error": "Firecrawl: invalid response"}

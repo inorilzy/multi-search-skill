@@ -9,12 +9,12 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use ts_rs::TS;
 
 /// What is currently at the skill target.
-#[derive(Clone, Serialize, PartialEq, Debug, TS)]
+#[derive(Clone, Serialize, PartialEq, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
-#[ts(export_to = "types.d.ts")]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub enum InstallState {
     /// Nothing at the target.
     Absent,
@@ -28,8 +28,9 @@ pub enum InstallState {
     Unknown,
 }
 
-#[derive(Clone, Serialize, Debug, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct SkillStatus {
     pub host: String,
     pub scope: String,
@@ -50,8 +51,9 @@ pub struct SkillStatus {
     pub reason: String,
 }
 
-#[derive(Clone, Serialize, Debug, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct UpdatePlan {
     /// absent | current | unknown | ready | needs_confirmation, or a new value added later; UI must fall back to a raw string.
     pub status: String,
@@ -63,8 +65,9 @@ pub struct UpdatePlan {
     pub can_update: bool,
 }
 
-#[derive(Clone, Serialize, Debug, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct RemovePlan {
     /// ready | nothing_to_remove, or a new value added later; UI must fall back to a raw string.
     pub status: String,
@@ -76,8 +79,9 @@ pub struct RemovePlan {
     pub can_remove: bool,
 }
 
-#[derive(Clone, Serialize, Debug, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct UpdateOutcome {
     /// updated | blocked | failed, or a new value added later; UI must fall back to a raw string.
     pub status: String,
@@ -86,8 +90,9 @@ pub struct UpdateOutcome {
     pub reason: String,
 }
 
-#[derive(Clone, Serialize, Debug, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct RemoveOutcome {
     /// removed | blocked | failed, or a new value added later; UI must fall back to a raw string.
     pub status: String,

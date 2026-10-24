@@ -101,6 +101,18 @@ export function managementApi(rawInvoke) {
     credentialDelete: async source => (expect('CredentialOverview', await invoke('credential_delete', { source }))),
     /** @param {string} source @param {string|null} path @returns {Promise<TestOutcome>} */
     credentialTest: async (source, path) => (expect('TestOutcome', await invoke('credential_test', { source, path }))),
+    /** @returns {Promise<import('./types').CookieStatus>} */
+    cookieStatus: async () => expect('CookieStatus', await invoke('cookie_status')),
+    /** @param {string} path @param {boolean} confirmed @returns {Promise<import('./types').CookieStatus>} */
+    cookieImport: async (path, confirmed) => {
+      if (confirmed !== true || typeof path !== 'string' || !path.trim()) throw new TypeError('Cookie 导入需要路径和显式确认。');
+      return expect('CookieStatus', await invoke('cookie_import', { path, confirmed }));
+    },
+    /** @param {boolean} confirmed @returns {Promise<import('./types').CookieStatus>} */
+    cookieDelete: async confirmed => {
+      if (confirmed !== true) throw new TypeError('Cookie 删除需要显式确认。');
+      return expect('CookieStatus', await invoke('cookie_delete', { confirmed }));
+    },
     /** @returns {Promise<SettingsView>} */
     settingsView: async () => (expect('SettingsView', await invoke('settings_view'))),
     /** @param {SettingsInput} input @returns {Promise<SettingsView>} */

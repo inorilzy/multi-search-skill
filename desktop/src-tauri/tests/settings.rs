@@ -804,3 +804,36 @@ fn aliases_null_type_and_legacy_timeout_previews_remain_compatible() {
         ["github_repos", "sov2ex"]
     );
 }
+
+#[test]
+fn scrape_patch_and_other_settings_writes_preserve_each_other() {
+    let sandbox = Sandbox::new("scrape-patch-race");
+    let env = sandbox.env(&[]);
+    fixture::save(&env, &input("default", 20, &[])).unwrap();
+    sandbox.replace(r#"{"type":"default","timeout":20,"future":{"keep":true}}"#);
+    for _ in 0..20 {
+        let a = env.clone();
+        let b = env.clone();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let peer = barrier.clone();
+        let scrape = std::thread::spawn(move || {
+            peer.wait();
+            multi_search_desktop::settings::save_scrape_backends(&a, &["firecrawl".into(), "exa".into()]).unwrap();
+        });
+        barrier.wait();
+        // Other pages omit scrape_backends rather than replaying its snapshot.
+        fixture::save(&b, &input("dev", 37, &["brave"])).unwrap();
+        scrape.join().unwrap();
+        let object = sandbox.object();
+        assert_eq!(object["type"], "dev");
+        assert_eq!(object["timeout"], 37);
+        assert_eq!(object["disabled_sources"], serde_json::json!(["brave"]));
+        assert_eq!(object["scrape_backends"], serde_json::json!(["firecrawl", "exa"]));
+        assert_eq!(object["future"], serde_json::json!({"keep":true}));
+    }
+    for invalid in [vec![], vec!["unknown".into()]] {
+        let before = sandbox.object();
+        assert!(multi_search_desktop::settings::save_scrape_backends(&env, &invalid).is_err());
+        assert_eq!(sandbox.object(), before);
+    }
+}

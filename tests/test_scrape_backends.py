@@ -69,7 +69,7 @@ class ResolveScrapeBackendsTests(unittest.TestCase):
 
 class ScrapeChainExecutionTests(unittest.TestCase):
     def _run(self, config, request, *, calls):
-        def firecrawl(url, key="", timeout=0):
+        def firecrawl(url, key="", timeout=0, deadline=None):
             calls.append("firecrawl")
             return {"url": url, "error": "fixture firecrawl unavailable"}
 

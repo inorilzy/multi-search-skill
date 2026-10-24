@@ -1,3 +1,4 @@
+import { mountCookies } from './cookies.js';
 import { pageRoot, el, confirmInline, disposePage } from './dom.js';
 import { toMessage } from './errors.js';
 // 搜索默认设置与可编辑路由分组。Rust SettingsView 是路由定义的唯一来源；
@@ -70,13 +71,13 @@ export async function mountSettings(root, api) {
       </section>
 
       <section class="panel settings-other"><div class="section-title"><div><p class="eyebrow">OTHER</p><h2>其他设置</h2></div></div>
-        <label>Twitter cookie 文件路径（可选，仅保存路径）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json" disabled></label>
+        <label>Twitter Cookie 文件兼容路径（仅 file 模式读取明文）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json" disabled></label>
         <details class="config-details"><summary>配置数据库信息</summary><dl class="cred-status"><dt>配置数据库</dt><dd class="status-text" data-status="path"></dd><dt>路径来源</dt><dd class="status-text" data-status="path-source"></dd></dl><p class="note" data-info="env" role="status"></p></details>
       </section>
 
       <div class="settings-savebar"><div><strong class="status-text" data-status="save" aria-live="polite"></strong><small class="status-text" data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存全部设置</button></div>
     </form>
-    <div data-refresh-confirm></div>`;
+    <div data-refresh-confirm></div><div data-cookie-panel></div>`;
 
   const q = selector => root.querySelector(selector);
   const text = (selector, value) => { const node = q(selector); if (node) node.textContent = value; };
@@ -500,9 +501,10 @@ export async function mountSettings(root, api) {
   q('[data-action="refresh"]').addEventListener('click', () => { void refresh(); });
   q('[data-settings-form]').addEventListener('submit', event => { event.preventDefault(); void saveDraft(); });
 
+  const cookieMount = api.cookieStatus ? await mountCookies(q('[data-cookie-panel]'), api) : null;
   await refresh(true);
   return {
-    dispose() { disposePage(root); disposed = true; refreshTicket += 1; root.classList.remove('settings-page'); },
+    dispose() { cookieMount?.dispose(); disposePage(root); disposed = true; refreshTicket += 1; root.classList.remove('settings-page'); },
     get saved() { return loadedView; },
     get dirty() { return dirty; },
   };

@@ -26,9 +26,7 @@ from multi_search_mcp.src.state.keys import (
     count_jina_keys,
     KeysError,
     jina_config_keys,
-    key_pool,
     load_keys,
-    pick_key,
 )
 from multi_search_mcp.src.state.key_state import BasicKeyManager, SQLiteKeyManager
 from multi_search_mcp.src.state.state_store import StateStore
@@ -379,7 +377,7 @@ class BaiduSearcherTests(unittest.TestCase):
     def test_baidu_uses_web_summary_endpoint(self):
         calls = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             calls.append(req.full_url)
             return self._FakeResp({
                 "request_id": "rid",
@@ -424,7 +422,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_tavily_want_content_maps_to_raw_content(self):
         captured = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             captured.append(json.loads(req.data.decode("utf-8")))
             return self._FakeResp({"results": [], "answer": "a"})
 
@@ -440,7 +438,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_exa_want_content_maps_to_text_contents(self):
         captured = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             captured.append(json.loads(req.data.decode("utf-8")))
             return self._FakeResp({"results": [{"title": "Doc", "url": "https://example.com", "highlights": ["h"]}]})
 
@@ -457,7 +455,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_parallel_uses_ga_search_endpoint_and_maps_excerpts(self):
         captured = {}
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             captured["url"] = req.full_url
             captured["api_key"] = req.get_header("X-api-key")
             captured["timeout"] = timeout
@@ -494,7 +492,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_parallel_clamps_count_and_drops_rows_without_urls(self):
         captured = {}
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             captured.update(json.loads(req.data.decode("utf-8")))
             return self._FakeResp({
                 "results": [
@@ -531,7 +529,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_brave_fast_disables_extra_snippets(self):
         urls = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             urls.append(req.full_url)
             return self._FakeResp({"web": {"results": []}})
 
@@ -580,17 +578,6 @@ class DedupTests(unittest.TestCase):
         )
 
 class KeyTests(unittest.TestCase):
-    def test_pick_key_supports_key_pool_arrays(self):
-        with mock.patch("multi_search_mcp.src.state.keys.random.choice", return_value="k2") as choice:
-            self.assertEqual(pick_key(["k1", "k2", ""]), "k2")
-        choice.assert_called_once_with(["k1", "k2"])
-
-    def test_key_pool_shuffles_non_empty_candidates(self):
-        with mock.patch("multi_search_mcp.src.state.keys.random.shuffle") as shuffle:
-            pool = key_pool(["k1", "", "k2"])
-        self.assertEqual(pool, ["k1", "k2"])
-        shuffle.assert_called_once_with(pool)
-
     def test_basic_key_manager_preserves_configured_order(self):
         manager = BasicKeyManager()
 

@@ -3,9 +3,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
+from ..support.secrets import scrub_secrets
 from .state_store import StateStore
+
+
+# Scrape-attempt history is diagnostic only. Keep it bounded so a long-lived
+# profile cannot accumulate tokens embedded in URLs or raw provider errors.
+ATTEMPT_TTL = timedelta(days=30)
+MAX_ATTEMPTS_PER_SITE = 200
+MAX_ATTEMPTS_TOTAL = 5000
+
+
+def _stored_url(url: str) -> str:
+    """Persist origin only; userinfo, path, query and fragment can all be secrets."""
+    try:
+        parts = urlsplit(str(url))
+    except ValueError:
+        return ""
+    if not parts.scheme or not parts.netloc:
+        return ""
+    host = parts.hostname or ""
+    if not host or parts.scheme.lower() not in {"http", "https"}:
+        return ""
+    host = "[" + host + "]" if ":" in host else host
+    return urlunsplit((parts.scheme.lower(), host.lower(), "/", "", ""))
 
 
 def _now() -> datetime:
@@ -58,6 +81,24 @@ class SiteScraperMemory:
         self.store = store or StateStore()
         self.min_success_chars = min_success_chars
         self._updates: list[dict] = []
+        self._sanitize_history()
+
+    def _sanitize_history(self) -> None:
+        # Independent data-migration marker: no state schema version change.
+        # Raw historical diagnostics are deliberately discarded; aggregate
+        # counts, site keys, pins and cooldowns are retained unchanged.
+        with self.store.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("CREATE TABLE IF NOT EXISTS privacy_migrations (name TEXT PRIMARY KEY)")
+            if conn.execute("SELECT 1 FROM privacy_migrations WHERE name='site-origin-v1'").fetchone():
+                return
+            for row in conn.execute("SELECT id,url FROM scrape_attempts").fetchall():
+                conn.execute("UPDATE scrape_attempts SET url=?,error_message='' WHERE id=?", (_stored_url(row["url"]), row["id"]))
+            for row in conn.execute("SELECT site,scraper,sample_url FROM site_scraper_stats").fetchall():
+                conn.execute("UPDATE site_scraper_stats SET sample_url=?,last_error_message='' WHERE site=? AND scraper=?", (_stored_url(row["sample_url"] or ""), row["site"], row["scraper"]))
+            conn.execute("DELETE FROM scrape_attempts WHERE created_at < ?", (_iso(_now() - ATTEMPT_TTL),))
+            conn.execute("DELETE FROM scrape_attempts WHERE id NOT IN (SELECT id FROM scrape_attempts ORDER BY id DESC LIMIT ?)", (MAX_ATTEMPTS_TOTAL,))
+            conn.execute("INSERT INTO privacy_migrations VALUES ('site-origin-v1')")
 
     def reorder_backends(self, url: str, backends: list[str] | tuple[str, ...]) -> list[str]:
         original = list(backends)
@@ -89,7 +130,9 @@ class SiteScraperMemory:
     def record_attempt(self, attempt: ScrapeAttempt) -> None:
         site = site_key(attempt.url)
         now = _iso()
+        stored_url = _stored_url(attempt.url)
         error_type = attempt.error_type or classify_scrape_error(attempt.error_message)
+        error_message = scrub_secrets(attempt.error_message) if attempt.error_message else ""
         success = bool(attempt.success and attempt.content_length >= self.min_success_chars)
         self.store.execute(
             """
@@ -99,8 +142,8 @@ class SiteScraperMemory:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                attempt.url, site, attempt.scraper, 1 if success else 0,
-                attempt.content_length, error_type, attempt.error_message,
+                stored_url, site, attempt.scraper, 1 if success else 0,
+                attempt.content_length, error_type, error_message,
                 attempt.elapsed_ms, now,
             ),
         )
@@ -118,7 +161,7 @@ class SiteScraperMemory:
                     cooldown_until = NULL, sample_url = ?, updated_at = ?
                 WHERE site = ? AND scraper = ?
                 """,
-                (attempt.content_length, attempt.content_length, now, attempt.url, now, site, attempt.scraper),
+                (attempt.content_length, attempt.content_length, now, stored_url, now, site, attempt.scraper),
             )
         else:
             failure_col = "failure_count"
@@ -135,8 +178,9 @@ class SiteScraperMemory:
                     cooldown_until = COALESCE(?, cooldown_until), sample_url = ?, updated_at = ?
                 WHERE site = ? AND scraper = ?
                 """,
-                (now, error_type, attempt.error_message, cooldown_until, attempt.url, now, site, attempt.scraper),
+                (now, error_type, error_message, cooldown_until, stored_url, now, site, attempt.scraper),
             )
+        self._prune_attempts(site, now)
         self._updates.append({
             "site": site,
             "scraper": attempt.scraper,
@@ -144,6 +188,23 @@ class SiteScraperMemory:
             "content_length": attempt.content_length,
             "error_type": "" if success else error_type,
         })
+
+    def _prune_attempts(self, site: str, now: str) -> None:
+        """Bound diagnostic history by age and per-site row count."""
+        cutoff = _iso(_now() - ATTEMPT_TTL)
+        with self.store.connect() as conn:
+            conn.execute("DELETE FROM scrape_attempts WHERE created_at < ?", (cutoff,))
+            conn.execute("DELETE FROM scrape_attempts WHERE id NOT IN (SELECT id FROM scrape_attempts ORDER BY id DESC LIMIT ?)", (MAX_ATTEMPTS_TOTAL,))
+            conn.execute(
+                """
+                DELETE FROM scrape_attempts
+                WHERE site = ? AND id NOT IN (
+                  SELECT id FROM scrape_attempts WHERE site = ?
+                  ORDER BY id DESC LIMIT ?
+                )
+                """,
+                (site, site, MAX_ATTEMPTS_PER_SITE),
+            )
 
     def stats(self, site: str | None = None) -> list[dict]:
         if site:

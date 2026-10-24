@@ -11,10 +11,10 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use ts_rs::TS;
 
-#[derive(Clone, Deserialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct SearchOptions {
     pub query: String,
     pub route: String,
@@ -29,8 +29,9 @@ pub(crate) fn is_allowed_source(name: &str) -> bool {
     provider::is_allowed_source(name)
 }
 
-#[derive(Clone, Serialize, TS)]
-#[ts(export_to = "types.d.ts")]
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct ExecutionStatus {
     pub id: u64,
     /// One of `running`, `success`, `empty`, `partial`, `failed`, `cancelled`, `timed_out`, or a new value added later; UI must fall back to a raw string.
@@ -48,9 +49,13 @@ pub(crate) struct Execution {
 }
 
 impl Execution {
-    fn complete(&mut self, code: i32) {
-        let output = self.process.take().unwrap().finish(Some(code), false);
+    fn complete(&mut self, code: i32, output: crate::process::Output) {
         self.state.exit_code = Some(code);
+        if output.truncated {
+            self.state.status = "failed".into();
+            self.state.error = "CLI output exceeded the 4 MiB limit and was truncated".into();
+            return;
+        }
         match serde_json::from_str::<Value>(&output.stdout) {
             Ok(mut payload) if payload.is_object() => {
                 crate::redaction::scrub_json(&mut payload, &self.secrets);
@@ -84,6 +89,7 @@ pub(crate) struct ExecutionManager<'a> {
     pub(crate) next_id: &'a AtomicU64,
     pub(crate) closed: &'a AtomicBool,
     pub(crate) discovery: CliDiscovery<'a>,
+    #[allow(dead_code)]
     pub(crate) install: InstallManager<'a>,
 }
 
@@ -125,13 +131,13 @@ impl ExecutionManager<'_> {
         let mut slot = self
             .execution_slot
             .lock()
-            .map_err(|_| "Execution state unavailable")?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if self.closed.load(std::sync::atomic::Ordering::Acquire) {
             return Err("Desktop manager is closed".into());
         }
         if slot
             .as_ref()
-            .is_some_and(|s| s.lock().unwrap().state.status == "running")
+            .is_some_and(|s| s.lock().unwrap_or_else(std::sync::PoisonError::into_inner).state.status == "running")
         {
             return Err("A test search is already running".into());
         }
@@ -140,7 +146,6 @@ impl ExecutionManager<'_> {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut args = vec![
             "search".into(),
-            options.query,
             format!("--route={}", options.route),
             "--timeout".into(),
             options.timeout.to_string(),
@@ -151,6 +156,8 @@ impl ExecutionManager<'_> {
             args.push("--source".into());
             args.push(source);
         }
+        args.push("--".into());
+        args.push(options.query);
         let process = OwnedProcess::spawn(&cli, &args, &self.environment)
             .map_err(|_| "Could not start the CLI")?;
         let execution = Arc::new(Mutex::new(Execution {
@@ -168,74 +175,62 @@ impl ExecutionManager<'_> {
         }));
         *slot = Some(execution.clone());
         thread::spawn(move || loop {
-            {
-                let mut run = execution.lock().unwrap();
-                if run.state.status != "running" {
-                    break;
-                }
-                let finished = run.process.as_mut().unwrap().poll();
-                let timed_out = run.started.elapsed() >= run.timeout;
-                match finished {
-                    Ok(Some(code)) => run.complete(code),
-                    Ok(None) if !timed_out => (),
-                    _ => {
-                        let _output = run.process.take().unwrap().finish(None, timed_out);
-                        run.state.status = if timed_out { "timed_out" } else { "failed" }.into();
-                        run.state.error = if timed_out {
-                            "CLI exceeded the test execution deadline"
-                        } else {
-                            "CLI process could not be observed"
-                        }
-                        .into();
-                    }
-                }
+            let mut run = execution.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if run.state.status != "running" { break; }
+            let Some(process) = run.process.as_mut() else {
+                drop(run);
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            };
+            let finished = process.poll();
+            let timed_out = run.started.elapsed() >= run.timeout;
+            if matches!(finished, Ok(None)) && !timed_out {
+                drop(run);
+                thread::sleep(Duration::from_millis(20));
+                continue;
             }
-            thread::sleep(Duration::from_millis(20));
+            let code = finished.ok().flatten();
+            let process = run.process.take().unwrap();
+            drop(run); // wait/join must never hold the execution state lock.
+            let output = process.finish(code, timed_out);
+            let mut run = execution.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(code) = code { run.complete(code, output); }
+            else {
+                run.state.status = if timed_out { "timed_out" } else { "failed" }.into();
+                run.state.error = if timed_out { "CLI exceeded the test execution deadline" } else { "CLI process could not be observed" }.into();
+            }
+            break;
         });
         Ok(id)
     }
     pub fn cancel_search(&self, id: u64) -> Result<ExecutionStatus, String> {
-        let slot = self
-            .execution_slot
-            .lock()
-            .map_err(|_| "Execution state unavailable")?;
-        let mut run = slot
-            .as_ref()
-            .ok_or("No execution")?
-            .lock()
-            .map_err(|_| "Execution state unavailable")?;
-        if run.state.id != id {
-            return Err("Unknown execution".into());
+        let execution = self.execution_slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref().cloned().ok_or("No execution")?;
+        loop {
+            let mut run = execution.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if run.state.id != id { return Err("Unknown execution".into()); }
+            if run.state.status != "running" { return Ok(run.state.clone()); }
+            let Some(mut process) = run.process.take() else {
+                drop(run);
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            };
+            let code = process.poll().ok().flatten();
+            drop(run);
+            let output = process.finish(code, false);
+            let mut run = execution.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(code) = code { run.complete(code, output); }
+            else { run.state.status = "cancelled".into(); }
+            return Ok(run.state.clone());
         }
-        if run.state.status == "running" {
-            let code = run
-                .process
-                .as_mut()
-                .unwrap()
-                .poll()
-                .map_err(|_| "Cannot observe execution")?;
-            if let Some(code) = code {
-                run.complete(code);
-            } else {
-                let _ = run.process.take().unwrap().finish(None, false);
-                run.state.status = "cancelled".into();
-            }
-        }
-        Ok(run.state.clone())
     }
 
     pub fn shutdown(&self) {
-        self.closed
-            .store(true, std::sync::atomic::Ordering::Release);
-        if let Ok(slot) = self.execution_slot.lock() {
-            if let Some(execution) = slot.as_ref() {
-                if let Ok(mut run) = execution.lock() {
-                    if let Some(process) = run.process.take() {
-                        let _ = process.finish(None, false);
-                        run.state.status = "cancelled".into();
-                    }
-                }
-            }
+        self.closed.store(true, std::sync::atomic::Ordering::Release);
+        let execution = self.execution_slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().cloned();
+        if let Some(execution) = execution {
+            let id = execution.lock().unwrap_or_else(std::sync::PoisonError::into_inner).state.id;
+            let _ = self.cancel_search(id);
         }
     }
 
@@ -243,12 +238,12 @@ impl ExecutionManager<'_> {
         let slot = self
             .execution_slot
             .lock()
-            .map_err(|_| "Execution state unavailable")?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let state = slot
             .as_ref()
             .ok_or("No execution")?
             .lock()
-            .map_err(|_| "Execution state unavailable")?
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .state
             .clone();
         if state.id != id {

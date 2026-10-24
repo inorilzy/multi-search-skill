@@ -134,7 +134,7 @@ class PluginKeyStateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             manager = SQLiteKeyManager(StateStore(Path(tmp) / "state.sqlite"))
 
-            def fake_exa(url, key, timeout=0, max_chars=None):
+            def fake_exa(url, key, timeout=0, max_chars=None, deadline=None):
                 if key == "bad":
                     return {"url": url, "error": "HTTP 429 rate limit"}
                 return {"url": url, "markdown": "ok", "via": "exa"}
@@ -190,9 +190,10 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             self.assertEqual(row["status"], INVALID)
             self.assertEqual(row["invalid_strikes"], INVALID_STRIKE_LIMIT)
 
-    def test_invalid_strikes_reset_on_success_and_other_failures(self):
-        # P0-A: the consecutive-invalid streak must reset, otherwise a key
-        # accumulates strikes across unrelated, recoverable errors.
+    def test_invalid_strikes_reset_on_success_but_not_on_neutral_failures(self):
+        # P0-A: only a success (or another credential verdict) resets the
+        # streak; a timeout/network failure must not erase a concurrent 401's
+        # strike or clear its cooldown.
         with tempfile.TemporaryDirectory() as tmp:
             manager = SQLiteKeyManager(StateStore(Path(tmp) / "state.sqlite"))
             cand = self._candidate("exa", "k1")
@@ -201,9 +202,10 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             success = KeyOutcome(True, False)
 
             manager.record_result("exa", cand, invalid)
-            manager.record_result("exa", cand, timeout)  # breaks streak
+            manager.record_result("exa", cand, timeout)  # neutral
             row = {r["key_id"]: r for r in manager.status_rows("exa")}[cand.key_id]
-            self.assertEqual(row["invalid_strikes"], 0)
+            self.assertEqual(row["invalid_strikes"], 1)
+            self.assertEqual(row["status"], TRANSIENT_INVALID)
 
             manager.record_result("exa", cand, invalid)
             manager.record_result("exa", cand, success)  # also resets
@@ -269,7 +271,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
     def test_firecrawl_backend_allows_anonymous_scrape(self):
         calls: list[tuple[str, str]] = []
 
-        def fake_firecrawl(url, key="", timeout=0):
+        def fake_firecrawl(url, key="", timeout=0, deadline=None):
             calls.append((url, key))
             return {"url": url, "title": "f", "markdown": "f" * 1000, "via": "firecrawl"}
 
@@ -299,7 +301,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     "statuses": [{"status": "success"}],
                 }).encode()
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             import json as _json
             captured["payload"] = _json.loads(req.data)
             return _FakeResp()
@@ -312,7 +314,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
     def test_scrape_chars_flows_into_exa_backend(self):
         captured = {}
 
-        def fake_exa(url, key, timeout=0, max_chars=None):
+        def fake_exa(url, key, timeout=0, max_chars=None, deadline=None):
             captured["max_chars"] = max_chars
             return {"url": url, "title": "T", "markdown": "x" * 1000, "via": "exa"}
 
@@ -345,7 +347,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     "data": {"markdown": "ok", "metadata": {"title": "Example"}},
                 }).encode()
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             captured["headers"] = dict(req.header_items())
             return _FakeResp()
 
@@ -404,7 +406,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 import json as _json
                 return _json.dumps(self._payload).encode()
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             import json as _json
             depth = _json.loads(req.data).get("extract_depth")
             calls.append(depth)
@@ -1101,7 +1103,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def read(self):
                 return b'{"answer":"fast answer","results":[]}'
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **_kwargs):
             import json as _json
             captured.update(_json.loads(req.data))
             return _FakeResp()

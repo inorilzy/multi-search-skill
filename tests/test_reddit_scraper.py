@@ -76,12 +76,22 @@ class RedditRoutingTests(unittest.TestCase):
         self.assertEqual(result["via"], "reddit")
         generic.assert_not_called()
 
-    def test_private_resolution_and_credentials_are_rejected_before_auth(self):
-        for url, resolver in ((URL, lambda host: ["127.0.0.1"]),
-                              (URL.replace("https://", "https://user:password@"), PUBLIC)):
-            with self.subTest(url=url), mock.patch.object(reddit, "get_post_json") as fetch:
-                self.assertIn("error", scrape_url_smart(url, context(url_resolver=resolver)))
-                fetch.assert_not_called()
+    def test_credentials_are_rejected_before_auth(self):
+        url = URL.replace("https://", "https://user:password@")
+        with mock.patch.object(reddit, "get_post_json") as fetch:
+            self.assertIn("error", scrape_url_smart(url, context(url_resolver=PUBLIC)))
+            fetch.assert_not_called()
+
+    def test_private_dns_answer_does_not_block_fixed_endpoint_fetch(self):
+        # Post URLs are parsed for an id; the request itself goes to fixed
+        # Reddit endpoints. A fake-IP/private answer for the permalink host is
+        # therefore not a local SSRF signal.
+        resolver = lambda _host: ["127.0.0.1"]
+        with mock.patch.object(reddit, "get_post_json", return_value=response_data()) as fetch:
+            result = scrape_url_smart(URL, context(url_resolver=resolver))
+        self.assertEqual(result["via"], "reddit")
+        self.assertNotIn("error", result)
+        fetch.assert_called_once()
 
     def test_supported_permalink_variants_and_comment_focus(self):
         urls = [URL, URL.replace("www.", "old."), URL.replace("www.", "new."),

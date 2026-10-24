@@ -6,6 +6,31 @@ use std::{path::PathBuf, sync::Arc};
 use tauri::Manager;
 
 #[tauri::command]
+async fn cookie_status(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::cookie::CookieStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::cookie::status(&manager.environment)).await.map_err(|_| "Cookie worker failed")?
+}
+#[tauri::command]
+async fn cookie_import(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    path: String,
+    confirmed: bool,
+) -> Result<crate::cookie::CookieStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::cookie::import(&manager.environment, std::path::Path::new(&path), confirmed)).await.map_err(|_| "Cookie worker failed")?
+}
+#[tauri::command]
+async fn cookie_delete(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    confirmed: bool,
+) -> Result<crate::cookie::CookieStatus, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::cookie::delete(&manager.environment, confirmed)).await.map_err(|_| "Cookie worker failed")?
+}
+
+#[tauri::command]
 async fn detect_cli(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     path: Option<String>,
@@ -40,18 +65,20 @@ async fn start_test_search(
     .map_err(|_| "Search worker failed")?
 }
 #[tauri::command]
-fn poll_execution(
+async fn poll_execution(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     id: u64,
 ) -> Result<ExecutionStatus, String> {
-    manager.execution(id)
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.execution(id)).await.map_err(|_| "Command worker failed")?
 }
 #[tauri::command]
-fn cancel_test_search(
+async fn cancel_test_search(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     id: u64,
 ) -> Result<ExecutionStatus, String> {
-    manager.cancel_search(id)
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.cancel_search(id)).await.map_err(|_| "Command worker failed")?
 }
 
 #[tauri::command]
@@ -105,8 +132,6 @@ async fn install_cli(
         .await
         .map_err(|_| "Install worker failed".into())
 }
-// Every credential command takes a UI source name. `resolve_source` is the only way a
-// provider reaches the store target, so an unknown or crafted name fails before any access.
 #[tauri::command]
 async fn update_cli(
     manager: tauri::State<'_, Arc<DesktopManager>>,
@@ -147,6 +172,8 @@ async fn user_path_change(
         .await
         .map_err(|_| "PATH 修改失败")?
 }
+// Every credential command takes a UI source name. `resolve_source` is the only way a
+// provider reaches the store target, so an unknown or crafted name fails before any access.
 #[tauri::command]
 async fn credential_status(
     manager: tauri::State<'_, Arc<DesktopManager>>,
@@ -178,8 +205,23 @@ async fn credential_read(
     .map_err(|_| "Credential read worker failed".to_string())?
 }
 #[tauri::command]
-fn credential_application_open(source: String) -> Result<(), String> {
-    crate::credential_commands::open_application(&source)
+async fn credential_reveal(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    source: String,
+) -> Result<crate::credential_commands::CredentialValue, String> {
+    let entry = crate::credential_commands::resolve_source(&source)?;
+    let variables = manager.inner().environment.variables.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::credential_commands::with_native(&variables, |backend| {
+            crate::credential_commands::reveal(backend, &variables, &entry)
+        })
+    })
+    .await
+    .map_err(|_| "Credential read worker failed".to_string())?
+}
+#[tauri::command]
+async fn credential_application_open(source: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::credential_commands::open_application(&source)).await.map_err(|_| "Browser worker failed")?
 }
 #[tauri::command]
 async fn credential_save(
@@ -274,44 +316,57 @@ async fn credential_test(
 }
 
 #[tauri::command]
-fn settings_view(
+async fn settings_view(
     manager: tauri::State<'_, Arc<DesktopManager>>,
 ) -> Result<crate::settings::SettingsView, String> {
-    Ok(crate::settings::view(&manager.inner().environment))
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || Ok(crate::settings::view(&manager.environment))).await.map_err(|_| "Command worker failed")?
 }
 #[tauri::command]
-fn settings_save(
+async fn scrape_settings_save(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    backends: Vec<String>,
+) -> Result<crate::settings::SettingsView, String> {
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::settings::save_scrape_backends(&manager.environment, &backends)).await.map_err(|_| "Command worker failed")?
+}
+#[tauri::command]
+async fn settings_save(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     input: crate::settings::SettingsInput,
 ) -> Result<crate::settings::SettingsView, String> {
-    crate::settings::save(&manager.inner().environment, &input)
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::settings::save(&manager.environment, &input)).await.map_err(|_| "Command worker failed")?
 }
 
 /// 只读站点抓取记忆；state.sqlite 缺失或损坏时返回 available=false 的视图。
 #[tauri::command]
-fn scrape_memory_view(
+async fn scrape_memory_view(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     site: Option<String>,
 ) -> Result<crate::scrape_memory::ScrapeMemoryView, String> {
-    Ok(crate::scrape_memory::view(
-        &manager.inner().environment,
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || Ok(crate::scrape_memory::view(
+        &manager.environment,
         site.as_deref(),
-    ))
+    ))).await.map_err(|_| "Command worker failed")?
 }
 #[tauri::command]
-fn scrape_memory_pin(
+async fn scrape_memory_pin(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     site: String,
     scraper: String,
 ) -> Result<crate::scrape_memory::ScrapeMemoryView, String> {
-    crate::scrape_memory::pin(&manager.inner().environment, &site, &scraper)
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::scrape_memory::pin(&manager.environment, &site, &scraper)).await.map_err(|_| "Command worker failed")?
 }
 #[tauri::command]
-fn scrape_memory_reset(
+async fn scrape_memory_reset(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     site: String,
 ) -> Result<crate::scrape_memory::ScrapeMemoryView, String> {
-    crate::scrape_memory::reset(&manager.inner().environment, Some(&site))
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::scrape_memory::reset(&manager.environment, Some(&site))).await.map_err(|_| "Command worker failed")?
 }
 
 /// Provider manifest for the sources/settings pages. Returns the same rows the
@@ -415,6 +470,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            cookie_status,
+            cookie_import,
+            cookie_delete,
             detect_cli,
             start_test_search,
             poll_execution,
@@ -433,6 +491,7 @@ pub fn run() {
             user_path_change,
             credential_status,
             credential_read,
+            credential_reveal,
             credential_application_open,
             credential_save,
             credential_delete,
@@ -441,6 +500,7 @@ pub fn run() {
             credential_remove,
             settings_view,
             settings_save,
+            scrape_settings_save,
             provider_list,
             scrape_memory_view,
             scrape_memory_pin,

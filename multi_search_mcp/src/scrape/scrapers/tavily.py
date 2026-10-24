@@ -48,7 +48,7 @@ def scrape_url_tavily(
             },
             method="POST",
         )
-        with urlopen_retry(req, timeout=call_timeout) as resp:
+        with urlopen_retry(req, timeout=call_timeout, **({"deadline": deadline} if deadline is not None else {})) as resp:
             return json.loads(resp.read())
 
     def _parse(data: dict, depth: str) -> dict:

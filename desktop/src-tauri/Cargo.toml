@@ -10,22 +10,29 @@ name = "multi_search_desktop"
 path = "src/lib.rs"
 
 [[test]]
+name = "cookies"
+path = "tests/cookies.rs"
+required-features = ["test-fixtures"]
+
+[[test]]
 name = "diagnostics"
+required-features = ["test-fixtures"]
 path = "tests/diagnostics.rs"
 
 [[test]]
 name = "execution"
+required-features = ["test-fixtures"]
 path = "tests/execution.rs"
 
 [[test]]
 name = "install"
 path = "tests/install.rs"
-required-features = ["install-test-boundary"]
+required-features = ["install-test-boundary", "test-fixtures"]
 
 [[test]]
 name = "install_lifecycle"
 path = "tests/install_lifecycle.rs"
-required-features = ["install-test-boundary"]
+required-features = ["install-test-boundary", "test-fixtures"]
 
 [[test]]
 name = "install_release_boundary"
@@ -33,50 +40,62 @@ path = "tests/install_release_boundary.rs"
 
 [[test]]
 name = "installed_cli"
+required-features = ["test-fixtures"]
 path = "tests/installed_cli.rs"
 
 [[test]]
 name = "skill"
+required-features = ["test-fixtures"]
 path = "tests/skill.rs"
 
 [[test]]
 name = "skill_manage"
+required-features = ["test-fixtures"]
 path = "tests/skill_manage.rs"
 
 [[test]]
 name = "credentials"
+required-features = ["test-fixtures"]
 path = "tests/credentials.rs"
 
 [[test]]
 name = "credential_sources"
+required-features = ["test-fixtures"]
 path = "tests/credential_sources.rs"
 
 [[test]]
 name = "settings"
+required-features = ["test-fixtures"]
 path = "tests/settings.rs"
 
 [[test]]
 name = "scrape_memory"
+required-features = ["test-fixtures"]
 path = "tests/scrape_memory.rs"
 
 [[test]]
 name = "provider_parity"
+required-features = ["test-fixtures"]
 path = "tests/provider_parity.rs"
 
 [[test]]
 name = "process_env"
+required-features = ["test-fixtures"]
 path = "tests/process_env.rs"
 
 [[test]]
 name = "sqlite_credentials"
+required-features = ["test-fixtures"]
 path = "tests/sqlite_credentials.rs"
 
 [[test]]
 name = "credential_rows"
+required-features = ["test-fixtures"]
 path = "tests/credential_rows.rs"
 
 [[test]]
 name = "ui_contract"
+required-features = ["test-fixtures", "ts"]
 path = "tests/ui_contract.rs"
 
 [[bin]]
@@ -90,19 +109,20 @@ serde_json = "1"
 sha2 = "0.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
 # ts-rs exports TypeScript declarations for the UI command contract. The
-# derive is unconditional so payload structs stay consistent; codegen runs in
-# `cargo test export_ui_contract` and is not part of the runtime binary.
-ts-rs = { version = "12", features = ["serde-json-impl"] }
+# optional ts feature enables derives for explicit contract tests/codegen only.
+ts-rs = { version = "12", features = ["serde-json-impl"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_System_Memory", "Win32_UI_Shell", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
 default = ["native-window"]
 native-window = ["dep:tauri", "dep:tauri-build"]
 # Test-only boundary: enables env-driven install source/anchor overrides and the disposable user PATH.
 # Never packageable for release; the default and release builds ignore these environment keys.
-install-test-boundary = []
+install-test-boundary = ["test-fixtures"]
+test-fixtures = []
+ts = ["dep:ts-rs"]
 
 [dependencies.tauri]
 version = "2"

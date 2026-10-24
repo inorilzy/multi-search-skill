@@ -37,8 +37,6 @@ import time
 from urllib.request import getproxies, proxy_bypass
 from uuid import uuid4
 
-from ...support.url_security import validate_public_http_url
-
 
 TOKEN_URL = "https://www.reddit.com/auth/v2/oauth/access-token/loid"
 API_ORIGIN = "https://oauth.reddit.com"
@@ -142,10 +140,10 @@ _auth = AnonymousAuth()
 
 
 def get_post_json(post_id: str, params: dict, deadline: float, *, resolver=None):
-    # All requests go to fixed Reddit endpoints; redirects never carry the token.
+    # All requests go to fixed Reddit endpoints under our control, so there is
+    # no caller-supplied destination to validate (and DNS prechecks would break
+    # under a local TUN/fake-IP proxy without adding protection).
     api_url = f"{API_ORIGIN}/comments/{post_id}.json"
-    validate_public_http_url(TOKEN_URL, resolver=resolver, deadline=deadline)
-    validate_public_http_url(api_url, resolver=resolver, deadline=deadline)
     from curl_cffi.requests import Session
 
     proxies = getproxies()

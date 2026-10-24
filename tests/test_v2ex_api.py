@@ -48,7 +48,7 @@ class V2exApiTests(unittest.TestCase):
         self.assertEqual(urllib.parse.parse_qs(url.query), {
             "q": ["Python 中文 & async"], "from": ["0"], "size": ["10"], "sort": ["sumup"],
         })
-        self.assertEqual(request.call_args.kwargs, {"timeout": 3.5})
+        self.assertEqual(request.call_args.kwargs, {"timeout": 3.5, "deadline": None})
         self.assertEqual({name.lower() for name, _ in req.header_items()}, {"user-agent", "accept"})
 
     def test_count_is_clamped_to_api_range(self):

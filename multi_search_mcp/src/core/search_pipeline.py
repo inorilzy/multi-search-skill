@@ -17,11 +17,10 @@ from ..search.capabilities import retention_policy_for_sources
 from ..search.query_plan import build_query_plan
 from ..search.query_policy import QueryFusionPolicy
 from ..search.resolve import (
-    _resolve_int,
-    _resolve_nonnegative,
     resolve_active_sources,
     resolve_search_plan,
 )
+from ..support.config import config_list, resolve_int, resolve_nonnegative
 from ..search.search_runner import SearchRunner, SearchRunnerConfig
 from ..scrape.scrapers.twitter import is_twitter_url
 from ..scrape.stage import run_ranked_fetch_stage
@@ -30,10 +29,9 @@ from ..support.models import normalize_scrape_result
 from ..state.content_store import ContentStoreError
 from ..state.source_registry import SourceRegistry
 from ..state.key_state import classify_error
-from ..support.config import config_list
 from ..support.models import ANSWER_SOURCES, is_empty_result, search_content
 from ..support.secrets import scrub_secrets
-from ..support.concurrency import BoundedDaemonExecutor
+from ..support.concurrency import BoundedDaemonExecutor, pool_size_from_env
 from . import runtime
 from .body_fetch import run_fetch_source
 from .requests import FetchSourceRequest, MultiSearchRequest, SearchWebRequest
@@ -41,7 +39,7 @@ from .requests import FetchSourceRequest, MultiSearchRequest, SearchWebRequest
 
 # Query expansion is a shallow, short fan-out (one task per variant query).
 # Capacity is intentionally small and isolated from provider/body pools.
-MAX_EXPAND_CONCURRENCY = 5
+MAX_EXPAND_CONCURRENCY = pool_size_from_env("MULTI_SEARCH_EXPAND_CONCURRENCY", 5)
 _EXPAND_POOL = BoundedDaemonExecutor(
     max_workers=MAX_EXPAND_CONCURRENCY,
     thread_name_prefix="multi-search-expand",
@@ -242,6 +240,7 @@ def run_search_candidates(
         "route": plan.route,
         "response_id": response_id,
         "results": hits,
+        "outcome": _search_outcome(_query_provider_status(query_runs), failures, hits),
         "provider_status": _query_provider_status(query_runs),
         "key_status_summary": _summarize_key_status(key_manager.status_rows()),
         "errors": failures,
@@ -309,9 +308,9 @@ def run_search_web(
         response["diagnostics"].update(result_limit=SEARCH_RESULT_LIMIT, body_fetch_count=0,
                                        body_success_count=0, body_failures=[])
         return response
-    max_chars = max(1, min(_resolve_int(scrape_chars, resolved_config, "scrape_chars", 1200), 20_000))
-    body_timeout = _resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
-    concurrency = max(1, _resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))
+    max_chars = max(1, min(resolve_int(scrape_chars, resolved_config, "scrape_chars", 1200), 20_000))
+    body_timeout = resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
+    concurrency = max(1, resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))
     body_deadline = time.monotonic() + body_timeout
 
     def fetch(hit, remaining):
@@ -371,6 +370,9 @@ def run_search_web(
         for row in scrapes if row.get("error")
     ]
     response["errors"].extend({**error, "stage": "fetch"} for error in body_errors)
+    response["outcome"] = _search_outcome(
+        response.get("provider_status") or [], response["errors"], response["results"],
+    )
     response["diagnostics"].update(
         result_limit=SEARCH_RESULT_LIMIT,
         body_fetch_count=len(response["results"]),
@@ -378,6 +380,15 @@ def run_search_web(
         body_failures=body_errors,
     )
     return response
+
+
+def _search_outcome(provider_status: list[dict], errors: list[dict], results: list[dict]) -> str:
+    """Business outcome shared by the CLI, service and desktop adapters."""
+    if provider_status and all(row.get("status") == "error" for row in provider_status):
+        return "failed"
+    if errors:
+        return "partial"
+    return "success" if results else "empty"
 
 
 def _query_provider_status(

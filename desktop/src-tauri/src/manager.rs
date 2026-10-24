@@ -28,6 +28,7 @@ pub struct DesktopManager {
     pub(crate) execution_slot: Mutex<Option<Arc<Mutex<Execution>>>>,
     pub(crate) next_id: AtomicU64,
     pub(crate) closed: AtomicBool,
+    mutation: Mutex<()>,
 }
 
 impl DesktopManager {
@@ -38,6 +39,7 @@ impl DesktopManager {
             execution_slot: Mutex::new(None),
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
+            mutation: Mutex::new(()),
         }
     }
 
@@ -49,6 +51,14 @@ impl DesktopManager {
         let mut manager = Self::new(environment);
         manager.user_path_store = Some(store);
         manager
+    }
+
+    // ponytail: one per-manager mutation lock; split by domain only if concurrency is needed.
+    fn mutation_guard(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        self.mutation.try_lock().map_err(|error| match error {
+            std::sync::TryLockError::WouldBlock => "Another management operation is in progress".into(),
+            std::sync::TryLockError::Poisoned(_) => "Previous management operation failed; restart and verify installation".into(),
+        })
     }
 
     // ---- domain views -------------------------------------------------
@@ -101,6 +111,7 @@ impl DesktopManager {
         self.discovery_view().execution_path(explicit_path)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn current_user_paths(&self) -> Vec<PathBuf> {
         self.discovery_view().current_user_paths()
     }
@@ -134,26 +145,36 @@ impl DesktopManager {
     }
 
     pub fn install(&self) -> InstallOutcome {
-        self.install_view().install()
+        self.install_from(None)
     }
 
     pub fn update(&self) -> InstallOutcome {
-        self.install_view().update()
+        self.update_from(None)
     }
 
     pub fn uninstall(&self) -> InstallOutcome {
+        let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return InstallOutcome {
+            status: "blocked".into(), steps: vec![], version: None, bin: None, path_hint: String::new(), reason,
+        }};
         self.install_view().uninstall()
     }
 
+    #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
     pub(crate) fn install_plan_from(&self, bundled: Option<&std::path::Path>) -> InstallPlan {
         self.install_view().install_plan_from(bundled)
     }
 
     pub(crate) fn install_from(&self, bundled: Option<&std::path::Path>) -> InstallOutcome {
+        let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return InstallOutcome {
+            status: "blocked".into(), steps: vec![], version: None, bin: None, path_hint: String::new(), reason,
+        }};
         self.install_view().install_from(bundled)
     }
 
     pub(crate) fn update_from(&self, bundled: Option<&std::path::Path>) -> InstallOutcome {
+        let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return InstallOutcome {
+            status: "blocked".into(), steps: vec![], version: None, bin: None, path_hint: String::new(), reason,
+        }};
         self.install_view().update_from(bundled)
     }
 
@@ -164,6 +185,9 @@ impl DesktopManager {
     }
 
     pub fn skill_install(&self, scope: &str, project: Option<PathBuf>) -> SkillInstall {
+        let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return SkillInstall {
+            status: "blocked".into(), target: None, verified: false, files: vec![], reason,
+        }};
         self.skills_view().skill_install(scope, project)
     }
 
@@ -173,6 +197,9 @@ impl DesktopManager {
         project: Option<PathBuf>,
         confirm_overwrite: bool,
     ) -> UpdateOutcome {
+        let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return UpdateOutcome {
+            status: "blocked".into(), verified: false, backup: None, reason,
+        }};
         self.skills_view().skill_update(scope, project, confirm_overwrite)
     }
 
@@ -190,6 +217,9 @@ impl DesktopManager {
         project: Option<PathBuf>,
         confirmed: bool,
     ) -> RemoveOutcome {
+        let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return RemoveOutcome {
+            status: "blocked".into(), deleted: vec![], kept: vec![], reason,
+        }};
         self.skills_view().skill_remove(scope, project, confirmed)
     }
 
@@ -209,10 +239,12 @@ impl DesktopManager {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn require_storage_cli(&self, cli: &std::path::Path) -> Result<(), String> {
         self.credential_manager().require_storage_cli(cli)
     }
 
+    #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
     pub(crate) fn test_source(
         &self,
         cli: PathBuf,
@@ -229,6 +261,39 @@ impl DesktopManager {
     }
 
     pub fn user_path_change(&self, remove: bool, confirmed: bool) -> Result<PathPlan, String> {
+        let _guard = self.mutation_guard()?;
         self.user_path_view().change(remove, confirmed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn execution_slot_recovers_after_poison() {
+        let manager = Arc::new(DesktopManager::new(RuntimeEnvironment {
+            app_path: vec![], user_path: vec![], variables: Default::default(), cwd: std::env::temp_dir(),
+        }));
+        let other = manager.clone();
+        let _ = std::thread::spawn(move || { let _guard = other.execution_slot.lock().unwrap(); panic!("synthetic poison"); }).join();
+        assert!(manager.execution(1).is_err());
+        manager.shutdown();
+    }
+    #[test]
+    fn management_mutations_fail_fast_while_busy() {
+        let manager = DesktopManager::new(RuntimeEnvironment {
+            app_path: vec![], user_path: vec![], variables: Default::default(), cwd: std::env::temp_dir(),
+        });
+        let _guard = manager.mutation_guard().unwrap();
+        assert_eq!(manager.install().status, "blocked");
+        assert_eq!(manager.update().status, "blocked");
+        assert_eq!(manager.uninstall().status, "blocked");
+        assert_eq!(manager.skill_install("global", None).status, "blocked");
+        assert_eq!(manager.skill_update("global", None, true).status, "blocked");
+        assert_eq!(manager.skill_remove("global", None, true).status, "blocked");
+        assert!(match manager.user_path_change(true, true) {
+            Err(reason) => reason.contains("Another management operation"),
+            Ok(_) => false,
+        });
     }
 }

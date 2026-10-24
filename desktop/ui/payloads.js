@@ -71,6 +71,7 @@ export const schemas = {
   PathPlan: schema({
     status: 's', directory: 's', reason: 's', can_add: 'b', can_remove: 'b', warning: 's',
   }),
+  CookieStatus: schema({ present: 'b', mode: 's', supported: 'b' }),
   CredentialStatus: schema({ state: 's', saved_at: 'nn', error: 's' }),
   CredentialOverview: schema({
     source: 's', store: 'CredentialStatus', effective_source: 's',
