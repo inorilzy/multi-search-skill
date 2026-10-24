@@ -1,10 +1,18 @@
 """Single reproducible entry point for the desktop's bundled CLI.
 
 Steps (each fails explicitly; nothing is copied from an old dist binary):
-  1. compile the relocatable launcher (desktop/src-tauri/launcher/main.rs) with rustc;
-  2. install the pinned runtime (scripts/cli-bundle-requirements.txt, hashed) offline from the uv cache;
-  3. build the bundle with build_cli_bundle.build (manifest + anchor);
-  4. write the anchor to desktop/src-tauri/resources/cli-bundle.anchor, which build.rs compiles in.
+  1. verify every input against a locked hash (scripts/build_inputs.py): the official CPython
+     archive (scripts/build-inputs.lock.json), the project wheel (--wheel-sha256 from the step that
+     built it) and the pinned rustc (rust-toolchain.toml);
+  2. compile the relocatable launcher (desktop/src-tauri/launcher/main.rs) with the pinned rustc and
+     Authenticode-sign it when a signing certificate is configured (scripts/sign_windows.py);
+  3. extract the verified CPython archive and install the pinned runtime
+     (scripts/cli-bundle-requirements.txt, hashed) offline from the uv cache;
+  4. build the bundle with build_cli_bundle.build (manifest + anchor), so the anchor covers the
+     signed launcher;
+  5. write the anchor to desktop/src-tauri/resources/cli-bundle.anchor, which build.rs compiles in.
+
+``--require-signing`` makes a missing certificate a hard failure; release CI sets it.
 
 The output goes to desktop/src-tauri/resources/cli-bundle (gitignored) so the Tauri resource directory
 carries it. The redistribution of the runtime is NOT cleared; this entry point builds, it does not publish.
@@ -22,6 +30,8 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 from bundle_manifest import BundleError  # noqa: E402
 from build_cli_bundle import build  # noqa: E402
+from build_inputs import BuildInputError, check_rustc, extract_python, load_lock, verify_file  # noqa: E402
+from sign_windows import SigningError, sign_file  # noqa: E402
 
 REPO = SCRIPTS_DIR.parent
 LAUNCHER_SRC = REPO / "desktop" / "src-tauri" / "launcher" / "main.rs"
@@ -59,7 +69,8 @@ def _uv_install(args: list[str], site: Path, what: str) -> None:
 def install_runtime(runtime: Path, requirements: Path, wheel: Path, xkit_source: Path) -> None:
     """Populate the runtime's site-packages offline: pinned hashed deps, the project wheel, pinned xkit-py.
 
-    Only site-packages is rebuilt; the copied CPython (python.exe, Lib/, DLLs/) is kept.
+    Only site-packages is rebuilt; the verified CPython (python.exe, stdlib) is kept. The wheel's
+    hash is checked by the caller before this runs; xkit-py is verified by its author separately.
     """
     for path, label in ((requirements, "pinned requirements"), (wheel, "project wheel"), (xkit_source, "xkit-py source")):
         if not path.exists():
@@ -75,26 +86,34 @@ def install_runtime(runtime: Path, requirements: Path, wheel: Path, xkit_source:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--python-tree", type=Path, required=True,
-                        help="pinned Windows CPython tree (python.exe, Lib/, DLLs/)")
+    parser.add_argument("--python-archive", type=Path, required=True,
+                        help="official Windows CPython embeddable zip locked in scripts/build-inputs.lock.json")
     parser.add_argument("--wheel", type=Path, required=True, help="built multi_search_mcp wheel")
+    parser.add_argument("--wheel-sha256", required=True,
+                        help="SHA-256 of --wheel, recorded by the pipeline step that built it")
     parser.add_argument("--xkit-source", type=Path, required=True,
                         help="xkit-py checkout at the pinned commit (see scripts/cli-bundle-requirements.txt)")
     parser.add_argument("--version", required=True)
     parser.add_argument("--work", type=Path, default=REPO / "dist" / "cli-release-work")
+    parser.add_argument("--require-signing", action="store_true",
+                        help="fail unless the launcher can be Authenticode-signed (release CI)")
     options = parser.parse_args(argv)
     try:
+        lock = load_lock()
+        check_rustc()
+        verify_file(options.wheel, options.wheel_sha256, "project wheel")
         launcher = compile_launcher(LAUNCHER_SRC, options.work / "launcher" / "multi-search.exe")
+        sign_file(launcher, required=options.require_signing)
         runtime = options.work / "runtime"
         if runtime.exists():
             shutil.rmtree(runtime)
-        shutil.copytree(options.python_tree, runtime)
+        extract_python(options.python_archive, runtime, lock)
         install_runtime(runtime, REQUIREMENTS, options.wheel, options.xkit_source)
         out = RESOURCES / "cli-bundle"
         if out.exists():
             shutil.rmtree(out)
         anchor = build(runtime, launcher, options.version, out, RESOURCES / "cli-bundle.anchor")
-    except BundleError as error:
+    except (BundleError, BuildInputError, SigningError) as error:
         print(f"release build refused: {error}", file=sys.stderr)
         return 2
     print(anchor)

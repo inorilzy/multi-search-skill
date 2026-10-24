@@ -1,0 +1,9 @@
+# Pinned Rust toolchain for every Rust build in this repository: the desktop app
+# (desktop/src-tauri) and the bundled CLI launcher compiled by scripts/build_cli_release.py.
+# The release build refuses to run when `rustc --version` does not report this exact version
+# (scripts/build_inputs.py:check_rustc). Bump the channel and RUSTC_VERSION there together.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["rustfmt"]
+targets = ["x86_64-pc-windows-msvc"]

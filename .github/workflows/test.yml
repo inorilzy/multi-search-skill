@@ -26,3 +26,6 @@ jobs:
         run: python scripts/smoke_install.py
       - name: Run regression tests with disposable state
         run: python scripts/run_tests.py
+      - name: Run release tooling tests (bundle manifest, locked inputs, signing)
+        working-directory: scripts
+        run: python -m unittest test_bundle_manifest test_build_cli_bundle test_build_inputs

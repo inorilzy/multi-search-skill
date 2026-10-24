@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 /// CLI config env var; when set, the CLI reads exactly this path.
@@ -255,24 +253,11 @@ fn merge(existing: Map<String, Value>, valid: &Validated) -> Map<String, Value> 
 fn write_atomic(path: &Path, object: &Map<String, Value>) -> Result<(), String> {
     let dir = path.parent().ok_or("配置路径无效")?;
     fs::create_dir_all(dir).map_err(|_| "无法创建配置目录".to_string())?;
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("config.json");
-    let temp = dir.join(format!(".{name}.tmp-{}-{nanos}", std::process::id()));
     let mut body = serde_json::to_string_pretty(&Value::Object(object.clone()))
         .map_err(|_| "无法序列化配置".to_string())?;
     body.push('\n');
-    let result = (|| -> std::io::Result<()> {
-        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
-        file.write_all(body.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&temp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-        return Err("保存失败，原配置未改变".into());
-    }
-    Ok(())
+    // Randomly named, exclusively created sibling, renamed over the target; removed on failure.
+    crate::secure_temp::replace_file(path, body.as_bytes()).map_err(|_| "保存失败，原配置未改变".to_string())
 }
 
 /// Validate, merge into the existing file, and atomically replace it. Returns the new view.

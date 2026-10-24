@@ -44,6 +44,15 @@
           "SimpChinese"
         ],
         "displayLanguageSelector": true
+      },
+      "digestAlgorithm": "sha256",
+      "signCommand": {
+        "cmd": "python",
+        "args": [
+          "-c",
+          "import os,runpy,sys; p=os.environ.get('MULTI_SEARCH_SIGN_SCRIPT') or sys.exit('MULTI_SEARCH_SIGN_SCRIPT is not set: export the absolute path of scripts/sign_windows.py'); sys.argv=[p,sys.argv[1]]; runpy.run_path(p, run_name='__main__')",
+          "%1"
+        ]
       }
     }
   }

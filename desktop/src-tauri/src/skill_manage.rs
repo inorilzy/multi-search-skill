@@ -299,16 +299,8 @@ fn backup_modified(directory: &Path, modified: &[String]) -> Result<Option<PathB
         .parent()
         .and_then(Path::parent)
         .ok_or("Invalid target directory")?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or_default();
-    let backup = base.join(format!(
-        ".multi-search-backup-{stamp}-{}-{}",
-        std::process::id(),
-        skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    fs::create_dir(&backup).map_err(|e| format!("Cannot reserve backup folder: {e}"))?;
+    let backup = crate::secure_temp::create_dir(base, ".multi-search-backup-")
+        .map_err(|e| format!("Cannot reserve backup folder: {e}"))?;
     for name in modified {
         let source = directory.join(name);
         if fs::symlink_metadata(&source).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
@@ -428,21 +420,19 @@ impl DesktopManager {
                 reason: "Invalid target".into(),
             };
         };
-        let staging = base.join(format!(
-            ".multi-search-update-{}-{}",
-            std::process::id(),
-            skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        if let Err(error) = fs::create_dir(&staging) {
-            return UpdateOutcome {
-                status: "failed".into(),
-                verified: false,
-                backup: backup_text,
-                reason: format!(
-                    "Cannot reserve staging folder; installed skill unchanged: {error}"
-                ),
-            };
-        }
+        let staging = match crate::secure_temp::create_dir(base, ".multi-search-update-") {
+            Ok(staging) => staging,
+            Err(error) => {
+                return UpdateOutcome {
+                    status: "failed".into(),
+                    verified: false,
+                    backup: backup_text,
+                    reason: format!(
+                        "Cannot reserve staging folder; installed skill unchanged: {error}"
+                    ),
+                };
+            }
+        };
         if let Err(reason) = skill::write_directory(&staging) {
             let _ = fs::remove_dir_all(&staging);
             return UpdateOutcome {
@@ -464,11 +454,8 @@ impl DesktopManager {
             }
         }
         // Swap: move the old folder aside, put the verified new folder in place, then drop the old one.
-        let old = base.join(format!(
-            ".multi-search-old-{}-{}",
-            std::process::id(),
-            skill::STAGING_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
+        // A fresh random name that does not exist yet; rename never targets a planted entry.
+        let old = base.join(format!(".multi-search-old-{}", crate::secure_temp::token()));
         if let Err(error) = fs::rename(&target, &old) {
             let _ = fs::remove_dir_all(&staging);
             return UpdateOutcome {

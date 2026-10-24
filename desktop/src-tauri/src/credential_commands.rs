@@ -246,10 +246,9 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
 pub(crate) struct TestConfig(pub PathBuf);
 #[cfg(feature = "native-window")]
 impl TestConfig {
+    /// The config is written to a fresh, randomly named file created with `create_new`, so a file
+    /// planted in a shared temp directory can never be read by the CLI as its config.
     pub fn create(dir: &Path, entry: &SourceEntry, environment: &RuntimeEnvironment) -> std::io::Result<Self> {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = dir.join(format!("{}-test-{}-{id}.json", entry.key_provider, std::process::id()));
         let view = crate::settings::view(environment);
         if view.status == "config_unreadable" {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "无法读取搜索设置"));
@@ -260,7 +259,7 @@ impl TestConfig {
         let mut config = serde_json::json!({});
         config["disabled_sources"] = serde_json::json!(view.disabled_sources);
         if let Some(cookies) = view.twitter_cookies_path { config["twitter_cookies_path"] = Value::String(cookies); }
-        std::fs::write(&path, serde_json::to_vec(&config)?)?;
+        let path = crate::secure_temp::create_file(dir, &format!("multi-search-{}-test-", entry.key_provider), ".json", &serde_json::to_vec(&config)?)?;
         Ok(Self(path))
     }
 }
@@ -423,13 +422,10 @@ pub(crate) fn migration_request(
 struct RequestFile(PathBuf);
 impl RequestFile {
     fn create(dir: &Path, request: &MigrationRequest) -> Result<Self, String> {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let path = dir.join(format!("migrate-request-{}-{nanos}.json", std::process::id()));
         let body = serde_json::to_string(request).map_err(|_| "无法准备迁移请求".to_string())?;
-        std::fs::write(&path, body).map_err(|_| "无法准备迁移请求".to_string())?;
+        // Random name + create_new: a pre-placed request file cannot be swapped in.
+        let path = crate::secure_temp::create_file(dir, "multi-search-migrate-request-", ".json", body.as_bytes())
+            .map_err(|_| "无法准备迁移请求".to_string())?;
         Ok(Self(path))
     }
 }
@@ -558,6 +554,30 @@ mod migration_tests {
         assert!(!raw.contains("synthetic-cookie-secret"));
         drop(config);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migration_request_file_has_an_unpredictable_name_and_never_reuses_a_planted_file() {
+        let dir = std::env::temp_dir().join(format!("ms-request-{}", crate::secure_temp::token()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // The old, guessable name pattern: a file planted there must stay untouched and unused.
+        let planted = dir.join(format!("migrate-request-{}-0.json", std::process::id()));
+        std::fs::write(&planted, b"attacker").unwrap();
+        let request = migration_request(TOKEN, &["tavily".into()], &BTreeMap::new()).unwrap();
+        let first = RequestFile::create(&dir, &request).unwrap();
+        let second = RequestFile::create(&dir, &request).unwrap();
+        assert_ne!(first.0, second.0);
+        assert_ne!(first.0, planted);
+        let name = first.0.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(!name.contains(&std::process::id().to_string()), "{name} must not embed the PID");
+        assert_eq!(std::fs::read(&planted).unwrap(), b"attacker");
+        let written: Value = serde_json::from_slice(&std::fs::read(&first.0).unwrap()).unwrap();
+        assert_eq!(written["approved"], serde_json::json!(["tavily"]));
+        let path = first.0.clone();
+        drop(first);
+        assert!(!path.exists(), "the request file is removed on drop");
+        drop(second);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
