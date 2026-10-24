@@ -36,6 +36,7 @@ function testText(result, label, provenance) {
     quota: `额度不足：${label} 额度已用尽。`,
     rate_limited: '触发频率限制：请稍后再试。',
     missing_key: '缺少 Key：请先保存。',
+    credential_store: '凭据库错误：无法读取这个来源的 Key，请重新保存。',
     network: `网络错误：无法连接 ${label}。`,
     timeout: '超时：请稍后重试。',
     error: '测试失败：请查看 CLI 输出。',

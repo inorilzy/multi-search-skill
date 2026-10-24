@@ -90,6 +90,48 @@ impl DesktopManager {
         }
     }
 
+    /// Core's own per-provider credential-source report (`doctor --format json`).
+    ///
+    /// The credential page displays this answer instead of re-deriving the
+    /// effective source; the same Core code loads keys for a real search, so the
+    /// UI, `doctor`, and `search` cannot disagree. An empty map (CLI missing,
+    /// timeout, or CLI without `--format json`) makes callers show `unavailable`
+    /// rather than a locally guessed source.
+    pub(crate) fn key_sources(
+        &self,
+    ) -> BTreeMap<String, crate::credential_commands::CoreKeySource> {
+        let Ok(cli) = self.execution_cli() else {
+            return BTreeMap::new();
+        };
+        let args = ["doctor", "--format", "json"].map(str::to_string);
+        // Forward the same provider key variables the desktop sees, so Core's
+        // `env` rows match what this process would load. Values stay in the child
+        // environment (never argv) and doctor prints booleans only.
+        let names: Vec<String> = crate::source_catalog::catalog()
+            .env
+            .providers
+            .values()
+            .flatten()
+            .cloned()
+            .collect();
+        let credentials: Vec<&str> = names.iter().map(String::as_str).collect();
+        let Ok(output) = crate::process::bounded_with(
+            &cli,
+            &args,
+            &self.environment,
+            &credentials,
+            std::time::Duration::from_secs(10),
+        ) else {
+            return BTreeMap::new();
+        };
+        if output.timed_out {
+            return BTreeMap::new();
+        }
+        serde_json::from_str::<serde_json::Value>(&output.stdout)
+            .map(|payload| crate::credential_commands::core_key_sources(&payload))
+            .unwrap_or_default()
+    }
+
     /// The executable every UI-triggered CLI run uses. Never chosen by the frontend.
     pub fn execution_cli(&self) -> Result<PathBuf, String> {
         let selected = self.detect_cli().execution;

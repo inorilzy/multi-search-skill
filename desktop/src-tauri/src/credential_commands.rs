@@ -58,8 +58,51 @@ pub struct CredentialOverview {
     pub file_key_count: usize,
 }
 
-/// Pure resolution of the effective source, matching `key_sources` in keys.py.
-pub(crate) fn effective_source(env_set: bool, store: &CredentialStatus, file_keys: usize) -> String {
+/// One row of Core's `doctor --format json` → `key_sources` report.
+///
+/// The desktop never derives the effective source itself: `window::credential_status`
+/// asks the CLI, which is the same code that loads keys for a real search. This
+/// keeps the credential page, `doctor`, and `search` from disagreeing.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct CoreKeySource {
+    #[serde(default)]
+    pub effective_source: String,
+    #[serde(default)]
+    pub env_vars_set: Vec<String>,
+    #[serde(default)]
+    pub env_overrides_store: bool,
+    #[serde(default)]
+    pub credential_store: String,
+    #[serde(default)]
+    pub file_key_count: usize,
+    #[serde(default)]
+    pub credential_store_error: Option<String>,
+}
+
+/// Parse the per-provider section of a `doctor --format json` payload.
+/// A payload without `key_sources` (e.g. `doctor --no-keys`) yields an empty map.
+pub(crate) fn core_key_sources(payload: &Value) -> BTreeMap<String, CoreKeySource> {
+    payload
+        .get("key_sources")
+        .and_then(|sources| serde_json::from_value(sources.clone()).ok())
+        .unwrap_or_default()
+}
+
+/// Overwrite the fields Core owns with Core's answer. Only called at the command
+/// boundary; unit tests may omit it and use the test-fixtures fallback below.
+pub(crate) fn apply_core_source(overview: &mut CredentialOverview, core: Option<&CoreKeySource>) {
+    let Some(core) = core else { return };
+    overview.effective_source = core.effective_source.clone();
+    overview.env_overrides_store = core.env_overrides_store;
+    overview.env_var = core.env_vars_set.last().cloned().unwrap_or_default();
+    overview.file_key_count = core.file_key_count;
+}
+
+/// Test-only mirror of Core's rule, so the fixture tests can exercise the
+/// desktop without spawning the CLI. Product builds never evaluate this: the
+/// source always comes from `CoreKeySource`.
+#[cfg(feature = "test-fixtures")]
+fn fallback_effective_source(env_set: bool, store: &CredentialStatus, file_keys: usize) -> String {
     if env_set {
         "env".into()
     } else if store.state == "present" {
@@ -71,6 +114,13 @@ pub(crate) fn effective_source(env_set: bool, store: &CredentialStatus, file_key
     } else {
         "none".into()
     }
+}
+
+/// Without Core data and without the test fixture, report "unavailable" rather
+/// than guessing from local state: fail visible, never contradict Core.
+#[cfg(not(feature = "test-fixtures"))]
+fn fallback_effective_source(_env_set: bool, _store: &CredentialStatus, _file_keys: usize) -> String {
+    "unavailable".into()
 }
 
 /// Keys file location derived from the given variables only (never the process environment).
@@ -119,7 +169,7 @@ pub(crate) fn overview(
     let file_keys = file_key_count(keys_file_path(variables).as_deref(), &entry.key_provider);
     CredentialOverview {
         source: entry.name.clone(),
-        effective_source: effective_source(!env_var.is_empty(), &store, file_keys),
+        effective_source: fallback_effective_source(!env_var.is_empty(), &store, file_keys),
         env_overrides_store: !env_var.is_empty() && store.state == "present",
         env_var,
         store,
@@ -167,6 +217,10 @@ pub(crate) fn classify(error_type: &str, label: &str) -> TestOutcome {
         "network" => ("network", format!("无法连接 {label}，请检查网络连接。")),
         "timeout" => ("timeout", format!("{label} 请求超时，请稍后重试。")),
         "missing_key" => ("missing_key", format!("未找到可用的 {label} key，请先保存。")),
+        "credential_store" => (
+            "credential_store",
+            format!("无法读取凭据库中 {label} 的 key。请重新保存该来源的 key。"),
+        ),
         _ => ("error", format!("{label} 测试失败，请查看 CLI 输出。")),
     };
     TestOutcome {

@@ -20,8 +20,8 @@ from .support.config import (
 from .support.format import body_preview_start, format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager, classify_error
 from .state.keys import (
-    KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, key_sources, load_keys,
-    keys_file_permission_warning,
+    KEY_ENV_NAMES, KeysError, KeyLoad, count_jina_keys, jina_config_keys, key_sources,
+    keys_file_permission_warning, load_keys,
 )
 from .support.models import ANSWER_SOURCES, as_dicts, is_empty_result, normalize_scrape_result, search_content
 from .scrape.scrape import scrape_url_smart
@@ -395,6 +395,7 @@ def _run_search_candidates(
     *,
     providers: dict | None = None,
     keys: dict | None = None,
+    key_errors: dict[str, str] | None = None,
     config: dict | None = None,
     state_store: StateStore | None = None,
     query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,
@@ -436,7 +437,11 @@ def _run_search_candidates(
         use_state=request.use_state,
     )
     plan = resolve_search_plan(planning_request, resolved_config)
-    runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
+    if keys is None:
+        loaded = _load_runtime_key_context(resolved_config)
+        runtime_keys, runtime_key_errors = loaded.keys, loaded.errors
+    else:
+        runtime_keys, runtime_key_errors = dict(keys), dict(key_errors or {})
     store = (state_store or StateStore()) if request.use_state else None
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
 
@@ -466,6 +471,7 @@ def _run_search_candidates(
             plan.serpapi_engine,
             runtime_keys,
             False,
+            key_errors=runtime_key_errors,
         ),
         providers,
         route_resolver=route_resolver,
@@ -704,11 +710,16 @@ def run_search_web(
             ("scrape_concurrency", scrape_concurrency),
         ) if value is not None
     })
-    runtime_keys = _load_runtime_keys(resolved_config) if keys is None else dict(keys)
+    if keys is None:
+        loaded = _load_runtime_key_context(resolved_config)
+        runtime_keys, runtime_key_errors = loaded.keys, loaded.errors
+    else:
+        runtime_keys, runtime_key_errors = dict(keys), {}
     store = (state_store or StateStore()) if request.use_state else None
     prefetched = {}
     response = _run_search_candidates(
-        request, providers=providers, keys=runtime_keys, config=resolved_config,
+        request, providers=providers, keys=runtime_keys, key_errors=runtime_key_errors,
+        config=resolved_config,
         state_store=store, query_runs_observer=query_runs_observer,
         prefetched_bodies=prefetched, persist_bodies=not request.no_fetch,
     )
@@ -1228,14 +1239,27 @@ def _compat_source_summaries(source_briefs: list[dict]) -> list[dict]:
     return rows
 
 
-def _load_runtime_keys(config: dict | None = None) -> dict:
-    """Load keys, adding the config's non-secret Twitter cookie path reference."""
+def _load_runtime_key_context(config: dict | None = None) -> KeyLoad:
+    """Load keys plus per-provider credential errors, with the config's Twitter reference."""
     from .support.config import config_str
     reference = config_str(config or {}, "twitter_cookies_path") or None
     if reference is None:
         # Keep the original call shape when config carries no Twitter reference.
-        return load_keys()
-    return load_keys(twitter_cookies_path=reference)
+        loaded = load_keys()
+    else:
+        loaded = load_keys(twitter_cookies_path=reference)
+    # `load_keys` is the long-standing seam callers patch; plain dicts (e.g. a
+    # test double) simply carry no per-provider errors.
+    return KeyLoad(keys=dict(loaded), errors=dict(getattr(loaded, "errors", {})))
+
+
+def _load_runtime_keys(config: dict | None = None) -> dict:
+    """Load keys, adding the config's non-secret Twitter cookie path reference.
+
+    Providers whose store entry is unreadable are simply absent; search paths use
+    :func:`_load_runtime_key_context` to surface their explicit error.
+    """
+    return _load_runtime_key_context(config).keys
 
 
 def _load_config_safe(path: str | None) -> dict:

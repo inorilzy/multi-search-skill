@@ -157,6 +157,9 @@ class SearchRunnerConfig:
     serpapi_engine: str
     keys: dict
     want_content: bool = False
+    # provider -> error for a credential entry that could not be read. Only that
+    # provider fails; every other source (keyed or keyless) keeps running.
+    key_errors: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -182,6 +185,21 @@ def missing(source: str, message: str) -> list[dict]:
             "source": source,
             "error": f"skipped: {message}",
             "error_type": "missing_key",
+        }
+    ]
+
+
+def credential_unavailable(source: str, message: str) -> list[dict]:
+    """Only this provider's stored credential entry could not be read.
+
+    The key is not used and the plaintext file is not substituted (fail closed),
+    but the failure stays local to the provider that depends on that entry.
+    """
+    return [
+        {
+            "source": source,
+            "error": message,
+            "error_type": "credential_store",
         }
     ]
 
@@ -372,7 +390,10 @@ class SearchRunner:
             if spec is None:
                 continue
             key_value = self.config.keys.get(spec.key_name) if spec.key_name else None
-            if spec.key_name and key_value:
+            key_error = self.config.key_errors.get(spec.key_name) if spec.key_name else None
+            if key_error:
+                results.extend(credential_unavailable(spec.public_name, key_error))
+            elif spec.key_name and key_value:
                 jobs.append((
                     spec.public_name,
                     lambda spec=spec, key_value=key_value: self._run_keyed_source(

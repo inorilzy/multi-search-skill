@@ -207,6 +207,7 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 
 - 同一 provider 有多个环境变量时，按下面列表从左到右依次读取，**最后一个非空值生效**。例如同时设置 `BRAVE_SEARCH_API_KEY` 和 `BRAVE_API_KEY` 时使用 `BRAVE_API_KEY`；同时设置 `GITHUB_TOKEN` 和 `GH_TOKEN` 时使用 `GH_TOKEN`。
 - 生效顺序：环境变量（`env`）> Windows 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）。
+- 凭据库条目读不出来时，只有该 provider 失败（`error_type: "credential_store"`），不会回退到明文文件，也不影响其他源和无 key 的源；`doctor`、桌面端凭据页和实际搜索都使用 `key_sources` 的同一判定。
 - `TWITTER_COOKIES_PATH` > 配置中的 `twitter_cookies_path` > keys 文件中的 `twitter` 条目。
 
 ```text

@@ -6,6 +6,7 @@ import stat
 import sys
 import tempfile
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -202,66 +203,178 @@ def _default_credential_store(use_process_env: bool, environ: Mapping[str, str],
     return default_store(environ)
 
 
+@dataclass(frozen=True)
+class KeyLoad:
+    """Keys plus the per-provider credential errors that kept a key out of rotation."""
+
+    keys: dict
+    errors: dict[str, str]
+
+
+class LoadedKeys(dict):
+    """The key map returned by :func:`load_keys`, carrying per-provider errors.
+
+    A plain ``dict`` everywhere it is used; ``errors`` is read by the search
+    pipeline so a broken credential entry fails only its own source. Callers
+    that copy with ``dict(keys)`` intentionally drop the annotations.
+    """
+
+    def __init__(self, keys: dict, errors: dict[str, str]):
+        super().__init__(keys)
+        self.errors = dict(errors)
+
+
+def _read_keys_file(keys_file: Path) -> dict:
+    """Read the plaintext fallback file. A whole-file parse failure is still fatal."""
+    if not keys_file.exists():
+        return {}
+    try:
+        # utf-8-sig tolerates BOM (PowerShell 5.1 writes BOM by default)
+        loaded = json.loads(keys_file.read_text(encoding="utf-8-sig"))
+    except Exception:
+        # Fail loudly instead of silently returning zero keys: a corrupt keys
+        # file otherwise surfaces as every provider "missing key", hiding the
+        # real cause. Reference only the path, never the (secret-bearing)
+        # file contents or parser detail.
+        raise KeysError(f"keys file is not valid JSON: {keys_file}") from None
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _source_rows(file_keys: dict, environ: Mapping[str, str], store) -> dict[str, dict]:
+    """The single effective-source decision shared by key loading and reporting.
+
+    Order: environment > credential store > keys file. A store that is present
+    but unreadable makes exactly that provider "unavailable": it fails closed
+    (the plaintext file is not used as a substitute) without affecting other
+    providers or keyless sources.
+    """
+    from ..support.credential_store import CredentialStoreError
+
+    report: dict[str, dict] = {}
+    for provider in CREDENTIAL_STORE_PROVIDERS:
+        env_names = [name for name, key_name in KEY_ENV_PAIRS if key_name == provider and environ.get(name)]
+        store_state = "disabled"
+        store_error = None
+        store_value = None
+        if store is not None:
+            try:
+                store_value = store.get(provider)
+                store_state = "present" if store_value else "absent"
+            except CredentialStoreError as exc:
+                store_state = "unavailable"
+                store_error = str(exc)
+        if env_names:
+            effective = "env"
+        elif store_state == "unavailable":
+            # Fail closed: never silently fall back to the plaintext file.
+            effective = "unavailable"
+        elif store_state == "present":
+            effective = "credential_store"
+        elif file_keys.get(provider):
+            effective = "file"
+        else:
+            effective = "none"
+        report[provider] = {
+            "effective_source": effective,
+            "env_vars_set": env_names,
+            "env_overrides_store": bool(env_names and store_state == "present"),
+            "credential_store": store_state,
+            "file_present": bool(file_keys.get(provider)),
+            # Count only: the file list is kept on disk and does not rotate with a store key.
+            "file_key_count": _file_key_count(file_keys.get(provider)),
+            # Internal: the loaded store value, never serialized to callers.
+            "_store_value": store_value,
+            **({"credential_store_error": store_error} if store_error else {}),
+        }
+    return report
+
+
+def _load_keys_result(
+    keys_file: str | Path | None,
+    environ: Mapping[str, str],
+    credential_store,
+) -> tuple[dict, dict[str, str]]:
+    keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
+    keys = _read_keys_file(keys_file)
+    store = _default_credential_store(False, environ, credential_store)
+    rows = _source_rows(keys, environ, store)
+    errors: dict[str, str] = {}
+    for provider, row in rows.items():
+        effective = row["effective_source"]
+        if effective == "unavailable":
+            # Drop any file value for this provider: fail closed, but keep every
+            # other provider and every keyless source working.
+            keys.pop(provider, None)
+            detail = row.get("credential_store_error") or "entry is unreadable"
+            errors[provider] = f"credential store unavailable for {provider}: {detail}"
+        elif effective == "credential_store" and row.get("_store_value"):
+            keys[provider] = row["_store_value"]
+    for env_name, key_name in KEY_ENV_PAIRS:
+        val = environ.get(env_name)
+        if val:
+            # Environment variables are read without consulting the store, so a
+            # broken entry never blocks an env-configured provider.
+            errors.pop(key_name, None)
+            keys[key_name] = val
+            if env_name == "TWITTER_COOKIES_PATH":
+                keys["twitter"] = val
+    return keys, errors
+
+
+def load_keys_detailed(
+    keys_file: str | Path | None = None,
+    environ: Mapping[str, str] | None = None,
+    credential_store=None,
+    *,
+    twitter_cookies_path: str | None = None,
+) -> KeyLoad:
+    """Load keys and report providers whose credential entry could not be read.
+
+    A single unusable store entry fails only that provider. Any provider whose
+    entry is unreadable is removed from ``keys`` (fail closed) and reported in
+    ``errors`` so the search pipeline can surface a clear per-source error.
+    """
+    use_process_env = environ is None
+    environ = os.environ if environ is None else environ
+    if credential_store is None and not use_process_env:
+        # Explicit environment (tests): never consult the process-wide store.
+        store = None
+    else:
+        store = _default_credential_store(use_process_env, environ, credential_store)
+    keys, errors = _load_keys_result(keys_file, environ, store)
+    # Config reference: below the env path, above the keys file's twitter entry.
+    if not environ.get("TWITTER_COOKIES_PATH") and twitter_cookies_path:
+        keys["twitter"] = twitter_cookies_path
+    return KeyLoad(keys=keys, errors=errors)
+
+
 def load_keys(
     keys_file: str | Path | None = None,
     environ: Mapping[str, str] | None = None,
     credential_store=None,
     *,
     twitter_cookies_path: str | None = None,
-) -> dict:
+) -> LoadedKeys:
     """Load API keys: environment > credential store > ~/.search-keys.json.
 
     ``credential_store`` may be injected (tests). When omitted, the Windows store
     is consulted only for the real process environment (see ``_credential_store_enabled``).
 
+    A provider whose store entry is unreadable is left out of the mapping (fail
+    closed) and recorded in ``errors``; use :func:`load_keys_detailed` for a
+    dataclass view of the same result.
+
     ``twitter_cookies_path`` is the non-secret cookie file reference from config. It
     ranks below ``TWITTER_COOKIES_PATH`` and above the keys file's twitter entry.
     Only the path string is stored here; the cookie file is never read by this function.
     """
-    keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
-    use_process_env = environ is None
-    environ = os.environ if environ is None else environ
-    keys: dict = {}
-    if keys_file.exists():
-        try:
-            # utf-8-sig tolerates BOM (PowerShell 5.1 writes BOM by default)
-            keys = json.loads(keys_file.read_text(encoding="utf-8-sig"))
-        except Exception as exc:
-            # Fail loudly instead of silently returning zero keys: a corrupt
-            # keys file otherwise surfaces as every provider "missing key",
-            # hiding the real cause. Reference only the path, never the
-            # (secret-bearing) file contents or parser detail.
-            raise KeysError(f"keys file is not valid JSON: {keys_file}") from None
-        if not isinstance(keys, dict):
-            keys = {}
-    store = _default_credential_store(use_process_env, environ, credential_store)
-    if store is not None:
-        from ..support.credential_store import CredentialStoreError
-
-        env_providers = {key_name for env_name, key_name in KEY_ENV_PAIRS if environ.get(env_name)}
-        for provider in CREDENTIAL_STORE_PROVIDERS:
-            if provider in env_providers:
-                # An environment variable overrides the store, so the store is not read.
-                # A broken store therefore never blocks an env-driven run.
-                continue
-            try:
-                value = store.get(provider)
-            except CredentialStoreError as exc:
-                # Explicit failure: a present-but-unreadable store must never be
-                # silently bypassed in favor of the plaintext file.
-                raise KeysError(f"credential store unavailable for {provider}: {exc}") from None
-            if value:
-                keys[provider] = value
-    for env_name, key_name in KEY_ENV_PAIRS:
-        val = environ.get(env_name)
-        if val:
-            keys[key_name] = val
-            if env_name == "TWITTER_COOKIES_PATH":
-                keys["twitter"] = val
-    # Config reference: below the env path, above the keys file's twitter entry.
-    if not environ.get("TWITTER_COOKIES_PATH") and twitter_cookies_path:
-        keys["twitter"] = twitter_cookies_path
-    return keys
+    loaded = load_keys_detailed(
+        keys_file,
+        environ,
+        credential_store,
+        twitter_cookies_path=twitter_cookies_path,
+    )
+    return LoadedKeys(loaded.keys, loaded.errors)
 
 
 def _file_key_count(value) -> int:
@@ -275,48 +388,21 @@ def key_sources(
     environ: Mapping[str, str] | None = None,
     credential_store=None,
 ) -> dict[str, dict]:
-    """Report provenance (never values) of each credential-store provider's key."""
-    from ..support.credential_store import CredentialStoreError
+    """Report provenance (never values) of each credential-store provider's key.
 
+    Uses the same decision as :func:`load_keys_detailed`: an unreadable store
+    entry reports ``unavailable`` (never ``file``) so CLI state, doctor output,
+    and a real search all give the same answer.
+    """
     keys_file = Path(keys_file).expanduser() if keys_file else Path.home() / ".search-keys.json"
     use_process_env = environ is None
     environ = os.environ if environ is None else environ
-    file_keys: dict = {}
-    if keys_file.exists():
-        try:
-            loaded = json.loads(keys_file.read_text(encoding="utf-8-sig"))
-            file_keys = loaded if isinstance(loaded, dict) else {}
-        except Exception:
-            file_keys = {}
-    store = _default_credential_store(use_process_env, environ, credential_store)
-    report: dict[str, dict] = {}
-    for provider in CREDENTIAL_STORE_PROVIDERS:
-        env_names = [name for name, key_name in KEY_ENV_PAIRS if key_name == provider and environ.get(name)]
-        store_state = "disabled"
-        store_error = None
-        if store is not None:
-            try:
-                store_state = "present" if store.get(provider) else "absent"
-            except CredentialStoreError as exc:
-                store_state = "unavailable"
-                store_error = str(exc)
-        in_store = store_state == "present"
-        if env_names:
-            effective = "env"
-        elif in_store:
-            effective = "credential_store"
-        elif file_keys.get(provider):
-            effective = "file"
-        else:
-            effective = "none"
-        report[provider] = {
-            "effective_source": effective,
-            "env_vars_set": env_names,
-            "env_overrides_store": bool(env_names and in_store),
-            "credential_store": store_state,
-            "file_present": bool(file_keys.get(provider)),
-            # Count only: the file list is kept on disk and does not rotate with a store key.
-            "file_key_count": _file_key_count(file_keys.get(provider)),
-            **({"credential_store_error": store_error} if store_error else {}),
-        }
+    file_keys = _read_keys_file(keys_file)
+    if credential_store is None and not use_process_env:
+        store = None
+    else:
+        store = _default_credential_store(use_process_env, environ, credential_store)
+    report = _source_rows(file_keys, environ, store)
+    for row in report.values():
+        row.pop("_store_value", None)
     return report

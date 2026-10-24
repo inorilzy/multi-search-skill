@@ -141,10 +141,18 @@ async fn credential_status(
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
     let entry = crate::credential_commands::resolve_source(&source)?;
     let variables = manager.inner().environment.variables.clone();
+    let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::credential_commands::with_native(|backend| {
+        // Core decides the effective source; the desktop only displays it.
+        let key_sources = manager.key_sources();
+        let mut overview = crate::credential_commands::with_native(|backend| {
             crate::credential_commands::overview(backend, &variables, entry)
-        })
+        });
+        crate::credential_commands::apply_core_source(
+            &mut overview,
+            key_sources.get(&entry.key_provider),
+        );
+        overview
     })
     .await
     .map_err(|_| "Credential status worker failed".into())
@@ -157,14 +165,22 @@ async fn credential_save(
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
     let entry = crate::credential_commands::resolve_source(&source)?;
     let variables = manager.inner().environment.variables.clone();
+    let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
-        crate::credential_commands::with_native(|backend| {
+        let mut overview = crate::credential_commands::with_native(|backend| {
             crate::credential_commands::save(backend, &variables, entry, &key, now)
-        })
+        })?;
+        // Read Core after the write so the returned overview reflects the new state.
+        let key_sources = manager.key_sources();
+        crate::credential_commands::apply_core_source(
+            &mut overview,
+            key_sources.get(&entry.key_provider),
+        );
+        Ok::<_, String>(overview)
     })
     .await
     .map_err(|_| "Credential save worker failed".to_string())?
@@ -176,10 +192,18 @@ async fn credential_delete(
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
     let entry = crate::credential_commands::resolve_source(&source)?;
     let variables = manager.inner().environment.variables.clone();
+    let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::credential_commands::with_native(|backend| {
+        let mut overview = crate::credential_commands::with_native(|backend| {
             crate::credential_commands::delete(backend, &variables, entry)
-        })
+        })?;
+        // Read Core after the delete so the returned overview reflects the new state.
+        let key_sources = manager.key_sources();
+        crate::credential_commands::apply_core_source(
+            &mut overview,
+            key_sources.get(&entry.key_provider),
+        );
+        Ok::<_, String>(overview)
     })
     .await
     .map_err(|_| "Credential delete worker failed".to_string())?

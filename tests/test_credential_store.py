@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 from multi_search_mcp.src.state import keys as keys_module
-from multi_search_mcp.src.state.keys import KeysError, key_sources, load_keys
+from multi_search_mcp.src.state.keys import KeysError, key_sources, load_keys, load_keys_detailed
 from multi_search_mcp.src.support.credential_store import (
     CredentialStore,
     CredentialStoreError,
@@ -119,10 +119,16 @@ class LoadKeysPriorityTests(unittest.TestCase):
         self.write_file({"tavily": self.file_key})
         backend = MemoryBackend()
         backend.fail = CredentialStoreError("credential store access denied")
-        with self.assertRaises(KeysError) as ctx:
-            load_keys(self.keys_file, environ={}, credential_store=CredentialStore(backend))
-        self.assertNotIn(self.file_key, str(ctx.exception))
-        self.assertNotIn(SYNTHETIC_KEY, str(ctx.exception))
+        loaded = load_keys_detailed(
+            self.keys_file, environ={}, credential_store=CredentialStore(backend),
+        )
+        # Fail closed: the plaintext file is not used while the store is unreadable.
+        self.assertEqual(loaded.keys, {})
+        self.assertIn("tavily", loaded.errors)
+        self.assertIn("credential store access denied", loaded.errors["tavily"])
+        # The error is explicit and never contains key material.
+        self.assertNotIn(self.file_key, loaded.errors["tavily"])
+        self.assertNotIn(SYNTHETIC_KEY, loaded.errors["tavily"])
 
     def test_process_store_is_not_consulted_under_test_isolation(self):
         env = {"MULTI_SEARCH_TEST_ISOLATION": "1"}
@@ -164,7 +170,8 @@ class KeySourcesTests(unittest.TestCase):
         backend.fail = CredentialStoreError("credential store access denied")
         report = key_sources(self.keys_file, environ={}, credential_store=CredentialStore(backend))
         self.assertEqual(report["tavily"]["credential_store"], "unavailable")
-        self.assertEqual(report["tavily"]["effective_source"], "none")
+        # Same answer as a real load: unavailable, never a silent file fallback.
+        self.assertEqual(report["tavily"]["effective_source"], "unavailable")
 
 
 class AllKeyProvidersStoreTests(unittest.TestCase):
@@ -223,11 +230,39 @@ class AllKeyProvidersStoreTests(unittest.TestCase):
         self.assertEqual(row["file_key_count"], 2)
         self.assertNotIn("file-brave-key-0031", json.dumps(row))
 
-    def test_store_failure_for_any_provider_is_explicit(self):
+    def test_store_failure_is_reported_per_provider_without_values(self):
         backend = MemoryBackend()
         backend.fail = CredentialStoreError("credential store access denied")
-        with self.assertRaises(KeysError):
-            load_keys(self.keys_file, environ={}, credential_store=CredentialStore(backend))
+        loaded = load_keys_detailed(
+            self.keys_file, environ={}, credential_store=CredentialStore(backend),
+        )
+        self.assertEqual(loaded.keys, {})
+        for provider in ("baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github"):
+            self.assertIn(provider, loaded.errors)
+            self.assertIn("credential store access denied", loaded.errors[provider])
+        self.assertNotIn(SYNTHETIC_KEY, json.dumps(loaded.errors))
+
+    def test_one_unreadable_entry_only_removes_that_provider(self):
+        self.keys_file.write_text(json.dumps({
+            "tavily": "file-tavily-key-0002",
+            "brave": "file-brave-key-0031",
+        }), encoding="utf-8")
+        backend = MemoryBackend()
+        store = CredentialStore(backend, namespace="ns-test")
+        store.set("exa", SYNTHETIC_KEY)
+        backend.entries[store.target("tavily")] = b"{not json"
+        loaded = load_keys_detailed(self.keys_file, environ={}, credential_store=store)
+        # The broken provider fails closed (no file fallback, no value).
+        self.assertNotIn("tavily", loaded.keys)
+        self.assertIn("tavily", loaded.errors)
+        self.assertIn("unreadable", loaded.errors["tavily"])
+        # Everyone else keeps working, including the file-provided provider.
+        self.assertEqual(loaded.keys["exa"], SYNTHETIC_KEY)
+        self.assertEqual(loaded.keys["brave"], "file-brave-key-0031")
+        rows = key_sources(self.keys_file, environ={}, credential_store=store)
+        self.assertEqual(rows["tavily"]["effective_source"], "unavailable")
+        self.assertEqual(rows["exa"]["effective_source"], "credential_store")
+        self.assertEqual(rows["brave"]["effective_source"], "file")
 
 
 class RustBlobContractTests(unittest.TestCase):
