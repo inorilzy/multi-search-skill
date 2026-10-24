@@ -152,7 +152,128 @@ class BoundedDaemonExecutorTests(unittest.TestCase):
             pool.shutdown(wait=True, cancel_futures=True)
 
 
+class AbandonTests(unittest.TestCase):
+    def test_abandoned_running_task_frees_its_slot_immediately(self):
+        release = threading.Event()
+        started = threading.Event()
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-abandon-free")
+
+        def stuck():
+            started.set()
+            release.wait(timeout=5)
+            return "late"
+
+        try:
+            stuck_future = pool.submit_nowait(stuck)
+            self.assertTrue(started.wait(timeout=1))
+            self.assertIsNone(pool.submit_nowait(lambda: "blocked"))
+            self.assertTrue(pool.abandon(stuck_future))
+            self.assertEqual(pool.detached_count, 1)
+            fresh = pool.submit_nowait(lambda: "fresh")
+            self.assertIsNotNone(fresh)
+            self.assertEqual(fresh.result(timeout=1), "fresh")
+            release.set()
+            self.assertEqual(stuck_future.result(timeout=1), "late")
+            pool._tasks.join()
+            self.assertEqual(pool.detached_count, 0)
+            # The detached task must not return a slot it no longer holds.
+            self.assertIsNotNone(pool.submit_nowait(lambda: None))
+        finally:
+            release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_detached_budget_bounds_threads_and_then_retains_the_slot(self):
+        release = threading.Event()
+        prefix = "test-abandon-bound"
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix=prefix, max_detached=1)
+        try:
+            first = pool.submit_nowait(release.wait, 5)
+            time.sleep(0.02)
+            self.assertTrue(pool.abandon(first))
+            second = pool.submit_nowait(release.wait, 5)
+            time.sleep(0.02)
+            self.assertFalse(pool.abandon(second), "no detached budget remains")
+            self.assertIsNone(pool.submit_nowait(lambda: None))
+            self.assertLessEqual(len(_live_threads(prefix)), 2)
+        finally:
+            release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_abandoning_a_finished_task_is_a_no_op(self):
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-abandon-done")
+        try:
+            future = pool.submit_nowait(lambda: "done")
+            self.assertEqual(future.result(timeout=1), "done")
+            pool._tasks.join()
+            self.assertTrue(pool.abandon(future))
+            self.assertEqual(pool.detached_count, 0)
+            # The finished task's slot was released exactly once.
+            self.assertIsNotNone(pool.submit_nowait(lambda: None))
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+
+
 class SearchRunnerLifecycleTests(unittest.TestCase):
+    def test_new_search_runs_normally_after_consecutive_provider_timeouts(self):
+        """Regression: a stuck provider must not starve later searches."""
+        prefix = "test-search-after-timeouts"
+        unblock = threading.Event()
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix=prefix)
+
+        def stuck(*_args):
+            unblock.wait(timeout=5)
+            return []
+
+        def fast(*_args):
+            return [{"source": "fast", "title": "Fresh", "url": "https://example.test/fresh"}]
+
+        stuck_runner = SearchRunner(
+            SearchRunnerConfig("test", {}, 0.05, "google", {}),
+            {"stuck": ProviderSpec("stuck", "stuck", stuck)},
+            route_resolver=lambda _route: ["stuck"],
+        )
+        fast_runner = SearchRunner(
+            SearchRunnerConfig("test", {}, 1, "google", {}),
+            {"fast": ProviderSpec("fast", "fast", fast)},
+            route_resolver=lambda _route: ["fast"],
+        )
+        try:
+            with mock.patch.object(search_runner_module, "_SEARCH_POOL", pool):
+                # max_workers=1 => one stuck call can be detached.
+                rows = stuck_runner.run("stuck")
+                self.assertIn("timeout after 0.05s", rows[0]["error"])
+                started = time.monotonic()
+                rows = fast_runner.run("fresh")
+                self.assertLess(time.monotonic() - started, 0.5)
+                self.assertEqual(rows[0].get("url"), "https://example.test/fresh")
+                self.assertNotIn("error", rows[0])
+        finally:
+            unblock.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_saturated_pool_is_reported_as_capacity_not_timeout(self):
+        release = threading.Event()
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-search-capacity", max_detached=0)
+        try:
+            pool.submit_nowait(release.wait, 5)
+            runner = SearchRunner(
+                SearchRunnerConfig("test", {}, 0.05, "google", {}),
+                {"fixture": ProviderSpec("fixture", "fixture", lambda *_: [])},
+                route_resolver=lambda _route: ["fixture"],
+            )
+            with mock.patch.object(search_runner_module, "_SEARCH_POOL", pool):
+                rows = runner.run("query")
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["error_type"], "capacity")
+            self.assertIn("saturated", rows[0]["error"])
+            self.assertNotIn("timeout", rows[0]["error"])
+            from multi_search_mcp.src.state.key_state import classify_error
+            self.assertEqual(classify_error(rows[0]["error"], error_type=rows[0]["error_type"]), "capacity")
+            self.assertNotEqual(classify_error(rows[0]["error"]), "timeout")
+        finally:
+            release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+
     def test_saturated_pool_preserves_completed_provider_outcomes(self):
         release = threading.Event()
         pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-search-completed")
@@ -185,8 +306,12 @@ class SearchRunnerLifecycleTests(unittest.TestCase):
             self.assertEqual(by_source["success"].get("url"), "https://example.test/ready")
             self.assertTrue(by_source["empty"].get("_empty"))
             self.assertEqual(by_source["broken"]["error"], "provider unavailable")
-            for source in ("blocked", "unsubmitted"):
-                self.assertIn("timeout", by_source[source]["error"])
+            # The provider that started and ran out of time is a timeout; the
+            # one that never obtained a worker slot is reported as saturation.
+            self.assertIn("timeout", by_source["blocked"]["error"])
+            self.assertIn("saturated", by_source["unsubmitted"]["error"])
+            self.assertEqual(by_source["unsubmitted"]["error_type"], "capacity")
+            self.assertNotIn("timeout", by_source["unsubmitted"]["error"])
         finally:
             release.set()
             pool.shutdown(wait=True, cancel_futures=True)
@@ -246,22 +371,61 @@ runner.run("query")
 
         try:
             with mock.patch.object(search_runner_module, "_SEARCH_POOL", pool, create=True):
-                for _ in range(6):
+                for attempt in range(6):
                     started = time.monotonic()
                     rows = runner.run("stuck query")
                     self.assertLess(time.monotonic() - started, 0.25)
                     self.assertEqual(len(rows), 1)
                     self.assertEqual(rows[0]["source"], "blocking")
-                    self.assertIn("timeout after 0.05s", rows[0]["error"])
+                    # Runs 1-2 detach their stuck call (freeing the slot), runs
+                    # 3-4 exhaust the detached budget and keep their slots; the
+                    # bounded pool then reports saturation instead of timeout.
+                    expected = "timeout after 0.05s" if attempt < 4 else "saturated"
+                    self.assertIn(expected, rows[0]["error"])
 
                 time.sleep(0.05)
-                self.assertLessEqual(len(_live_threads(prefix)), 2)
+                self.assertLessEqual(len(_live_threads(prefix)), 4)
         finally:
             unblock.set()
             pool.shutdown(wait=True, cancel_futures=True)
 
 
 class RankedFetchStageLifecycleTests(unittest.TestCase):
+    def test_fetch_runs_normally_after_a_timed_out_fetch(self):
+        unblock = threading.Event()
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-fetch-after-timeout")
+        hit = [{"source_id": "src_doc", "title": "Doc", "url": "https://example.com/doc"}]
+        try:
+            with mock.patch.object(scrape_stage_module, "_SCRAPE_POOL", pool):
+                stuck = run_ranked_fetch_stage(
+                    hit, fetch=lambda *_: unblock.wait(timeout=5) and {}, timeout=0.05,
+                )
+                self.assertIn("fetch timeout", stuck["errors"][0]["error"])
+                fresh = run_ranked_fetch_stage(
+                    hit, fetch=lambda h, _r: {"source_id": h["source_id"], "url": h["url"], "body": "ok"},
+                    timeout=1,
+                )
+            self.assertEqual(fresh["errors"], [])
+            self.assertEqual(fresh["results"][0]["body"], "ok")
+        finally:
+            unblock.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_saturated_fetch_pool_is_reported_as_capacity(self):
+        release = threading.Event()
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-fetch-capacity", max_detached=0)
+        hit = [{"source_id": "src_doc", "title": "Doc", "url": "https://example.com/doc"}]
+        try:
+            pool.submit_nowait(release.wait, 5)
+            with mock.patch.object(scrape_stage_module, "_SCRAPE_POOL", pool):
+                result = run_ranked_fetch_stage(hit, fetch=mock.Mock(), timeout=0.05)
+            self.assertEqual(result["errors"][0]["error_type"], "capacity")
+            self.assertIn("saturated", result["errors"][0]["error"])
+            self.assertNotIn("timeout", result["errors"][0]["error"])
+        finally:
+            release.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+
     def test_ranked_fetch_timeouts_do_not_spawn_unbounded_workers(self):
         prefix = "test-ranked-fetch-stage-lifecycle"
         unblock = threading.Event()
@@ -277,7 +441,7 @@ class RankedFetchStageLifecycleTests(unittest.TestCase):
 
         try:
             with mock.patch.object(scrape_stage_module, "_SCRAPE_POOL", pool):
-                for _ in range(6):
+                for attempt in range(6):
                     started = time.monotonic()
                     result = run_ranked_fetch_stage(
                         hits, fetch=blocking_fetch, timeout=0.05, concurrency=1,
@@ -285,10 +449,11 @@ class RankedFetchStageLifecycleTests(unittest.TestCase):
                     self.assertLess(time.monotonic() - started, 0.25)
                     self.assertEqual(len(result["errors"]), 1)
                     self.assertEqual(result["errors"][0]["source_id"], "src_doc")
-                    self.assertIn("fetch timeout after 0.05s", result["errors"][0]["error"])
+                    expected = "fetch timeout after 0.05s" if attempt < 4 else "saturated"
+                    self.assertIn(expected, result["errors"][0]["error"])
 
                 time.sleep(0.05)
-                self.assertLessEqual(len(_live_threads(prefix)), 2)
+                self.assertLessEqual(len(_live_threads(prefix)), 4)
         finally:
             unblock.set()
             pool.shutdown(wait=True, cancel_futures=True)

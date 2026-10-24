@@ -319,8 +319,62 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertEqual(requests_seen, ["http://" + PUBLIC_IP + "/start"])
         self.assertTrue(finished.wait(timeout=1))
 
-    def test_dns_capacity_is_retained_until_running_resolution_finishes(self):
-        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-r3-dns")
+    def test_timed_out_resolution_frees_its_slot_for_the_next_lookup(self):
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-r3-dns-detach")
+        released = threading.Event()
+        finished = threading.Event()
+
+        def blocking_resolver(_host):
+            try:
+                released.wait(timeout=2)
+                return [PUBLIC_IP]
+            finally:
+                finished.set()
+
+        try:
+            with mock.patch.object(url_security, "_DNS_POOL", pool):
+                with self.assertRaises(UrlSecurityError) as first:
+                    url_security.validate_public_http_url(
+                        "https://blocked.example/path",
+                        resolver=blocking_resolver,
+                        deadline=time.monotonic() + 0.02,
+                    )
+                self.assertIn("deadline", str(first.exception))
+                self.assertFalse(finished.is_set())
+                self.assertEqual(pool.detached_count, 1)
+                # The stuck resolver no longer blocks an unrelated lookup.
+                self.assertEqual(
+                    url_security.validate_public_http_url(
+                        "https://next.example/path",
+                        resolver=lambda _host: [PUBLIC_IP],
+                        deadline=time.monotonic() + 1,
+                    ),
+                    "https://next.example/path",
+                )
+                # The detached budget (1) is spent: a second stuck lookup keeps
+                # its slot and further work reports capacity, not a timeout.
+                with self.assertRaises(UrlSecurityError):
+                    url_security.validate_public_http_url(
+                        "https://blocked-again.example/path",
+                        resolver=lambda _host: released.wait(timeout=2) and [PUBLIC_IP],
+                        deadline=time.monotonic() + 0.02,
+                    )
+                with self.assertRaises(UrlSecurityError) as saturated:
+                    url_security.validate_public_http_url(
+                        "https://full.example/path",
+                        resolver=lambda _host: [PUBLIC_IP],
+                        deadline=time.monotonic() + 1,
+                    )
+                self.assertIn("capacity", str(saturated.exception))
+                self.assertNotIn("deadline", str(saturated.exception))
+        finally:
+            released.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+
+    def test_dns_capacity_is_retained_when_no_detached_budget_remains(self):
+        pool = BoundedDaemonExecutor(
+            max_workers=1, thread_name_prefix="test-r3-dns", max_detached=0,
+        )
         started = threading.Event()
         released = threading.Event()
         finished = threading.Event()

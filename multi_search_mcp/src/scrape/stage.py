@@ -5,7 +5,11 @@ import time
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from typing import Any, Callable
 
-from ..support.concurrency import BoundedDaemonExecutor
+from ..support.concurrency import (
+    POOL_SATURATED_ERROR_TYPE,
+    BoundedDaemonExecutor,
+    pool_saturated_message,
+)
 from ..support.secrets import scrub_secrets
 
 
@@ -63,9 +67,14 @@ def run_ranked_fetch_stage(
         except Exception as exc:
             results[index] = error_row(hits[index], str(exc) or type(exc).__name__)
 
+    saturated = False
     while next_index < len(hits) or active:
         while next_index < len(hits) and len(active) < concurrency:
+            had_budget = deadline - time.monotonic() > 0
             future = _SCRAPE_POOL.submit_before(deadline, fetch_hit, hits[next_index])
+            # Only the latest admission attempt decides why the remaining hits
+            # never ran: no free slot while time remained, or plain timeout.
+            saturated = future is None and had_budget
             if future is None:
                 break
             active[future] = next_index
@@ -89,10 +98,21 @@ def run_ranked_fetch_stage(
         if future.done():
             collect(future, index)
         else:
-            future.cancel()
+            # Free the slot for later requests instead of holding it until the
+            # abandoned fetch eventually returns.
+            _SCRAPE_POOL.abandon(future)
+
+    def missing_row(index: int, hit: dict) -> dict:
+        if saturated and index >= next_index:
+            return {
+                **error_row(hit, pool_saturated_message("fetch", timeout)),
+                "error_type": POOL_SATURATED_ERROR_TYPE,
+            }
+        return timeout_row(hit)
+
     final_results = [
-        result if result is not None else timeout_row(hit)
-        for hit, result in zip(hits, results)
+        result if result is not None else missing_row(index, hit)
+        for index, (hit, result) in enumerate(zip(hits, results))
     ]
     return {
         "results": final_results,

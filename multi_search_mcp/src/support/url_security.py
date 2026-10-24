@@ -130,10 +130,11 @@ def _run_bounded_dns(fn: Callable[[], Iterable], *, deadline: float, label: str 
     try:
         result = future.result(timeout=remaining)
     except concurrent.futures.TimeoutError as exc:
-        # A running resolver cannot be cancelled safely.  BoundedDaemonExecutor
-        # retains its slot until that resolver returns, so repeated request
-        # timeouts cannot create an unbounded number of DNS workers.
-        future.cancel()
+        # A running resolver cannot be cancelled safely.  Abandoning it frees
+        # its admission slot while BoundedDaemonExecutor still bounds the
+        # number of detached resolver threads; past that bound the slot stays
+        # held and new lookups fail fast with "capacity exhausted".
+        _DNS_POOL.abandon(future)
         raise DnsResolutionError(f"{label} deadline exceeded") from exc
     if deadline - time.monotonic() <= 0:
         raise DnsResolutionError(f"{label} deadline exceeded")

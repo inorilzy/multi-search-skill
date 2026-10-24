@@ -9,7 +9,11 @@ from threading import Lock
 from typing import Any, Callable
 
 from .capabilities import PROVIDER_CAPABILITIES
-from ..support.concurrency import BoundedDaemonExecutor
+from ..support.concurrency import (
+    POOL_SATURATED_ERROR_TYPE,
+    BoundedDaemonExecutor,
+    pool_saturated_message,
+)
 from ..support.auth import is_key_retryable_error
 from ..state.key_state import BasicKeyManager, KeyCandidate
 from ..state.keys import key_pool
@@ -381,10 +385,16 @@ class SearchRunner:
 
         pending = {name for name, _ in jobs}
         future_sources: dict[Future, str] = {}
+        saturated: set[str] = set()
         for name, call in jobs:
+            had_budget = source_deadline - time.monotonic() > 0
             future = _SEARCH_POOL.submit_before(source_deadline, call)
             if future is not None:
                 future_sources[future] = name
+            elif had_budget:
+                # The request still had time but no worker slot freed up: this
+                # is local capacity, not a slow provider.
+                saturated.add(name)
 
         while future_sources:
             done = {future for future in future_sources if future.done()}
@@ -416,10 +426,21 @@ class SearchRunner:
                     else:
                         results.append(empty_result_row(source))
 
+        for future in future_sources:
+            # The caller has given up on these; do not let them block later searches.
+            if not future.done():
+                _SEARCH_POOL.abandon(future)
         for source in sorted(pending):
             with partial_lock:
                 results.extend(partial_results.get(source, []))
-            results.append({"source": source, "error": f"timeout after {timeout_seconds}s"})
+            if source in saturated:
+                results.append({
+                    "source": source,
+                    "error": pool_saturated_message("search", timeout_seconds),
+                    "error_type": POOL_SATURATED_ERROR_TYPE,
+                })
+            else:
+                results.append({"source": source, "error": f"timeout after {timeout_seconds}s"})
         return results
 
     def _run_keyed_source(
