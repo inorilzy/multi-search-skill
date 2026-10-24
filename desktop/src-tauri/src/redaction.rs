@@ -65,8 +65,8 @@ pub(crate) fn collect(environment: &RuntimeEnvironment, backend: &dyn Credential
     // Credential Manager keys, one entry per allowlisted provider. An unavailable or
     // unreadable store contributes nothing; it never fails redaction.
     let namespace = credential::namespace(&environment.variables);
-    for entry in crate::credential_commands::SOURCES {
-        if let Ok(Some((key, _saved_at))) = credential::load(backend, &namespace, entry.provider) {
+    for entry in crate::source_catalog::catalog().credential_sources() {
+        if let Ok(Some((key, _saved_at))) = credential::load(backend, &namespace, &entry.key_provider) {
             values.push(key);
         }
     }
