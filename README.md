@@ -42,7 +42,7 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `key
 
 边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置。
 
-当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
+当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 请求参数已移除；配置文件中的同名键（以及 `no_scrape`、`brief`、`verbose`、`title_url_only`、`want_content`）会被忽略并给出弃用警告（`FutureWarning`）。
 
 ## Windows 桌面管理（本地开发候选）
 
@@ -266,7 +266,7 @@ flowchart LR
 - **Searcher 搜索器**：`multi_search_mcp/src/search/searchers/*`，只负责 query -> `SearchResult`/dict，输出 title、url、description、source、score、raw metadata。
 - **SearchRunner 搜索调度器**：`multi_search_mcp/src/search/search_runner.py`，负责 route、并发、timeout、SQLite key state 和 source status。
 - **统一排序与抓取**：两个公共搜索入口共用 RRF 结果；`run_ranked_fetch_stage` 获取最终列表正文，按输入顺序回填。正文长度、抓取成功与否和 stars 不再改变排名；`support/dedup.py` 中的旧排序辅助函数不参与公共搜索排序。
-- **抓取后端选择**：`scrape/service.run_scrape_raw` 从共享 key manager 获取可用 key，`scrape/scrape.py` 维护 backend 顺序和逐次尝试；搜索最终列表不再按每源 quota 二次截取。旧 `run_scrape_stage`、planner 和正文回写链已删除，`multi_search` 仅包装共享流程的展示结果；`support/dedup.py` 保留格式化所需的 `rank_results` / `consensus_weight`。清理依据及公共契约验证见 [旧抓取链清理记录](docs/legacy-scrape-cleanup-2026-09-12.md)。
+- **抓取后端选择**：`scrape/service.run_scrape_raw` 从共享 key manager 获取可用 key，`scrape/scrape.py` 维护 backend 顺序和逐次尝试；搜索最终列表不再按每源 quota 二次截取。旧 `run_scrape_stage`、planner 和正文回写链已删除，`multi_search` 仅包装共享流程的展示结果；`support/dedup.py` 只保留展示用的 `consensus_weight`；RRF 顺序是唯一排序来源，格式化不再重排。清理依据及公共契约验证见 [旧抓取链清理记录](docs/legacy-scrape-cleanup-2026-09-12.md)。
 - **Scraper 抓取器 backend**：`multi_search_mcp/src/scrape/scrapers/*`，负责 url -> 正文。Jina、Exa、Tavily、Firecrawl 都是 backend。
 - **Scrape orchestration 抓取调度执行器**：`multi_search_mcp/src/scrape/scrape.py`，负责单 URL fallback 链、站点策略和 key 使用结果记录。
 - **Renderer 渲染器**：`multi_search_mcp/src/support/format.py`，负责诊断信息、搜索结果、抓取正文和 untrusted 安全围栏。
@@ -276,7 +276,7 @@ flowchart LR
 关键规则：
 
 - 搜索阶段统一获取 RRF 最终前 15 条的正文；有效候选不足 15 条时全部获取。已有可用正文缓存时直接复用。
-- `scrape_top` / `scrape_per_source` 仅保留兼容接收，不改变最终抓取列表；显式传入时 diagnostics 会说明其不再生效。
+- `scrape_top` / `scrape_per_source` 等已失效键已从请求 DTO 移除；示例配置只保留生效键。旧配置文件中的这些键会被忽略，并通过弃用警告（`FutureWarning`）提示。
 - 默认抓取后端从可用能力构建：Jina 匿名优先；Exa / Tavily 只有配置对应 key 后才进入 fallback 链；Firecrawl `/v2/scrape` 无 key 也会作为最后 fallback，但匿名额度是 IP 级免费日额度，不参与批量抓取 primary 轮换。抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
 - Jina、Parallel、Exa、Tavily、Firecrawl 等带 key 的 provider/backend 走 SQLite key state：`invalid` 只累计连续的 provider 认证失败，前两次为 `transient_invalid`，第三次才升级为永久 `invalid`；success、`rate_limit`、`quota_exhausted` 或其它非 invalid provider 结果都会清零 `invalid_strikes`，而 target 错误是中立事件，不改变既有 key 健康、冷却或计数。`invalid` / `disabled` 无自动恢复，需明确重置或人工清除后才会重新使用；`cooldown` 和 `transient_invalid` 在 `cooldown_until` 未到期时跳过，当前冷却为 15 分钟；`quota_exhausted` 在 `exhausted_until` 未到期时跳过，当前恢复期为 24 小时，期满后重新允许尝试。从未使用过的 key 优先；同等情况下按 `last_used_at` 最早优先；每次选中会更新 `last_used_at` 和 `use_count`。
 - 每个候选 URL 只走一次完整 fallback 链；失败或 `scrape_timeout` 后记录 Errors，不自动补位。
@@ -355,7 +355,7 @@ CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写�
 
 `fetch_source` 通过 `source_id` 或 `url` 选择一页，支持 `backends`、`max_chars`、`full_content`、`timeout`、`use_state`。`full_content` 默认 `False`，保留现有 `max_chars` 行为（默认 20000，显式值限制在 1–20000）；设为 `True` 时覆盖 `max_chars`，一次返回全部已取得文本。CLI 对应 `fetch --full-content`。`read_source` 通过 `source_id` 读取缓存，支持 `keyword`、`offset`、`limit`；单次最多 8000 字符，用于定向查证。
 
-`multi_search` 额外支持 `scrape_chars`、`scrape_timeout` 和 `output`。`scrape_chars` 限制本次正文预览，默认 1200；`scrape_timeout` 限制正文阶段时间。旧 `scrape_top` / `scrape_per_source` 仍接受，但包括 0 在内都不再控制是否抓取或抓取数量，diagnostics 会明确说明。所有搜索入口都获取最终前 15 条正文。
+`multi_search` 额外支持 `scrape_chars`、`scrape_timeout` 和 `output`。`scrape_chars` 限制本次正文预览，默认 1200；`scrape_timeout` 限制正文阶段时间。旧 `scrape_top` / `scrape_per_source` 请求参数已移除；配置中的同名键会被忽略并给出弃用警告。所有搜索入口都获取最终前 15 条正文。
 
 `count` 解析优先级：tool 入参 `count` > 配置文件 `counts{}` / `*_count` > 配置文件全局 `count` > route 默认值，最后按各 provider 的上限 clamp。响应里的 `diagnostics.effective_counts` 会回显最终每个 provider 使用的数量；`diagnostics.route_meta.route_default_count` 只表示 route 默认值。
 
@@ -428,7 +428,7 @@ Twitter/X 需要 cookies。确认依赖已安装，并配置 `TWITTER_COOKIES_PA
 
 ### 抓取正文太慢怎么办？
 
-搜索会自动获取最终前 15 条正文，旧 `scrape_top: 0` 不再关闭抓取。正文抓取会受目标网站、Jina / Exa / Tavily / Firecrawl 状态和网络影响；`scrape_timeout` 可限制正文阶段时间，超时会保留 RRF 结果并显式报告正文失败。已有 URL 时直接抓取，避免不必要的搜索。
+搜索会自动获取最终前 15 条正文，旧 `scrape_top: 0` 配置不再关闭抓取，且该键已弃用。正文抓取会受目标网站、Jina / Exa / Tavily / Firecrawl 状态和网络影响；`scrape_timeout` 可限制正文阶段时间，超时会保留 RRF 结果并显式报告正文失败。已有 URL 时直接抓取，避免不必要的搜索。
 
 ## License
 

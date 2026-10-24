@@ -76,14 +76,14 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             "tavily",
             missing_message="missing TAVILY_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_tavily, q, key, cfg.counts["tavily"], timeout=ctx.timeout, want_content=cfg.want_content,
+                search_tavily, q, key, cfg.counts["tavily"], timeout=ctx.timeout,
             ),
         ),
         "exa": _provider_spec(
             "exa",
             missing_message="missing EXA_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_exa, q, key, cfg.counts["exa"], timeout=ctx.timeout, want_content=cfg.want_content,
+                search_exa, q, key, cfg.counts["exa"], timeout=ctx.timeout,
             ),
         ),
         "serpapi": _provider_spec(
@@ -99,7 +99,7 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             "firecrawl",
             missing_message="missing FIRECRAWL_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, want_content=cfg.want_content,
+                search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout,
             ),
         ),
         "sov2ex": _provider_spec(

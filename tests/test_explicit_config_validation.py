@@ -103,15 +103,14 @@ class ExplicitConfigValidationTests(unittest.TestCase):
         request = SearchPlanRequest(query="test")
         default = resolve_search_plan(request, {})
         self.assertEqual(
-            (default.timeout, default.scrape_top, default.scrape_chars,
-             default.scrape_per_source, default.scrape_timeout,
+            (default.timeout, default.scrape_chars, default.scrape_timeout,
              default.scrape_url_timeout, default.scrape_concurrency),
-            (60, 20, 1200, 6, 60, 60, 5),
+            (60, 1200, 60, 60, 5),
         )
         self.assertEqual(set(default.effective_counts.values()), {10})
         nulls = dict.fromkeys((
-            "timeout", "scrape_top", "scrape_chars", "scrape_per_source",
-            "scrape_timeout", "scrape_url_timeout", "scrape_concurrency", "count", "counts",
+            "timeout", "scrape_chars", "scrape_timeout", "scrape_url_timeout",
+            "scrape_concurrency", "count", "counts",
         ))
         self.assertEqual(resolve_search_plan(request, nulls), default)
         for defaults in ({}, nulls):
@@ -120,12 +119,12 @@ class ExplicitConfigValidationTests(unittest.TestCase):
             service.run_search_web({"query": "test", "sources": ["hackernews"]})
             self.provider.assert_called_once()
         fast = resolve_search_plan(SearchPlanRequest(query="test", route="fast"), {})
-        self.assertEqual((fast.timeout, fast.scrape_top), (45, 0))
+        self.assertEqual(fast.timeout, 45)
 
     def test_int_conversion_and_clamping_remain_compatible(self):
         minimums = {
-            "timeout": 0, "scrape_top": 0, "scrape_timeout": 0, "scrape_url_timeout": 0,
-            "scrape_chars": 1, "scrape_per_source": 1, "scrape_concurrency": 1,
+            "timeout": 0, "scrape_timeout": 0, "scrape_url_timeout": 0,
+            "scrape_chars": 1, "scrape_concurrency": 1,
         }
         for field, minimum in minimums.items():
             for value, integer in ((" 12 ", 12), ("0", 0), ("-4", -4), (2.9, 2), (False, 0), (True, 1)):
@@ -169,8 +168,8 @@ class ExplicitConfigValidationTests(unittest.TestCase):
 
     def test_invalid_numeric_defaults_do_not_expose_values(self):
         secret = "synthetic-credential-must-not-appear"
-        for field in ("timeout", "scrape_top", "scrape_chars", "scrape_per_source",
-                      "scrape_timeout", "scrape_url_timeout", "scrape_concurrency", "count"):
+        for field in ("timeout", "scrape_chars", "scrape_timeout",
+                      "scrape_url_timeout", "scrape_concurrency", "count"):
             with self.subTest(field=field):
                 self.write_config({field: secret})
                 data = tools.multi_search_tool("test", sources=["hackernews"])
@@ -187,7 +186,7 @@ class ExplicitConfigValidationTests(unittest.TestCase):
         self.assertNotIn(secret, data["error"])
 
     def test_valid_request_overrides_bad_defaults_through_both_search_stages(self):
-        for field in ("timeout", "scrape_chars", "scrape_per_source", "scrape_timeout", "scrape_concurrency", "count"):
+        for field in ("timeout", "scrape_chars", "scrape_timeout", "scrape_concurrency", "count"):
             with self.subTest(field=field):
                 self.write_config({field: "bad"})
                 response = service.run_multi_search({

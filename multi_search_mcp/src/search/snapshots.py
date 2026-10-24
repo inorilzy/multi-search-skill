@@ -109,7 +109,7 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
     providers = build_provider_registry() if providers is None else providers
     plan = resolve_search_plan(SearchPlanRequest(
         route=request.route, count=request.count,
-        sources=request.sources, timeout=request.timeout, scrape_top=0,
+        sources=request.sources, timeout=request.timeout,
     ), config)
     attempts: list[dict] = []
     lock = Lock()

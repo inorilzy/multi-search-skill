@@ -3,7 +3,7 @@ import re
 from html import unescape
 
 from .models import ANSWER_SOURCES, as_dicts, is_empty_result
-from .dedup import consensus_weight, rank_results
+from .dedup import consensus_weight
 
 SOURCE_ICONS = {
     "brave": "🔍",
@@ -159,9 +159,8 @@ def format_scrapes(scrapes: list, max_chars: int = 1200) -> str:
 
 
 def format_results(results: list, query: str, raw_counts: dict | None = None,
-                   brief: bool = False, verbose: bool = False,
-                   title_url_only: bool = False, show_answer: bool = False,
-                   show_snippet: bool = True, degradation: dict | None = None) -> str:
+                   show_answer: bool = False, show_snippet: bool = True,
+                   degradation: dict | None = None) -> str:
     """Format aggregated results for display."""
     results = as_dicts(results)
     lines = [f"## multi-search Results: `{query}`\n"]
@@ -178,7 +177,7 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     if degradation:
         lines.append(f"\n> ⚠️ {degradation.get('message', 'route degraded')}\n")
 
-    show_answers = (show_answer or verbose) and not brief
+    show_answers = show_answer
     if show_answers and baidu_answers:
         lines.append(f"\n> **Baidu AI Search Answer:** {baidu_answers[0]['answer']}\n")
     if show_answers and tavily_answers:
@@ -217,7 +216,7 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
     ]
     lines.append("**Sources (raw hits):** " + (" | ".join(summary_parts) if summary_parts else "none"))
 
-    if (source_counts or error_by_source) and not title_url_only:
+    if source_counts or error_by_source:
         lines.append("\n### Source Status\n")
         lines.append("| Source | Raw hits | Status | Detail |")
         lines.append("|---|---:|---|---|")
@@ -243,35 +242,14 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
             return -1
         return consensus_weight(item)
 
-    # Use the shared ranking so standalone callers match service-layer order
-    # (service already pre-ranks; rank_results is stable + idempotent here).
-    results = rank_results(results)
+    # RRF order is authoritative: the service already ranked these rows, so the
+    # formatter must not rerank by consensus, body length, or popularity.
 
     valid = [r for r in results if "error" not in r]
     rrf_ranked = bool(valid) and all("rrf_score" in item for item in valid)
     consensus_count = sum(1 for r in valid if _weight(r) >= 2)
     max_weight = max((_weight(r) for r in valid), default=0)
     lines.append(f"**Result count:** {len(valid)} results")
-
-    if title_url_only:
-        if errors:
-            lines.append("\n### Errors\n")
-            lines.append("| Source | Error |")
-            lines.append("|---|---|")
-            for item in errors:
-                lines.append(f"| {SOURCE_ICONS.get(item.get('source'), '•')} {item.get('source', '?')} | {_cell(item.get('error'), 160)} |")
-            lines.append("")
-        lines.append("\n### Top:\n")
-        if valid:
-            for i, item in enumerate(valid, 1):
-                title = _cell(item.get("title", "(no title)"), 200)
-                url = item.get("url", "")
-                lines.append(f"{i}. {title}")
-                lines.append(f"   {url}")
-        else:
-            lines.append("No successful results.")
-        lines.append("")
-        return "\n".join(lines)
 
     if valid:
         lines.append(
@@ -344,9 +322,8 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
         lines.append(f"{i}. {weight_prefix}{icon} **{_md_link(title, url)}**{stars_str}{also_str}")
         if src == "twitter" and url:
             lines.append(f"   链接: {url}")
-        # Default output is optimized for agents: keep compact social/community
-        # signals, but save content snippets and AI answers for --verbose.
-        show_desc = desc and not brief and (show_snippet or verbose or src == "twitter")
+        # Keep compact social/community signals; snippets follow the route policy.
+        show_desc = desc and (show_snippet or src == "twitter")
         if show_desc:
             short = desc[:200].replace("\n", " ")
             if len(desc) > 200:

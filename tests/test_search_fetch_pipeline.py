@@ -296,7 +296,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         ):
             legacy = service.run_multi_search(service.MultiSearchRequest(
                 query="primary", sources=list(providers), count=30, use_state=False,
-                scrape_top=0, scrape_per_source=1, output="both",
+                output="both",
             ))
         self.assertEqual(legacy["errors"], [])
         for field in ("url", "rrf_score", "body_available"):
@@ -312,7 +312,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         for row in current["scrapes"]:
             self.assertEqual(legacy["markdown"].count(row["markdown"]), 1)
         self.assertTrue(all("markdown" not in row for row in legacy["scrapes"]))
-        self.assertIn("legacy_scrape_limits", legacy["diagnostics"])
+        self.assertNotIn("legacy_scrape_limits", legacy["diagnostics"])
 
     def test_direct_url_fetch_never_invokes_search(self):
         scraper = mock.Mock(side_effect=lambda url, **kwargs: {

@@ -66,8 +66,10 @@ complete search snippet (at least 32 non-space characters; whitespace difference
 only). Otherwise it starts at the beginning. `preview_start` / `preview_end`
 identify the unchanged body's character range. A preview is not a full read.
 
-`multi_search` retains its compatibility output and preview/timeout parameters;
-`scrape_top` no longer selects how many URLs to fetch. Core adds no AI selector,
+`multi_search` retains its compatibility output and preview/timeout parameters.
+The legacy `scrape_top` / `scrape_per_source` request fields are gone; old
+config keys such as `scrape_top`, `no_scrape`, or `brief` are ignored with a
+`FutureWarning` and never change body fetching. Core adds no AI selector,
 summary, or smart excerpt.
 
 Let configured timeouts apply unless the caller specifies a tighter budget.

@@ -61,7 +61,7 @@
 
 ## want_content 行为与注意事项
 
-`level`（fast/normal）维度已删除。`want_content` 只保留为搜索器兼容字段；公共搜索召回固定传 `want_content=False`，先融合候选，再统一获取最终前 15 条正文。
+`level`（fast/normal）维度已删除。`want_content` 只保留为搜索器函数的兼容参数；公共搜索不再暴露该配置/路由开关，召回固定不请求内联正文，先融合候选，再统一获取最终前 15 条正文。
 
 - **作用范围**：`want_content` 只保留为历史兼容字段，不再作为正文开关。
 - **Tavily / Exa / Firecrawl**：召回时不向这些 provider 请求正文，公共入口在 RRF 后统一获取正文。
@@ -85,7 +85,7 @@
 
 当前共 12 个搜索源，`all` 包含全部 12 个。单 provider 调用不再放进 `ROUTE_PROFILES`，统一走 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` 或 `sources=["v2ex"]`。
 
-上表同时适用于 `search_web` 与 `multi_search`。`count` 仅控制每源召回；`scrape_top` / `scrape_per_source` 仍接受但不再二次裁剪或关闭抓取，显式传入时 diagnostics 会说明。
+上表同时适用于 `search_web` 与 `multi_search`。`count` 仅控制每源召回；`scrape_top` / `scrape_per_source` 等失效键已从请求移除；旧配置中的同名键会被忽略并给出弃用警告。
 
 ## 直接总结 vs 抓正文后总结
 

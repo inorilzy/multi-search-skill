@@ -15,18 +15,13 @@ class MultiSearchRequest:
     route: str | None = None
     count: int | None = None
     sources: list[str] | None = None
-    scrape_top: int | None = None
     scrape_chars: int | None = None
-    scrape_per_source: int | None = None
     scrape_timeout: int | None = None
     scrape_concurrency: int | None = None
     timeout: int | None = None
     output: str = "both"
     config_path: str | None = None
     expand: list[str] | None = None
-    brief: bool = False
-    verbose: bool = False
-    title_url_only: bool = False
     use_state: bool = True
 
 

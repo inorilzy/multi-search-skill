@@ -91,7 +91,7 @@ def main() -> None:
             request = SearchWebRequest(**arguments)
             plan = resolve_search_plan(SearchPlanRequest(
                 route=request.route, count=request.count,
-                sources=request.sources, timeout=request.timeout, scrape_top=0,
+                sources=request.sources, timeout=request.timeout,
                 output="json",
             ), config)
             _selected, active = resolve_active_sources(plan.route, plan.sources, plan.disabled_sources)

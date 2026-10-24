@@ -14,7 +14,7 @@
 | **route（路由）** | 一组预设 source，负责粗粒度选源。两个公共搜索入口使用相同的排序和正文获取流程。 | `search_runner.py` → `ROUTE_PROFILES` |
 | **profile（源集合）** | 某个 route 对应的那组 source 集合。`profile` 和 `route` 常被混用，但严格说 profile 只指「源集合」这一部分。 | `ROUTE_PROFILES` 的 value |
 | **route_meta（兼容行为参数）** | route 的搜索超时、每源召回数量和展示默认值等。旧抓取数量字段不再控制公共流程；最终 RRF 前 15 条统一获取正文。 | `search_runner.py` → `ROUTE_META` / `DEFAULT_ROUTE_META` |
-| **want_content（正文内联）** | 搜索器兼容字段。公共搜索在召回阶段固定为 false，先取得候选并排序，再统一获取最终结果正文。 | `search_runner.py` / `service.py` |
+| **want_content（正文内联）** | 仅保留为搜索器函数的兼容参数。公共搜索不再暴露路由/配置开关，召回阶段固定不请求内联正文，先取得候选并排序，再统一获取最终结果正文。 | `search/searchers/*` / `search/candidates.py` |
 
 ## 2. route 分类（概念性，非代码标签）
 
@@ -64,7 +64,7 @@
 | **response_id / source_id** | `response_id` 标识一次候选搜索；`source_id` 稳定标识该响应中的 canonical URL，并作为 `fetch_source` / `read_source` 的引用。 | `search/candidate.py` / `state/source_registry.py` |
 | **provider_rank / RRF** | 保留 provider 内部原始名次；同一 query 先做等权 RRF，expanded query 再按 query 排名做第二级 RRF，默认等权。`k=40`，两级均无中间截断，最终最多 15 条。provider 原生 score 只保留为诊断，正文不改变排序。 | `search/search_runner.py` / `search/candidate.py` |
 | **count（每源召回量）** | 控制每个搜索源请求多少结果，受该源上限约束；不控制融合后的最终 15 条限制。 | `search/resolve.py` / `search/candidate.py` |
-| **scrape（抓正文）** | 搜索后自动获取最终 RRF 前 15 条正文，已有 URL 可直接抓取。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪列表，显式传入时 diagnostics 会说明。 | `service.py` → `run_search_web` / `scrape/stage.py` → `run_ranked_fetch_stage` |
+| **scrape（抓正文）** | 搜索后自动获取最终 RRF 前 15 条正文，已有 URL 可直接抓取。旧 `scrape_top` / `scrape_per_source` 请求参数已移除；旧配置中的失效键会被忽略并给出 弃用警告（`FutureWarning`）。 | `service.py` → `run_search_web` / `scrape/stage.py` → `run_ranked_fetch_stage` |
 | **scrape backend（抓取后端）** | 抓正文用的后端，与搜索源不同。已知集合：`jina`、`exa`、`tavily`、`firecrawl`。 | `scrape.py` → `KNOWN_BACKENDS` |
 | **site memory（站点抓取记忆）** | 记录每个站点用哪个 scraper 成功率高，下次优先用它。 | `state/site_memory.py` → `SiteScraperMemory` |
 | **dedup（去重）** | 两个搜索入口统一使用保守 canonical URL 后按 RRF 融合，同一 query、同一 provider 的重复 URL 只按最好名次投一票。跨 provider、跨 query 的贡献保留。 | `search/candidate.py` |
