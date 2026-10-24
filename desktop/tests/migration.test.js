@@ -122,3 +122,57 @@ test('partial failure is reported as incomplete with done and not-done parts', a
   mounted.dispose();
   window.close();
 });
+
+test('apply shows a loading state and a double click sends exactly one migration', async () => {
+  const { window, root } = setup();
+  let release;
+  const calls = [];
+  const api = {
+    migrationPlan: async () => plan(),
+    migrationApply: (...args) => { calls.push(args); return new Promise(resolve => { release = resolve; }); },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  root.querySelector('[data-approve="tavily"]').checked = true;
+  const applyButton = root.querySelector('[data-action="apply"]');
+  applyButton.click();
+  applyButton.click();
+  await flush();
+  assert.equal(calls.length, 1, 'a second click while applying must not reach the API');
+  assert.equal(applyButton.disabled, true);
+  assert.equal(applyButton.getAttribute('aria-busy'), 'true');
+  assert.match(applyButton.textContent, /迁移中/);
+  assert.equal(root.querySelector('[data-action="preview"]').disabled, true, 'preview cannot replace the plan mid-apply');
+  release({ written: ['tavily'], kept: [], unchanged: [], failed: [], not_done: [], complete: true });
+  await flush();
+  assert.match(root.querySelector('[data-info="result"]').textContent, /迁移完成/);
+  assert.equal(applyButton.disabled, true, 'a used plan token needs a fresh preview');
+  assert.equal(root.querySelector('[data-action="preview"]').disabled, false);
+  applyButton.click();
+  await flush();
+  assert.equal(calls.length, 1);
+  mounted.dispose();
+  window.close();
+});
+
+test('preview shows a loading state and ignores repeated clicks', async () => {
+  const { window, root } = setup();
+  let release;
+  let previews = 0;
+  const api = { migrationPlan: () => { previews += 1; return new Promise(resolve => { release = resolve; }); } };
+  const mounted = await mountMigration(root, api);
+  const button = root.querySelector('[data-action="preview"]');
+  button.click();
+  button.click();
+  await flush();
+  assert.equal(previews, 1);
+  assert.equal(button.disabled, true);
+  assert.match(button.textContent, /预览中/);
+  release(plan());
+  await flush();
+  assert.equal(button.disabled, false);
+  assert.equal(root.querySelector('[data-action="apply"]').disabled, false);
+  mounted.dispose();
+  window.close();
+});

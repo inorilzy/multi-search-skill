@@ -234,3 +234,26 @@ fn shutdown_terminates_its_execution_without_disabling_the_standalone_cli() {
         "multi-search 0.4.0"
     );
 }
+
+#[test]
+fn test_search_timeout_range_matches_the_cli_route_maximum() {
+    let profile = common::Profile::new();
+    let manager = DesktopManager::new(profile.environment.clone());
+    for timeout in [0, 91] {
+        let error = manager
+            .start_search(
+                None,
+                SearchOptions { query: "fixture".into(), route: "all".into(), sources: vec![], timeout },
+            )
+            .unwrap_err();
+        assert_eq!(error, "Unsupported search options", "timeout {timeout} must be rejected before spawning");
+    }
+    // 90 s is the `all` route default in the CLI, so the desktop must accept it.
+    let id = manager
+        .start_search(
+            None,
+            SearchOptions { query: "fixture".into(), route: "all".into(), sources: vec![], timeout: 90 },
+        )
+        .unwrap();
+    manager.cancel_search(id).unwrap();
+}

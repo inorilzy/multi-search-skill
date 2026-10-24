@@ -129,10 +129,10 @@ test('an enable toggle preserves route, timeout and the Twitter path it was not 
   await flush();
   assert.deepEqual(sent, {
     route: 'dev',
-    timeout: 25,
+    timeout: null,
     disabled_sources: ['exa', 'brave'],
     twitter_cookies_path: 'C:/cookies.json',
-  }, 'the toggle must not clobber settings it did not touch');
+  }, 'the toggle must not clobber settings it did not touch; timeout null keeps the stored value');
   assert.equal(root.querySelector('[data-toggle="brave"]').checked, false);
   window.close();
 });
@@ -197,7 +197,7 @@ test('queued source changes reread current settings and preserve both toggles', 
   await mountSources(root, {
     credentialStatus: async () => absent,
     settingsView: async () => { reads += 1; return { ...current, disabled_sources: [...current.disabled_sources] }; },
-    settingsSave: async input => { await flush(); current = settings(input); return current; },
+    settingsSave: async input => { await flush(); current = settings({ ...input, timeout: input.timeout ?? current.timeout }); return current; },
   });
   current = settings({ route: 'dev', timeout: 22, twitter_cookies_path: 'new-cookie-path' });
   for (const source of ['exa', 'brave']) {
