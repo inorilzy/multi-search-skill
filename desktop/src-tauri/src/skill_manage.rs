@@ -105,9 +105,15 @@ fn is_link(metadata: &fs::Metadata) -> bool {
     }
 }
 
+/// Ancestors of a Skill target that this tool creates and owns: `<target>`, `skills/`, `.claude/`.
+/// Anything above `.claude/` (the user/project root and its parents) is machine layout.
+const MANAGED_ANCESTOR_DEPTH: usize = 3;
+
 pub(crate) fn safe_managed_paths(directory: &Path) -> bool {
-    // Every ancestor matters: references/ or the target itself may be a junction.
-    for ancestor in directory.ancestors() {
+    // Every ancestor the tool owns matters: references/ or the target itself may be a junction that
+    // redirects writes. Ancestors above `.claude/` are not ours: macOS ships `/var -> /private/var`
+    // and `/tmp -> private/tmp`, and home or project folders may legitimately sit behind a link.
+    for ancestor in directory.ancestors().take(MANAGED_ANCESTOR_DEPTH) {
         if let Ok(metadata) = fs::symlink_metadata(ancestor) {
             if is_link(&metadata) || !metadata.is_dir() {
                 return false;

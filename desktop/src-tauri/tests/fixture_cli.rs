@@ -29,7 +29,12 @@ fn main() {
                 std::process::exit(2);
             }
             Ok("secret") => {
-                eprintln!("{}", env::var("EXA_API_KEY").unwrap());
+                // The version probe runs with the minimal environment, so provider keys never reach
+                // it. Report whether one leaked, then echo the debug-only seam value so the parent's
+                // redaction of child output is still exercised.
+                let leaked = env::var("EXA_API_KEY").is_ok();
+                eprintln!("exa_key_present={leaked}");
+                eprintln!("{}", env::var("FIXTURE_SECRET_ECHO").unwrap_or_default());
                 std::process::exit(2);
             }
             Ok("hang") => thread::sleep(Duration::from_secs(30)),

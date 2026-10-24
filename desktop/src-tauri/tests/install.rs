@@ -1,3 +1,5 @@
+//! Managed CLI install against the Windows bundle layout and the HKCU user PATH. Windows only.
+#![cfg(windows)]
 mod common;
 use multi_search_desktop::{DesktopManager, RuntimeEnvironment};
 use sha2::{Digest, Sha256};

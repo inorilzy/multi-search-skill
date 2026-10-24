@@ -39,7 +39,7 @@ impl Profile {
             );
             path
         });
-        std::fs::copy(fixture, root.join("multi-search.exe")).unwrap();
+        std::fs::copy(fixture, root.join(multi_search_desktop::CLI_FILE_NAME)).unwrap();
         let variables = BTreeMap::from([
             ("USERPROFILE".into(), root.to_string_lossy().into_owned()),
             ("HOME".into(), root.to_string_lossy().into_owned()),
@@ -59,6 +59,18 @@ impl Drop for Profile {
     }
 }
 
+#[cfg(not(windows))]
+#[allow(dead_code)]
+pub fn process_alive(pid: u32) -> bool {
+    // Signal 0 probes for existence without delivering anything.
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
 pub fn process_alive(pid: u32) -> bool {
     use windows_sys::Win32::{
         Foundation::CloseHandle,

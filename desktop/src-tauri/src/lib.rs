@@ -16,7 +16,7 @@ mod skill_manage;
 pub mod user_path;
 #[cfg(feature = "native-window")]
 mod window;
-pub use diagnostics::{CliStatus, DesktopManager, Discovery, RuntimeEnvironment};
+pub use diagnostics::{CliStatus, DesktopManager, Discovery, RuntimeEnvironment, CLI_FILE_NAME};
 pub use execution::{ExecutionStatus, SearchOptions};
 pub use skill::{skill_version, SkillInstall, SkillPlan};
 pub use skill_manage::{InstallState, RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome, UpdatePlan};

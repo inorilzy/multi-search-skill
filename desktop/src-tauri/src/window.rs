@@ -322,9 +322,22 @@ async fn skill_remove(
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.
 pub fn run() {
     let mut environment = RuntimeEnvironment::system();
-    environment.user_path = environment.machine_paths();
-    let path_store: Arc<dyn crate::user_path::PathStore> = Arc::new(crate::user_path::NativePathStore::current_user());
-    #[cfg(feature = "install-test-boundary")]
+    // Windows: the registry-backed machine PATH is the base and the user PATH lives in HKCU.
+    #[cfg(windows)]
+    let path_store: Arc<dyn crate::user_path::PathStore> = {
+        environment.user_path = environment.machine_paths();
+        Arc::new(crate::user_path::NativePathStore::current_user())
+    };
+    // Other platforms have no registry user PATH. The process PATH is the search base, and PATH
+    // registration is kept in memory for the session instead of editing shell profiles.
+    #[cfg(not(windows))]
+    let path_store: Arc<dyn crate::user_path::PathStore> = {
+        environment.user_path = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+        Arc::new(crate::user_path::MemoryPathStore::new(crate::user_path::PathValue::expandable(
+            &std::env::var("PATH").unwrap_or_default(),
+        )))
+    };
+    #[cfg(all(windows, feature = "install-test-boundary"))]
     let path_store = if environment.variables.get("MULTI_SEARCH_TEST_ISOLATION").map(String::as_str) == Some("1") {
         // Compile-time-only acceptance boundary. Never present in the distributed build.
         let key = environment.variables.get("MULTI_SEARCH_ACCEPTANCE_PATH_KEY").expect("isolated PATH key required");

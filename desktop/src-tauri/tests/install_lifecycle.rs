@@ -1,5 +1,5 @@
 //! CLI update and uninstall lifecycle (ticket 08). Isolated: test boundary build only.
-#![cfg(feature = "install-test-boundary")]
+#![cfg(all(windows, feature = "install-test-boundary"))]
 mod common;
 use multi_search_desktop::{DesktopManager, RuntimeEnvironment};
 use sha2::{Digest, Sha256};

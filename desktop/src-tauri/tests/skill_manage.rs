@@ -432,6 +432,48 @@ fn linked_references_never_modify_external_files() {
     assert!(target.join("SKILL.md").is_file());
 }
 
+#[cfg(unix)]
+#[test]
+fn linked_references_never_modify_external_files() {
+    let profile = common::Profile::new();
+    install_global(&profile);
+    let target = skill_dir(&profile.root);
+    let outside = profile.root.join("outside");
+    fs::rename(target.join("references"), &outside).unwrap();
+    let link = target.join("references");
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    let plan = manager(&profile).skill_remove_plan("global", None).unwrap();
+    let outcome = manager(&profile).skill_remove("global", None, true);
+    fs::remove_file(&link).unwrap();
+    assert!(!plan.can_remove);
+    assert_eq!(outcome.status, "blocked");
+    assert!(outside.join("cli.md").is_file());
+    assert!(target.join("SKILL.md").is_file());
+}
+
+/// Each directory the tool owns (`<target>`, `skills/`, `.claude/`) is refused when it is a link,
+/// even though links above `.claude/` (such as macOS `/var -> /private/var`) are accepted.
+#[cfg(unix)]
+#[test]
+fn every_tool_owned_ancestor_that_is_a_link_is_refused() {
+    for depth in 0..3 {
+        let profile = common::Profile::new();
+        install_global(&profile);
+        let target = skill_dir(&profile.root);
+        let owned = target.ancestors().nth(depth).unwrap().to_path_buf();
+        let moved = profile.root.join(format!("moved-{depth}"));
+        fs::rename(&owned, &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, &owned).unwrap();
+        let plan = manager(&profile).skill_remove_plan("global", None).unwrap();
+        let outcome = manager(&profile).skill_remove("global", None, true);
+        fs::remove_file(&owned).unwrap();
+        fs::rename(&moved, &owned).unwrap();
+        assert!(!plan.can_remove, "depth {depth}: a linked owned directory must not be removable");
+        assert_eq!(outcome.status, "blocked", "depth {depth}");
+        assert!(target.join("SKILL.md").is_file(), "depth {depth}: files must survive");
+    }
+}
+
 #[test]
 fn missing_managed_file_can_be_repaired_after_confirmation() {
     let profile = common::Profile::new();

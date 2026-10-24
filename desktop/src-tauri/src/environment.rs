@@ -110,6 +110,7 @@ impl RuntimeEnvironment {
             std::env::split_paths(&expand(&format!("{machine};{user}"), &variables)).collect()
         };
         #[cfg(not(windows))]
+        #[allow(unused_mut)]
         let mut user_path = Vec::new();
         // An isolated acceptance launcher can set a separate disposable user PATH; no registry changes.
         #[cfg(feature = "install-test-boundary")]

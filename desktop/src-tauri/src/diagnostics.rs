@@ -31,11 +31,15 @@ pub struct CliStatus {
     pub managed: bool,
 }
 
+/// The CLI's file name on this platform. The managed bundle ships a Windows executable; on Unix
+/// the same CLI is installed as a plain `multi-search` script, so discovery must look for that.
+pub const CLI_FILE_NAME: &str = if cfg!(windows) { "multi-search.exe" } else { "multi-search" };
+
 fn find_cli(paths: &[PathBuf]) -> Option<PathBuf> {
     paths
         .iter()
         .filter(|p| p.is_absolute())
-        .map(|p| p.join("multi-search.exe"))
+        .map(|p| p.join(CLI_FILE_NAME))
         .find(|p| p.is_file())
 }
 
@@ -158,10 +162,10 @@ impl DesktopManager {
             || path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|s| s.eq_ignore_ascii_case("multi-search.exe"))
+                .map(|s| s.eq_ignore_ascii_case(CLI_FILE_NAME))
                 != Some(true)
         {
-            result.reason = "请选择 multi-search.exe 的绝对路径".into();
+            result.reason = format!("请选择 {CLI_FILE_NAME} 的绝对路径");
             return result;
         }
         match crate::process::bounded(

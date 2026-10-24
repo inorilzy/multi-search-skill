@@ -342,6 +342,11 @@ impl DesktopManager {
         let Some(base) = target.parent().and_then(Path::parent) else {
             return failed("目标无效 directory".into());
         };
+        // secure_temp::create_dir only creates the final component, so the base (for example
+        // ~/.claude on a fresh machine) must exist first; the previous create_dir_all did this.
+        if let Err(error) = fs::create_dir_all(base) {
+            return failed(format!("无法准备安装目录：{error}"));
+        }
         let staging = match crate::secure_temp::create_dir(base, ".multi-search-staging-") {
             Ok(staging) => staging,
             Err(error) => return failed(format!("无法准备安装目录：{error}")),

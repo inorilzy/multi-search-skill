@@ -129,7 +129,7 @@ fn cancellation_stops_owned_descendants_but_not_unrelated_processes() {
         "FIXTURE_CHILD_PID".into(),
         child_pid.to_string_lossy().into_owned(),
     );
-    let mut unrelated = Command::new(profile.root.join("multi-search.exe"))
+    let mut unrelated = Command::new(profile.root.join(multi_search_desktop::CLI_FILE_NAME))
         .arg("descendant")
         .stdout(Stdio::null())
         .spawn()
@@ -234,7 +234,7 @@ fn shutdown_terminates_its_execution_without_disabling_the_standalone_cli() {
             }
         )
         .is_err());
-    let output = std::process::Command::new(profile.root.join("multi-search.exe"))
+    let output = std::process::Command::new(profile.root.join(multi_search_desktop::CLI_FILE_NAME))
         .arg("--version")
         .output()
         .unwrap();
@@ -313,7 +313,7 @@ fn test_search_timeout_range_matches_the_cli_route_maximum() {
                 SearchOptions { query: "fixture".into(), route: "all".into(), sources: vec![], timeout },
             )
             .unwrap_err();
-        assert_eq!(error, "Unsupported search options", "timeout {timeout} must be rejected before spawning");
+        assert_eq!(error, "不支持的搜索选项", "timeout {timeout} must be rejected before spawning");
     }
     // 90 s is the `all` route default in the CLI, so the desktop must accept it.
     let id = manager

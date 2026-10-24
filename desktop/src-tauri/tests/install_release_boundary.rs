@@ -11,7 +11,7 @@ fn default_build_ignores_isolation_and_anchor_test_keys() {
     let localappdata = profile.root.join("localappdata");
     let source = profile.root.join("src-release");
     fs::create_dir_all(source.join("bin")).unwrap();
-    fs::copy(profile.root.join("multi-search.exe"), source.join("bin").join("multi-search.exe")).unwrap();
+    fs::copy(profile.root.join(multi_search_desktop::CLI_FILE_NAME), source.join("bin").join("multi-search.exe")).unwrap();
     let mut environment = profile.environment.clone();
     environment.variables.insert("LOCALAPPDATA".into(), localappdata.to_string_lossy().into_owned());
     environment.variables.insert("MULTI_SEARCH_TEST_ISOLATION".into(), "1".into());

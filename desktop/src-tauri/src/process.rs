@@ -191,6 +191,13 @@ impl OwnedProcess {
             .stderr(Stdio::piped());
         #[cfg(windows)]
         command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
+        // Unix counterpart of the Job Object: the child leads a fresh process group, so the whole
+        // tree it spawns (Python workers, fetchers) can be signalled together on cancel.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         let mut child = command.spawn()?;
         #[cfg(windows)]
         let job = match OwnedJob::attach(&child) {
@@ -219,7 +226,15 @@ impl OwnedProcess {
     pub(crate) fn terminate(&mut self) {
         #[cfg(windows)]
         self.job.terminate();
-        #[cfg(not(windows))]
+        #[cfg(unix)]
+        {
+            // Signal the child's own group (pgid == child pid), stopping descendants the CLI
+            // spawned instead of orphaning them. Only that group is touched, never the caller's.
+            let group = format!("-{}", self.child.id());
+            let _ = Command::new("kill").args(["-KILL", "--", &group]).status();
+            let _ = self.child.kill();
+        }
+        #[cfg(not(any(windows, unix)))]
         {
             let _ = self.child.kill();
         }
