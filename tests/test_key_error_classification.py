@@ -151,7 +151,11 @@ class KeyHealthRegressionTests(unittest.TestCase):
         )
         self.assertEqual(len(rows), 1)
         self.assertNotIn("error_type", rows[0])
-        state = list(self._rows().values())[0]
+        # Rows are ordered by fingerprint (a key digest), so select the key that was
+        # actually tried instead of relying on row order.
+        used = [row for row in self._rows().values() if row["last_used_at"]]
+        self.assertEqual(len(used), 1)
+        state = used[0]
         self.assertEqual(state["status"], ACTIVE)
         self.assertIsNone(state["cooldown_until"])
         self.assertEqual(state["last_error_type"], "error")
