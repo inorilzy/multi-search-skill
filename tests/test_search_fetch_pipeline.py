@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 import unittest
@@ -332,6 +333,86 @@ class SearchFetchPipelineTests(unittest.TestCase):
         self.assertEqual(result["body"], "Direct body")
         self.assertTrue(result["persisted"])
         self.assertEqual(scraper.call_count, 1)
+
+    @staticmethod
+    def _provider_body_row():
+        return {
+            **_row("brave", "candidate"),
+            "content_kind": "body",
+            "scraped_content": "PROVIDER_BODY_FROM_SEARCH",
+        }
+
+    def test_candidate_only_mode_never_fetches_or_writes_the_body_cache(self):
+        row = self._provider_body_row()
+        provider = _provider("brave", {"primary": [row]})
+        scraper = mock.Mock(
+            side_effect=AssertionError("candidate-only mode must never fetch a body")
+        )
+
+        response = service.run_search_web(
+            service.SearchWebRequest(
+                query="primary", sources=["brave"], count=30,
+                use_state=True, no_fetch=True,
+            ),
+            providers={"brave": provider}, keys={}, config={}, scraper=scraper,
+            url_resolver=_resolver,
+        )
+
+        self.assertEqual(response["errors"], [])
+        self.assertEqual(len(response["results"]), 1)
+        source_id = response["results"][0]["source_id"]
+        self.assertEqual(response["scrapes"], [])
+        self.assertEqual(response["site_scraper_updates"], [])
+        self.assertEqual(response["diagnostics"]["body_fetch_mode"], "candidates")
+        self.assertEqual(response["diagnostics"]["body_fetch_count"], 0)
+        self.assertEqual(response["diagnostics"]["body_success_count"], 0)
+        self.assertEqual(response["diagnostics"]["body_failures"], [])
+        scraper.assert_not_called()
+        self.assertIsNone(ContentStore(StateStore(self.state_path)).get(source_id))
+
+    def test_default_mode_still_caches_a_provider_body_candidate(self):
+        row = self._provider_body_row()
+        provider = _provider("brave", {"primary": [row]})
+        scraper = mock.Mock(
+            side_effect=AssertionError("the provider body must be reused, not fetched again")
+        )
+
+        response = self._search({"brave": provider}, scraper, use_state=True)
+
+        self.assertEqual(response["errors"], [])
+        source_id = response["results"][0]["source_id"]
+        cached = ContentStore(StateStore(self.state_path)).get(source_id)
+        self.assertIsNotNone(cached)
+        self.assertEqual(cached["content"], row["scraped_content"])
+
+    def test_cli_no_fetch_flag_skips_the_fetch_stage_end_to_end(self):
+        from multi_search_mcp import cli
+
+        row = self._provider_body_row()
+        providers = {"brave": _provider("brave", {"primary": [row]})}
+        scraper = mock.Mock(
+            side_effect=AssertionError("candidate-only mode must never fetch a body")
+        )
+        with (
+            mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
+            mock.patch.object(service, "scrape_url_smart", scraper),
+            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
+        ):
+            output, errors = StringIO(), StringIO()
+            code = cli.main(
+                ["search", "primary", "--source", "brave", "--no-fetch", "--format", "json"],
+                stdout=output, stderr=errors,
+            )
+
+        self.assertEqual(code, 0, errors.getvalue())
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["scrapes"], [])
+        self.assertEqual(payload["diagnostics"]["body_fetch_mode"], "candidates")
+        self.assertEqual(payload["diagnostics"]["body_fetch_count"], 0)
+        scraper.assert_not_called()
+        self.assertIsNone(
+            ContentStore(StateStore(self.state_path)).get(payload["results"][0]["source_id"])
+        )
 
     def test_cli_human_and_markdown_include_fetched_body_and_failures(self):
         from multi_search_mcp import cli

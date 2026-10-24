@@ -13,7 +13,6 @@ use crate::credential::CredentialError;
 use crate::{DesktopManager, RuntimeEnvironment};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-#[cfg(feature = "native-window")]
 use std::time::Duration;
 use std::{collections::BTreeMap, path::{Path, PathBuf}};
 
@@ -232,13 +231,23 @@ pub(crate) fn interpret_source(payload: &Value, entry: &SourceEntry) -> TestOutc
     classify(error_type, entry.label)
 }
 
-/// Config file content for a test run: no body scraping, so only one search is made.
-#[cfg(feature = "native-window")]
-pub(crate) fn test_config_json() -> String {
-    serde_json::json!({ "no_scrape": true }).to_string()
-}
+/// Search budget the isolated test run hands to the CLI via `--timeout`.
+pub(crate) const TEST_SEARCH_TIMEOUT_SECS: u64 = 15;
+/// Allowance for process start, Python import, CLI output and exit.
+#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
+pub(crate) const TEST_PROCESS_OVERHEAD_SECS: u64 = 10;
+/// Whole-process deadline for one test run: Core's search budget plus the fixed
+/// process overhead. The test run is candidate-only (`--no-fetch`), so there is
+/// deliberately no 60s body-fetch stage to cover here.
+#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
+pub(crate) const TEST_TIMEOUT: Duration =
+    Duration::from_secs(TEST_SEARCH_TIMEOUT_SECS + TEST_PROCESS_OVERHEAD_SECS);
 
 /// Arguments for the isolated CLI test run. Key material is never included.
+///
+/// `--no-fetch` makes Core fuse candidates and stop: the test spends one search
+/// budget, contacts no scraper, and writes no body cache. `--timeout` must stay
+/// the same budget [`TEST_TIMEOUT`] was derived from.
 pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
     vec![
         "search".into(),
@@ -247,8 +256,9 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
         "default".into(),
         "--source".into(),
         entry.source.into(),
+        "--no-fetch".into(),
         "--timeout".into(),
-        "15".into(),
+        TEST_SEARCH_TIMEOUT_SECS.to_string(),
         "--format".into(),
         "json".into(),
     ]
@@ -267,7 +277,10 @@ impl TestConfig {
         if view.status == "config_unreadable" {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "无法读取搜索设置"));
         }
-        let mut config: Value = serde_json::from_str(&test_config_json()).unwrap();
+        // The test run does not rely on `no_scrape`: Core ignores it, and
+        // `--no-fetch` expresses candidates-only directly. The temp config only
+        // carries the user's disabled sources and Twitter cookie path.
+        let mut config = serde_json::json!({});
         config["disabled_sources"] = serde_json::json!(view.disabled_sources);
         if let Some(cookies) = view.twitter_cookies_path { config["twitter_cookies_path"] = Value::String(cookies); }
         std::fs::write(&path, serde_json::to_vec(&config)?)?;
@@ -289,9 +302,6 @@ pub(crate) fn test_environment(base: &RuntimeEnvironment, config: &TestConfig) -
         .insert(CONFIG_ENV.into(), config.0.to_string_lossy().into_owned());
     environment
 }
-
-#[cfg(feature = "native-window")]
-pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Only the native window's explicit source test uses the isolated config path above.
 #[cfg(feature = "native-window")]
@@ -456,7 +466,9 @@ fn run_migration_cli(
     cli: &Path,
     args: &[String],
 ) -> Result<crate::process::Output, String> {
-    let output = crate::process::bounded(cli, args, &manager.environment, TEST_TIMEOUT)
+    // Legacy migration is local file/state work and has no network stage.
+    const MIGRATION_TIMEOUT: Duration = Duration::from_secs(30);
+    let output = crate::process::bounded(cli, args, &manager.environment, MIGRATION_TIMEOUT)
         .map_err(|_| "无法启动 CLI".to_string())?;
     if output.timed_out {
         return Err("迁移操作超时，请稍后重试。".into());
@@ -510,6 +522,31 @@ impl DesktopManager {
 }
 
 #[cfg(test)]
+mod test_run_budget {
+    use super::*;
+
+    #[test]
+    fn test_run_is_candidates_only_and_uses_the_same_search_budget() {
+        let entry = resolve_test_source("tavily").unwrap();
+        let args = test_args("synthetic connectivity", entry);
+        assert!(
+            args.iter().any(|argument| argument.as_str() == "--no-fetch"),
+            "a test run must never fetch page bodies: {args:?}"
+        );
+        let index = args
+            .iter()
+            .position(|argument| argument.as_str() == "--timeout")
+            .expect("the test run always passes an explicit search budget");
+        let budget: u64 = args[index + 1].parse().expect("an integer search budget");
+        assert_eq!(budget, TEST_SEARCH_TIMEOUT_SECS);
+        assert!(
+            TEST_TIMEOUT.as_secs() >= budget + 5,
+            "the process deadline must cover the search budget plus real process overhead"
+        );
+    }
+}
+
+#[cfg(test)]
 mod migration_tests {
     use super::*;
 
@@ -535,7 +572,10 @@ mod migration_tests {
         let value: Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(value["twitter_cookies_path"], serde_json::json!(cookies));
         assert_eq!(value["disabled_sources"], serde_json::json!(["brave"]));
-        assert_eq!(value["no_scrape"], true);
+        assert!(
+            value.get("no_scrape").is_none(),
+            "the test run must not rely on the no_scrape key Core ignores"
+        );
         assert!(!raw.contains("synthetic-cookie-secret"));
         drop(config);
         std::fs::remove_dir_all(root).unwrap();

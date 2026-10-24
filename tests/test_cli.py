@@ -65,6 +65,32 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         self.assertIsNone(captured["request"].expand)
 
+    def test_search_no_fetch_flag_requests_candidates_only(self):
+        captured = {}
+
+        def fake_run(request):
+            captured["request"] = request
+            return {"query": request.query, "results": [], "provider_status": [], "diagnostics": {}}
+
+        with mock.patch.object(cli, "run_search_web", side_effect=fake_run):
+            code, _stdout, stderr = self.run_cli(["search", "primary", "--no-fetch"])
+
+        self.assertEqual(code, 0, stderr)
+        self.assertTrue(captured["request"].no_fetch)
+
+    def test_search_fetches_bodies_without_the_no_fetch_flag(self):
+        captured = {}
+
+        def fake_run(request):
+            captured["request"] = request
+            return {"query": request.query, "results": [], "provider_status": [], "diagnostics": {}}
+
+        with mock.patch.object(cli, "run_search_web", side_effect=fake_run):
+            code, _stdout, stderr = self.run_cli(["search", "primary"])
+
+        self.assertEqual(code, 0, stderr)
+        self.assertFalse(captured["request"].no_fetch)
+
     def test_search_markdown_renders_compact_search_hits(self):
         with mock.patch.object(cli, "run_search_web", return_value={
             "query": "python",
