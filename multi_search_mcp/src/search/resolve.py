@@ -1,12 +1,12 @@
 """Resolve search request/config defaults into one execution plan."""
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
 from ..support.config import (
     ConfigError,
-    config_bool,
     config_int,
     config_list,
     resolve_int,
@@ -55,13 +55,10 @@ class SearchPlanRequest:
     count: int | None = None
     sources: list[str] | None = None
     timeout: int | None = None
-    scrape_top: int | None = None
     scrape_chars: int | None = None
-    scrape_per_source: int | None = None
     scrape_timeout: int | None = None
     scrape_concurrency: int | None = None
     output: str = "both"
-    title_url_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,29 +69,44 @@ class ResolvedSearchPlan:
     route_defaults: dict[str, Any]
     effective_counts: dict[str, int]
     timeout: int
-    scrape_top: int
     scrape_chars: int
-    scrape_per_source: int
     scrape_timeout: int
     scrape_url_timeout: int
     scrape_concurrency: int
     output_mode: str
-    title_url_only: bool
-    want_content: bool
     show_answer: bool
     show_snippet: bool
     serpapi_engine: str
 
 
+# Keys that no longer affect execution. They are ignored (not validated) and
+# warned about once per plan resolution; the next release removes them.
+DEPRECATED_CONFIG_KEYS = (
+    "scrape_top", "no_scrape", "scrape_per_source", "brief", "verbose",
+    "title_url_only", "want_content",
+)
+
+
+def _warn_deprecated_config(config: dict) -> None:
+    present = [key for key in DEPRECATED_CONFIG_KEYS if key in config]
+    if present:
+        warnings.warn(
+            "ignored multi-search config key(s) will be removed: "
+            + ", ".join(sorted(present)),
+            FutureWarning,
+            stacklevel=3,
+        )
+
+
 def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSearchPlan:
     if not isinstance(request, SearchPlanRequest):
         raise TypeError("resolve_search_plan requires a SearchPlanRequest")
+    _warn_deprecated_config(config)
     route = normalize_route(str(resolve_value(request.route, config, "type", "default")))
     meta = route_meta(route)
     source_names = _resolve_sources(route, request.sources)
 
     timeout = resolve_nonnegative(request.timeout, config, "timeout", meta["timeout"])
-    scrape_top = _resolve_scrape_top(request, config, meta)
     scrape_timeout = resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
 
     return ResolvedSearchPlan(
@@ -104,15 +116,11 @@ def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSea
         route_defaults=meta,
         effective_counts=build_counts(config, request.count, route_default=meta["count"]),
         timeout=timeout,
-        scrape_top=scrape_top,
         scrape_chars=max(1, resolve_int(request.scrape_chars, config, "scrape_chars", 1200)),
-        scrape_per_source=max(1, resolve_int(request.scrape_per_source, config, "scrape_per_source", 6)),
         scrape_timeout=scrape_timeout,
         scrape_url_timeout=resolve_nonnegative(None, config, "scrape_url_timeout", scrape_timeout),
         scrape_concurrency=max(1, resolve_int(request.scrape_concurrency, config, "scrape_concurrency", 5)),
         output_mode=request.output if request.output in {"json", "markdown", "both"} else "both",
-        title_url_only=bool(request.title_url_only or meta.get("title_url_only")),
-        want_content=bool(meta.get("want_content", False)),
         show_answer=bool(meta.get("show_answer")),
         show_snippet=bool(meta.get("show_snippet")),
         serpapi_engine=str(config.get("serpapi_engine", "google_light")),
@@ -191,8 +199,3 @@ def resolve_active_sources(
     """Return (selected, active) sources, where active drops disabled ones."""
     selected = requested_sources or resolve_route(route)
     return selected, selected - disabled_sources
-
-def _resolve_scrape_top(request: SearchPlanRequest, config: dict, meta: dict[str, Any]) -> int:
-    if request.scrape_top is None and config_bool(config, "no_scrape", False):
-        return 0
-    return resolve_nonnegative(request.scrape_top, config, "scrape_top", meta["scrape_top"])

@@ -1,7 +1,6 @@
 """Compatibility multi-search presentation over the shared search-and-fetch flow."""
 from __future__ import annotations
 
-from .search.candidate import SEARCH_RESULT_LIMIT
 from .search.formatting import (
     compat_source_summaries,
     display_results,
@@ -28,13 +27,10 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             count=request.count,
             sources=request.sources,
             timeout=request.timeout,
-            scrape_top=request.scrape_top,
             scrape_chars=request.scrape_chars,
-            scrape_per_source=request.scrape_per_source,
             scrape_timeout=request.scrape_timeout,
             scrape_concurrency=request.scrape_concurrency,
             output=request.output,
-            title_url_only=request.title_url_only,
         ),
         config,
     )
@@ -45,7 +41,7 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             sources=request.sources, timeout=request.timeout, expand=request.expand,
             config_path=request.config_path, use_state=request.use_state,
         ),
-        config={**config, "scrape_per_source": plan.scrape_per_source},
+        config=config,
         query_runs_observer=query_runs.extend,
         scrape_chars=request.scrape_chars, scrape_timeout=request.scrape_timeout,
         scrape_concurrency=request.scrape_concurrency,
@@ -63,17 +59,11 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     response["diagnostics"].update(
         valid_result_count=len(results),
         effective_counts=plan.effective_counts,
-        route_meta={**plan.route_defaults, "scrape_top": SEARCH_RESULT_LIMIT,
-                    "want_content": False, "timeout": plan.timeout,
+        route_meta={**plan.route_defaults, "timeout": plan.timeout,
                     "route_default_count": plan.route_defaults["count"],
                     "route_default_timeout": plan.route_defaults["timeout"]},
         route_degradation=route_degradation(plan.route, rows, plan.sources, plan.route_defaults),
     )
-    if request.scrape_top is not None or request.scrape_per_source is not None:
-        response["diagnostics"]["legacy_scrape_limits"] = (
-            "scrape_top and scrape_per_source no longer limit fetching; "
-            "all final RRF results (at most 15) are fetched"
-        )
     if plan.output_mode in {"markdown", "both"}:
         raw_counts = {}
         for row in rows:
@@ -82,9 +72,8 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
                 raw_counts[source] = raw_counts.get(source, 0) + 1
         response["markdown"] = format_results(
             results + [row for row in rows if row.get("source") in ANSWER_SOURCES or row.get("error") or is_empty_result(row)],
-            request.query, raw_counts=raw_counts, brief=request.brief,
-            verbose=request.verbose, title_url_only=plan.title_url_only,
-            show_answer=plan.show_answer or request.verbose, show_snippet=plan.show_snippet,
+            request.query, raw_counts=raw_counts,
+            show_answer=plan.show_answer, show_snippet=plan.show_snippet,
             degradation=response["diagnostics"]["route_degradation"],
         ) + format_scrapes(response["scrapes"], max_chars=plan.scrape_chars)
         # Rendered Markdown owns the bodies in these modes; JSON rows retain

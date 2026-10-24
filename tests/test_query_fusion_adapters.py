@@ -30,7 +30,7 @@ class QueryFusionAdapterTests(unittest.TestCase):
                 config_path.write_text(json.dumps({"query_fusion": policy}), encoding="utf-8")
 
                 def provider(query, config, _context, _key):
-                    self.assertFalse(config.want_content)
+                    self.assertFalse(hasattr(config, "want_content"))
                     name = "z-primary" if query == "original" else "a-variant"
                     return [{"source": "brave", "title": name,
                              "url": "https://example.test/" + name}]

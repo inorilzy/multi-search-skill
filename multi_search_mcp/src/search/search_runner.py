@@ -56,50 +56,42 @@ ROUTE_ALIASES = {
     "web": "default",
 }
 
-# Route-level behavior. A route decides *which sources* to fan out to plus
-# source-shaped defaults (count/timeout/snippet rendering) and whether providers
-# should return body content inline (``want_content``).
+# Route-level behavior that still runs: fan-out membership plus display defaults.
+# Body fetching is always the shared post-RRF stage, so routes carry no scrape
+# count or inline-content switches.
 DEFAULT_ROUTE_META = {
-    "scrape_top": 20,
     "show_snippet": True,
     "count": 10,
     "timeout": 60,
-    "title_url_only": False,
     "degrade_to": set(),
     "primary_success_sources": set(),
     "show_answer": False,
-    "want_content": False,
 }
 
 ROUTE_META = {
     "default": {
-        "scrape_top": 20,
         "show_snippet": True,
         "count": 10,
         "timeout": 60,
         "primary_success_sources": ROUTE_PROFILES["default"],
     },
-    # ``fast`` keeps the low-latency provider mix, but the public search
-    # contract is still candidate-only. Body retrieval is reserved for
-    # explicit fetch/read paths.
+    # ``fast`` keeps the low-latency provider mix. Like every route it still
+    # fetches previews for the final RRF results (at most 15); ``scrape_top=0``
+    # does not disable the shared body stage any more.
     "fast": {
-        "scrape_top": 0,
         "show_snippet": True,
         "show_answer": True,
-        "want_content": False,
         "count": 10,
         "timeout": 45,
         "primary_success_sources": ROUTE_PROFILES["fast"],
     },
     "all": {
-        "scrape_top": 30,
         "show_snippet": True,
         "count": 10,
         "timeout": 90,
         "primary_success_sources": ROUTE_PROFILES["all"],
     },
     "social": {
-        "scrape_top": 0,
         "show_snippet": True,
         "count": 10,
         "timeout": 60,
@@ -107,7 +99,6 @@ ROUTE_META = {
         "primary_success_sources": {"twitter"},
     },
     "dev": {
-        "scrape_top": 20,
         "show_snippet": True,
         "count": 10,
         "timeout": 60,
@@ -156,7 +147,6 @@ class SearchRunnerConfig:
     timeout: int
     serpapi_engine: str
     keys: dict
-    want_content: bool = False
     # provider -> error for a credential entry that could not be read. Only that
     # provider fails; every other source (keyed or keyless) keeps running.
     key_errors: dict[str, str] = field(default_factory=dict)

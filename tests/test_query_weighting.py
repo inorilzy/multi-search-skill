@@ -15,7 +15,7 @@ def hit(name):
 
 def search(rows, expand, *, policy=EXPERIMENT, count=10):
     def call(query, config, _context, _key):
-        if config.want_content:
+        if hasattr(config, "want_content"):
             raise AssertionError("candidate search requested bodies")
         value = rows[query]
         if isinstance(value, Exception):

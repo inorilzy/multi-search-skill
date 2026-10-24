@@ -18,13 +18,7 @@
   },
   "serpapi_engine": "google_light",
   "timeout": 60,
-  "scrape_top": null,
-  "no_scrape": false,
   "scrape_chars": 1200,
-  "scrape_per_source": 6,
   "scrape_timeout": 60,
-  "scrape_concurrency": 5,
-  "brief": false,
-  "title_url_only": false,
-  "verbose": false
+  "scrape_concurrency": 5
 }

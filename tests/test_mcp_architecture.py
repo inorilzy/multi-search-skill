@@ -30,7 +30,7 @@ from multi_search_mcp.src.state.site_memory import ScrapeAttempt, SiteScraperMem
 from multi_search_mcp.src.support.format import format_results
 from multi_search_mcp import tools
 from multi_search_mcp.src.support import config as config_module
-from multi_search_mcp.src.support.dedup import _norm_url, rank_results
+from multi_search_mcp.src.support.dedup import _norm_url
 from multi_search_mcp.src import service as service_module
 
 
@@ -62,22 +62,24 @@ class PluginRouteRedesignTests(unittest.TestCase):
         self.assertEqual(resolve_route("fast"), {"baidu", "tavily", "firecrawl", "exa"})
         self.assertNotIn("normal", ROUTE_PROFILES)
 
-    def test_route_meta_carries_source_shaped_behavior(self):
-        # Routes carry source defaults; public search fetches the final RRF results.
-        self.assertEqual(route_meta("default")["scrape_top"], 20)
-        self.assertEqual(route_meta("default")["count"], 10)
+    def test_route_meta_keeps_only_effective_keys(self):
+        # Routes carry fan-out membership plus live display defaults. Scrape
+        # count and inline-content switches are gone from route definitions.
+        default = route_meta("default")
+        self.assertEqual(default["count"], 10)
+        self.assertEqual(default["timeout"], 60)
+        self.assertTrue(default["show_snippet"])
+        for dead in ("scrape_top", "title_url_only", "want_content"):
+            self.assertNotIn(dead, default)
         self.assertEqual(route_meta("fast")["timeout"], 45)
-        self.assertEqual(route_meta("all")["scrape_top"], 30)
         self.assertEqual(route_meta("social")["timeout"], 60)
-        self.assertEqual(route_meta("dev")["scrape_top"], 20)
-        self.assertNotIn("search_depth", route_meta("default"))
-        self.assertFalse(route_meta("default")["want_content"])
+        self.assertNotIn("search_depth", default)
 
-    def test_fast_route_keeps_provider_inline_content_disabled(self):
+    def test_fast_route_matches_shared_body_fetch_behavior(self):
         meta = route_meta("fast")
-        self.assertFalse(meta["want_content"])
         self.assertTrue(meta["show_answer"])
-        self.assertEqual(meta["scrape_top"], 0)
+        for dead in ("want_content", "scrape_top"):
+            self.assertNotIn(dead, meta)
 
     def test_list_sources_exposes_all_sources_after_single_provider_routes_removed(self):
         data = list_sources()
@@ -568,7 +570,8 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(captured["fetched_urls"], ["https://example.com/doc"])
         self.assertIn("Tavily AI Answer", response["markdown"])
         self.assertIn("Fetched body for https://example.com/doc", response["markdown"])
-        self.assertEqual(response["diagnostics"]["route_meta"]["scrape_top"], 15)
+        self.assertNotIn("scrape_top", response["diagnostics"]["route_meta"])
+        self.assertNotIn("want_content", response["diagnostics"]["route_meta"])
 
     def test_fast_route_is_echoed_in_diagnostics(self):
         class FakeRunner:
@@ -587,8 +590,8 @@ class PluginServiceConfigTests(unittest.TestCase):
 
         self.assertEqual(response["route"], "fast")
         route_meta_out = response["diagnostics"]["route_meta"]
-        self.assertFalse(route_meta_out["want_content"])
-        self.assertEqual(route_meta_out["scrape_top"], 15)
+        self.assertNotIn("want_content", route_meta_out)
+        self.assertNotIn("scrape_top", route_meta_out)
         self.assertEqual(response["diagnostics"]["effective_counts"]["tavily"], 10)
         self.assertEqual(route_meta_out["route_default_count"], 10)
 
@@ -625,7 +628,7 @@ class PluginServiceConfigTests(unittest.TestCase):
 
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
-                captured["want_content"] = config.want_content
+                captured["timeout"] = config.timeout
 
             def run(self, query, *, deadline=None):
                 return [{"source": "tavily", "title": "t", "url": "https://e.com"}]
@@ -637,9 +640,9 @@ class PluginServiceConfigTests(unittest.TestCase):
              mock.patch("multi_search_mcp.src.search_web.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage):
             response = run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
-        # config-provided route drives both the echoed route and want_content.
+        # config-provided route drives the echoed route and its timeout.
         self.assertEqual(response["route"], "fast")
-        self.assertFalse(captured["want_content"])
+        self.assertEqual(captured["timeout"], 45)
 
     def test_config_and_request_override_search_defaults_but_keep_shared_fetch_limit(self):
         captured = []
@@ -655,13 +658,13 @@ class PluginServiceConfigTests(unittest.TestCase):
             captured[-1]["fetched_urls"] = [hit["url"] for hit in hits]
             return _fake_ranked_fetch_stage(hits, **kwargs)
 
-        with mock.patch("multi_search_mcp.src.state.runtime.load_config_safe", return_value={"type": "default", "timeout": 11, "scrape_top": 2, "count": 4}), \
+        with mock.patch("multi_search_mcp.src.state.runtime.load_config_safe", return_value={"type": "default", "timeout": 11, "count": 4}), \
              mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}), \
              mock.patch("multi_search_mcp.src.search.candidates.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.search_web.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
             default = run_multi_search(MultiSearchRequest(query="q", use_state=False))
-            explicit = run_multi_search(MultiSearchRequest(query="q", scrape_top=0, timeout=12, count=6, use_state=False))
+            explicit = run_multi_search(MultiSearchRequest(query="q", timeout=12, count=6, use_state=False))
 
         self.assertEqual(captured[0]["timeout"], 11)
         self.assertEqual(captured[0]["counts"]["tavily"], 4)
@@ -669,9 +672,8 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(captured[1]["counts"]["tavily"], 6)
         for run in captured:
             self.assertEqual(run["fetched_urls"], ["https://example.com/doc"])
-        self.assertEqual(default["diagnostics"]["route_meta"]["scrape_top"], 15)
-        self.assertEqual(explicit["diagnostics"]["route_meta"]["scrape_top"], 15)
-        self.assertIn("legacy_scrape_limits", explicit["diagnostics"])
+        self.assertNotIn("scrape_top", default["diagnostics"]["route_meta"])
+        self.assertNotIn("legacy_scrape_limits", explicit["diagnostics"])
 
     def test_request_count_overrides_configured_per_source_counts(self):
         request = SearchPlanRequest(route="fast", count=6)
@@ -693,12 +695,12 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(plan.effective_counts["exa"], 4)
         self.assertEqual(plan.route_defaults["count"], 10)
 
-    def test_fast_route_want_content_flows_to_runner_and_diagnostics(self):
+    def test_fast_route_has_no_inline_content_switch(self):
         captured = {}
 
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
-                captured["want_content"] = config.want_content
+                captured["has_want_content"] = hasattr(config, "want_content")
 
             def run(self, query, *, deadline=None):
                 return [{"source": "baidu_answer", "answer": "summary"}]
@@ -712,8 +714,8 @@ class PluginServiceConfigTests(unittest.TestCase):
                 query="q", sources=["baidu"], route="fast", use_state=False,
             ))
 
-        self.assertFalse(captured["want_content"])
-        self.assertFalse(response["diagnostics"]["route_meta"]["want_content"])
+        self.assertFalse(captured["has_want_content"])
+        self.assertNotIn("want_content", response["diagnostics"]["route_meta"])
 
     def test_answer_rows_are_exposed_as_top_level_summary(self):
         class FakeRunner:
@@ -1022,7 +1024,7 @@ class PluginServiceConfigTests(unittest.TestCase):
 
         self.assertIsNone(response["diagnostics"]["route_degradation"])
 
-    def test_legacy_no_scrape_and_scrape_top_do_not_disable_body_fetching(self):
+    def test_deprecated_config_keys_warn_and_do_not_disable_body_fetching(self):
         fetched = []
 
         class FakeRunner:
@@ -1036,19 +1038,23 @@ class PluginServiceConfigTests(unittest.TestCase):
             fetched.append([hit["url"] for hit in hits])
             return _fake_ranked_fetch_stage(hits, **kwargs)
 
-        with mock.patch("multi_search_mcp.src.state.runtime.load_config_safe", return_value={"no_scrape": True, "scrape_top": 0}), \
+        legacy = {"no_scrape": True, "scrape_top": 0, "scrape_per_source": 1,
+                  "brief": True, "verbose": True, "title_url_only": True,
+                  "want_content": True}
+        with mock.patch("multi_search_mcp.src.state.runtime.load_config_safe", return_value=legacy), \
              mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}), \
              mock.patch("multi_search_mcp.src.search.candidates.SearchRunner", FakeRunner), \
              mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
              mock.patch("multi_search_mcp.src.search_web.run_ranked_fetch_stage", side_effect=fake_fetch_stage):
-            responses = [run_multi_search(MultiSearchRequest(query="q", scrape_top=value, use_state=False))
-                         for value in (None, 0, 3)]
+            with self.assertWarns(FutureWarning) as warning:
+                response = run_multi_search(MultiSearchRequest(query="q", use_state=False))
 
-        self.assertEqual(fetched, [["https://example.com/doc"]] * 3)
-        for response in responses:
-            self.assertNotIn("body", response["results"][0])
-            self.assertEqual(response["markdown"].count("Fetched body for https://example.com/doc"), 1)
-            self.assertEqual(response["diagnostics"]["body_fetch_count"], 1)
+        self.assertIn("scrape_top", str(warning.warning))
+        self.assertIn("want_content", str(warning.warning))
+        self.assertEqual(fetched, [["https://example.com/doc"]])
+        self.assertNotIn("body", response["results"][0])
+        self.assertEqual(response["markdown"].count("Fetched body for https://example.com/doc"), 1)
+        self.assertEqual(response["diagnostics"]["body_fetch_count"], 1)
 
     def test_direct_scrape_passes_configured_jina_keys(self):
         captured = {}
@@ -1374,32 +1380,13 @@ class PluginNormUrlTests(unittest.TestCase):
             self.assertIn(token, norm)
 
 class PluginRankingTests(unittest.TestCase):
-    def test_scraped_row_ranks_above_consensus_only(self):
+    def test_formatter_keeps_rrf_order_instead_of_legacy_reranking(self):
         rows = [
-            {"source": "a", "url": "https://x.com/p1", "also_from": ["b", "c"]},
-            {"source": "d", "url": "https://x.com/p2", "scraped_content": "Z" * 400},
+            {"source": "brave", "title": "First", "url": "https://x.com/first", "rrf_score": 0.1},
+            {"source": "exa", "title": "Second", "url": "https://x.com/second", "rrf_score": 0.9},
         ]
-        ranked = rank_results(rows)
-        self.assertEqual(ranked[0]["url"], "https://x.com/p2")
-
-    def test_errors_sink_to_bottom(self):
-        rows = [
-            {"source": "a", "error": "boom"},
-            {"source": "b", "url": "https://x.com/p"},
-        ]
-        ranked = rank_results(rows)
-        self.assertNotIn("error", ranked[0])
-        self.assertIn("error", ranked[-1])
-
-    def test_single_source_route_ranks_by_content_length(self):
-        # Single-source results: no also_from consensus; ordering must come from
-        # content length / stars, not insertion order.
-        rows = [
-            {"source": "twitter", "url": "https://x.com/short", "scraped_content": "s" * 50},
-            {"source": "twitter", "url": "https://x.com/long", "scraped_content": "l" * 900},
-        ]
-        ranked = rank_results(rows)
-        self.assertEqual(ranked[0]["url"], "https://x.com/long")
+        output = format_results(rows, "q")
+        self.assertLess(output.index("https://x.com/first"), output.index("https://x.com/second"))
 
     def test_json_results_order_matches_markdown_order(self):
         captured = {}
