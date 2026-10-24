@@ -9,7 +9,9 @@ compatibility:
     mode: "semantic"
   execution:
     context: "inline"
-    shell: "powershell"
+    # No hardcoded shell: the CLI and CI run cross-platform, so the host picks
+    # the shell and the Skill's quoting rules apply on POSIX and PowerShell.
+    shell: "host-default"
   trust:
     source_tier: "local"
     remote_inline_execution: "forbid"

@@ -53,8 +53,7 @@ class DashQueryTests(unittest.TestCase):
     def test_skills_document_the_option_terminator(self):
         root = Path(__file__).resolve().parents[1]
         for relative in (
-            "desktop/skill/multi-search/SKILL.md",
-            "desktop/skill/multi-search/references/cli.md",
+            "skills/multi-search/SKILL.md",
             "skills/multi-search/references/cli.md",
         ):
             with self.subTest(file=relative):

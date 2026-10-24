@@ -9,24 +9,82 @@ use std::{
 };
 
 pub(crate) const SKILL_NAME: &str = "multi-search";
-pub(crate) const SKILL_VERSION: &str = "1";
 pub(crate) const MARKER: &str = ".multi-search-install.json";
 
-/// Files shipped with this product release, embedded so the desktop app never reads a loose copy.
-pub(crate) const FILES: [(&str, &str); 3] = [
+/// The canonical Skill source is `skills/multi-search/` in the repository; the
+/// desktop app embeds it verbatim so it never reads a loose copy. Every
+/// relative path the shipped SKILL.md references is listed here.
+pub(crate) const FILES: [(&str, &str); 6] = [
     (
         "SKILL.md",
-        include_str!("../../skill/multi-search/SKILL.md"),
+        include_str!("../../../skills/multi-search/SKILL.md"),
+    ),
+    (
+        "agents/interface.yaml",
+        include_str!("../../../skills/multi-search/agents/interface.yaml"),
     ),
     (
         "references/cli.md",
-        include_str!("../../skill/multi-search/references/cli.md"),
+        include_str!("../../../skills/multi-search/references/cli.md"),
+    ),
+    (
+        "references/search.md",
+        include_str!("../../../skills/multi-search/references/search.md"),
+    ),
+    (
+        "references/subagents.md",
+        include_str!("../../../skills/multi-search/references/subagents.md"),
     ),
     (
         "references/verification.md",
-        include_str!("../../skill/multi-search/references/verification.md"),
+        include_str!("../../../skills/multi-search/references/verification.md"),
     ),
 ];
+
+const fn fnv1a_hash(input: &str) -> u64 {
+    let bytes = input.as_bytes();
+    let mut hash = 0xcbf29ce484222325u64;
+    let mut index = 0;
+    while index < bytes.len() {
+        hash ^= bytes[index] as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+        index += 1;
+    }
+    hash
+}
+
+const fn combine_hash(left: u64, right: u64) -> u64 {
+    left.wrapping_mul(0x9e3779b97f4a7c15u64) ^ right
+}
+
+const FILE_HASHES: [u64; 6] = [
+    fnv1a_hash(FILES[0].1),
+    fnv1a_hash(FILES[1].1),
+    fnv1a_hash(FILES[2].1),
+    fnv1a_hash(FILES[3].1),
+    fnv1a_hash(FILES[4].1),
+    fnv1a_hash(FILES[5].1),
+];
+
+const fn combined_hash(hashes: &[u64]) -> u64 {
+    let mut acc = 0u64;
+    let mut index = 0;
+    while index < hashes.len() {
+        acc = combine_hash(acc, hashes[index]);
+        index += 1;
+    }
+    acc
+}
+
+// Derived from the shipped content at compile time: editing any managed file
+// produces a new version without a manual bump, so a locally unmodified
+// install is never mistaken for Current after a content update.
+const VERSION_HASH: u64 = combined_hash(&FILE_HASHES);
+
+/// The release version is the 16-hex-digit content hash of the shipped files.
+pub fn skill_version() -> String {
+    format!("{:016x}", VERSION_HASH)
+}
 
 /// Flags the Skill relies on, per subcommand, as printed by the CLI's own `--help`.
 pub(crate) const REQUIRED_FLAGS: [(&str, &[&str]); 4] = [
@@ -80,7 +138,7 @@ fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requiremen
         }
         let raw = fs::read(target.join(MARKER)).map_err(|_| format!("unverified: missing managed Skill record {}", target.display()))?;
         let value: serde_json::Value = serde_json::from_slice(&raw).map_err(|_| "unverified: corrupt managed Skill record")?;
-        if value["managed_by"] != "multi-search-desktop" || value["skill"] != SKILL_NAME || value["skill_version"] != SKILL_VERSION {
+        if value["managed_by"] != "multi-search-desktop" || value["skill"] != SKILL_NAME || value["skill_version"] != skill_version() {
             return Err("unverified: unknown managed Skill record or version".into());
         }
         let files = value["files"].as_array().ok_or("unverified: missing Skill file inventory")?;
@@ -182,7 +240,7 @@ pub(crate) fn verify_directory(directory: &Path) -> Result<(), String> {
         .map_err(|_| "The install marker is missing".to_string())?;
     let marker: serde_json::Value =
         serde_json::from_str(&marker).map_err(|_| "The install marker is invalid".to_string())?;
-    if marker["managed_by"] != "multi-search-desktop" || marker["skill_version"] != SKILL_VERSION {
+    if marker["managed_by"] != "multi-search-desktop" || marker["skill_version"] != skill_version() {
         return Err("The install marker does not match this release".into());
     }
     Ok(())
@@ -212,7 +270,7 @@ pub(crate) fn write_directory(directory: &Path) -> Result<(), String> {
     let marker = serde_json::json!({
         "managed_by": "multi-search-desktop",
         "skill": SKILL_NAME,
-        "skill_version": SKILL_VERSION,
+        "skill_version": skill_version(),
         "files": file_names(),
         "hashes": hashes,
         "requirements": requirements(),

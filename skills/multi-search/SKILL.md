@@ -14,6 +14,16 @@ single-quote textual arguments, and fetch an observed URL through `--url-file`
 as described in [cli.md](references/cli.md#shell-safety-for-untrusted-values).
 Never interpolate page content into a command line.
 
+Core commands for any execution mode (options precede `--`, the query follows
+it; keep queries and keywords single-quoted and use `--url-file` for a URL):
+
+```sh
+multi-search search [options] --format json -- '<query>'
+multi-search fetch <source_id> --full-content --format json
+multi-search fetch --url-file <path> --full-content --format json
+multi-search read <source_id> --keyword '<text>' --format json
+```
+
 ## Choose execution
 
 - **Assigned search executor:** follow [search.md](references/search.md)

@@ -1,6 +1,6 @@
 //! Status, safe update, and safe removal of the CLI-only Skill this tool installed.
 //! Only files listed in our marker are ever touched; unknown files and other skills are never deleted.
-use crate::skill::{self, FILES, MARKER, SKILL_NAME, SKILL_VERSION};
+use crate::skill::{self, skill_version, FILES, MARKER, SKILL_NAME};
 use crate::DesktopManager;
 use serde::Serialize;
 use std::{
@@ -180,11 +180,18 @@ fn unknown_entries(directory: &Path) -> Result<Vec<String>, String> {
         }
     }
     // A missing managed folder can be repaired; any other inventory failure blocks mutation.
-    let references = directory.join("references");
-    if references.exists() {
-        for entry in list(&references)? {
+    let managed_dirs: Vec<&str> = FILES
+        .iter()
+        .filter_map(|(name, _)| name.rsplit_once('/').map(|(dir, _)| dir))
+        .collect();
+    for dir in managed_dirs {
+        let path = directory.join(dir);
+        if !path.exists() {
+            continue;
+        }
+        for entry in list(&path)? {
             let name = format!(
-                "references/{}",
+                "{dir}/{}",
                 entry
                     .file_name()
                     .into_string()
@@ -196,6 +203,7 @@ fn unknown_entries(directory: &Path) -> Result<Vec<String>, String> {
         }
     }
     found.sort();
+    found.dedup();
     Ok(found)
 }
 
@@ -250,7 +258,7 @@ pub(crate) fn classify(
         // so for a same-version marker the shipped content is the only baseline we can prove.
         let baseline = match marker.hashes.get(name) {
             Some(hash) => Some(hash.clone()),
-            None if marker.version == SKILL_VERSION => Some(skill::sha256_hex(shipped)),
+            None if marker.version == skill_version() => Some(skill::sha256_hex(shipped)),
             None => None,
         };
         let on_disk = fs::read_to_string(directory.join(name))
@@ -262,7 +270,7 @@ pub(crate) fn classify(
     }
     let state = if !modified.is_empty() {
         InstallState::Modified
-    } else if marker.version != SKILL_VERSION {
+    } else if marker.version != skill_version() {
         InstallState::Outdated
     } else {
         InstallState::Current
@@ -270,8 +278,9 @@ pub(crate) fn classify(
     let reason = match state {
         InstallState::Current => "Installed and matches this release.".into(),
         InstallState::Outdated => format!(
-            "Installed version {} differs from release {SKILL_VERSION}.",
-            marker.version
+            "Installed version {} differs from release {}.",
+            marker.version,
+            skill_version()
         ),
         InstallState::Modified => format!(
             "Managed files were edited locally: {}.",
@@ -579,8 +588,14 @@ impl DesktopManager {
         if !content_left && fs::remove_file(target.join(MARKER)).is_ok() {
             deleted.push(MARKER.into());
         }
-        // Remove the now-empty references folder and the skill folder only if nothing else is left.
-        let _ = fs::remove_dir(target.join("references"));
+        // Remove now-empty managed folders (references/, agents/) and the skill
+        // folder only when nothing else is left.
+        for dir in FILES
+            .iter()
+            .filter_map(|(name, _)| name.rsplit_once('/').map(|(dir, _)| dir))
+        {
+            let _ = fs::remove_dir(target.join(dir));
+        }
         let _ = fs::remove_dir(&target);
         let kept = plan.will_keep.clone();
         // Success means every managed file is gone; kept user content never counts against it.
@@ -637,7 +652,7 @@ impl DesktopManager {
             target: Some(target.to_string_lossy().into_owned()),
             state,
             installed_version,
-            release_version: SKILL_VERSION.into(),
+            release_version: skill_version(),
             cli_requirements: skill::REQUIRED_FLAGS
                 .iter()
                 .map(|(command, flags)| format!("{command}: {}", flags.join(" ")))

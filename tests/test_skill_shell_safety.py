@@ -8,7 +8,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_ROOTS = (ROOT / "skills/multi-search", ROOT / "desktop/skill/multi-search")
+# A single canonical skill source (review fix 08); desktop/skill is gone.
+SKILL_ROOTS = (ROOT / "skills/multi-search",)
 
 UNSAFE_PATTERNS = (
     (re.compile(r'--url\s+"'), "double-quoted --url example"),
@@ -20,7 +21,7 @@ UNSAFE_PATTERNS = (
 
 
 class SkillDocSafetyTests(unittest.TestCase):
-    def test_both_skill_copies_document_the_safe_url_path(self):
+    def test_canonical_skill_documents_the_safe_url_path(self):
         for root in SKILL_ROOTS:
             with self.subTest(skill=str(root.relative_to(ROOT))):
                 cli_doc = (root / "references/cli.md").read_text(encoding="utf-8")

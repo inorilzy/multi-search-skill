@@ -120,7 +120,9 @@ skill 入口在 [skills/multi-search/SKILL.md](skills/multi-search/SKILL.md)，�
 
 CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；业务能力只落在 `multi_search_mcp/src/`。命令按需执行，无后台服务。历史架构审查文档仅记录过去的 MCP 形态，不是当前安装步骤。
 
-同步个人 Skill 时，将整个 `skills/multi-search/`（含 `references/`）复制到自己的 Skill 目录；先备份现有文件并保留个人定制，核对文件内容或 hash 后替换。只复制 `SKILL.md` 会缺少 CLI 指南。已加载的旧 Skill 需要在新任务中重新读取。
+同步个人 Skill 时，将整个 `skills/multi-search/`（含 `references/` 与 `agents/`）复制到自己的 Skill 目录；先备份现有文件并保留个人定制，核对文件内容或 hash 后替换。只复制 `SKILL.md` 会缺少 CLI 指南与子代理约定。已加载的旧 Skill 需要在新任务中重新读取。
+
+`skills/multi-search/` 是仓库里唯一的 Skill 权威来源；桌面端在编译时把同一棵树原样打包进 `desktop/src-tauri/src/skill.rs`（`include_str!`），安装到受管目录的内容与这里一致，不再有第二份手写副本。Skill 内容一旦变化，受管版本的 `skill_version` 会随打包内容自动变化，桌面端据此提示更新。
 
 ## 搜索源、注册和免费额度
 
