@@ -1,15 +1,15 @@
 const statusLabels = { ready: '可调用', missing: '未发现', not_executable: '不可执行', version_failed: '版本检查失败', unavailable: '不可用' };
-export async function mountDiagnostics(root, api, { pollInterval = 150 } = {}) {
-  root.innerHTML = `<section class="heading"><p class="eyebrow">01 / LOCAL RUNTIME</p><h1>搜索，从本机开始。</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
+export async function mountDiagnostics(root, api, { pollInterval = 150, number = '01' } = {}) {
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / LOCAL RUNTIME</p><h1 tabindex="-1">搜索，从本机开始。</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
     <section class="runtime panel"><div class="section-title"><h2>CLI 概览</h2><button type="button" data-action="refresh">重新检测</button></div>
       <label class="path-input">指定已安装的 CLI <input data-field="path" placeholder="可选：C:\\…\\multi-search.exe" spellcheck="false"></label>
       <div class="discovery-grid"><article><span class="eyebrow">APP INVOCATION</span><h3>应用调用</h3><strong data-status="app">检测中</strong><p data-info="app"></p></article><article><span class="eyebrow">FRESH USER ENVIRONMENT</span><h3>用户命令发现</h3><strong data-status="user">检测中</strong><p data-info="user"></p></article></div>
       <p data-info="restart" class="note"></p><p data-info="error" role="alert"></p></section>
     <section class="panel test-search"><div class="section-title"><h2>一次测试搜索</h2><span class="eyebrow">ON DEMAND / NO SERVICE</span></div>
       <form data-search-form><label>搜索词<input data-field="query" required maxlength="2000" placeholder="例如：Python SQLite 缓存"></label>
-      <div class="search-options"><label>路由<select data-field="route"><option value="default">通用 / default</option><option value="dev">开发 / dev</option><option value="fast">快速 / fast</option><option value="all">全部 / all</option><option value="social">社交 / social</option></select></label><label>搜索源<select data-field="sources"><option value="">按路由配置</option><option value="hackernews">Hacker News（无 key）</option><option value="hackernews,brave">Hacker News + Brave</option><option value="github_repos">GitHub</option><option value="brave">Brave</option><option value="exa">Exa</option><option value="tavily">Tavily</option></select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="60" value="15"></label></div>
+      <div class="search-options"><label>路由<select data-field="route"><option value="default">通用 / default</option><option value="dev">开发 / dev</option><option value="fast">快速 / fast</option><option value="all">全部 / all</option><option value="social">社交 / social</option></select></label><label>搜索源<select data-field="sources"><option value="">按路由配置</option><option value="hackernews">Hacker News（无需 API Key）</option><option value="hackernews,brave">Hacker News + Brave</option><option value="github_repos">GitHub</option><option value="brave">Brave</option><option value="exa">Exa</option><option value="tavily">Tavily</option></select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="60" value="15"></label></div>
       <div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
-      <p data-execution-error role="alert"></p><pre data-results tabindex="0" aria-label="搜索结果">结果会显示在这里。</pre></section>`;
+      <p data-execution-error role="alert"></p><pre data-results tabindex="0" role="region" aria-label="搜索结果">结果会显示在这里。</pre></section>`;
   const path = root.querySelector('[data-field="path"]');
   let appReady = false, activeId = null, timer = null, disposed = false, starting = false;
   const search = root.querySelector('[data-action="search"]');

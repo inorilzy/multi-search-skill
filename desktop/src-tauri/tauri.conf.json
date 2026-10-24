@@ -6,7 +6,7 @@
   "build": { "frontendDist": "../ui" },
   "app": {
     "withGlobalTauri": true,
-    "windows": [{ "title": "Multi Search · 本机搜索管理", "width": 1080, "height": 880, "minWidth": 760, "minHeight": 600 }],
+    "windows": [{ "title": "Multi Search · 本机搜索管理", "width": 1080, "height": 880, "minWidth": 960, "minHeight": 600 }],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'; base-uri 'none'",
       "capabilities": [{ "identifier": "management", "windows": ["main"], "permissions": [] }]

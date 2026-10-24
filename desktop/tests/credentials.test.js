@@ -54,7 +54,7 @@ test('page shows saved state, effective source, and env override notice without 
   await mountCredentials(root, api);
   assert.equal(root.querySelector('[data-status="store"]').textContent, '已保存');
   assert.equal(root.querySelector('[data-status="source"]').textContent, '环境变量 TAVILY_API_KEY');
-  assert.match(root.querySelector('[data-info="override"]').textContent, /覆盖已保存的 key/);
+  assert.match(root.querySelector('[data-info="override"]').textContent, /覆盖已保存的 API Key|覆盖已保存的 Key/);
   assert.match(root.querySelector('[data-info="override"]').textContent, /TAVILY_API_KEY/);
   window.close();
 });
@@ -127,7 +127,7 @@ test('successful test expires on replacement, deletion and provenance refresh', 
   root.querySelector('[data-action="test"]').click();
   await flush();
   assert.match(root.querySelector('[data-status="test"]').textContent, /环境变量 TAVILY_API_KEY/);
-  assert.doesNotMatch(root.querySelector('[data-status="test"]').textContent, /已保存的 key/);
+  assert.doesNotMatch(root.querySelector('[data-status="test"]').textContent, /已保存的 Key/);
   window.close();
 });
 
@@ -183,7 +183,7 @@ test('save with a file key list asks for confirmation; cancel writes nothing', a
   assert.equal(saveCalls, 0, 'nothing is written before confirmation');
   const prompt = root.querySelector('[data-confirm="save"]');
   assert.ok(prompt);
-  assert.match(prompt.textContent, /保存后使用凭据库key，文件中的2个key保留但不参与本来源轮换/);
+  assert.match(prompt.textContent, /保存后使用凭据库 Key，文件中的 2 个 Key 保留但不参与本来源轮换/);
   root.querySelector('[data-action="cancel-save"]').click();
   await flush();
   assert.equal(saveCalls, 0);
@@ -209,7 +209,7 @@ test('confirmed save with a file key list writes exactly once with the source na
   assert.deepEqual(calls, [{ source: 'github_repos', key: SYNTHETIC_KEY }]);
   assert.equal(root.querySelector('[data-confirm="save"]'), null);
   assert.equal(root.querySelector('[data-status="source"]').textContent, 'Windows 凭据库');
-  assert.match(root.querySelector('[data-info="override"]').textContent, /文件中的 2 个 key 已保留/);
+  assert.match(root.querySelector('[data-info="override"]').textContent, /文件中的 2 个 Key 已保留/);
   assert.ok(!root.innerHTML.includes(SYNTHETIC_KEY));
   window.close();
 });
@@ -242,11 +242,11 @@ test('delete warning with a file list says the file keys will be restored', asyn
   root.querySelector('[data-action="delete"]').click();
   await flush();
   const text = root.querySelector('[data-confirm="delete"]').textContent;
-  assert.match(text, /删除后将恢复使用文件中的 2 个 key/);
+  assert.match(text, /删除后将恢复使用文件中的 2 个 Key/);
   assert.doesNotMatch(text, /需要重新粘贴/);
   root.querySelector('[data-action="confirm-delete"]').click();
   await flush();
-  assert.match(root.querySelector('[data-info="test"]').textContent, /已恢复使用文件中的 2 个 key/);
+  assert.match(root.querySelector('[data-info="test"]').textContent, /已恢复使用文件中的 2 个 Key/);
   window.close();
 });
 
@@ -266,7 +266,7 @@ test('delete warning with an env var says the env var still overrides and never 
   await flush();
   const message = root.querySelector('[data-info="test"]').textContent;
   assert.match(message, /仍由环境变量 TAVILY_API_KEY 生效/);
-  assert.doesNotMatch(message, /当前没有可用的 key/);
+  assert.doesNotMatch(message, /当前没有可用的 Key/);
   window.close();
 });
 
@@ -278,14 +278,14 @@ test('delete warning with no fallback says the key must be pasted again', async 
   await mountCredentials(root, api);
   root.querySelector('[data-action="delete"]').click();
   await flush();
-  assert.match(root.querySelector('[data-confirm="delete"]').textContent, /需要重新粘贴 key/);
+  assert.match(root.querySelector('[data-confirm="delete"]').textContent, /需要重新粘贴 Key/);
   window.close();
 });
 
 test('test results distinguish success, auth, quota, and network outcomes', async () => {
   const cases = [
-    ['success', '测试成功：Tavily 本次使用Windows 凭据库。'],
-    ['auth_failed', '认证失败：Tavily 拒绝了该 key。'],
+    ['success', '测试成功：Tavily 本次使用 Windows 凭据库。'],
+    ['auth_failed', '认证失败：Tavily 拒绝了该 Key。'],
     ['quota', '额度不足：Tavily 额度已用尽。'],
     ['network', '网络错误：无法连接 Tavily。'],
   ];

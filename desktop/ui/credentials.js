@@ -1,3 +1,6 @@
+import { openConfirm } from './confirm.js';
+
+// Copy: 'API Key' for the credential, 'Cookie' for Twitter, and a space between Chinese and Latin text.
 // The single canonical search-source list. Keyed sources store a key in the Windows credential
 // store; their names mirror credential_commands::SOURCES in Rust, which also accepts the
 // hyphenated `github-repos` alias. Keyless sources need no key. `twitter` reads a cookie file
@@ -25,15 +28,15 @@ const storeLabels = { present: '已保存', absent: '未保存', unavailable: '�
 function sourceText(overview) {
   if (overview.effective_source === 'env') return `环境变量 ${overview.env_var}`;
   if (overview.effective_source === 'credential_store') return 'Windows 凭据库';
-  if (overview.effective_source === 'file') return `文件中的 ${overview.file_key_count} 个 key`;
+  if (overview.effective_source === 'file') return `文件中的 ${overview.file_key_count} 个 Key`;
   if (overview.effective_source === 'unavailable') return '不可用';
   return '未配置';
 }
 
 function testText(result, label, provenance) {
   const labels = {
-    success: `测试成功：${label} 本次使用${provenance}。`,
-    auth_failed: `认证失败：${label} 拒绝了该 key。`,
+    success: `测试成功：${label} 本次使用 ${provenance}。`,
+    auth_failed: `认证失败：${label} 拒绝了该 Key。`,
     quota: `额度不足：${label} 额度已用尽。`,
     rate_limited: '触发频率限制：请稍后再试。',
     network: `网络错误：无法连接 ${label}。`,
@@ -47,7 +50,7 @@ function testText(result, label, provenance) {
 /// Full page: heading plus the credential panels. Used when a source owns its own page.
 export async function mountCredentials(root, api, options = {}) {
   const entry = sourceEntry(options.source);
-  root.innerHTML = `<section class="heading"><p class="eyebrow">CREDENTIALS / ${entry.source}</p><h1>${entry.label} 凭据。</h1><p>key 只保存在 Windows 凭据库中，不写入配置文件，也不会再次显示。</p></section>`;
+  root.innerHTML = `<section class="heading"><p class="eyebrow">CREDENTIALS / ${entry.source}</p><h1 tabindex="-1">${entry.label} 凭据。</h1><p>Key 只保存在 Windows 凭据库中，不写入配置文件，也不会再次显示。</p></section>`;
   const holder = root.ownerDocument.createElement('div');
   root.append(holder);
   return mountCredentialBody(holder, api, options);
@@ -71,7 +74,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <p class="credential-note">Key 保存在本机 Windows 凭据库。保存不会发起搜索请求。</p>
       <dl class="cred-status"><dt>已保存</dt><dd data-status="store"></dd><dt>生效来源</dt><dd data-status="source"></dd></dl>
       <p data-info="override" class="note" role="status"></p><p data-info="error" role="alert"></p>
-      <div class="credential-tools"><button type="button" data-action="refresh">刷新状态</button><div data-delete-slot><button type="button" data-action="delete">删除已保存的 key</button></div></div></div>
+      <div class="credential-tools"><button type="button" data-action="refresh">刷新状态</button><div data-delete-slot><button type="button" data-action="delete">删除已保存的 Key</button></div></div></div>
       <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
       <p class="credential-note" data-info="warning">测试会向 ${label} 发送一次外部搜索请求，并向对应服务商提供认证凭据，可能消耗额度并计入费用。请只在需要时测试。</p></div>
     </div>`;
@@ -112,9 +115,9 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     text('[data-status="source"]', sourceText(current));
     let note = '';
     if (overview.env_overrides_store) {
-      note = `检测到环境变量 ${overview.env_var}，它会覆盖已保存的 key。删除或替换已保存的 key 不会改变当前生效的来源。`;
+      note = `检测到环境变量 ${overview.env_var}，它会覆盖已保存的 Key。删除或替换已保存的 Key 不会改变当前生效的来源。`;
     } else if (files > 0 && overview.store.state === 'present') {
-      note = `文件中的 ${files} 个 key 已保留，但被凭据库 key 覆盖，不参与本来源轮换。`;
+      note = `文件中的 ${files} 个 Key 已保留，但被凭据库 Key 覆盖，不参与本来源轮换。`;
     }
     text('[data-info="override"]', note);
     text('[data-info="error"]', overview.store.error || '');
@@ -131,18 +134,30 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   // Save is confirmed in-page when a file list exists: the file keys stay listed but stop
   // rotating for this source. Cancel removes the panel and writes nothing.
   let pendingKey = null;
-  function closeSaveConfirm() { root.querySelector('[data-confirm="save"]')?.remove(); pendingKey = null; }
-  function openSaveConfirm(key) {
-    closeSaveConfirm();
-    pendingKey = key;
+  let releaseSave = null;
+  // Backend values are set with textContent; only constant markup goes through innerHTML.
+  function confirmPanel(kind, message, confirmClass, confirmLabel) {
     const panel = root.ownerDocument.createElement('div');
-    panel.setAttribute('data-confirm', 'save');
-    panel.innerHTML = `<p class="note">保存后使用凭据库key，文件中的${current.file_key_count}个key保留但不参与本来源轮换</p>`
-      + '<div class="run-controls"><button type="button" class="primary" data-action="confirm-save">确认保存</button>'
-      + '<button type="button" data-action="cancel-save">取消</button></div>';
+    panel.setAttribute('data-confirm', kind);
+    panel.innerHTML = `<p class="note"></p><div class="run-controls"><button type="button" class="${confirmClass}" data-action="confirm-${kind}">${confirmLabel}</button>`
+      + `<button type="button" data-action="cancel-${kind}">取消</button></div>`;
+    panel.querySelector('p').textContent = message;
+    return panel;
+  }
+  function closeSaveConfirm(options) {
+    releaseSave?.(options);
+    releaseSave = null;
+    root.querySelector('[data-confirm="save"]')?.remove();
+    pendingKey = null;
+  }
+  function openSaveConfirm(key) {
+    closeSaveConfirm({ restoreFocus: false });
+    pendingKey = key;
+    const panel = confirmPanel('save', `保存后使用凭据库 Key，文件中的 ${current.file_key_count} 个 Key 保留但不参与本来源轮换。`, 'primary', '确认保存');
     root.querySelector('[data-save-form]').append(panel);
     panel.querySelector('[data-action="confirm-save"]').addEventListener('click', confirmSave);
-    panel.querySelector('[data-action="cancel-save"]').addEventListener('click', closeSaveConfirm);
+    panel.querySelector('[data-action="cancel-save"]').addEventListener('click', () => closeSaveConfirm());
+    releaseSave = openConfirm(panel, { trigger: root.querySelector('[data-action="save"]'), cancel: panel.querySelector('[data-action="cancel-save"]'), onCancel: () => closeSaveConfirm() });
   }
   async function doSave(key) {
     invalidateTest();
@@ -153,7 +168,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   }
   async function confirmSave() {
     const key = pendingKey;
-    closeSaveConfirm();
+    closeSaveConfirm({ restoreFocus: false });
     if (key) await doSave(key);
   }
 
@@ -170,23 +185,25 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   // or an env var still provides one.
   function deleteWarning() {
     const files = current.file_key_count ?? 0;
-    const parts = ['确定删除已保存的 key 吗？'];
+    const parts = ['确定删除已保存的 Key 吗？'];
     if (current.env_var) parts.push(`环境变量 ${current.env_var} 仍会覆盖，删除不会改变当前生效的来源。`);
-    if (files > 0) parts.push(`删除后将恢复使用文件中的 ${files} 个 key。`);
-    if (!files && !current.env_var) parts.push('删除后需要重新粘贴 key 才能使用。');
+    if (files > 0) parts.push(`删除后将恢复使用文件中的 ${files} 个 Key。`);
+    if (!files && !current.env_var) parts.push('删除后需要重新粘贴 Key 才能使用。');
     return parts.join('');
   }
-  function closeDeleteConfirm() { root.querySelector('[data-confirm="delete"]')?.remove(); }
+  let releaseDelete = null;
+  function closeDeleteConfirm(options) {
+    releaseDelete?.(options);
+    releaseDelete = null;
+    root.querySelector('[data-confirm="delete"]')?.remove();
+  }
   function openDeleteConfirm() {
     if (root.querySelector('[data-confirm="delete"]')) return;
-    const panel = root.ownerDocument.createElement('div');
-    panel.setAttribute('data-confirm', 'delete');
-    panel.innerHTML = `<p class="note">${deleteWarning()}</p>`
-      + '<div class="run-controls"><button type="button" class="danger" data-action="confirm-delete">确认删除</button>'
-      + '<button type="button" data-action="cancel-delete">取消</button></div>';
+    const panel = confirmPanel('delete', deleteWarning(), 'danger', '确认删除');
     root.querySelector('[data-delete-slot]').append(panel);
     panel.querySelector('[data-action="confirm-delete"]').addEventListener('click', confirmDelete);
-    panel.querySelector('[data-action="cancel-delete"]').addEventListener('click', closeDeleteConfirm);
+    panel.querySelector('[data-action="cancel-delete"]').addEventListener('click', () => closeDeleteConfirm());
+    releaseDelete = openConfirm(panel, { trigger: root.querySelector('[data-action="delete"]'), cancel: panel.querySelector('[data-action="cancel-delete"]'), onCancel: () => closeDeleteConfirm() });
   }
 
   async function confirmDelete() {
@@ -194,19 +211,18 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     setBusy(true);
     try {
       render(await api.credentialDelete(source));
-      closeDeleteConfirm();
       const files = current.file_key_count ?? 0;
       let message = '已删除。';
       if (current.env_var) message += `仍由环境变量 ${current.env_var} 生效。`;
-      else if (files > 0) message += `已恢复使用文件中的 ${files} 个 key。`;
-      else message += '当前没有可用的 key。';
+      else if (files > 0) message += `已恢复使用文件中的 ${files} 个 Key。`;
+      else message += '当前没有可用的 Key。';
       text('[data-info="test"]', message);
     }
     catch (error) {
-      closeDeleteConfirm();
       text('[data-info="error"]', typeof error === 'string' ? error : '删除失败，请重试。');
     }
-    finally { setBusy(false); }
+    // Re-enable first so focus can return to the delete button.
+    finally { setBusy(false); closeDeleteConfirm(); }
   }
 
   root.querySelector('[data-action="delete"]').addEventListener('click', openDeleteConfirm);

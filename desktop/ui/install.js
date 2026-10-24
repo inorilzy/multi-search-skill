@@ -1,3 +1,5 @@
+import { openConfirm } from './confirm.js';
+
 const statusLabels = {
   ready: '可安装',
   installed: '已由本工具安装',
@@ -13,14 +15,14 @@ const statusLabels = {
   uninstalled: '已卸载',
 };
 
-export async function mountInstall(root, api) {
-  root.innerHTML = `<section class="heading"><p class="eyebrow">02 / INSTALL CLI</p><h1>安装命令行工具。</h1><p>从受控来源安装并校验。未知安装不会被覆盖，失败不会改动已有可用版本。</p></section>
+export async function mountInstall(root, api, { number = '02' } = {}) {
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / INSTALL CLI</p><h1 tabindex="-1">安装命令行工具。</h1><p>从受控来源安装并校验。未知安装不会被覆盖，失败不会改动已有可用版本。</p></section>
     <section class="panel install"><div class="section-title"><h2>安装计划</h2><button type="button" data-action="plan">重新检查</button></div>
       <strong data-status="plan" aria-live="polite">检查中</strong>
       <dl class="install-plan"><dt>安装目录</dt><dd data-info="root"></dd><dt>可执行文件</dt><dd data-info="bin"></dd><dt>版本</dt><dd data-info="version"></dd><dt>当前版本</dt><dd data-info="current-version"></dd><dt>安装来源</dt><dd data-info="source"></dd><dt>Skill 兼容性</dt><dd data-info="compatibility"></dd></dl>
       <p data-info="path-hint" class="note"></p><p data-info="reason" role="alert"></p>
       <div class="run-controls"><button type="button" data-action="install" class="primary" disabled>安装 CLI</button><button type="button" data-action="update" disabled>更新 CLI</button><button type="button" data-action="uninstall" disabled>卸载 CLI</button><strong data-status="result" aria-live="polite"></strong></div>
-      <div class="run-controls" data-confirm hidden><strong>卸载只删除本工具安装的 CLI 文件；配置、凭据和 Skill 会保留。</strong><button type="button" data-action="uninstall-confirm" class="danger">确认卸载</button><button type="button" data-action="uninstall-cancel">取消</button></div>
+      <div class="run-controls" data-confirm hidden><p>卸载只删除本工具安装的 CLI 文件；配置、凭据和 Skill 会保留。</p><button type="button" data-action="uninstall-confirm" class="danger">确认卸载</button><button type="button" data-action="uninstall-cancel">取消</button></div>
       <ol data-steps aria-label="安装步骤"></ol></section>
     <section class="panel"><h2>用户 PATH 与宿主发现</h2><p data-path-directory></p><p data-path-reason></p>
       <button type="button" data-action="path-add" disabled>将 CLI 加入当前用户 PATH</button>
@@ -32,7 +34,14 @@ export async function mountInstall(root, api) {
   const uninstall = root.querySelector('[data-action="uninstall"]');
   const confirmBox = root.querySelector('[data-confirm]');
   const plan = root.querySelector('[data-action="plan"]');
+  const uninstallCancel = root.querySelector('[data-action="uninstall-cancel"]');
   let busy = false;
+  let releaseUninstall = null;
+  function closeUninstall(options) {
+    releaseUninstall?.(options);
+    releaseUninstall = null;
+    confirmBox.hidden = true;
+  }
 
   function renderPlan(status) {
     root.querySelector('[data-status="plan"]').textContent = statusLabels[status.status] || status.status;
@@ -51,7 +60,7 @@ export async function mountInstall(root, api) {
     install.disabled = busy || status.status !== 'ready';
     update.disabled = busy || status.status !== 'update_available';
     uninstall.disabled = busy || status.status !== 'installed';
-    if (status.status !== 'installed') confirmBox.hidden = true;
+    if (status.status !== 'installed') closeUninstall({ restoreFocus: false });
   }
 
   function renderSteps(steps) {
@@ -79,12 +88,24 @@ export async function mountInstall(root, api) {
       pathRemove.disabled = busy || !state.can_remove;
     } catch { root.querySelector('[data-path-reason]').textContent = '无法检查用户 PATH，未修改。请重新检查。'; }
   }
-  pathAdd.addEventListener('click', () => { removePath = false; pathConfirm.hidden = false; });
-  pathRemove.addEventListener('click', () => { removePath = true; pathConfirm.hidden = false; });
-  root.querySelector('[data-action="path-cancel"]').addEventListener('click', () => { pathConfirm.hidden = true; });
+  const pathCancel = root.querySelector('[data-action="path-cancel"]');
+  let releasePath = null;
+  function closePath(options) {
+    releasePath?.(options);
+    releasePath = null;
+    pathConfirm.hidden = true;
+  }
+  function openPath(remove, trigger) {
+    closePath({ restoreFocus: false });
+    removePath = remove;
+    releasePath = openConfirm(pathConfirm, { trigger, cancel: pathCancel, onCancel: () => closePath() });
+  }
+  pathAdd.addEventListener('click', () => openPath(false, pathAdd));
+  pathRemove.addEventListener('click', () => openPath(true, pathRemove));
+  pathCancel.addEventListener('click', () => closePath());
   root.querySelector('[data-action="path-confirm"]').addEventListener('click', async () => {
     if (busy) return;
-    busy = true; pathConfirm.hidden = true; pathAdd.disabled = true; pathRemove.disabled = true;
+    busy = true; closePath(); pathAdd.disabled = true; pathRemove.disabled = true;
     const result = root.querySelector('[data-path-result]');
     try {
       const outcome = await api.userPathChange(removePath, true);
@@ -131,10 +152,13 @@ export async function mountInstall(root, api) {
     o => o.status === 'installed', o => `安装成功 v${o.version}`, '安装请求失败，未确认安装结果，请重新检查。'));
   update.addEventListener('click', () => run('正在更新', '更新失败', () => api.update(),
     o => o.status === 'installed', o => `更新成功 v${o.version}`));
-  uninstall.addEventListener('click', () => { confirmBox.hidden = false; });
-  root.querySelector('[data-action="uninstall-cancel"]').addEventListener('click', () => { confirmBox.hidden = true; });
+  uninstall.addEventListener('click', () => {
+    closeUninstall({ restoreFocus: false });
+    releaseUninstall = openConfirm(confirmBox, { trigger: uninstall, cancel: uninstallCancel, onCancel: () => closeUninstall() });
+  });
+  uninstallCancel.addEventListener('click', () => closeUninstall());
   root.querySelector('[data-action="uninstall-confirm"]').addEventListener('click', () => {
-    confirmBox.hidden = true;
+    closeUninstall();
     run('正在卸载', '卸载失败', () => api.uninstall(), o => o.status === 'uninstalled', () => '已卸载 CLI，配置与 Skill 已保留');
   });
   plan.addEventListener('click', refresh);
