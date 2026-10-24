@@ -163,7 +163,19 @@ class ProviderSpec:
 
 
 def missing(source: str, message: str) -> list[dict]:
-    return [{"source": source, "error": f"skipped: {message}"}]
+    """A provider was skipped because no key is configured.
+
+    ``missing_key`` is an explicit classification, not a provider response: the
+    desktop offers "save a key" for it and key-health tracking must never cool
+    a key that was never used.
+    """
+    return [
+        {
+            "source": source,
+            "error": f"skipped: {message}",
+            "error_type": "missing_key",
+        }
+    ]
 
 
 def _attach_provider_ranks(rows: list[dict]) -> list[dict]:

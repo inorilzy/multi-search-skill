@@ -36,6 +36,7 @@ function testText(result, label, provenance) {
     auth_failed: `认证失败：${label} 拒绝了该 key。`,
     quota: `额度不足：${label} 额度已用尽。`,
     rate_limited: '触发频率限制：请稍后再试。',
+    missing_key: '缺少 key：请先保存。',
     network: `网络错误：无法连接 ${label}。`,
     timeout: '超时：请稍后重试。',
     error: '测试失败：请查看 CLI 输出。',

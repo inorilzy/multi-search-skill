@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from ..support.auth import is_key_retryable_error
+from ..support.auth import classify_error, is_key_retryable_error
 from ..support.secrets import scrub_secrets
 from .state_store import StateStore
 
@@ -280,21 +280,9 @@ class SQLiteKeyManager(BasicKeyManager):
         )
 
 
-def classify_error(message: str, *, error_type: str = "") -> str:
-    if error_type:
-        return error_type
-    text = str(message or "").lower()
-    if any(token in text for token in ("invalid api", "invalid key", "unauthorized", "forbidden", "401", "403")):
-        return "invalid"
-    if any(token in text for token in ("quota", "credits", "billing", "payment", "insufficient", "exceeded your")):
-        return "quota_exhausted"
-    if any(token in text for token in ("429", "rate limit", "rate_limit", "too many requests", "limit exceeded")):
-        return "rate_limit"
-    if "timeout" in text or "timed out" in text:
-        return "timeout"
-    if any(token in text for token in ("network", "connection", "dns", "ssl")):
-        return "network"
-    return "error"
+# ``classify_error`` lives in ``support.auth`` so key health, adapter retries,
+# and the CLI's ``provider_status`` all share one classification rule. It is
+# re-exported here because ``service`` and tests import it from this module.
 
 
 def _ordered_key_pool(value: Any) -> list[str]:
