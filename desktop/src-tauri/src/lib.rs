@@ -23,12 +23,9 @@ pub use skill_manage::{InstallState, RemoveOutcome, RemovePlan, SkillStatus, Upd
 #[doc(hidden)]
 pub mod settings_fixture {
     pub use crate::settings::{
-        config_path, save, save_with_dev, validate, view, view_with_dev, SettingsInput, SettingsView, Validated,
+        config_path, save, save_with_dev, save_with_dev_mode, validate, view, view_with_doctor, view_with_dev,
+        view_with_dev_mode, SettingsInput, SettingsView, Validated,
     };
-    /// Dev fallback location for the real app: the repo-root file the CLI reads when no user file exists.
-    pub fn default_dev_config() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("multi-search-config.json")
-    }
     /// Whether the execution allowlist accepts a `--source` name.
     pub fn is_allowed_source(name: &str) -> bool {
         crate::execution::is_allowed_source(name)

@@ -10,7 +10,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .support.config import ConfigError, config_list, load_config, resolve_config_path
+from .support.config import (
+    ConfigError,
+    config_list,
+    load_config,
+    resolve_config_path_source,
+)
 from .support.format import body_preview_start, format_results, format_scrapes
 from .state.key_state import BasicKeyManager, SQLiteKeyManager, classify_error
 from .state.keys import KEY_ENV_NAMES, KeysError, count_jina_keys, jina_config_keys, key_sources, load_keys
@@ -962,7 +967,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         # failure becomes unusable.
         keys_error = str(exc)
     store = StateStore()
-    config_path = resolve_config_path()
+    config_path, config_path_source = resolve_config_path_source()
     config_error = None
     try:
         config = load_config()
@@ -976,6 +981,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         "server": "multi-search",
         "state_path": str(store.path),
         "config_path": str(config_path),
+        "config_path_source": config_path_source,
         "config_loaded": config_error is None and config_path.exists(),
         "config_status": "error" if config_error else "ok" if config_path.exists() else "defaults",
         "key_sources": {

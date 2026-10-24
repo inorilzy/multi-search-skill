@@ -7,24 +7,57 @@ from typing import Any
 
 CONFIG_ENV_VAR = "MULTI_SEARCH_CONFIG"
 USER_CONFIG_PATH = Path.home() / ".multi-search" / "multi-search-config.json"
-# Development fallback: the config file shipped next to the MCP source tree.
-DEV_CONFIG_PATH = Path(__file__).resolve().parents[3] / "multi-search-config.json"
+# Repo root when running from a source checkout. In an installed package this points at
+# site-packages; the dev fallback below is only enabled for an actual source checkout.
+_SOURCE_ROOT = Path(__file__).resolve().parents[3]
 
 
-def resolve_config_path() -> Path:
-    """Resolve the default config path in a portable, install-safe order.
+def _is_source_checkout(root: Path) -> bool:
+    """True only for the project's own source tree, never for an installed package.
+
+    A wheel installs ``multi_search_mcp/src/support/config.py`` under ``site-packages``;
+    that directory has the package but not the project manifest. Requiring both keeps an
+    installed CLI from resolving a config next to ``site-packages``.
+    """
+    return (root / "pyproject.toml").is_file() and (root / "multi_search_mcp" / "cli.py").is_file()
+
+
+IS_SOURCE_CHECKOUT = _is_source_checkout(_SOURCE_ROOT)
+# Never computed for an installed package: there is no dev fallback to point at.
+DEV_CONFIG_PATH = _SOURCE_ROOT / "multi-search-config.json" if IS_SOURCE_CHECKOUT else None
+
+
+def dev_config_path() -> Path | None:
+    """The development fallback location, or ``None`` for an installed package."""
+    return DEV_CONFIG_PATH if IS_SOURCE_CHECKOUT else None
+
+
+def resolve_config_path_source() -> tuple[Path, str]:
+    """Resolve the config path and where it came from: ``env``, ``user``, ``dev_fallback``,
+    or ``defaults``.
 
     Order of precedence:
     1. ``MULTI_SEARCH_CONFIG`` environment variable (e.g. injected via .mcp.json).
     2. User-level config under ``~/.multi-search`` (matches the state DB location).
-    3. Development fallback next to the MCP source tree, only if it exists.
+    3. Development fallback next to the MCP source tree, only in a source checkout.
+    An installed package never reads next to ``site-packages``; it reports the user path
+    instead so ``doctor`` and the desktop show the same location the CLI would create.
     """
     env_value = os.environ.get(CONFIG_ENV_VAR)
     if env_value:
-        return Path(env_value).expanduser()
+        return Path(env_value).expanduser(), "env"
     if USER_CONFIG_PATH.exists():
-        return USER_CONFIG_PATH
-    return DEV_CONFIG_PATH
+        return USER_CONFIG_PATH, "user"
+    dev = dev_config_path()
+    if dev is not None:
+        return dev, "dev_fallback" if dev.exists() else "defaults"
+    return USER_CONFIG_PATH, "defaults"
+
+
+def resolve_config_path() -> Path:
+    """The config path the CLI reads (or would create) now. See
+    :func:`resolve_config_path_source` for the full precedence and source label."""
+    return resolve_config_path_source()[0]
 
 
 class ConfigError(ValueError):

@@ -314,3 +314,81 @@ fn unreadable_target_blocks_save_and_leaves_the_old_file_and_no_temp_file() {
     assert_eq!(std::fs::read(sandbox.user_config()).unwrap(), before);
     assert!(sandbox.leftovers().iter().all(|n| !n.contains(".tmp-")));
 }
+
+#[test]
+fn release_build_never_reads_or_displays_the_dev_fallback() {
+    let sandbox = Sandbox::new("release-no-dev");
+    let dev = write_dev_fallback(&sandbox);
+    let env = sandbox.env(&[]);
+    let view = fixture::view_with_dev_mode(&env, &dev, false, None);
+    assert_eq!(view.read_source, "defaults", "release must not fall back to the build machine's source tree");
+    assert_eq!(view.path_source, "defaults");
+    assert_eq!(view.route, "default", "release must not display dev values");
+    assert_eq!(view.timeout, 60);
+    assert!(!view.save_creates_override);
+    let user = sandbox.user_config().to_string_lossy().into_owned();
+    assert_eq!(view.config_path.as_deref(), Some(user.as_str()), "the user path is shown, not the dev file");
+
+    let saved = fixture::save_with_dev_mode(&env, &input("fast", 30, &[]), &dev, false).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
+    assert_eq!(json["type"], "fast");
+    assert!(json.get("count").is_none(), "release save must not merge dev-only fields");
+    assert!(json.get("no_scrape").is_none(), "release save must not merge dev-only fields");
+    assert_eq!(saved.read_source, "user");
+}
+
+#[test]
+fn doctor_payload_supplies_the_displayed_config_path_and_source() {
+    let sandbox = Sandbox::new("doctor-path");
+    let env = sandbox.env(&[]);
+    let cli_config = sandbox.0.join("cli-home").join("multi-search-config.json");
+    let cli_text = cli_config.to_string_lossy().into_owned();
+    let doctor = serde_json::json!({
+        "config_path": cli_text.clone(),
+        "config_path_source": "user",
+    });
+    let view = fixture::view_with_dev_mode(&env, &sandbox.absent_dev(), false, Some(&doctor));
+    assert_eq!(
+        view.config_path.as_deref(),
+        Some(cli_text.as_str()),
+        "the desktop must display the path reported by doctor --format json"
+    );
+    assert_eq!(view.path_source, "user");
+    assert_eq!(view.read_source, "user");
+    assert!(!view.file_present);
+}
+
+#[test]
+fn a_doctor_reported_dev_fallback_is_displayed_with_its_values_even_in_a_release_build() {
+    let sandbox = Sandbox::new("doctor-dev");
+    let dev = write_dev_fallback(&sandbox);
+    let dev_text = dev.to_string_lossy().into_owned();
+    let env = sandbox.env(&[]);
+    let doctor = serde_json::json!({
+        "config_path": dev_text.clone(),
+        "config_path_source": "dev_fallback",
+    });
+    let view = fixture::view_with_dev_mode(&env, &sandbox.absent_dev(), false, Some(&doctor));
+    assert_eq!(view.path_source, "dev_fallback");
+    assert_eq!(view.read_source, "dev_fallback");
+    assert_eq!(view.config_path.as_deref(), Some(dev_text.as_str()));
+    assert_eq!(view.route, "dev", "values come from the exact path the CLI reported");
+    assert!(view.save_creates_override, "saving creates the user file that overrides the CLI's fallback");
+}
+
+#[test]
+fn an_unusable_doctor_payload_leaves_the_local_path_rules_in_place() {
+    let sandbox = Sandbox::new("doctor-invalid");
+    let env = sandbox.env(&[]);
+    let doctor = serde_json::json!({"config_path": 7, "config_path_source": "elsewhere"});
+    let view = fixture::view_with_dev_mode(&env, &sandbox.absent_dev(), false, Some(&doctor));
+    assert_eq!(view.read_source, "defaults");
+    assert_eq!(view.path_source, "defaults");
+    let user_text = sandbox.user_config().to_string_lossy().into_owned();
+    assert_eq!(
+        view.config_path.as_deref(),
+        Some(user_text.as_str()),
+        "an unrecognised doctor payload must not override the save target"
+    );
+}
