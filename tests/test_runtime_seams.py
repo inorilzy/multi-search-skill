@@ -40,11 +40,11 @@ class RuntimeSeamTests(unittest.TestCase):
         fake_manager.status_rows.return_value = [{"provider": "exa"}]
 
         with mock.patch("multi_search_mcp.src.diagnostics.StateStore", return_value=fake_store) as store_cls, \
-             mock.patch("multi_search_mcp.src.diagnostics.SQLiteKeyManager", return_value=fake_manager):
+             mock.patch("multi_search_mcp.src.state.operations.SQLiteKeyManager", return_value=fake_manager):
             data = list_sources(include_key_status=True, include_scraper_stats=False)
 
         store_cls.assert_called_once_with()
-        fake_manager.status_rows.assert_called_once_with()
+        fake_manager.status_rows.assert_called_once_with(None)
         self.assertEqual(data["key_status"], [{"provider": "exa"}])
 
 

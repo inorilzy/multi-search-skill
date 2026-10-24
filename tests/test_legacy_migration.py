@@ -265,6 +265,34 @@ class LegacyMigrationTests(unittest.TestCase):
         finally:
             os.chmod(self.keys_file, 0o600)
 
+class MigrationPlanTokenTests(unittest.TestCase):
+    """The token contract belongs to Core, not the CLI layer (issue 24 / L-03)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.keys_file = self.dir / "search-keys.json"
+        self.keys_file.write_text(json.dumps({"tavily": SYN_TAVILY}), encoding="utf-8")
+        self.store = CredentialStore(MemoryBackend(), namespace="token-test")
+        self.plan = lm.plan_migration(self.keys_file, self.store)
+
+    def test_token_is_stable_opaque_and_tracks_both_digests(self):
+        token = lm.plan_token(self.plan)
+        self.assertRegex(token, r"^[0-9a-f]{64}$")
+        self.assertEqual(token, lm.plan_token(dict(self.plan)))
+        self.assertNotIn(self.plan["source_digest"], token)
+        self.assertNotIn(self.plan["store_digest"], token)
+
+        source_changed = {**self.plan, "source_digest": "0" * 64}
+        store_changed = {**self.plan, "store_digest": "0" * 64}
+        self.assertNotEqual(token, lm.plan_token(source_changed))
+        self.assertNotEqual(token, lm.plan_token(store_changed))
+        self.assertNotEqual(
+            lm.plan_token(source_changed), lm.plan_token(store_changed),
+        )
+
+
 class LegacyMigrationCliTests(unittest.TestCase):
     """Independent CLI path: plan, then apply with a token. Store is an injected memory backend."""
 
@@ -303,6 +331,13 @@ class LegacyMigrationCliTests(unittest.TestCase):
         self.assertEqual(json.loads(out)["written"], ["tavily"])
         self.assertEqual(self.store.get("tavily"), SYN_TAVILY)
         self.assertIn("jina", plan["skipped"], "jina skip is reported")
+
+    def test_plan_token_is_the_core_token(self):
+        code, out, _ = self.run_cli("migrate-legacy", "plan", "--keys-file", str(self.keys_file), "--format", "json")
+        self.assertEqual(code, 0)
+        token = json.loads(out)["plan_token"]
+        core_plan = lm.plan_migration(self.keys_file, self.store)
+        self.assertEqual(token, lm.plan_token(core_plan))
 
     def test_stale_plan_token_is_refused_before_any_write(self):
         code, out, _ = self.run_cli("migrate-legacy", "plan", "--keys-file", str(self.keys_file), "--format", "json")

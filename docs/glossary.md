@@ -66,7 +66,7 @@
 | **count（每源召回量）** | 控制每个搜索源请求多少结果，受该源上限约束；不控制融合后的最终 15 条限制。 | `search/resolve.py` / `search/candidate.py` |
 | **scrape（抓正文）** | 搜索后自动获取最终 RRF 前 15 条正文，已有 URL 可直接抓取。旧 `scrape_top` / `scrape_per_source` 请求参数已移除；旧配置中的失效键会被忽略并给出 弃用警告（`FutureWarning`）。 | `service.py` → `run_search_web` / `scrape/stage.py` → `run_ranked_fetch_stage` |
 | **scrape backend（抓取后端）** | 抓正文用的后端，与搜索源不同。已知集合：`jina`、`exa`、`tavily`、`firecrawl`。 | `scrape.py` → `KNOWN_BACKENDS` |
-| **site memory（站点抓取记忆）** | 记录每个站点用哪个 scraper 成功率高，下次优先用它。 | `state/site_memory.py` → `SiteScraperMemory` |
+| **site memory（站点抓取记忆）** | 记录每个站点用哪个 scraper 成功率高，下次优先用它；CLI 用 `site stats/set-preference/reset` 操作。 | `state/site_memory.py` → `SiteScraperMemory`，`state/operations.py` 统一入口 |
 | **dedup（去重）** | 两个搜索入口统一使用保守 canonical URL 后按 RRF 融合，同一 query、同一 provider 的重复 URL 只按最好名次投一票。跨 provider、跨 query 的贡献保留。 | `search/candidate.py` |
 | **ContentStore（正文缓存）** | 对后端本次返回的原始正文执行容量检查与持久化，再裁剪本次响应。`max_chars` 只限制返回预览，不能截短缓存；TTL、单对象/总容量、LRU 和 provider retention 继续生效。 | `state/content_store.py` / `service.py` → `_run_scrape_raw` |
 | **SourceRegistry（来源注册表）** | 保存短期来源引用；每个注册批次在同一事务中删除已到期记录，按 `expires_at` 索引查找。没有后台定时器，应用停止时不会自动执行清理。 | `state/source_registry.py` / `state/state_store.py` |
@@ -89,7 +89,7 @@
 | **key 状态：invalid** | 运行态达到 invalid 计数阈值后的长期排除状态；候选选择会跳过，需调用 `reset_key_state` 或明确重置后才会重新使用。 | `state/key_state.py` → `INVALID` / `SQLiteKeyManager.candidates` |
 | **key 状态：disabled** | 运行态被操作员手动禁用（`manually_disabled` 或 `disabled`）；无自动到期恢复，候选选择会跳过，需清除该标记或调用 `reset_key_state`。它也不等于 Jina 配置级 `exhausted`。 | `state/key_state.py` → `DISABLED` / `manually_disabled` |
 | **StateStore（状态库）** | SQLite 状态库，存 key 状态、站点记忆、短期 source registry 与 ContentStore，默认 `~/.multi-search/state.sqlite`。 | `state/state_store.py` |
-| **use_state（状态开关）** | 工具参数。`false` 时跳过 SQLite 状态、key 轮换、站点记忆，用于干净测试。 | `tools.py` / `service.py` |
+| **use_state（状态开关）** | 请求参数。`false` 时跳过 SQLite 状态、key 轮换、站点记忆，用于干净测试。 | `support/requests.py` / `service.py` |
 
 `invalid_strikes` 只表示连续的 provider invalid 分类失败：每次 invalid 结果原子累加，并在同一转换中决定 `transient_invalid` 或永久 `invalid`；其它 provider 结果清零计数并按自身状态更新。抓取 target 错误在编排入口作为中立事件处理，既不增加也不清零计数，也不覆盖已有健康状态或冷却。时间字段到期后候选选择器会重新允许尝试，但数据库的 `status` 不会仅因时间流逝自动改写为 `active`。
 
@@ -98,7 +98,7 @@
 | 术语 | 定义 | 代码出处 |
 |------|------|---------|
 | **Core 请求** | `search_web` 和 `multi_search` 共用 RRF 搜索及正文获取；`fetch_source` / `scrape_url` 可直接抓 URL，`read_source` 局部读缓存，另有状态/诊断能力。无 MCP 服务入口。 | `multi_search_mcp/src/service.py` |
-| **CLI** | `multi-search` console entry；`search/fetch/read/doctor/keys` 都直接调用同一 Core 和 StateStore，按需启动并退出，不依赖 MCP 或常驻服务。 | `multi_search_mcp/cli.py` |
+| **CLI** | `multi-search` console entry；`search/fetch/read/doctor/sources/keys/site/migrate-legacy` 都直接调用同一 Core 和 StateStore，是唯一产品入口；按需启动并退出，不依赖 MCP 或常驻服务。 | `multi_search_mcp/cli.py` |
 | **SKILL** | 给 agent 的薄自然语言触发层，告诉它何时调工具、传什么 route/sources。 | `skills/multi-search/SKILL.md` |
 | **config（行为配置）** | 非敏感的默认值（route/count/timeout 等）。解析顺序：env `MULTI_SEARCH_CONFIG` → `~/.multi-search/multi-search-config.json` → 源码树 fallback。 | `support/config.py` → `resolve_config_path` |
 | **keys file（密钥文件）** | 明文 API key / cookie，只从环境变量和 `~/.search-keys.json` 读取，**不**放进 config。 | `state/keys.py` |

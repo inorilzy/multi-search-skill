@@ -1,10 +1,16 @@
-"""Legacy Python request adapters over shared Core; no server or MCP dependency."""
+"""Legacy Python request adapters over shared Core; no server or MCP dependency.
+
+The CLI (``multi_search_mcp.cli``) is the single product entry point. This
+module is retained only as a thin, documented compatibility wrapper for Python
+callers and tests: it delegates search/fetch/read and state operations to Core
+and implements no business rules of its own. New integrations should use the
+CLI (or Core) instead.
+"""
 from __future__ import annotations
 
 from typing import Any, Callable, Literal
 
-from .src.state.key_state import SQLiteKeyManager
-from .src.scrape.scrape import KNOWN_BACKENDS
+from .src.support.backends import KNOWN_BACKENDS
 from .src.service import (
     FetchSourceRequest,
     MultiSearchRequest,
@@ -20,8 +26,13 @@ from .src.service import (
     run_scrape,
 )
 from .src.search.search_runner import ALL_SOURCE_NAMES, ROUTE_PROFILES
-from .src.state.site_memory import SiteScraperMemory
-from .src.state.state_store import StateStore
+from .src.state.operations import (
+    key_status,
+    reset_key_state,
+    reset_site_scraper_stats,
+    set_site_scraper_preference,
+    site_scraper_stats,
+)
 
 
 _VALID_OUTPUT = {"json", "markdown", "both"}
@@ -163,16 +174,15 @@ def doctor_tool(include_keys: bool = True, include_network: bool = False) -> dic
 
 
 def get_key_status_tool(provider: str | None = None) -> dict[str, Any]:
-    return {"key_status": SQLiteKeyManager(StateStore()).status_rows(provider)}
+    return {"key_status": key_status(provider)}
 
 
 def reset_key_state_tool(provider: str | None = None, key_id: str | None = None) -> dict[str, Any]:
-    changed = SQLiteKeyManager(StateStore()).reset(provider=provider, key_id=key_id)
-    return {"updated": changed}
+    return {"updated": reset_key_state(provider=provider, key_id=key_id)}
 
 
 def get_site_scraper_stats_tool(site: str | None = None) -> dict[str, Any]:
-    return {"site_scraper_stats": SiteScraperMemory(StateStore()).stats(site)}
+    return {"site_scraper_stats": site_scraper_stats(site)}
 
 
 def scraper_preference_error(scraper: str) -> dict[str, Any] | None:
@@ -191,13 +201,11 @@ def set_site_scraper_preference_tool(
     priority: int | None = None,
     note: str | None = None,
 ) -> dict[str, Any]:
-    if error := scraper_preference_error(scraper):
-        return error
-    memory = SiteScraperMemory(StateStore())
-    memory.set_preference(site, scraper, priority=priority, note=note)
-    return {"site": site, "scraper": scraper, "pinned": True, "priority": priority}
+    try:
+        return set_site_scraper_preference(site, scraper, priority=priority, note=note)
+    except ValueError as exc:
+        return _error(str(exc), "invalid_request", valid_scrapers=list(KNOWN_BACKENDS))
 
 
 def reset_site_scraper_stats_tool(site: str | None = None) -> dict[str, Any]:
-    changed = SiteScraperMemory(StateStore()).reset(site)
-    return {"deleted": changed}
+    return {"deleted": reset_site_scraper_stats(site)}

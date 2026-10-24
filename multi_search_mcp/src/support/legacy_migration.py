@@ -170,6 +170,19 @@ def _store_digest(store: CredentialStore, providers) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
+def plan_token(plan: dict[str, Any]) -> str:
+    """Opaque token over both plan digests; it changes when either side changes.
+
+    The CLI returns this instead of the raw digests; apply recomputes it from a
+    fresh plan and refuses the request on mismatch. Kept in Core so the token
+    contract is covered by unit tests independent of the CLI.
+    """
+    import hashlib
+
+    raw = json.dumps({"s": plan["source_digest"], "t": plan["store_digest"]}, sort_keys=True)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def apply_migration(
     keys_file: Path,
     store: CredentialStore,

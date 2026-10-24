@@ -9,7 +9,6 @@ from .search.query_policy import QueryFusionPolicy
 from .search.resolve import SearchPlanRequest, resolve_search_plan
 from .search.search_runner import ALL_SOURCE_NAMES, available_routes
 from .state import runtime
-from .state.key_state import SQLiteKeyManager
 from .state.keys import (
     KEY_ENV_NAMES,
     KeysError,
@@ -17,7 +16,7 @@ from .state.keys import (
     key_sources,
     keys_file_permission_warning,
 )
-from .state.site_memory import SiteScraperMemory
+from .state.operations import key_status, site_scraper_stats
 from .state.state_store import StateStore
 from .support.config import config_list, load_config, resolve_config_path_source
 from .support.secrets import scrub_secrets
@@ -29,9 +28,9 @@ def list_sources(include_key_status: bool = False, include_scraper_stats: bool =
     if include_key_status or include_scraper_stats:
         store = StateStore()
     if include_key_status:
-        response["key_status"] = SQLiteKeyManager(store).status_rows()
+        response["key_status"] = key_status(store=store)
     if include_scraper_stats:
-        response["site_scraper_stats"] = SiteScraperMemory(store).stats()
+        response["site_scraper_stats"] = site_scraper_stats(store=store)
     return response
 
 
@@ -118,6 +117,6 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         except Exception as exc:  # diagnostic boundary: provenance is advisory
             data["key_sources_error"] = scrub_secrets(exc, keys)
         data["configured_keys"] = {name: bool(value) for name, value in keys.items()}
-        data["key_status"] = SQLiteKeyManager(store).status_rows()
+        data["key_status"] = key_status(store=store)
         data["jina_keys_active_total"] = count_jina_keys(keys.get("jina"))
     return data

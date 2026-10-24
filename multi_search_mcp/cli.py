@@ -19,9 +19,15 @@ from .src.service import (
     run_read_source,
     run_search_web,
 )
+from .src.state.operations import (
+    key_status,
+    reset_key_state,
+    reset_site_scraper_stats,
+    set_site_scraper_preference,
+    site_scraper_stats,
+)
+from .src.support.backends import KNOWN_BACKENDS
 from .src.support.format import format_scrapes
-from .src.state.key_state import SQLiteKeyManager
-from .src.state.state_store import StateStore
 
 
 OUTPUT_FORMATS = ("json", "human", "markdown")
@@ -93,6 +99,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-fetch", action="store_true",
         help="candidates only: fuse ranked hits but never fetch page bodies or write the body cache",
     )
+    search_parser.add_argument(
+        "--no-state", action="store_true",
+        help="skip SQLite key rotation, content cache, and site memory (clean test/debug runs)",
+    )
     _add_format_argument(search_parser)
     search_parser.set_defaults(handler=_handle_search)
 
@@ -114,6 +124,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--full-content", action="store_true",
         help="return the entire acquired body, overriding --max-chars",
     )
+    fetch_parser.add_argument(
+        "--no-state", action="store_true",
+        help="skip SQLite key rotation and the content cache (clean test/debug runs)",
+    )
     _add_format_argument(fetch_parser)
     fetch_parser.set_defaults(handler=_handle_fetch)
 
@@ -128,6 +142,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=_bounded_int(1, None), default=4_000,
         help="characters to return, at least 1; values above 8000 use 8000 (default 4000)",
     )
+    read_parser.add_argument(
+        "--no-state", action="store_true",
+        help="read without the shared content cache (clean test/debug runs)",
+    )
     _add_format_argument(read_parser)
     read_parser.set_defaults(handler=_handle_read)
 
@@ -140,6 +158,14 @@ def build_parser() -> argparse.ArgumentParser:
     sources_parser = subparsers.add_parser(
         "sources",
         help="print the shared source, route, alias, and env catalog (JSON by default)",
+    )
+    sources_parser.add_argument(
+        "--key-status", "--include-key-status", dest="key_status", action="store_true",
+        help="include current key-health rows from the shared state store",
+    )
+    sources_parser.add_argument(
+        "--scraper-stats", "--include-scraper-stats", dest="scraper_stats", action="store_true",
+        help="include per-site scraper statistics from the shared state store",
     )
     _add_format_argument(sources_parser)
     sources_parser.set_defaults(handler=_handle_sources)
@@ -157,6 +183,33 @@ def build_parser() -> argparse.ArgumentParser:
     keys_reset_parser.add_argument("--key-id")
     _add_format_argument(keys_reset_parser)
     keys_reset_parser.set_defaults(handler=_handle_keys_reset)
+
+    site_parser = subparsers.add_parser(
+        "site", help="inspect or edit per-site scraper statistics and preferences",
+    )
+    site_subparsers = site_parser.add_subparsers(dest="site_command", required=True)
+
+    site_stats_parser = site_subparsers.add_parser("stats", help="show scraper statistics for one site or all sites")
+    site_stats_parser.add_argument("site", nargs="?")
+    _add_format_argument(site_stats_parser)
+    site_stats_parser.set_defaults(handler=_handle_site_stats)
+
+    site_preference_parser = site_subparsers.add_parser(
+        "set-preference", help="pin a scraper for one site key",
+    )
+    site_preference_parser.add_argument("site")
+    site_preference_parser.add_argument("scraper", choices=KNOWN_BACKENDS)
+    site_preference_parser.add_argument("--priority", type=int)
+    site_preference_parser.add_argument("--note")
+    _add_format_argument(site_preference_parser)
+    site_preference_parser.set_defaults(handler=_handle_site_set_preference)
+
+    site_reset_parser = site_subparsers.add_parser(
+        "reset", help="reset scraper statistics for one site or all sites",
+    )
+    site_reset_parser.add_argument("site", nargs="?")
+    _add_format_argument(site_reset_parser)
+    site_reset_parser.set_defaults(handler=_handle_site_reset)
 
     migrate_parser = subparsers.add_parser(
         "migrate-legacy",
@@ -236,6 +289,7 @@ def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
             timeout=args.timeout,
             expand=None if args.expand is None else list(args.expand),
             no_fetch=bool(args.no_fetch),
+            use_state=not args.no_state,
         )
     )
     statuses = payload.get("provider_status") or []
@@ -288,6 +342,7 @@ def _handle_fetch(args: argparse.Namespace) -> dict[str, Any]:
             max_chars=args.max_chars,
             timeout=args.timeout,
             full_content=args.full_content,
+            use_state=not args.no_state,
         )
     )
 
@@ -299,6 +354,7 @@ def _handle_read(args: argparse.Namespace) -> dict[str, Any]:
             keyword=args.keyword,
             offset=args.offset,
             limit=args.limit,
+            use_state=not args.no_state,
         )
     )
 
@@ -311,17 +367,34 @@ def _handle_sources(args: argparse.Namespace) -> dict[str, Any]:
     # Imported lazily so the light search CLI paths do not grow their import graph.
     from .src.search.catalog import build_source_catalog
 
-    return build_source_catalog()
+    catalog = build_source_catalog()
+    if args.key_status:
+        catalog["key_status"] = key_status()
+    if args.scraper_stats:
+        catalog["site_scraper_stats"] = site_scraper_stats()
+    return catalog
 
 
 def _handle_keys_status(args: argparse.Namespace) -> dict[str, Any]:
-    manager = SQLiteKeyManager(StateStore())
-    return {"key_status": manager.status_rows(args.provider)}
+    return {"key_status": key_status(args.provider)}
 
 
 def _handle_keys_reset(args: argparse.Namespace) -> dict[str, Any]:
-    manager = SQLiteKeyManager(StateStore())
-    return {"updated": manager.reset(provider=args.provider, key_id=args.key_id)}
+    return {"updated": reset_key_state(provider=args.provider, key_id=args.key_id)}
+
+
+def _handle_site_stats(args: argparse.Namespace) -> dict[str, Any]:
+    return {"site_scraper_stats": site_scraper_stats(args.site)}
+
+
+def _handle_site_set_preference(args: argparse.Namespace) -> dict[str, Any]:
+    return set_site_scraper_preference(
+        args.site, args.scraper, priority=args.priority, note=args.note,
+    )
+
+
+def _handle_site_reset(args: argparse.Namespace) -> dict[str, Any]:
+    return {"deleted": reset_site_scraper_stats(args.site)}
 
 
 def _migration_store():
@@ -330,20 +403,13 @@ def _migration_store():
     return default_store()
 
 
-def _plan_token(plan: dict[str, Any]) -> str:
-    import hashlib
-
-    raw = json.dumps({"s": plan["source_digest"], "t": plan["store_digest"]}, sort_keys=True)
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
 def _handle_migrate_plan(args: argparse.Namespace) -> dict[str, Any]:
     from .src.support import legacy_migration
 
     plan = legacy_migration.plan_migration(Path(args.keys_file).expanduser(), _migration_store())
     # Digests stay in-process; the caller gets an opaque token that changes if either side changes.
     visible = {k: v for k, v in plan.items() if k not in ("source_digest", "store_digest")}
-    visible["plan_token"] = _plan_token(plan)
+    visible["plan_token"] = legacy_migration.plan_token(plan)
     return visible
 
 
@@ -354,7 +420,7 @@ def _handle_migrate_apply(args: argparse.Namespace) -> dict[str, Any]:
     store = _migration_store()
     request = json.loads(Path(args.request).read_text(encoding="utf-8-sig"))
     plan = legacy_migration.plan_migration(keys_file, store)
-    if request.get("plan_token") != _plan_token(plan):
+    if request.get("plan_token") != legacy_migration.plan_token(plan):
         raise CLIUsageError("the migration plan changed since preview; run the preview again")
     return legacy_migration.apply_migration(
         keys_file,
