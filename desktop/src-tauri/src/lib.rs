@@ -21,6 +21,8 @@ pub use skill::{SkillInstall, SkillPlan};
 pub use skill_manage::{InstallState, RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome, UpdatePlan};
 
 /// Test seam for the settings writer. Not a supported public API.
+/// Compiled only with the test-only `test-fixtures` feature, never in a product build.
+#[cfg(feature = "test-fixtures")]
 #[doc(hidden)]
 pub mod settings_fixture {
     pub use crate::settings::{
@@ -35,6 +37,8 @@ pub mod settings_fixture {
 }
 
 /// Test seam for the Tavily credential store. Not a supported public API.
+/// Compiled only with the test-only `test-fixtures` feature, never in a product build.
+#[cfg(feature = "test-fixtures")]
 #[doc(hidden)]
 pub mod credential_fixture {
     use crate::credential::{CredentialBackend, CredentialError};

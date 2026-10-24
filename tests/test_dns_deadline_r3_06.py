@@ -23,16 +23,25 @@ PUBLIC_IP = "93.184.216.34"
 
 
 class DnsDeadlineTests(unittest.TestCase):
-    @staticmethod
-    def _slow_resolver(finished: threading.Event, result=None):
+    def setUp(self):
+        # Slow resolvers block on this event instead of sleeping, so "late"
+        # means "after the caller has already returned", not "after N ms".
+        self.release = threading.Event()
+        self.addCleanup(self.release.set)
+
+    def _slow_resolver(self, finished: threading.Event, result=None):
         def resolve(_host):
             try:
-                time.sleep(0.08)
+                self.release.wait(timeout=5)
                 return list(result or [PUBLIC_IP])
             finally:
                 finished.set()
 
         return resolve
+
+    def _finish_late_resolution(self, finished: threading.Event):
+        self.release.set()
+        self.assertTrue(finished.wait(timeout=5))
 
     @staticmethod
     def _redirect_response(url: str, location: str):
@@ -47,7 +56,7 @@ class DnsDeadlineTests(unittest.TestCase):
 
         def delayed_dns(_host, port, *args, **kwargs):
             try:
-                time.sleep(0.08)
+                self.release.wait(timeout=5)
                 return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIC_IP, port))]
             finally:
                 finished.set()
@@ -64,9 +73,9 @@ class DnsDeadlineTests(unittest.TestCase):
                 )
         elapsed = time.monotonic() - start
 
-        self.assertLess(elapsed, 0.06)
+        self.assertLess(elapsed, 1.0)
         self.assertIn("DNS", str(error.exception))
-        self.assertTrue(finished.wait(timeout=1))
+        self._finish_late_resolution(finished)
 
     def test_url_security_dns_timeout_returns_before_late_resolver_result(self):
         finished = threading.Event()
@@ -80,10 +89,10 @@ class DnsDeadlineTests(unittest.TestCase):
             )
         elapsed = time.monotonic() - start
 
-        self.assertLess(elapsed, 0.06)
+        self.assertLess(elapsed, 1.0)
         self.assertIn("DNS", str(error.exception))
         self.assertIn("deadline", str(error.exception))
-        self.assertTrue(finished.wait(timeout=1))
+        self._finish_late_resolution(finished)
 
     def test_scrape_core_does_not_dispatch_after_url_preflight_deadline(self):
         finished = threading.Event()
@@ -99,10 +108,10 @@ class DnsDeadlineTests(unittest.TestCase):
             )
         elapsed = time.monotonic() - start
 
-        self.assertLess(elapsed, 0.06)
+        self.assertLess(elapsed, 1.0)
         self.assertIn("DNS", result["error"])
         scraper.assert_not_called()
-        self.assertTrue(finished.wait(timeout=1))
+        self._finish_late_resolution(finished)
 
     def test_http_hostname_uses_resolved_address_for_normal_connection(self):
         class SocketProbe:
@@ -183,16 +192,20 @@ class DnsDeadlineTests(unittest.TestCase):
             )
         elapsed = time.monotonic() - start
 
-        self.assertLess(elapsed, 0.06)
+        self.assertLess(elapsed, 1.0)
         self.assertIn("DNS", str(error.exception))
         scraper.assert_not_called()
-        self.assertTrue(finished.wait(timeout=1))
+        self._finish_late_resolution(finished)
 
     def test_fetch_core_starts_timeout_budget_before_url_preflight(self):
-        finished = threading.Event()
         scraper = mock.Mock(return_value={"markdown": "ok", "via": "fixture"})
-        start = time.monotonic()
+        resolved_at = []
 
+        def recording_resolver(_host):
+            resolved_at.append(time.monotonic())
+            return [PUBLIC_IP]
+
+        start = time.monotonic()
         result = service.run_fetch_source(
             service.FetchSourceRequest(
                 url="https://slow.example/path", timeout=1, use_state=False,
@@ -200,15 +213,17 @@ class DnsDeadlineTests(unittest.TestCase):
             scraper=scraper,
             keys={},
             config={},
-            url_resolver=self._slow_resolver(finished),
+            url_resolver=recording_resolver,
         )
 
         self.assertEqual(result["body"], "ok")
         scraper.assert_called_once()
         scrape_deadline = scraper.call_args.kwargs["deadline"]
         self.assertGreater(scrape_deadline, time.monotonic())
-        self.assertLessEqual(scrape_deadline, start + 1.04)
-        self.assertTrue(finished.is_set())
+        # The 1s budget started before the URL preflight resolved the host.
+        self.assertEqual(len(resolved_at), 1)
+        self.assertGreaterEqual(scrape_deadline - 1, start)
+        self.assertLessEqual(scrape_deadline - 1, resolved_at[0])
 
     def test_fetch_core_timeout_bounds_slow_url_preflight_without_explicit_deadline(self):
         started = threading.Event()
@@ -242,7 +257,7 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertLess(elapsed, 1.6)
         self.assertTrue(started.is_set())
         self.assertIn("deadline", str(error.exception))
-        self.assertTrue(finished.wait(timeout=1))
+        self._finish_late_resolution(finished)
 
     def test_fetch_core_config_timeout_bounds_slow_url_preflight(self):
         started = threading.Event()
@@ -276,7 +291,7 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertLess(elapsed, 1.6)
         self.assertTrue(started.is_set())
         self.assertIn("deadline", str(error.exception))
-        self.assertTrue(finished.wait(timeout=1))
+        self._finish_late_resolution(finished)
 
     def test_direct_reddit_scraper_timeout_bounds_second_url_preflight(self):
         finished = threading.Event()
@@ -289,9 +304,9 @@ class DnsDeadlineTests(unittest.TestCase):
         )
 
         elapsed = time.monotonic() - start
-        self.assertLess(elapsed, 0.06)
+        self.assertLess(elapsed, 1.0)
         self.assertIn("DNS", result["error"])
-        self.assertTrue(finished.wait(timeout=1))
+        self._finish_late_resolution(finished)
 
     def test_redirect_dns_preflight_uses_original_http_deadline(self):
         finished = threading.Event()
@@ -314,10 +329,10 @@ class DnsDeadlineTests(unittest.TestCase):
             )
         elapsed = time.monotonic() - start
 
-        self.assertLess(elapsed, 0.06)
+        self.assertLess(elapsed, 1.0)
         self.assertIn("DNS", str(error.exception))
         self.assertEqual(requests_seen, ["http://" + PUBLIC_IP + "/start"])
-        self.assertTrue(finished.wait(timeout=1))
+        self._finish_late_resolution(finished)
 
     def test_timed_out_resolution_frees_its_slot_for_the_next_lookup(self):
         pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-r3-dns-detach")
@@ -409,7 +424,7 @@ class DnsDeadlineTests(unittest.TestCase):
                     self.assertIn("capacity", str(saturated.exception))
 
                 released.set()
-                self.assertTrue(finished.wait(timeout=1))
+                self._finish_late_resolution(finished)
                 self.assertEqual(
                     url_security.validate_public_http_url(
                         "https://reusable.example/path",
@@ -425,12 +440,12 @@ class DnsDeadlineTests(unittest.TestCase):
     def test_dns_timeout_worker_does_not_hold_process_exit(self):
         script = """
 import socket
-import time
+import threading
 import urllib.request
 from multi_search_mcp.src.support import http
 
 def slow_dns(*_args, **_kwargs):
-    time.sleep(5)
+    threading.Event().wait()  # never released: only process exit ends it
     return []
 
 socket.getaddrinfo = slow_dns

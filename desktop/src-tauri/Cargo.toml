@@ -46,14 +46,17 @@ path = "tests/skill_manage.rs"
 [[test]]
 name = "credentials"
 path = "tests/credentials.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "credential_sources"
 path = "tests/credential_sources.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "settings"
 path = "tests/settings.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "source_catalog"
@@ -78,6 +81,9 @@ native-window = ["dep:tauri", "dep:tauri-build"]
 # Test-only boundary: enables env-driven install source/anchor overrides and the disposable user PATH.
 # Never packageable for release; the default and release builds ignore these environment keys.
 install-test-boundary = []
+# Test-only seams (Tavily-centred credential fixture, settings writer). Never packageable:
+# build.rs rejects it in release builds; the tests that use it declare it as a required feature.
+test-fixtures = []
 
 [dependencies.tauri]
 version = "2"

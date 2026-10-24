@@ -1,10 +1,26 @@
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from multi_search_mcp.src.scrape import stage
+from multi_search_mcp.src.support import concurrency
 from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
+
+
+class _Clock:
+    """Monotonic clock the test advances explicitly instead of sleeping."""
+
+    def __init__(self):
+        self.now = time.monotonic()
+
+    def monotonic(self):
+        return self.now
+
+    def patched(self):
+        clock = SimpleNamespace(monotonic=self.monotonic)
+        return mock.patch.multiple(stage, time=clock), mock.patch.multiple(concurrency, time=clock)
 
 
 def _hits(count):
@@ -90,8 +106,8 @@ class RankedFetchStageTests(unittest.TestCase):
                 maximum = max(maximum, active)
             try:
                 if hit in hits[:2]:
+                    # Both workers are inside fetch together: concurrency is 2.
                     first_pair.wait(timeout=1)
-                time.sleep(0.01)
                 return {"source_id": hit["source_id"], "content": "body"}
             finally:
                 with lock:
@@ -103,13 +119,16 @@ class RankedFetchStageTests(unittest.TestCase):
 
     def test_passes_remaining_batch_time_to_each_fetch(self):
         remaining_times = []
+        clock = _Clock()
 
         def fetch(hit, remaining):
             remaining_times.append(remaining)
-            time.sleep(0.02)
+            clock.now += 0.02
             return {"content": "body"}
 
-        result = stage.run_ranked_fetch_stage(_hits(2), fetch=fetch, timeout=1, concurrency=1)
+        stage_patch, pool_patch = clock.patched()
+        with stage_patch, pool_patch:
+            result = stage.run_ranked_fetch_stage(_hits(2), fetch=fetch, timeout=1, concurrency=1)
         self.assertEqual(result["errors"], [])
         self.assertGreater(remaining_times[0], remaining_times[1])
         self.assertGreater(remaining_times[1], 0)
@@ -162,15 +181,20 @@ class RankedFetchStageTests(unittest.TestCase):
     def test_worker_rechecks_deadline_before_invoking_callback(self):
         fetch = mock.Mock(return_value={"content": "body"})
         submit = self.pool.submit_before
+        clock = _Clock()
 
         def delay_worker(deadline, callback, hit):
             def delayed():
-                time.sleep(max(0, deadline - time.monotonic()) + 0.02)
+                # The worker starts only after the batch deadline has passed.
+                clock.now = deadline + 0.02
                 return callback(hit)
 
             return submit(deadline, delayed)
 
-        with mock.patch.object(self.pool, "submit_before", side_effect=delay_worker):
+        stage_patch, pool_patch = clock.patched()
+        with stage_patch, pool_patch, mock.patch.object(
+            self.pool, "submit_before", side_effect=delay_worker,
+        ):
             result = stage.run_ranked_fetch_stage(_hits(1), fetch=fetch, timeout=0.04)
         self.assertEqual(len(result["errors"]), 1)
         self.pool.shutdown(wait=True, cancel_futures=True)

@@ -497,10 +497,13 @@ class SearchFetchPipelineTests(unittest.TestCase):
         started = threading.Event()
         batch_deadline = None
 
+        never_released = threading.Event()
+
         def slow_jina(url, *args, **kwargs):
             started.set()
+            # Hang exactly until the batch deadline has passed.
             while time.monotonic() <= batch_deadline:
-                time.sleep(0.005)
+                never_released.wait(timeout=max(0.0, batch_deadline - time.monotonic()))
             return {"url": url, "error": "Jina did not finish in time"}
 
         def real_scraper(url, **kwargs):

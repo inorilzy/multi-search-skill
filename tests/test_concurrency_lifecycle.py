@@ -186,12 +186,19 @@ class AbandonTests(unittest.TestCase):
         release = threading.Event()
         prefix = "test-abandon-bound"
         pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix=prefix, max_detached=1)
+        first_started = threading.Event()
+        second_started = threading.Event()
+
+        def blocked(started):
+            started.set()
+            return release.wait(5)
+
         try:
-            first = pool.submit_nowait(release.wait, 5)
-            time.sleep(0.02)
+            first = pool.submit_nowait(blocked, first_started)
+            self.assertTrue(first_started.wait(timeout=1))
             self.assertTrue(pool.abandon(first))
-            second = pool.submit_nowait(release.wait, 5)
-            time.sleep(0.02)
+            second = pool.submit_nowait(blocked, second_started)
+            self.assertTrue(second_started.wait(timeout=1))
             self.assertFalse(pool.abandon(second), "no detached budget remains")
             self.assertIsNone(pool.submit_nowait(lambda: None))
             self.assertLessEqual(len(_live_threads(prefix)), 2)
@@ -318,11 +325,11 @@ class SearchRunnerLifecycleTests(unittest.TestCase):
 
     def test_timed_out_worker_does_not_delay_process_exit(self):
         script = """
-import time
+import threading
 from multi_search_mcp.src.search.search_runner import ProviderSpec, SearchRunner, SearchRunnerConfig
 
 def blocking_provider(*_args):
-    time.sleep(5)
+    threading.Event().wait()  # never released: only process exit ends it
     return []
 
 runner = SearchRunner(
@@ -383,7 +390,8 @@ runner.run("query")
                     expected = "timeout after 0.05s" if attempt < 4 else "saturated"
                     self.assertIn(expected, rows[0]["error"])
 
-                time.sleep(0.05)
+                # Workers start synchronously at submission, so the bound holds now:
+                # max_workers running plus at most max_detached abandoned threads.
                 self.assertLessEqual(len(_live_threads(prefix)), 4)
         finally:
             unblock.set()
@@ -452,7 +460,8 @@ class RankedFetchStageLifecycleTests(unittest.TestCase):
                     expected = "fetch timeout after 0.05s" if attempt < 4 else "saturated"
                     self.assertIn(expected, result["errors"][0]["error"])
 
-                time.sleep(0.05)
+                # Workers start synchronously at submission, so the bound holds now:
+                # max_workers running plus at most max_detached abandoned threads.
                 self.assertLessEqual(len(_live_threads(prefix)), 4)
         finally:
             unblock.set()

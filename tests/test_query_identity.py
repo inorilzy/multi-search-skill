@@ -92,25 +92,29 @@ class QueryIdentityTests(unittest.TestCase):
         self.assertEqual(len(response["results"][0]["query_ranks"]), 11)
 
     def test_variant_permutation_and_completion_order_keep_scores_and_ties_stable(self):
-        def search_with_delays(expand, delays):
+        def search_in_order(expand, completion_order):
             barrier = threading.Barrier(3)
+            done = {query: threading.Event() for query in completion_order}
             completed = []
 
             def call(query):
                 barrier.wait(timeout=2)
-                time.sleep(delays[query])
+                position = completion_order.index(query)
+                if position:
+                    self.assertTrue(done[completion_order[position - 1]].wait(timeout=2))
                 completed.append(query)
+                done[query].set()
                 return [{"source": "brave", "url": "https://example.com/" + query,
                          "title": query}]
 
             response, _ = self.search(expand=expand, call=call)
             return response, completed
 
-        forward, first_order = search_with_delays(
-            ["z-angle", "a-angle"], {"primary": 0.04, "z-angle": 0.02, "a-angle": 0},
+        forward, first_order = search_in_order(
+            ["z-angle", "a-angle"], ["a-angle", "z-angle", "primary"],
         )
-        reverse, second_order = search_with_delays(
-            ["a-angle", "z-angle", "z-angle"], {"primary": 0, "z-angle": 0.02, "a-angle": 0.04},
+        reverse, second_order = search_in_order(
+            ["a-angle", "z-angle", "z-angle"], ["primary", "z-angle", "a-angle"],
         )
         self.assertNotEqual(first_order, second_order)
         self.assertEqual(stable_hits(forward), stable_hits(reverse))

@@ -54,7 +54,7 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `key
 npm --prefix desktop ci
 npm --prefix desktop run dev
 # 原生测试与 DOM 测试分开，均不能代替真实窗口验收
-cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --no-default-features
+cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --no-default-features --features test-fixtures
 npm --prefix desktop test
 ```
 
