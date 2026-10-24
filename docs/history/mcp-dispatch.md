@@ -1,4 +1,6 @@
-# MCP 入口调度
+# MCP 入口调度（已归档）
+
+> **历史文档，不再维护。** MCP `server.py` 入口已随去 MCP 迁移删除；本文只记录当时的 4 槽位调度设计，现行 CLI 直接调用同步 Core，见 [仓库 README](../../README.md) 与 [文档索引](../README.md)。
 
 `server.py` 的 `search_web`、`multi_search`、`fetch_source`、`scrape_url` 和 `doctor` 是异步入口；它们通过专属的 `BoundedDaemonExecutor` 在工作线程中调用同步 `tools.py` / Core。7 个会触及 SQLite 状态的入口（`read_source`、`list_sources` 的两个状态开关、`get_key_status`、`reset_key_state`、`get_site_scraper_stats`、`set_site_scraper_preference`、`reset_site_scraper_stats`）也复用同一个调度池。普通 `list_sources`、`read_source(use_state=False)` 和无效 scraper 参数保留事件循环内的快速路径；CLI 仍直接调用同步 Core。
 

@@ -7,20 +7,22 @@
 
 > 当前 canonical 形态是 **一个 skill + 一个 Core + 按需执行的 CLI**：`skills/multi-search/SKILL.md` 负责工具选择和使用策略；`multi_search_mcp/src/` 承载搜索、RRF、抓取、ContentStore、key 状态和站点记忆。
 
-> 分阶段迁移、回滚和发布验证门槛见 [docs/candidate-first-release.md](docs/candidate-first-release.md)。
+> 文档索引（现行 / 历史 / provider 参考）见 [docs/README.md](docs/README.md)。0.4.0 发布说明和 MCP 时代的架构图已归入历史，不再代表当前实现。
 
 ## CLI / Skill 入口
 
-当前开发版本保留 **0.4.0** 包版本标识；本地迁移尚未发布为新的远程版本。CLI 无需安装、配置或启动 MCP，也没有常驻服务。在仓库根目录运行：
+当前开发版本保留 **0.4.0** 包版本标识；本地迁移尚未发布为新的远程版本。CLI 不需要 MCP 配置、客户端或常驻服务。在仓库根目录运行：
 
 ```powershell
 uv run --locked multi-search --help
-uv run --locked multi-search search "Python asyncio TaskGroup" --source hackernews --count 3 --format markdown
-uv run --locked multi-search fetch --url "https://docs.python.org/3/library/asyncio-task.html" --full-content --format json
+uv run --locked multi-search search --source hackernews --count 3 --format markdown -- 'Python asyncio TaskGroup'
+uv run --locked multi-search fetch --url 'https://docs.python.org/3/library/asyncio-task.html' --full-content --format json
 # 将 src_... 替换为搜索结果中的 source_id
 uv run --locked multi-search fetch src_... --full-content --format json
-uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
+uv run --locked multi-search read src_... --keyword 'TaskGroup' --limit 2000
 ```
+
+查询放在 `--` 之后并保持单引号，避免以 `-` 开头的文本被当成选项，也避免 shell 解释 `$(...)` 或反引号；未知来源 URL 优先写入文件后使用 `fetch --url-file`。规则详见 [CLI-only 指南](skills/multi-search/references/cli.md#shell-safety-for-untrusted-values)。
 
 `uv run --locked` 使用项目虚拟环境并按锁文件同步依赖。已在激活的虚拟环境中安装项目时，也可以直接执行 `multi-search` 或 `python -m multi_search_mcp.cli`，子命令参数相同。
 
@@ -32,21 +34,32 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 仓库关键文件：
 
-- `skills/multi-search/SKILL.md`：薄 skill，自然语言触发和使用策略。
+- `skills/multi-search/`：唯一权威 Skill（`SKILL.md`、`agents/interface.yaml` 和 `references/`），桌面端在编译时原样打包同一棵树。
 - `multi_search_mcp/cli.py`：唯一产品入口 `multi-search` CLI，直接调用共享 Core。
 - `multi_search_mcp/tools.py`：兼容 Python 请求适配器，无 MCP 依赖或服务。
-- `multi_search_mcp/src/`：自包含搜索、抓取、状态、key 与 service 实现。
+- `multi_search_mcp/src/`：按职责拆分的搜索、抓取、状态、诊断和格式化模块；`service.py` 只是兼容 facade，不再承载实现。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
 
-CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `keys reset`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
+CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys status|reset` 和 `migrate-legacy plan|apply`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
 
-边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置。
+边界约定：凭据按 **环境变量（`env`）> Windows 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）** 解析；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置。
 
 当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 参数不再裁剪最终正文列表。
 
 ## Windows 桌面管理（本地开发候选）
 
-`desktop/` 是 Tauri 2 管理窗口，仅检测已安装的 `multi-search.exe`、显示版本/实际路径，并运行或取消一次测试搜索；尚不提供 UI 安装、凭据编辑或 Skill 安装。CLI 新增 `--version`。检测区区分应用继承的 PATH 与 Windows 用户/机器持久化 PATH，新终端可发现不意味着已打开的终端或 Agent 已刷新环境。桌面端只运行受管安装目录（`%LOCALAPPDATA%\MultiSearch\cli`，验证通过时优先于 PATH 中的同名文件）或 PATH 中发现的 CLI，前端不能指定可执行路径；子进程只拿到非敏感的基础环境变量和本次所需的 key。
+`desktop/` 是 Tauri 2 管理台，共 6 个页面，负责本机 CLI、Skill、凭据和配置；它不提供搜索 UI，也不修改系统级设置。
+
+| 页面 | 能力 |
+|---|---|
+| 01 概览与测试 | 检测应用继承的 PATH 与 Windows 用户/机器持久化 PATH 中的 `multi-search.exe`，显示版本、实际路径和来源；运行或取消一次测试搜索，结果以结构化列表展示，来源错误单列，原始 JSON 折叠保留。新终端可发现不意味着已打开的终端或 Agent 已刷新环境。 |
+| 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI 到 `%LOCALAPPDATA%\MultiSearch\cli`；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本；可把受管目录加入当前用户 PATH（系统 PATH 不变）。 |
+| 03 Claude Code Skill | 以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
+| 04 搜索源与凭据 | 列出 12 个搜索源及启用状态；Key 保存在 Windows 凭据库（通用凭据 `multi-search/<provider>`），可保存、删除并向对应服务商发送一次测试请求；不显示已保存的 Key，测试可能消耗额度。 |
+| 05 搜索设置 | 读写 CLI 配置文件：默认路由、超时（1–90 秒）和 Twitter Cookie 文件路径（只保存路径，不读取 Cookie）；显示实际配置文件路径与路径来源，配置无法读取时禁止保存。 |
+| 06 旧配置迁移 | 预览并迁移 `~/.search-keys.json` 中的单 Key 条目到 Windows 凭据库；多 Key 列表、Jina、Cookie 对象和无法识别的条目保留在旧文件。预览只显示掩码指纹，迁移前逐项确认，旧文件永不删除，并在结果中提示残留明文和文件权限。 |
+
+受管 CLI 与 Skill 都以“先校验、再写入”为前提：bundle 的信任锚是 `scripts/build_cli_bundle.py` 生成、由 `desktop/src-tauri/build.rs` 编译进二进制的 manifest SHA-256；Skill 以 `skills/multi-search/` 为唯一权威源，受管版本由打包内容哈希派生。桌面端只运行受管目录（验证通过时优先于 PATH 中的同名文件）或 PATH 中发现的 CLI，前端不能指定可执行路径；子进程只拿到非敏感的基础环境变量和本次所需的 key。取消/关闭只结束本次 Windows Job Object 归属的执行和子进程，独立终端 CLI 不受影响。
 
 已有 Node、Rust/MSVC 与 WebView2 的 Windows 开发环境中：
 
@@ -58,7 +71,7 @@ cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --no-default-fe
 npm --prefix desktop test
 ```
 
-应用只启动固定 CLI 程序并传独立参数；取消/关闭只结束本次 Windows Job Object 归属的执行和子进程，独立终端 CLI 不受影响。输出当纯文本展示并脱敏。测试使用一次性 profile 与受控 HTTP，不能证明真实付费源可用。原生窗口验收使用 `scripts/desktop_acceptance.py`，需要先在隔离 `.wheel-venv` 安装本地 wheel；`scripts/desktop_native_acceptance.py` 只验 native API 链路，不是窗口替代。
+桌面端输出当纯文本展示并脱敏。测试使用一次性 profile 与受控 HTTP，不能证明真实付费源可用。原生窗口验收使用 `scripts/desktop_acceptance.py`，需要先在隔离 `.wheel-venv` 安装本地 wheel；`scripts/desktop_native_acceptance.py` 只验 native API 链路，不是窗口替代。
 
 ## 适用场景
 
@@ -118,7 +131,7 @@ skill 入口在 [skills/multi-search/SKILL.md](skills/multi-search/SKILL.md)，�
 用 multi-search 查一下最近大家怎么评价某个 LLM 框架，重点看 GitHub、Twitter/X 和技术博客。
 ```
 
-CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；业务能力只落在 `multi_search_mcp/src/`。命令按需执行，无后台服务。历史架构审查文档仅记录过去的 MCP 形态，不是当前安装步骤。
+CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；业务能力只落在 `multi_search_mcp/src/`。命令按需执行，无后台服务。历史架构审查文档仅记录过去的 MCP 形态，不是当前安装步骤；现行/历史文档分类见 [docs/README.md](docs/README.md)。
 
 同步个人 Skill 时，将整个 `skills/multi-search/`（含 `references/` 与 `agents/`）复制到自己的 Skill 目录；先备份现有文件并保留个人定制，核对文件内容或 hash 后替换。只复制 `SKILL.md` 会缺少 CLI 指南与子代理约定。已加载的旧 Skill 需要在新任务中重新读取。
 
@@ -186,6 +199,12 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 
 ## Keys
 
+Key 有三个来源，CLI、`doctor` 和桌面端使用同一套判定：
+
+- 环境变量（`env`）：适合 CI 和临时覆盖，优先级最高。
+- Windows 凭据库（`credential_store`）：桌面端“搜索源与凭据”页写入的通用凭据 `multi-search/<provider>`（UTF-8 JSON，单条 secret）；只在 Windows 且未启用测试隔离时读取。
+- `~/.search-keys.json`（`keys_file`）：明文回退文件，适合批量维护和没有凭据库的环境；文件权限对其他用户开放时，`doctor` 会给出 `chmod 600` 提示。
+
 把 key 放到 `~/.search-keys.json`，不要提交到仓库：
 
 ```json
@@ -208,7 +227,7 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 环境变量会覆盖同名配置。优先级与 `multi-search sources --format json` 的 `key_resolution`、`env` 字段完全一致：
 
 - 同一 provider 有多个环境变量时，按下面列表从左到右依次读取，**最后一个非空值生效**。例如同时设置 `BRAVE_SEARCH_API_KEY` 和 `BRAVE_API_KEY` 时使用 `BRAVE_API_KEY`；同时设置 `GITHUB_TOKEN` 和 `GH_TOKEN` 时使用 `GH_TOKEN`。
-- 生效顺序：环境变量（`env`）> Windows 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）。
+- 生效顺序：环境变量（`env`）> Windows 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）。同一 provider 不跨来源合并：高优先级来源存在时不再读取低优先级来源，多 Key 轮换列表也不会拼接。
 - 凭据库条目读不出来时，只有该 provider 失败（`error_type: "credential_store"`），不会回退到明文文件，也不影响其他源和无 key 的源；`doctor`、桌面端凭据页和实际搜索都使用 `key_sources` 的同一判定。
 - `TWITTER_COOKIES_PATH` > 配置中的 `twitter_cookies_path` > keys 文件中的 `twitter` 条目。
 
@@ -224,6 +243,19 @@ FIRECRAWL_API_KEY
 SERPAPI_API_KEY / SERPAPI_KEY
 TWITTER_COOKIES_PATH
 ```
+
+### 迁移旧 Key 文件到 Windows 凭据库
+
+桌面端“旧配置迁移”页和 CLI `migrate-legacy` 使用同一套规则：只迁移单 Key 的搜索源（baidu、brave、parallel、tavily、exa、firecrawl、serpapi、github）；多 Key 列表、Jina 和 Cookie 对象保留在旧文件，不做压缩或猜测。预览只返回掩码指纹，执行前列出逐项确认；来源文件不会被删除或改写。
+
+```powershell
+multi-search migrate-legacy plan --keys-file "$HOME\.search-keys.json" --format json
+# 按预览结果准备 request.json：
+# {"plan_token": "...", "approved": ["brave"], "choices": {"tavily": "keep"}}
+multi-search migrate-legacy apply --keys-file "$HOME\.search-keys.json" --request request.json --format json
+```
+
+`plan` 返回 `plan_token`，它绑定旧文件与凭据库的当前内容；两者在预览后任一变化，`apply` 都会拒绝执行并要求重新预览。`apply` 返回 `legacy_file`、`legacy_file_has_plaintext` 和权限告警，提示继续清理旧文件。
 
 多数 key 字段支持 string 或 string array。Jina 支持 `{ "key": "...", "exhausted": true|false }`。这里的 `exhausted` 是 `~/.search-keys.json` 中由操作员维护的配置级静态排除标记：设为 `true` 后该 key 不再进入 Jina 轮换；它不是 SQLite 运行态的 `quota_exhausted`，也没有 24 小时自动恢复语义。带 key 的 Jina Reader 请求遇到 HTTP 402 或明确配额/余额错误时，会直接分类为运行态 `quota_exhausted`，无需先调用 wallet/余额接口；该状态在 `exhausted_until` 未到期时跳过该 key，期满后重新允许尝试，不会自动把配置文件的 `exhausted` 写成 `true`。需要手动软删除 Jina key：
 
@@ -400,7 +432,7 @@ JSON 配置支持 `disabled_sources`（默认为 `[]`）用来全局关闭某些
 - `Ranked Results`：RRF 排序后的结果；JSON `results` 与此顺序一致，正文获取后不再重排。
 - `Scraped Content`：正文内容，统一包在 untrusted block 里。
 
-Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-search/SKILL.md](skills/multi-search/SKILL.md)。
+Provider 参考文档和现行/历史文档分类见 [docs/README.md](docs/README.md)；agent 说明在 [skills/multi-search/SKILL.md](skills/multi-search/SKILL.md)。
 
 ## 安全
 
@@ -412,7 +444,7 @@ Provider 参考文档保存在 [docs/](docs/)，agent 说明在 [skills/multi-se
 
 ### 某个搜索源一直报错怎么办？
 
-先调用 `doctor` tool 检查依赖和 key。缺 key、quota 用完、网络超时都会在 `Source Status` 和 `Errors` 中显示，不会静默吞掉。
+先运行 `multi-search doctor` 检查依赖和 Key。缺 Key、quota 用完、网络超时都会在 `Source Status` 和 `Errors` 中显示，不会静默吞掉。
 
 ## 开发验证
 
