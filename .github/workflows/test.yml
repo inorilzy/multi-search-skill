@@ -48,6 +48,48 @@ jobs:
       - name: Check documentation source paths
         run: uv run --locked python scripts/check_glossary_paths.py
 
+  rust-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - name: Install locked Python dependencies for Rust interop tests
+        run: |
+          uv sync --locked --python 3.12
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$env:GITHUB_WORKSPACE\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Prepare Rust toolchain and fetch locked crates before isolation
+        run: |
+          rustup toolchain install stable --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "RUSTUP_HOME=$env:USERPROFILE\.rustup" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_HOME=$env:USERPROFILE\.cargo" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          cargo fetch --locked --manifest-path desktop/src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check native Windows prerequisites
+        run: |
+          # windows-latest supplies MSVC and WebView2; fail rather than pretend native coverage.
+          $edge = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application\*\msedgewebview2.exe" -ErrorAction SilentlyContinue
+          if (-not $edge) { throw 'Windows Rust native tests require the WebView2 runtime' }
+          rustc --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify isolated Python regression prerequisites
+        run: python scripts/run_tests.py
+      - name: Run Rust matrices with disposable profile and explicit native overlay
+        # No --ignored: real installed CLI/bundle and type generation are separate acceptance.
+        # Overlay disables bundle inputs only; it is not a release/bundle certification.
+        # Versioned script inserts the repo root into sys.path; cwd/PYTHONPATH are not required.
+        run: python -B scripts/rust_ci_matrix.py
+
   frontend:
     runs-on: ubuntu-latest
     steps:
