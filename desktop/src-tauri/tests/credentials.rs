@@ -122,6 +122,9 @@ fn test_outcome_classifies_provider_errors_and_success() {
     assert_eq!(fixture::interpret(&payload("error", "rate_limit")).result, "rate_limited");
     assert_eq!(fixture::interpret(&payload("error", "network")).result, "network");
     assert_eq!(fixture::interpret(&payload("error", "timeout")).result, "timeout");
+    // Core emits ``missing_key`` for a provider that was skipped because no key is
+    // configured; the desktop consumes that classification instead of re-deriving it.
+    assert_eq!(fixture::interpret(&payload("error", "missing_key")).result, "missing_key");
     assert_eq!(fixture::interpret(&serde_json::json!({})).result, "error");
 }
 

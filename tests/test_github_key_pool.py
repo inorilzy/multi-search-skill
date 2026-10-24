@@ -92,7 +92,11 @@ class GitHubKeyPoolTests(unittest.TestCase):
             SearchRunnerConfig("default", {"brave": 1}, 10, "google", {"brave": "fixture-disabled"}),
             build_provider_registry(), route_resolver=lambda _route: {"brave"}, key_manager=self.manager,
         )
-        self.assertEqual(runner.run("fixture"), [{"source": "brave", "error": "skipped: missing API key"}])
+        self.assertEqual(runner.run("fixture"), [{
+            "source": "brave",
+            "error": "skipped: missing API key",
+            "error_type": "missing_key",
+        }])
 
     def test_stateless_auth_and_rate_limit_errors_rotate_then_stop(self):
         for status in (401, 403, 429):
