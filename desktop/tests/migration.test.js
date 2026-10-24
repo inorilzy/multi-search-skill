@@ -20,8 +20,8 @@ function plan() {
   return {
     plan_token: TOKEN,
     items: [
-      { provider: 'tavily', action: 'migrate', preview: 'synth…0001' },
-      { provider: 'brave', action: 'conflict', preview: 'synth…0002' },
+      { provider: 'tavily', action: 'migrate', preview: 'sha256:1a2b3c4d' },
+      { provider: 'brave', action: 'conflict', preview: 'sha256:5e6f7a8b' },
       { provider: 'jina', action: 'unsupported', reason: 'not a single-key search provider; left in the legacy file' },
     ],
     migratable: ['tavily', 'brave'],
@@ -35,7 +35,7 @@ test('preview shows masked values, lists skips, and never renders a full key', a
   const mounted = await mountMigration(root, api);
   root.querySelector('[data-action="preview"]').click();
   await flush();
-  assert.ok(root.querySelector('[data-preview="tavily"]').textContent.startsWith('synth'));
+  assert.equal(root.querySelector('[data-preview="tavily"]').textContent, 'sha256:1a2b3c4d');
   assert.ok(root.querySelector('[data-item="jina"]').textContent.includes('不支持'));
   assert.ok(!root.innerHTML.includes(SYNTHETIC_FULL), 'full key must not appear in the DOM');
   assert.match(root.querySelector('[data-info="summary"]').textContent, /可迁移 2 项；跳过 1 项/);

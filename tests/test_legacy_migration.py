@@ -63,8 +63,23 @@ class LegacyMigrationTests(unittest.TestCase):
         self.assertEqual(tavily["action"], "migrate")
         self.assertNotIn(SYN_TAVILY, json.dumps(plan))
         self.assertNotIn(SYN_BRAVE, json.dumps(plan))
-        self.assertTrue(tavily["preview"].startswith("synth"))
-        self.assertTrue(tavily["preview"].endswith("0001"))
+        # The preview is an irreversible short hash: no prefix or suffix of the key.
+        self.assertRegex(tavily["preview"], r"^sha256:[0-9a-f]{8}$")
+        self.assertNotIn("synth", tavily["preview"])
+        self.assertNotIn("0001", tavily["preview"])
+        self.assertNotEqual(tavily["preview"], self.item(plan, "brave")["preview"])
+
+    def test_mask_reveals_no_plaintext_for_any_key_length(self):
+        from multi_search_mcp.src.state.key_state import key_fingerprint
+
+        for key in ("abcdefgh", "abcdefghijkl", "tvly-" + "x" * 32, "k"):
+            with self.subTest(length=len(key)):
+                preview = lm.mask(key)
+                self.assertRegex(preview, r"^sha256:[0-9a-f]{8}$")
+                self.assertNotIn(key[:4], preview)
+                self.assertNotIn(key[-4:], preview)
+                # Same identifier as `keys status`, so a migrated key can be matched.
+                self.assertEqual(preview, key_fingerprint(key))
 
     def test_single_element_list_is_accepted_as_one_key(self):
         self.write_keys({"exa": [SYN_OTHER]})

@@ -48,10 +48,13 @@ def key_id_for(provider: str, key: str) -> str:
 
 
 def key_fingerprint(key: str) -> str:
-    text = str(key)
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
-    if len(text) >= 8:
-        return f"{text[:4]}...{text[-4:]} ({digest})"
+    """Irreversible short display identifier for a key; contains no key characters.
+
+    The digest is the 8-hex prefix of the digest in :func:`key_id_for`, so rows
+    written by older versions (``前4...后4 (sha8)``) can be rewritten from
+    ``key_id`` alone; see ``StateStore._scrub_key_fingerprints``.
+    """
+    digest = hashlib.sha256(str(key).encode("utf-8")).hexdigest()[:8]
     return f"sha256:{digest}"
 
 
