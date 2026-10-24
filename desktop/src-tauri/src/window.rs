@@ -37,18 +37,24 @@ async fn start_test_search(
     .map_err(|_| "Search worker failed")?
 }
 #[tauri::command]
-fn poll_execution(
+async fn poll_execution(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     id: u64,
 ) -> Result<ExecutionStatus, String> {
-    manager.execution(id)
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.execution(id))
+        .await
+        .map_err(|_| "Execution poll worker failed".to_string())?
 }
 #[tauri::command]
-fn cancel_test_search(
+async fn cancel_test_search(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     id: u64,
 ) -> Result<ExecutionStatus, String> {
-    manager.cancel_search(id)
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.cancel_search(id))
+        .await
+        .map_err(|_| "Execution cancel worker failed".to_string())?
 }
 
 #[tauri::command]
@@ -232,17 +238,23 @@ async fn migration_apply(
 }
 
 #[tauri::command]
-fn settings_view(
+async fn settings_view(
     manager: tauri::State<'_, Arc<DesktopManager>>,
 ) -> Result<crate::settings::SettingsView, String> {
-    Ok(crate::settings::view(&manager.inner().environment))
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::settings::view(&manager.environment))
+        .await
+        .map_err(|_| "Settings view worker failed".to_string())
 }
 #[tauri::command]
-fn settings_save(
+async fn settings_save(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     input: crate::settings::SettingsInput,
 ) -> Result<crate::settings::SettingsView, String> {
-    crate::settings::save(&manager.inner().environment, &input)
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || crate::settings::save(&manager.environment, &input))
+        .await
+        .map_err(|_| "Settings save worker failed".to_string())?
 }
 
 #[tauri::command]

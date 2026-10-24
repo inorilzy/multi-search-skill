@@ -106,3 +106,110 @@ test('user can cancel the current execution and missing CLI disables start', asy
   assert.equal(root.querySelector('[data-action="search"]').disabled, true);
   window.close();
 });
+
+test('leaving the page cancels the running CLI so the next visit is not blocked', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const cancelled = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' } }),
+    start: async () => 9,
+    poll: async () => ({ status: 'running' }),
+    cancel: async id => { cancelled.push(id); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 1000 });
+  root.querySelector('[data-field="query"]').value = 'still running';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  page.dispose();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(cancelled, [9]);
+  window.close();
+});
+
+test('a CLI started while unmounting is cancelled instead of leaking', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let finishStart;
+  const cancelled = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' } }),
+    start: () => new Promise(resolve => { finishStart = resolve; }),
+    cancel: async id => { cancelled.push(id); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api);
+  root.querySelector('[data-field="query"]').value = 'slow start';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  page.dispose();
+  finishStart(13);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(cancelled, [13]);
+  window.close();
+});
+
+test('a failed cancel resets the run and allows a new test search', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let starts = 0;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' } }),
+    start: async () => { starts += 1; return starts; },
+    poll: async () => ({ status: 'running' }),
+    cancel: async () => { throw 'IPC unavailable'; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 1000 });
+  root.querySelector('[data-field="query"]').value = 'retryable';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="cancel"]').disabled, false);
+
+  root.querySelector('[data-action="cancel"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.match(root.querySelector('[data-execution-error]').textContent, /IPC unavailable/);
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待测试');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false, 'state is reset after a failed cancel');
+  assert.equal(root.querySelector('[data-action="cancel"]').disabled, true);
+
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(starts, 2, 'a new test search can be started');
+  page.dispose();
+  window.close();
+});
+
+test('the backend reason for a rejected start stays visible and retry is possible', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let attempts = 0;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' } }),
+    start: async () => { attempts += 1; throw 'A test search is already running'; },
+  };
+  const page = await mountDiagnostics(root, api);
+  root.querySelector('[data-field="query"]').value = 'busy';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.match(root.querySelector('[data-execution-error]').textContent, /A test search is already running/);
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(attempts, 2);
+  page.dispose();
+  window.close();
+});
+
+test('a failed poll shows its backend reason and still allows cancelling', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const api = {
+    detect: async () => ({ app: { status: 'ready' } }),
+    start: async () => 31,
+    poll: async () => { throw 'Execution state unavailable'; },
+    cancel: async () => ({ status: 'cancelled' }),
+  };
+  const page = await mountDiagnostics(root, api);
+  root.querySelector('[data-field="query"]').value = 'poll failure';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.match(root.querySelector('[data-execution-error]').textContent, /Execution state unavailable/);
+  assert.equal(root.querySelector('[data-action="cancel"]').disabled, false);
+  page.dispose();
+  window.close();
+});

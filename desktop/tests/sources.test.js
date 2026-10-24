@@ -239,3 +239,20 @@ test('row testing sends one request and saving invalidates row success', async (
 });
 
 function flush() { return new Promise(resolve => setTimeout(resolve, 0)); }
+
+test('disposal or navigation abort releases the Ctrl K shortcut', async () => {
+  const { window, root } = setup();
+  const api = { settingsView: async () => settings(), credentialStatus: async () => absent };
+  const mounted = await mountSources(root, api);
+  mounted.dispose();
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, cancelable: true }));
+  assert.notEqual(window.document.activeElement, root.querySelector('[data-search]'));
+
+  const second = setup();
+  const controller = new second.window.AbortController();
+  await mountSources(second.root, api, { signal: controller.signal });
+  controller.abort();
+  second.window.document.dispatchEvent(new second.window.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, cancelable: true }));
+  assert.notEqual(second.window.document.activeElement, second.root.querySelector('[data-search]'));
+  window.close(); second.window.close();
+});
