@@ -34,11 +34,11 @@ uv run --locked multi-search read src_... --keyword "TaskGroup" --limit 2000
 
 - `skills/multi-search/SKILL.md`：薄 skill，自然语言触发和使用策略。
 - `multi_search_mcp/cli.py`：唯一产品入口 `multi-search` CLI，直接调用共享 Core。
-- `multi_search_mcp/tools.py`：兼容 Python 请求适配器，无 MCP 依赖或服务。
+- `multi_search_mcp/tools.py`：仅保留的兼容 Python 适配器，无 MCP 依赖或服务；所有产品能力已由 CLI 提供；本模块只保留旧 Python 调用形状并转发 Core，不再承载独立实现。
 - `multi_search_mcp/src/`：自包含搜索、抓取、状态、key 与 service 实现。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
 
-CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`keys status` 和 `keys reset`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
+CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys status`、`keys reset`、`site stats`、`site set-preference`、`site reset` 和 `migrate-legacy`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留，但只作为 CLI/Core 之上的薄包装。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
 
 边界约定：明文 key 只从环境变量和 `~/.search-keys.json` 读取；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置。
 
@@ -333,7 +333,7 @@ search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
 search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录）、`doctor`、`keys status`、`keys reset`。
+CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，以及站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`。
 
 ## 配置和参数
 
@@ -351,7 +351,7 @@ CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写�
 | `expand` | — | 额外扩展查询（list），常用于给中文查询补英文 |
 | `use_state` | true | 是否使用 SQLite key 状态与站点抓取器记忆 |
 
-站点抓取记忆使用目标 URL 的标准 `hostname` 作为站点键：忽略 userinfo 和端口，主机名按小写处理；保留完整 IPv6 地址；继续去掉一个 `www.` 前缀，并保留 Reddit 的 host 分组和 GitHub 的路径分组。知乎只有精确的 `zhihu.com` 或真正的 `.zhihu.com` 子域会归入 `zhihu.com`，例如 `evilzhihu.com` 保持独立。`get_site_scraper_stats`、`set_site_scraper_preference` 和 `reset_site_scraper_stats` 的 `site` 参数使用该站点键；带 `site` 的 reset 只删除该键的统计和抓取尝试，省略时才清空全部站点。修复前由错误键聚合的历史行（例如截断的 IPv6 键）无法可靠还原归属，不自动猜测迁移或全表清理；需要处理时先查看统计，再用既有 reset 定向删除明确的旧键。
+站点抓取记忆使用目标 URL 的标准 `hostname` 作为站点键：忽略 userinfo 和端口，主机名按小写处理；保留完整 IPv6 地址；继续去掉一个 `www.` 前缀，并保留 Reddit 的 host 分组和 GitHub 的路径分组。知乎只有精确的 `zhihu.com` 或真正的 `.zhihu.com` 子域会归入 `zhihu.com`，例如 `evilzhihu.com` 保持独立。CLI 的 `site stats`、`site set-preference` 和 `site reset` 使用该站点键（兼容适配器中的同名函数只是调用同一 Core 操作）；带 `site` 的 reset 只删除该键的统计和抓取尝试，省略时才清空全部站点。修复前由错误键聚合的历史行（例如截断的 IPv6 键）无法可靠还原归属，不自动猜测迁移或全表清理；需要处理时先查看统计，再用既有 reset 定向删除明确的旧键。
 
 `fetch_source` 通过 `source_id` 或 `url` 选择一页，支持 `backends`、`max_chars`、`full_content`、`timeout`、`use_state`。`full_content` 默认 `False`，保留现有 `max_chars` 行为（默认 20000，显式值限制在 1–20000）；设为 `True` 时覆盖 `max_chars`，一次返回全部已取得文本。CLI 对应 `fetch --full-content`。`read_source` 通过 `source_id` 读取缓存，支持 `keyword`、`offset`、`limit`；单次最多 8000 字符，用于定向查证。
 

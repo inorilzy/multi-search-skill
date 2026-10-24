@@ -271,12 +271,10 @@ class CliTests(unittest.TestCase):
         self.assertIn("server: multi-search-mcp", stdout)
         self.assertIn("state_path: D:/tmp/state.sqlite", stdout)
 
-    def test_keys_status_uses_state_store_and_manager(self):
-        fake_manager = mock.Mock()
-        fake_manager.status_rows.return_value = [{"provider": "exa", "status": "active"}]
-
-        with mock.patch.object(cli, "StateStore", return_value=object()) as store_cls, \
-             mock.patch.object(cli, "SQLiteKeyManager", return_value=fake_manager):
+    def test_keys_status_uses_the_shared_core_operation(self):
+        with mock.patch.object(
+            cli, "key_status", return_value=[{"provider": "exa", "status": "active"}],
+        ) as status:
             code, stdout, stderr = self.run_cli([
                 "keys",
                 "status",
@@ -286,15 +284,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         payload = json.loads(stdout)
         self.assertEqual(payload["key_status"], [{"provider": "exa", "status": "active"}])
-        store_cls.assert_called_once_with()
-        fake_manager.status_rows.assert_called_once_with("exa")
+        status.assert_called_once_with("exa")
 
-    def test_keys_reset_reports_updated_rows(self):
-        fake_manager = mock.Mock()
-        fake_manager.reset.return_value = 3
-
-        with mock.patch.object(cli, "StateStore", return_value=object()) as store_cls, \
-             mock.patch.object(cli, "SQLiteKeyManager", return_value=fake_manager):
+    def test_keys_reset_uses_the_shared_core_operation(self):
+        with mock.patch.object(cli, "reset_key_state", return_value=3) as reset:
             code, stdout, stderr = self.run_cli([
                 "keys",
                 "reset",
@@ -305,8 +298,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         payload = json.loads(stdout)
         self.assertEqual(payload["updated"], 3)
-        store_cls.assert_called_once_with()
-        fake_manager.reset.assert_called_once_with(provider="tavily", key_id="tavily:abcd")
+        reset.assert_called_once_with(provider="tavily", key_id="tavily:abcd")
 
     def test_service_error_is_reported_to_stderr_with_nonzero_exit(self):
         with mock.patch.object(cli, "run_search_web", side_effect=ValueError("bad query")):

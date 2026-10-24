@@ -245,8 +245,7 @@ class GitHubKeyPoolTests(unittest.TestCase):
              mock.patch(
                  "multi_search_mcp.src.diagnostics.resolve_config_path_source", return_value=(self.keys_path.parent / "config.json", "user")
              ), \
-             mock.patch.object(tools, "StateStore", return_value=self.store), \
-             mock.patch.object(cli, "StateStore", return_value=self.store):
+             mock.patch("multi_search_mcp.src.state.operations.StateStore", return_value=self.store):
             self.assertEqual(service.doctor_data()["key_status"], expected)
             self.assertEqual(service.list_sources(include_key_status=True)["key_status"], expected)
             self.assertEqual(tools.get_key_status_tool("github")["key_status"], expected)

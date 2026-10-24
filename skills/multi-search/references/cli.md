@@ -130,6 +130,12 @@ console streams retain their existing encoding.
 `network_checks` record results. This checks those endpoints' connectivity,
 not every provider's credentials, quota, or search quality.
 
+Maintenance commands share the same Core state: `multi-search keys status` /
+`keys reset`, `multi-search sources --key-status --scraper-stats`, and
+`multi-search site stats [site]`, `site set-preference <site> <scraper>
+[--priority N] [--note TEXT]`, `site reset [site]`. Prefer these over the
+legacy Python adapter module, which only forwards to Core.
+
 Completion: the CLI runs, the search outcome is visible, and matching links are
 identified or the bodies needed for the answer were read (or failures recorded).
 Each claim about page contents cites inspected supporting material. Use the

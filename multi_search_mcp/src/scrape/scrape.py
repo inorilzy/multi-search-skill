@@ -1,13 +1,15 @@
 """URL scraping with platform domain dispatch and generic page backends."""
 import time
 
+from ..state.key_state import KeyCandidate, key_fingerprint, key_id_for
+from ..state.site_memory import ScrapeAttempt
 from ..support.auth import is_key_retryable_error
+from ..support.backends import KEYED_BACKENDS, KNOWN_BACKENDS  # noqa: F401 - re-exported compatibility names
 from ..support.models import normalize_scrape_result
 from ..support.url_security import (
     UrlSecurityError,
     validate_scrape_url,
 )
-from ..state.key_state import KeyCandidate, key_fingerprint, key_id_for
 from .scrapers import _DEFAULT_SCRAPE_TIMEOUT_SECONDS
 from .scrapers.exa import scrape_url_exa
 from .scrapers.firecrawl import scrape_url_firecrawl
@@ -20,15 +22,6 @@ from .scrapers.tavily import scrape_url_tavily
 from .scrapers.reddit import is_reddit_url, scrape_url_reddit
 from .scrapers.twitter import is_twitter_url, scrape_url_twitter, validate_twitter_url
 from .url_classify import is_zhihu_blocked_text, is_zhihu_url
-from ..state.site_memory import ScrapeAttempt
-
-
-# Selectable generic backends. Platform scrapers are selected by URL domain.
-KNOWN_BACKENDS = ("jina", "exa", "tavily", "firecrawl")
-# Keyed backends whose only requirement to run is a configured key. Used to
-# distinguish "no key configured" from "backend unknown" when a caller forces
-# a specific backend list.
-KEYED_BACKENDS = ("exa", "tavily")
 
 
 DEFAULT_SCRAPE_POLICY = {
