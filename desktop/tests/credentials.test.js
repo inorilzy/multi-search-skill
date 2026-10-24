@@ -92,7 +92,7 @@ test('saving clears the input, never renders the key, and does not run a test', 
   assert.equal(field.value, '');
   assert.equal(root.querySelector('[data-status="store"]').textContent, '已保存');
   assert.equal(root.querySelector('[data-status="test"]').textContent, '尚未测试');
-  assert.match(root.querySelector('[data-info="test"]').textContent, /尚未测试/);
+  assert.match(root.querySelector('[data-info="save"]').textContent, /尚未测试/);
   assert.ok(!root.innerHTML.includes(SYNTHETIC_KEY));
   window.close();
 });
@@ -246,7 +246,7 @@ test('delete warning with a file list says the file keys will be restored', asyn
   assert.doesNotMatch(text, /需要重新粘贴/);
   root.querySelector('[data-action="confirm-delete"]').click();
   await flush();
-  assert.match(root.querySelector('[data-info="test"]').textContent, /已恢复使用文件中的 2 个 Key/);
+  assert.match(root.querySelector('[data-info="save"]').textContent, /已恢复使用文件中的 2 个 Key/);
   window.close();
 });
 
@@ -264,7 +264,7 @@ test('delete warning with an env var says the env var still overrides and never 
   assert.doesNotMatch(text, /没有|需要重新粘贴/);
   root.querySelector('[data-action="confirm-delete"]').click();
   await flush();
-  const message = root.querySelector('[data-info="test"]').textContent;
+  const message = root.querySelector('[data-info="save"]').textContent;
   assert.match(message, /仍由环境变量 TAVILY_API_KEY 生效/);
   assert.doesNotMatch(message, /当前没有可用的 Key/);
   window.close();

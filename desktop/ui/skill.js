@@ -1,4 +1,9 @@
+import { showError } from './api.js';
+
 const reasons = { exists: '目标已存在', invalid_scope: '目标无效', cli_missing: 'CLI 不可发现', cli_incompatible: 'CLI 与 Skill 不兼容', ready: '可安装' };
+const stateLabels = { current: '当前版本', outdated: '有可用更新', modified: '有本地修改', absent: '未安装', unknown: '未知状态' };
+// Known statuses are localized; a raw backend enum is never shown on its own.
+const statusText = (status, fallback) => reasons[status] || fallback || `未知状态（${status ?? '无'}）`;
 export async function mountSkill(root, api, { number = '03' } = {}) {
   root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / CLAUDE CODE SKILL</p><h1 tabindex="-1">让 Claude Code 使用本机 CLI。</h1><p>安装仅写入所选目录中的 multi-search 技能文件，不覆盖已有内容，不使用 MCP。</p></section>
     <section class="panel skill-install"><div class="section-title"><h2>安装范围</h2><span class="eyebrow">CLAUDE CODE ONLY</span></div>
@@ -30,9 +35,9 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       const plan = await api.skillPlan(selectedScope(), projectValue());
       plannedScope = plan.scope; plannedProject = projectValue(); ready = plan.can_install;
       root.querySelector('[data-info="target"]').textContent = plan.target ? `目标目录：${plan.target}\n文件：${plan.files.join('、')}` : '';
-      root.querySelector('[data-info="status"]').textContent = `${reasons[plan.status] || plan.status}：${plan.reason}`;
+      root.querySelector('[data-info="status"]').textContent = `${statusText(plan.status)}：${plan.reason}`;
       install.disabled = !ready;
-    } catch { ready = false; install.disabled = true; root.querySelector('[data-info="error"]').textContent = '预览失败，请重试。'; }
+    } catch (error) { ready = false; install.disabled = true; showError(root.querySelector('[data-info="error"]'), error, '预览失败，请重试。'); }
   });
   install.addEventListener('click', async () => {
     if (!ready || plannedScope !== selectedScope() || plannedProject !== projectValue()) { root.querySelector('[data-info="error"]').textContent = '请先预览目标目录。'; return; }
@@ -42,7 +47,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       root.querySelector('[data-info="target"]').textContent = result.target ? `目标目录：${result.target}` : '';
       root.querySelector('[data-info="status"]').textContent = result.status === 'installed' ? `已安装并校验：${result.reason}` : `未完成安装：${result.reason}`;
       ready = false;
-    } catch { root.querySelector('[data-info="error"]').textContent = '安装失败，未确认写入结果，请重新预览。'; ready = false; }
+    } catch (error) { showError(root.querySelector('[data-info="error"]'), error, '安装失败，未确认写入结果，请重新预览。'); ready = false; }
     finally { install.disabled = true; }
   });
   // Manage panel: status, update, and removal. Each destructive step needs its own explicit confirmation.
@@ -82,7 +87,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       const status = await api.skillStatus(scope, targetProject);
       if (disposed || request !== generation || scope !== manageScope() || targetProject !== manageProject()) return;
       managedScope = scope; managedProject = targetProject; removeReady = false;
-      info('installed').textContent = `状态：${status.state}；已装版本：${status.installed_version ?? '无'}；发布版本：${status.release_version}。${status.reason}`;
+      info('installed').textContent = `状态：${stateLabels[status.state] || `未知状态（${status.state}）`}；已装版本：${status.installed_version ?? '无'}；发布版本：${status.release_version}。${status.reason}`;
       info('managed-target').textContent = `目标目录：${status.target ?? '未确认'}`;
       info('compatibility').textContent = `CLI 要求：${status.cli_requirements ?? '请重新检查'}。${status.compatibility_reason ?? ''}`;
       info('modified').textContent = status.modified_files.length ? `本地修改：${status.modified_files.join('、')}` : '';
@@ -91,7 +96,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       manageButton('remove-plan').disabled = !['outdated', 'modified', 'current'].includes(status.state);
       manageButton('remove').disabled = true;
       confirmOverwrite.checked = false;
-    } catch { setManageError('检查失败，请重试。'); }
+    } catch (error) { showError(info('manage-error'), error, '检查失败，请重试。'); }
   });
   manageButton('update').addEventListener('click', async () => {
     if (!sameTarget()) { setManageError('请先检查当前目标。'); return; }
@@ -103,7 +108,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       info('manage-status').textContent = result.status === 'updated' && result.verified === true
         ? `已更新并校验：${result.reason}${result.backup ? `；本地修改已备份到 ${result.backup}` : ''}`
         : `未完成更新：${result.reason}${result.backup ? `；备份位置 ${result.backup}` : ''}`;
-    } catch { setManageError('更新失败，原 Skill 未被确认改变，请重新检查。'); }
+    } catch (error) { showError(info('manage-error'), error, '更新失败，原 Skill 未被确认改变，请重新检查。'); }
     finally { setBusy(false); if (!disposed) manageButton('check').click(); }
   });
   manageButton('remove-plan').addEventListener('click', async () => {
@@ -119,7 +124,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
         ? `将删除：${plan.will_delete.join('、')}；保留：${plan.will_keep.join('、') || '无'}。${plan.reason}`
         : `无可移除内容：${plan.reason}`;
       manageButton('remove').disabled = !removeReady;
-    } catch { if (!disposed && request === generation) setManageError('移除预览失败，请重试。'); }
+    } catch (error) { if (!disposed && request === generation) showError(info('manage-error'), error, '移除预览失败，请重试。'); }
   });
   manageButton('remove').addEventListener('click', async () => {
     if (busy || disposed) return;
@@ -130,7 +135,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       info('manage-status').textContent = result.status === 'removed'
         ? `已移除：${result.deleted.join('、')}。${result.reason}`
         : `未移除：${result.reason}`;
-    } catch { setManageError('移除失败，请重新检查目标。'); }
+    } catch (error) { showError(info('manage-error'), error, '移除失败，请重新检查目标。'); }
     finally { removeReady = false; setBusy(false); if (!disposed) manageButton('check').click(); }
   });
   return { dispose() { disposed = true; generation++; } };

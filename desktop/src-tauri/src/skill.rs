@@ -42,7 +42,7 @@ fn requirements() -> Requirements {
 }
 
 fn registry_path(environment: &RuntimeEnvironment) -> Result<PathBuf, String> {
-    Ok(home_directory(environment).ok_or("Missing user profile")?.join(".multi-search/managed-skills.json"))
+    Ok(home_directory(environment).ok_or("缺少用户目录")?.join(".multi-search/managed-skills.json"))
 }
 
 fn managed_targets(environment: &RuntimeEnvironment) -> Result<Vec<PathBuf>, String> {
@@ -63,9 +63,9 @@ pub(crate) fn record_target(environment: &RuntimeEnvironment, target: &Path, pre
     targets.retain(|p| p != target);
     if present { targets.push(target.to_path_buf()); }
     let path = registry_path(environment)?;
-    fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("Cannot record managed Skill: {e}"))?;
+    fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("无法记录受管 Skill：{e}"))?;
     crate::secure_temp::replace_file(&path, &serde_json::to_vec(&targets).unwrap())
-        .map_err(|e| format!("Cannot commit managed Skill registry: {e}"))
+        .map_err(|e| format!("无法写入受管 Skill 记录：{e}"))
 }
 
 fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requirements, String> {
@@ -145,15 +145,15 @@ pub(crate) fn target_directory(
 ) -> Result<PathBuf, String> {
     let base = match scope {
         "global" => home_directory(environment)
-            .ok_or_else(|| "The user profile directory is not available".to_string())?,
+            .ok_or_else(|| "用户目录不可用".to_string())?,
         "project" => {
-            let project = project.ok_or_else(|| "Select the project directory".to_string())?;
+            let project = project.ok_or_else(|| "请选择项目目录".to_string())?;
             if !project.is_absolute() || !project.is_dir() {
-                return Err("Select an existing absolute project directory".into());
+                return Err("请选择已存在的项目绝对路径".into());
             }
             project.to_path_buf()
         }
-        _ => return Err("Scope must be global or project".into()),
+        _ => return Err("作用范围必须是全局或项目".into()),
     };
     Ok(base.join(".claude").join("skills").join(SKILL_NAME))
 }
@@ -179,11 +179,11 @@ pub(crate) fn verify_directory(directory: &Path) -> Result<(), String> {
         }
     }
     let marker = fs::read_to_string(directory.join(MARKER))
-        .map_err(|_| "The install marker is missing".to_string())?;
+        .map_err(|_| "安装标记缺失".to_string())?;
     let marker: serde_json::Value =
-        serde_json::from_str(&marker).map_err(|_| "The install marker is invalid".to_string())?;
+        serde_json::from_str(&marker).map_err(|_| "安装标记无效".to_string())?;
     if marker["managed_by"] != "multi-search-desktop" || marker["skill_version"] != SKILL_VERSION {
-        return Err("The install marker does not match this release".into());
+        return Err("安装标记与本版本不一致".into());
     }
     Ok(())
 }
@@ -200,9 +200,9 @@ pub(crate) fn write_directory(directory: &Path) -> Result<(), String> {
     for (name, content) in FILES {
         let path = directory.join(name);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Cannot create {name}: {e}"))?;
+            fs::create_dir_all(parent).map_err(|e| format!("无法创建 {name}：{e}"))?;
         }
-        fs::write(&path, content).map_err(|e| format!("Cannot write {name}: {e}"))?;
+        fs::write(&path, content).map_err(|e| format!("无法写入 {name}：{e}"))?;
     }
     // Hashes let later status and update checks tell an unmodified file from a user edit.
     let hashes: serde_json::Map<String, serde_json::Value> = FILES
@@ -218,7 +218,7 @@ pub(crate) fn write_directory(directory: &Path) -> Result<(), String> {
         "requirements": requirements(),
     });
     fs::write(directory.join(MARKER), format!("{marker}\n"))
-        .map_err(|e| format!("Cannot write {MARKER}: {e}"))?;
+        .map_err(|e| format!("无法写入 {MARKER}：{e}"))?;
     verify_directory(directory)
 }
 
@@ -234,14 +234,14 @@ impl DesktopManager {
             return blocked_plan(
                 scope,
                 "exists",
-                "A multi-search skill already exists here; this release does not overwrite it.".into(),
+                "目标目录已有 multi-search Skill，本版本不会覆盖。".into(),
                 Some(target_text),
             );
         }
         let cli = self.detect_cli().user;
         if cli.status != "ready" {
             let reason = format!(
-                "The CLI is not discoverable from the user environment ({}). Install the CLI first.",
+                "无法发现 CLI from the user environment ({}). Install the CLI first.",
                 cli.status
             );
             return blocked_plan(scope, "cli_missing", reason, Some(target_text));
@@ -254,7 +254,7 @@ impl DesktopManager {
             scope: scope.into(),
             target: Some(target_text),
             status: "ready".into(),
-            reason: "Ready to install into the target directory shown above.".into(),
+            reason: "可以安装到上方显示的目标目录。".into(),
             files: file_names(),
             can_install: true,
         }
@@ -282,11 +282,11 @@ impl DesktopManager {
         };
         // Staging sits beside skills/, not inside it, so a half-written folder never appears as a skill.
         let Some(base) = target.parent().and_then(Path::parent) else {
-            return failed("Invalid target directory".into());
+            return failed("目标无效 directory".into());
         };
         let staging = match crate::secure_temp::create_dir(base, ".multi-search-staging-") {
             Ok(staging) => staging,
-            Err(error) => return failed(format!("Cannot prepare the install folder: {error}")),
+            Err(error) => return failed(format!("无法准备安装目录：{error}")),
         };
         if let Err(reason) = write_directory(&staging) {
             let _ = fs::remove_dir_all(&staging);
@@ -294,32 +294,32 @@ impl DesktopManager {
         }
         let Some(skills_dir) = target.parent() else {
             let _ = fs::remove_dir_all(&staging);
-            return failed("Invalid target directory".into());
+            return failed("目标无效 directory".into());
         };
         if let Err(error) = fs::create_dir_all(skills_dir) {
             let _ = fs::remove_dir_all(&staging);
-            return failed(format!("Cannot create the skills folder: {error}"));
+            return failed(format!("无法创建 skills 目录：{error}"));
         }
         if fs::symlink_metadata(&target).is_ok() {
             let _ = fs::remove_dir_all(&staging);
-            return blocked("A multi-search skill appeared at the target; nothing was changed.".into());
+            return blocked("目标目录出现了新的 multi-search Skill，未做任何修改。".into());
         }
         if let Err(error) = fs::rename(&staging, &target) {
             let _ = fs::remove_dir_all(&staging);
-            return failed(format!("Cannot place the skill at the target: {error}"));
+            return failed(format!("无法把 Skill 放到目标目录：{error}"));
         }
         match verify_directory(&target).and_then(|()| record_target(&self.environment, &target, true)) {
             Ok(()) => SkillInstall {
                 status: "installed".into(),
                 target: plan.target.clone(),
                 verified: true,
-                reason: "Installed and verified. Start a new Claude Code session to load it.".into(),
+                reason: "已安装并校验；请新开 Claude Code 会话以加载。".into(),
                 files: file_names(),
             },
             Err(reason) => {
                 // We created this folder with the rename above, so removing it leaves no user content behind.
                 let _ = fs::remove_dir_all(&target);
-                failed(format!("Installed files failed verification and were removed: {reason}"))
+                failed(format!("已安装文件未通过校验，已移除：{reason}"))
             }
         }
     }
@@ -341,14 +341,14 @@ impl DesktopManager {
                 &self.environment,
                 Duration::from_secs(5),
             )
-            .map_err(|_| "The CLI help could not be read".to_string())?;
+            .map_err(|_| "无法读取 CLI 帮助".to_string())?;
             if output.timed_out || output.code != Some(0) {
-                return Err(format!("The CLI `{subcommand} --help` failed; update the CLI."));
+                return Err(format!("CLI 的 `{subcommand} --help` 执行失败；请更新 CLI。"));
             }
             let help_tokens: Vec<_> = output.stdout.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')).collect();
             if let Some(flag) = flags.iter().find(|flag| !help_tokens.contains(&flag.as_str())) {
                 return Err(format!(
-                    "The installed CLI does not support `{subcommand} {flag}`; update the CLI to match this Skill."
+                    "已安装的 CLI 不支持 `{subcommand} {flag}`；请更新 CLI 以匹配该 Skill。"
                 ));
             }
         }

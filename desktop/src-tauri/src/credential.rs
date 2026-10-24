@@ -28,7 +28,7 @@ impl std::fmt::Display for CredentialError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unavailable(message) => f.write_str(message),
-            Self::Unreadable => f.write_str("stored credential is unreadable"),
+            Self::Unreadable => f.write_str("已保存的凭据无法读取"),
             Self::Invalid(message) => f.write_str(message),
         }
     }
@@ -46,12 +46,12 @@ pub(crate) fn validate_key(key: &str) -> Result<String, CredentialError> {
     let text = key.trim();
     if text.is_empty() || text.len() > MAX_KEY_LENGTH {
         return Err(CredentialError::Invalid(
-            "key must be 1-1024 characters with no control characters",
+            "API Key 必须为 1 到 1024 个字符，且不能包含控制字符",
         ));
     }
     if text.chars().any(|c| (c as u32) < 32 || c as u32 == 127) {
         return Err(CredentialError::Invalid(
-            "key must be 1-1024 characters with no control characters",
+            "API Key 必须为 1 到 1024 个字符，且不能包含控制字符",
         ));
     }
     Ok(text.to_string())
@@ -172,10 +172,10 @@ fn to_wide(text: &str) -> Vec<u16> {
 fn store_error(code: u32) -> CredentialError {
     use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
     if code == ERROR_ACCESS_DENIED {
-        CredentialError::Unavailable("credential store access denied".into())
+        CredentialError::Unavailable("Windows 凭据库访问被拒绝".into())
     } else {
         CredentialError::Unavailable(format!(
-            "credential store unavailable (Windows error {code})"
+            "Windows 凭据库不可用（Windows 错误 {code}）"
         ))
     }
 }

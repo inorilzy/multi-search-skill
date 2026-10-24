@@ -103,7 +103,7 @@ impl DesktopManager {
                 status: "missing".into(),
                 path: None,
                 version: None,
-                reason: "multi-search.exe was not found on this environment's PATH".into(),
+                reason: "当前环境的 PATH 中未找到 multi-search.exe".into(),
             };
         };
         let mut result = Discovery {
@@ -119,7 +119,7 @@ impl DesktopManager {
                 .map(|s| s.eq_ignore_ascii_case("multi-search.exe"))
                 != Some(true)
         {
-            result.reason = "Select the absolute path to multi-search.exe".into();
+            result.reason = "请选择 multi-search.exe 的绝对路径".into();
             return result;
         }
         match crate::process::bounded(

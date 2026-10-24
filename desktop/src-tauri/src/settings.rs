@@ -231,7 +231,7 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
         None | Some("") => None,
         Some(path) => {
             if path.len() > MAX_PATH_BYTES || path.contains('\0') {
-                return Err("Twitter cookie 文件路径无效".into());
+                return Err("Twitter Cookie 文件路径无效".into());
             }
             Some(path.to_string())
         }

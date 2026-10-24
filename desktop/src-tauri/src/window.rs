@@ -1,6 +1,31 @@
 use crate::{CliStatus, DesktopManager, ExecutionStatus, RuntimeEnvironment, SearchOptions, SkillInstall, SkillPlan};
 use std::{path::PathBuf, sync::Arc};
 use tauri::Manager;
+use crate::errors::{backend, finish};
+
+/// Join a blocking worker and normalize both failure layers into the `{ code, message }` contract:
+/// a worker panic gets a stable code, an inner operation error keeps its localized message.
+async fn offload<T, F>(work: F, worker_code: &'static str) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| backend(worker_code).into())
+        .and_then(finish)
+}
+
+/// Offload work that cannot fail on its own (it reports outcomes in its payload).
+async fn offload_value<T, F>(work: F, worker_code: &'static str) -> Result<T, String>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| backend(worker_code).into())
+}
 
 // No command accepts an executable path from the frontend: every CLI run resolves the managed
 // install (then PATH) in the backend, so script running in the webview cannot pick a program.
@@ -9,7 +34,7 @@ async fn detect_cli(
     manager: tauri::State<'_, Arc<DesktopManager>>,
 ) -> Result<CliStatus, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    offload_value(move || {
         let mut status = manager.detect_cli();
         let secrets = crate::redaction::secrets(&manager.environment);
         for row in [&mut status.app, &mut status.user, &mut status.execution] {
@@ -20,9 +45,8 @@ async fn detect_cli(
             row.reason = crate::redaction::scrub(&row.reason, &secrets);
         }
         status
-    })
+    }, "cli_detect_failed")
     .await
-    .map_err(|_| "CLI detection worker failed".into())
 }
 #[tauri::command]
 async fn start_test_search(
@@ -30,9 +54,7 @@ async fn start_test_search(
     options: SearchOptions,
 ) -> Result<u64, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.start_search(options))
-    .await
-    .map_err(|_| "Search worker failed")?
+    offload(move || manager.start_search(options), "search_start_failed").await
 }
 #[tauri::command]
 async fn poll_execution(
@@ -40,9 +62,7 @@ async fn poll_execution(
     id: u64,
 ) -> Result<ExecutionStatus, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.execution(id))
-        .await
-        .map_err(|_| "Execution poll worker failed".to_string())?
+    offload(move || manager.execution(id), "execution_poll_failed").await
 }
 #[tauri::command]
 async fn cancel_test_search(
@@ -50,9 +70,7 @@ async fn cancel_test_search(
     id: u64,
 ) -> Result<ExecutionStatus, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.cancel_search(id))
-        .await
-        .map_err(|_| "Execution cancel worker failed".to_string())?
+    offload(move || manager.cancel_search(id), "execution_cancel_failed").await
 }
 
 #[tauri::command]
@@ -62,9 +80,7 @@ async fn skill_plan(
     project: Option<String>,
 ) -> Result<SkillPlan, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.skill_plan(&scope, project.map(PathBuf::from)))
-        .await
-        .map_err(|_| "Skill planning worker failed".into())
+    offload_value(move || manager.skill_plan(&scope, project.map(PathBuf::from)), "skill_plan_failed").await
 }
 #[tauri::command]
 async fn skill_install(
@@ -73,9 +89,7 @@ async fn skill_install(
     project: Option<String>,
 ) -> Result<SkillInstall, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.skill_install(&scope, project.map(PathBuf::from)))
-        .await
-        .map_err(|_| "Skill install worker failed".into())
+    offload_value(move || manager.skill_install(&scope, project.map(PathBuf::from)), "skill_install_failed").await
 }
 /// The app's own `cli-bundle` resource directory, resolved once at startup. Never a frontend parameter.
 struct BundledCli(Option<PathBuf>);
@@ -87,9 +101,7 @@ async fn install_plan(
 ) -> Result<crate::install::InstallPlan, String> {
     let manager = manager.inner().clone();
     let bundled = bundled.0.clone();
-    tauri::async_runtime::spawn_blocking(move || manager.install_plan_from(bundled.as_deref()))
-        .await
-        .map_err(|_| "Install planning failed".into())
+    offload_value(move || manager.install_plan_from(bundled.as_deref()), "install_plan_failed").await
 }
 #[tauri::command]
 async fn install_cli(
@@ -98,12 +110,8 @@ async fn install_cli(
 ) -> Result<crate::install::InstallOutcome, String> {
     let manager = manager.inner().clone();
     let bundled = bundled.0.clone();
-    tauri::async_runtime::spawn_blocking(move || manager.install_from(bundled.as_deref()))
-        .await
-        .map_err(|_| "Install worker failed".into())
+    offload_value(move || manager.install_from(bundled.as_deref()), "install_failed").await
 }
-// Every credential command takes a UI source name. `resolve_source` is the only way a
-// provider reaches the store target, so an unknown or crafted name fails before any access.
 #[tauri::command]
 async fn update_cli(
     manager: tauri::State<'_, Arc<DesktopManager>>,
@@ -111,43 +119,40 @@ async fn update_cli(
 ) -> Result<crate::install::InstallOutcome, String> {
     let manager = manager.inner().clone();
     let bundled = bundled.0.clone();
-    tauri::async_runtime::spawn_blocking(move || manager.update_from(bundled.as_deref()))
-        .await
-        .map_err(|_| "Update worker failed".into())
+    offload_value(move || manager.update_from(bundled.as_deref()), "update_failed").await
 }
 #[tauri::command]
 async fn uninstall_cli(
     manager: tauri::State<'_, Arc<DesktopManager>>,
 ) -> Result<crate::install::InstallOutcome, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.uninstall())
-        .await
-        .map_err(|_| "Uninstall worker failed".into())
+    offload_value(move || manager.uninstall(), "uninstall_failed").await
 }
 #[tauri::command]
 async fn user_path_plan(manager: tauri::State<'_, Arc<DesktopManager>>) -> Result<crate::user_path::PathPlan, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.user_path_plan()).await.map_err(|_| "PATH 检查失败")?
+    offload(move || manager.user_path_plan(), "user_path_check_failed").await
 }
 #[tauri::command]
 async fn user_path_change(manager: tauri::State<'_, Arc<DesktopManager>>, remove: bool, confirmed: bool) -> Result<crate::user_path::PathPlan, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.user_path_change(remove, confirmed)).await.map_err(|_| "PATH 修改失败")?
+    offload(move || manager.user_path_change(remove, confirmed), "user_path_change_failed").await
 }
+// Every credential command takes a UI source name. `resolve_source` is the only way a
+// provider reaches the store target, so an unknown or crafted name fails before any access.
 #[tauri::command]
 async fn credential_status(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
-    let entry = crate::credential_commands::resolve_source(&source)?;
+    let entry = finish(crate::credential_commands::resolve_source(&source))?;
     let variables = manager.inner().environment.variables.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    offload_value(move || {
         crate::credential_commands::with_native(|backend| {
             crate::credential_commands::overview(backend, &variables, entry)
         })
-    })
+    }, "credential_status_failed")
     .await
-    .map_err(|_| "Credential status worker failed".into())
 }
 #[tauri::command]
 async fn credential_save(
@@ -155,9 +160,9 @@ async fn credential_save(
     source: String,
     key: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
-    let entry = crate::credential_commands::resolve_source(&source)?;
+    let entry = finish(crate::credential_commands::resolve_source(&source))?;
     let variables = manager.inner().environment.variables.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    offload(move || {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
@@ -165,38 +170,35 @@ async fn credential_save(
         crate::credential_commands::with_native(|backend| {
             crate::credential_commands::save(backend, &variables, entry, &key, now)
         })
-    })
+    }, "credential_save_failed")
     .await
-    .map_err(|_| "Credential save worker failed".to_string())?
 }
 #[tauri::command]
 async fn credential_delete(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
-    let entry = crate::credential_commands::resolve_source(&source)?;
+    let entry = finish(crate::credential_commands::resolve_source(&source))?;
     let variables = manager.inner().environment.variables.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    offload(move || {
         crate::credential_commands::with_native(|backend| {
             crate::credential_commands::delete(backend, &variables, entry)
         })
-    })
+    }, "credential_delete_failed")
     .await
-    .map_err(|_| "Credential delete worker failed".to_string())?
 }
 #[tauri::command]
 async fn credential_test(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
 ) -> Result<crate::credential_commands::TestOutcome, String> {
-    let entry = crate::credential_commands::resolve_test_source(&source)?;
+    let entry = finish(crate::credential_commands::resolve_test_source(&source))?;
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    offload(move || {
         let cli = manager.execution_cli()?;
         manager.test_source(cli, entry, &format!("{} connectivity check", entry.name))
-    })
+    }, "credential_test_failed")
     .await
-    .map_err(|_| "Credential test worker failed".to_string())?
 }
 
 #[tauri::command]
@@ -204,14 +206,13 @@ async fn migration_plan(
     manager: tauri::State<'_, Arc<DesktopManager>>,
 ) -> Result<crate::credential_commands::MigrationPlan, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    offload(move || {
         let keys_file = crate::credential_commands::keys_file_path(&manager.environment.variables)
             .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
         let cli = manager.execution_cli()?;
         manager.migration_plan(cli, &keys_file)
-    })
+    }, "migration_plan_failed")
     .await
-    .map_err(|_| "Migration plan worker failed".to_string())?
 }
 #[tauri::command]
 async fn migration_apply(
@@ -220,16 +221,15 @@ async fn migration_apply(
     approved: Vec<String>,
     choices: std::collections::BTreeMap<String, String>,
 ) -> Result<crate::credential_commands::MigrationResult, String> {
-    let request = crate::credential_commands::migration_request(&plan_token, &approved, &choices)?;
+    let request = finish(crate::credential_commands::migration_request(&plan_token, &approved, &choices))?;
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    offload(move || {
         let keys_file = crate::credential_commands::keys_file_path(&manager.environment.variables)
             .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
         let cli = manager.execution_cli()?;
         manager.migration_apply(cli, &keys_file, &request)
-    })
+    }, "migration_apply_failed")
     .await
-    .map_err(|_| "Migration apply worker failed".to_string())?
 }
 
 #[tauri::command]
@@ -237,13 +237,12 @@ async fn settings_view(
     manager: tauri::State<'_, Arc<DesktopManager>>,
 ) -> Result<crate::settings::SettingsView, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    offload_value(move || {
         // The CLI's doctor payload is the single source of truth for the displayed config path.
         let doctor = manager.doctor_config();
         crate::settings::view_with_doctor(&manager.environment, doctor.as_ref())
-    })
+    }, "settings_view_failed")
     .await
-    .map_err(|_| "设置读取失败".to_string())
 }
 #[tauri::command]
 async fn settings_save(
@@ -251,9 +250,7 @@ async fn settings_save(
     input: crate::settings::SettingsInput,
 ) -> Result<crate::settings::SettingsView, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || crate::settings::save(&manager.environment, &input))
-        .await
-        .map_err(|_| "Settings save worker failed".to_string())?
+    offload(move || crate::settings::save(&manager.environment, &input), "settings_save_failed").await
 }
 
 #[tauri::command]
@@ -263,9 +260,7 @@ async fn skill_status(
     project: Option<String>,
 ) -> Result<crate::SkillStatus, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.skill_status(&scope, project.map(PathBuf::from)))
-        .await
-        .map_err(|_| "Skill status worker failed".to_string())?
+    offload(move || manager.skill_status(&scope, project.map(PathBuf::from)), "skill_status_failed").await
 }
 #[tauri::command]
 async fn skill_update(
@@ -275,11 +270,10 @@ async fn skill_update(
     confirm_overwrite: bool,
 ) -> Result<crate::UpdateOutcome, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    offload_value(move || {
         manager.skill_update(&scope, project.map(PathBuf::from), confirm_overwrite)
-    })
+    }, "skill_update_failed")
     .await
-    .map_err(|_| "Skill update worker failed".into())
 }
 #[tauri::command]
 async fn skill_remove_plan(
@@ -288,9 +282,7 @@ async fn skill_remove_plan(
     project: Option<String>,
 ) -> Result<crate::RemovePlan, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.skill_remove_plan(&scope, project.map(PathBuf::from)))
-        .await
-        .map_err(|_| "Skill removal planning worker failed".to_string())?
+    offload(move || manager.skill_remove_plan(&scope, project.map(PathBuf::from)), "skill_remove_plan_failed").await
 }
 #[tauri::command]
 async fn skill_remove(
@@ -300,9 +292,7 @@ async fn skill_remove(
     confirmed: bool,
 ) -> Result<crate::RemoveOutcome, String> {
     let manager = manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || manager.skill_remove(&scope, project.map(PathBuf::from), confirmed))
-        .await
-        .map_err(|_| "Skill removal worker failed".into())
+    offload(move || manager.skill_remove(&scope, project.map(PathBuf::from), confirmed), "skill_remove_failed").await
 }
 
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.

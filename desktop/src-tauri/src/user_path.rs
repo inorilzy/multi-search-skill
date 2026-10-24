@@ -207,7 +207,7 @@ impl NativePathStore {
     #[cfg(feature = "install-test-boundary")]
     pub fn isolated_key(subkey: &str) -> Result<Self, String> {
         if !subkey.starts_with("Software\\MultiSearchAcceptance\\") || subkey.contains("..") {
-            return Err("Invalid isolated registry key".into());
+            return Err("隔离注册表键无效".into());
         }
         Ok(Self {
             subkey: subkey.into(),

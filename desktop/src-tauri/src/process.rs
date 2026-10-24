@@ -75,7 +75,7 @@ impl OwnedJob {
             }
             CloseHandle(snapshot);
             if !found {
-                return Err(io::Error::other("cannot resume owned CLI process"));
+                return Err(io::Error::other("无法恢复受管的 CLI 进程"));
             }
             Ok(job)
         }

@@ -1,4 +1,5 @@
 import { openConfirm } from './confirm.js';
+import { showError } from './api.js';
 
 const statusLabels = {
   ready: '可安装',
@@ -13,7 +14,23 @@ const statusLabels = {
   unverified: '安装记录无法验证，已阻止修改',
   not_installed: '未安装',
   uninstalled: '已卸载',
+  owned: '本工具已安装',
+  existing: '已有安装',
+  absent: '未安装',
+  current: '当前版本',
+  outdated: '有可用更新',
+  modified: '已修改',
+  unknown: '未知状态',
+  added: '已添加',
+  removed: '已移除',
+  unchanged: '未改变',
 };
+
+// Never show a raw backend enum: known statuses are localized, anything else is labelled.
+const statusText = (status, fallback) => statusLabels[status] || fallback || `未知状态（${status ?? '无'}）`;
+// `detect` rows use the same vocabulary as the overview page.
+const detectionLabels = { ready: '可调用', missing: '未发现', not_executable: '不可执行', version_failed: '版本检查失败', unavailable: '不可用' };
+const detectionText = status => detectionLabels[status] || `未知状态（${status ?? '无'}）`;
 
 export async function mountInstall(root, api, { number = '02' } = {}) {
   root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / INSTALL CLI</p><h1 tabindex="-1">安装命令行工具。</h1><p>从受控来源安装并校验。未知安装不会被覆盖，失败不会改动已有可用版本。</p></section>
@@ -44,7 +61,7 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
   }
 
   function renderPlan(status) {
-    root.querySelector('[data-status="plan"]').textContent = statusLabels[status.status] || status.status;
+    root.querySelector('[data-status="plan"]').textContent = statusText(status.status);
     root.querySelector('[data-status="plan"]').dataset.kind = status.status;
     root.querySelector('[data-info="root"]').textContent = status.root || '';
     root.querySelector('[data-info="bin"]').textContent = status.bin || '';
@@ -53,7 +70,7 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
     root.querySelector('[data-info="source"]').textContent = status.source || '';
     const compatLabel = { compatible: '兼容', incompatible: '不兼容', unknown: '未知' }[status.compatibility];
     root.querySelector('[data-info="compatibility"]').textContent = status.compatibility
-      ? `${compatLabel || status.compatibility}：${status.compatibility_reason || ''}` : '';
+      ? `${compatLabel || `未知状态（${status.compatibility}）`}：${status.compatibility_reason || ''}` : '';
     root.querySelector('[data-info="path-hint"]').textContent = ['ready', 'installed'].includes(status.status) ? status.path_hint : '';
     // A ready plan must not erase the reason of the previous install result.
     if (status.status !== 'ready') root.querySelector('[data-info="reason"]').textContent = status.reason || '';
@@ -86,7 +103,7 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
       root.querySelector('[data-path-reason]').textContent = state.reason;
       pathAdd.disabled = busy || !state.can_add;
       pathRemove.disabled = busy || !state.can_remove;
-    } catch { root.querySelector('[data-path-reason]').textContent = '无法检查用户 PATH，未修改。请重新检查。'; }
+    } catch (error) { showError(root.querySelector('[data-path-reason]'), error, '无法检查用户 PATH，未修改。请重新检查。'); }
   }
   const pathCancel = root.querySelector('[data-action="path-cancel"]');
   let releasePath = null;
@@ -110,15 +127,15 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
     try {
       const outcome = await api.userPathChange(removePath, true);
       const status = await api.detect();
-      result.textContent = `${outcome.status}；当前应用：${status.app.status}；新用户环境：${status.user.status}。请重启终端或 Agent 宿主。`;
-    } catch (error) { result.textContent = typeof error === 'string' ? error : '用户 PATH 修改未确认，请重新检查；原有或被修改项目会保留。'; }
+      result.textContent = `${statusText(outcome.status, 'PATH 已修改')}；当前应用：${detectionText(status.app?.status)}；新用户环境：${detectionText(status.user?.status)}。请重启终端或 Agent 宿主。`;
+    } catch (error) { showError(result, error, '用户 PATH 修改未确认，请重新检查；原有或被修改项目会保留。'); }
     finally { busy = false; await refreshPath(); }
   });
 
   async function refresh() {
     plan.disabled = true;
     try { renderPlan(await api.installPlan()); await refreshPath(); }
-    catch { renderPlan({ status: 'unavailable', reason: '无法检查安装计划，请重新检查。' }); }
+    catch (error) { renderPlan({ status: 'unavailable' }); showError(root.querySelector('[data-info="reason"]'), error, '无法检查安装计划，请重新检查。'); }
     finally { plan.disabled = busy; }
   }
 
@@ -136,12 +153,12 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
         root.querySelector('[data-status="result"]').textContent = successText(outcome);
         root.querySelector('[data-info="path-hint"]').textContent = outcome.path_hint || '';
       } else {
-        root.querySelector('[data-status="result"]').textContent = statusLabels[outcome.status] || failLabel;
+        root.querySelector('[data-status="result"]').textContent = statusText(outcome.status, failLabel);
         root.querySelector('[data-info="reason"]').textContent = outcome.reason || '操作未完成，已保留原有状态。';
       }
-    } catch {
+    } catch (error) {
       root.querySelector('[data-status="result"]').textContent = failLabel;
-      root.querySelector('[data-info="reason"]').textContent = unconfirmed;
+      showError(root.querySelector('[data-info="reason"]'), error, unconfirmed);
     } finally {
       busy = false; plan.disabled = false;
       await refresh();

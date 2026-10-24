@@ -161,12 +161,12 @@ pub struct TestOutcome {
 /// Map one provider error_type to a user-facing test result. Messages never echo secrets.
 pub(crate) fn classify(error_type: &str, label: &str) -> TestOutcome {
     let (result, message) = match error_type {
-        "invalid" => ("auth_failed", format!("{label} 拒绝了这个 key（认证失败）。请替换为有效的 key。")),
+        "invalid" => ("auth_failed", format!("{label} 拒绝了该 Key（认证失败）。请替换为有效的 Key。")),
         "quota_exhausted" => ("quota", format!("{label} 额度已用尽。请检查账户额度。")),
         "rate_limit" => ("rate_limited", format!("{label} 触发了频率限制，请稍后再试。")),
         "network" => ("network", format!("无法连接 {label}，请检查网络连接。")),
         "timeout" => ("timeout", format!("{label} 请求超时，请稍后重试。")),
-        "missing_key" => ("missing_key", format!("未找到可用的 {label} key，请先保存。")),
+        "missing_key" => ("missing_key", format!("未找到可用的 {label} Key，请先保存。")),
         _ => ("error", format!("{label} 测试失败，请查看 CLI 输出。")),
     };
     TestOutcome {
@@ -316,17 +316,17 @@ struct UnavailableBackend;
 impl CredentialBackend for UnavailableBackend {
     fn read(&self, _target: &str) -> Result<Option<Vec<u8>>, CredentialError> {
         Err(CredentialError::Unavailable(
-            "Windows Credential Manager is only available on Windows".into(),
+            "Windows 凭据库仅在 Windows 上可用".into(),
         ))
     }
     fn write(&self, _target: &str, _blob: &[u8]) -> Result<(), CredentialError> {
         Err(CredentialError::Unavailable(
-            "Windows Credential Manager is only available on Windows".into(),
+            "Windows 凭据库仅在 Windows 上可用".into(),
         ))
     }
     fn delete(&self, _target: &str) -> Result<bool, CredentialError> {
         Err(CredentialError::Unavailable(
-            "Windows Credential Manager is only available on Windows".into(),
+            "Windows 凭据库仅在 Windows 上可用".into(),
         ))
     }
 }

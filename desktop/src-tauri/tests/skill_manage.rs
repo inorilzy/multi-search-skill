@@ -52,7 +52,7 @@ fn unmodified_install_reports_current_and_update_is_not_needed() {
     assert!(status.unknown_entries.is_empty());
     let update = manager(&profile).skill_update("global", None, false);
     assert_eq!(update.status, "blocked");
-    assert!(update.reason.contains("up to date"), "{}", update.reason);
+    assert!(update.reason.contains("已是最新版本"), "{}", update.reason);
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn local_modification_requires_confirmation_and_is_backed_up_before_overwrite() 
     let blocked = manager(&profile).skill_update("global", None, false);
     assert_eq!(blocked.status, "blocked");
     assert!(
-        blocked.reason.contains("Confirmation required"),
+        blocked.reason.contains("需要确认"),
         "{}",
         blocked.reason
     );
