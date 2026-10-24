@@ -27,9 +27,9 @@ const pathSourceText = {
   defaults: '内置默认值',
 };
 
-export async function mountSettings(root, api) {
-  root.innerHTML = '<section class="heading"><p class="eyebrow">SETTINGS</p><h1>搜索默认设置。</h1>'
-    + '<p>路由、超时和 Twitter cookie 文件路径保存在 CLI 的配置文件中。key 不写入该文件。</p></section>'
+export async function mountSettings(root, api, { number = '05' } = {}) {
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / SETTINGS</p><h1 tabindex="-1">搜索默认设置。</h1>`
+    + '<p>路由、超时和 Twitter Cookie 文件路径保存在 CLI 的配置文件中。API Key 不写入该文件。</p></section>'
     + '<section class="panel"><div class="section-title"><h2>配置文件</h2><button type="button" data-action="refresh">刷新</button></div>'
     + '<dl class="cred-status"><dt>配置文件</dt><dd data-status="path"></dd><dt>路径来源</dt><dd data-status="path-source"></dd>'
     + '<dt>当前路由会运行</dt><dd data-status="active"></dd></dl>'
@@ -39,7 +39,7 @@ export async function mountSettings(root, api) {
     + ROUTES.map(r => `<option value="${r.value}">${r.label}</option>`).join('')
     + '</select></label><label><span data-label="timeout">超时（秒）</span><input data-field="timeout" type="number" min="1" max="90" step="1"></label>'
     + '<p class="note" data-info="timeout" role="status"></p>'
-    + '<label>Twitter cookie 文件路径（可选，仅保存路径）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json"></label>'
+    + '<label>Twitter Cookie 文件路径（可选，仅保存路径）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json"></label>'
     + '<div class="run-controls"><button type="submit" class="primary" data-action="save">保存设置</button><strong data-status="save" aria-live="polite"></strong></div>'
     + '</form></section>';
 

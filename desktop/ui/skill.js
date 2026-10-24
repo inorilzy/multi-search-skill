@@ -1,6 +1,6 @@
 const reasons = { exists: '目标已存在', invalid_scope: '目标无效', cli_missing: 'CLI 不可发现', cli_incompatible: 'CLI 与 Skill 不兼容', ready: '可安装' };
-export async function mountSkill(root, api) {
-  root.innerHTML = `<section class="heading"><p class="eyebrow">02 / CLAUDE CODE SKILL</p><h1>让 Claude Code 使用本机 CLI。</h1><p>安装仅写入所选目录中的 multi-search 技能文件，不覆盖已有内容，不使用 MCP。</p></section>
+export async function mountSkill(root, api, { number = '03' } = {}) {
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / CLAUDE CODE SKILL</p><h1 tabindex="-1">让 Claude Code 使用本机 CLI。</h1><p>安装仅写入所选目录中的 multi-search 技能文件，不覆盖已有内容，不使用 MCP。</p></section>
     <section class="panel skill-install"><div class="section-title"><h2>安装范围</h2><span class="eyebrow">CLAUDE CODE ONLY</span></div>
       <fieldset><legend>作用范围</legend>
         <label><input type="radio" name="scope" value="global" checked> 全局（当前用户的所有项目）</label>

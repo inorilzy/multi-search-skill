@@ -5,10 +5,10 @@ const statusLabels = { ready: '可调用', missing: '未发现', not_executable:
 const routeOptions = ROUTES.map(({ name, label }) => `<option value="${name}">${label} / ${name}</option>`).join('');
 const sourceOptions = [
   '<option value="">按路由配置</option>',
-  ...SEARCH_SOURCES.map(source => `<option value="${source.name}">${source.label}${source.keyed ? '' : '（无 key）'}</option>`),
+  ...SEARCH_SOURCES.map(source => `<option value="${source.name}">${source.label}${source.keyed ? '' : '（无需 API Key）'}</option>`),
 ].join('');
-export async function mountDiagnostics(root, api, { pollInterval = 150, signal } = {}) {
-  root.innerHTML = `<section class="heading"><p class="eyebrow">01 / LOCAL RUNTIME</p><h1>搜索，从本机开始。</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
+export async function mountDiagnostics(root, api, { pollInterval = 150, signal, number = '01' } = {}) {
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / LOCAL RUNTIME</p><h1 tabindex="-1">搜索，从本机开始。</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
     <section class="runtime panel"><div class="section-title"><h2>CLI 概览</h2><button type="button" data-action="refresh">重新检测</button></div>
       <p class="note">测试搜索使用 <strong data-status="execution-cli">检测中</strong><span data-info="execution-cli"></span></p>
       <div class="discovery-grid"><article><span class="eyebrow">APP INVOCATION</span><h3>应用调用</h3><strong data-status="app">检测中</strong><p data-info="app"></p></article><article><span class="eyebrow">FRESH USER ENVIRONMENT</span><h3>用户命令发现</h3><strong data-status="user">检测中</strong><p data-info="user"></p></article></div>
@@ -17,7 +17,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal }
       <form data-search-form><label>搜索词<input data-field="query" required maxlength="2000" placeholder="例如：Python SQLite 缓存"></label>
       <div class="search-options"><label>路由<select data-field="route">${routeOptions}</select></label><label>搜索源<select data-field="sources">${sourceOptions}</select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="90" value="15"></label></div>
       <div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
-      <p data-execution-error role="alert"></p><pre data-results tabindex="0" aria-label="搜索结果">结果会显示在这里。</pre></section>`;
+      <p data-execution-error role="alert"></p><pre data-results tabindex="0" role="region" aria-label="搜索结果">结果会显示在这里。</pre></section>`;
   let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false;
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');

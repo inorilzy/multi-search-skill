@@ -7,7 +7,7 @@ import { SEARCH_SOURCES } from './catalog.js';
 const actionLabels = {
   migrate: '可迁移',
   already_current: '已是最新，无需迁移',
-  conflict: '与凭据库中的 key 冲突',
+  conflict: '与凭据库中的 Key 冲突',
   unsupported: '不支持，保留在旧文件中',
   blocked: '无法检查，已跳过',
 };
@@ -20,9 +20,9 @@ function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 }
 
-export async function mountMigration(root, api) {
-  root.innerHTML = `<section class="heading"><p class="eyebrow">LEGACY / MIGRATION</p><h1>迁移旧 key 文件。</h1>
-    <p>只迁移单个 key 的搜索源。多 key 列表、Jina 及无法识别的条目会保留在旧文件中，不做任何改动。旧文件不会被删除。</p></section>
+export async function mountMigration(root, api, { number = '06' } = {}) {
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / LEGACY MIGRATION</p><h1 tabindex="-1">迁移旧 Key 文件。</h1>
+    <p>只迁移单个 Key 的搜索源。多 Key 列表、Jina 及无法识别的条目会保留在旧文件中，不做任何改动。旧文件不会被删除。</p></section>
     <section class="panel"><div class="section-title"><h2>预览</h2><button type="button" data-action="preview">预览旧文件</button></div>
       <p data-info="error" role="alert"></p><div data-plan></div></section>`;
 
@@ -59,7 +59,7 @@ export async function mountMigration(root, api) {
       }
       if (item.action === 'conflict') {
         control += `<label>冲突选择 <select data-choice="${esc(source)}">
-          <option value="">请选择</option><option value="keep">保留凭据库中的 key</option><option value="replace">用旧文件中的 key 替换</option></select></label>`;
+          <option value="">请选择</option><option value="keep">保留凭据库中的 Key</option><option value="replace">用旧文件中的 Key 替换</option></select></label>`;
       }
       return `<li data-item="${esc(source)}"><strong>${esc(source)}</strong> ${esc(label)} ${preview} ${control} ${detail}</li>`;
     }).join('');

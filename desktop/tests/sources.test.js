@@ -31,6 +31,9 @@ test('sources page lists every allowlisted source once and mounts only the selec
 
   const rows = [...root.querySelectorAll('[data-source-row]')].map(node => node.getAttribute('data-source-row'));
   assert.deepEqual(rows, ALL, 'all twelve sources appear as list rows in a stable order');
+  assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0, 'no detail is expanded on entry');
+  assert.equal(root.querySelectorAll('[data-source-detail] [data-field="key"]').length, 0);
+  await pick(root, 'baidu');
   assert.equal(root.querySelectorAll('[data-source-detail] [data-field="key"]').length, 1, 'only one source detail is mounted at a time');
 
   for (const name of KEYED) {
@@ -66,8 +69,8 @@ test('per-source test outcomes map to their own source and never leak into a reb
   await mountSources(root, api);
 
   const expected = {
-    tavily: '测试成功：Tavily 本次使用Windows 凭据库。',
-    brave: '认证失败：Brave 搜索 拒绝了该 key。',
+    tavily: '测试成功：Tavily 本次使用 Windows 凭据库。',
+    brave: '认证失败：Brave 搜索 拒绝了该 Key。',
     exa: '额度不足：Exa 额度已用尽。',
   };
   for (const name of ['tavily', 'brave', 'exa']) {
@@ -163,7 +166,7 @@ test('overview, search, filters and keyboard shortcut use real source state', as
   assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '10');
   assert.equal(root.querySelector('[data-stat="configured"]').textContent, '1');
   assert.equal(root.querySelector('[data-stat="absent"]').textContent, '8');
-  assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 1);
+  assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0, 'entering the page expands nothing');
   root.querySelector('[data-filter="unconfigured"]').click();
   const visible = () => [...root.querySelectorAll('[data-source-row]')].filter(row => !row.hidden);
   assert.equal(visible().length, 8);

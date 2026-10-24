@@ -18,19 +18,25 @@ const icon = name => {
   };
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 };
+/// "⌘ K" on Apple platforms, "Ctrl K" elsewhere. The handler already accepts both modifiers.
+export function shortcutLabel(nav = globalThis.navigator) {
+  const platform = `${nav?.userAgentData?.platform || nav?.platform || nav?.userAgent || ''}`;
+  return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘ K' : 'Ctrl K';
+}
 function statCard(key, label, symbol) {
   return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${TOTAL}</small></strong></div></div>`;
 }
 
-export async function mountSources(root, api, { signal } = {}) {
+export async function mountSources(root, api, { signal, number = '04' } = {}) {
   const doc = root.ownerDocument;
+  const shortcut = shortcutLabel(doc.defaultView?.navigator);
   root.classList.add('sources-page');
-  root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">SOURCES</p><h1>搜索源与凭据</h1><p>管理各搜索源的 API Key 和启用状态，并可快速测试连接，确保服务可用。</p></div>
+  root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">${number} / SOURCES</p><h1 tabindex="-1">搜索源与凭据</h1><p>管理各搜索源的 API Key 和启用状态，并可快速测试连接，确保服务可用。</p></div>
     <aside class="key-hint"><span>${icon('lock')}</span><div><strong>凭据保存在本地</strong><p>测试时仅向对应服务商发送认证请求，不回显已保存的 Key。</p></div></aside></section>
     <div class="sources-overview"><section class="stats" aria-label="搜索源概览">${statCard('enabled', '已启用', 'toggle')}${statCard('configured', '已配置', 'key')}${statCard('error', '异常', 'alert')}${statCard('absent', '未配置', 'box')}</section>
-    <div class="toolbar"><label class="source-search">${icon('search')}<input type="search" data-search aria-label="搜索搜索源" placeholder="搜索搜索源名称、描述…"><kbd>Ctrl K</kbd></label><div class="filters" role="group" aria-label="筛选">${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === 'all'}">${label}</button>`).join('')}</div></div></div>
+    <div class="toolbar"><label class="source-search">${icon('search')}<input type="search" data-search aria-label="搜索搜索源" placeholder="搜索搜索源名称、描述…" aria-keyshortcuts="${shortcut === '⌘ K' ? 'Meta+K' : 'Control+K'}"><kbd>${shortcut}</kbd></label><div class="filters" role="group" aria-label="筛选">${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === 'all'}">${label}</button>`).join('')}</div></div></div>
     <p class="source-test-warning">测试会向对应服务发送外部请求，可能消耗额度。已配置不代表连接已验证；无需凭据的服务不计入已配置数量。</p>
-    <p class="row-error" data-list-error role="alert"></p><div class="source-list" data-source-list aria-label="搜索源列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;
+    <p class="row-error" data-list-error role="alert"></p><div class="source-list" data-source-list role="list" aria-label="搜索源列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;
 
   const list = root.querySelector('[data-source-list]');
   const search = root.querySelector('[data-search]');
@@ -123,6 +129,7 @@ export async function mountSources(root, api, { signal } = {}) {
     rec.state.dataset.kind = kind;
     rec.state.textContent = text;
     rec.summary.textContent = kind === 'configured' ? rec.entry.cookie ? 'Cookie 文件' : '••••••••••••••••••' : rec.entry.cookie ? 'Cookie 路径' : rec.entry.keyed ? '—' : '无需配置';
+    rec.summaryText.textContent = kind === 'configured' ? rec.entry.cookie ? 'Cookie 路径已配置' : 'API Key 已配置（不显示）' : rec.entry.keyed || rec.entry.cookie ? '未配置' : '无需配置';
     refreshStats();
   }
   function updateRow(rec, view) {
@@ -147,16 +154,17 @@ export async function mountSources(root, api, { signal } = {}) {
   function buildRow(entry) {
     const row = doc.createElement('article');
     row.className = 'source-row';
+    row.setAttribute('role', 'listitem');
     row.dataset.expanded = 'false';
     row.setAttribute('data-source-row', entry.source);
     row.innerHTML = `<div class="source-line"><span class="source-icon icon-${entry.source}" aria-hidden="true">${MARKS[entry.source]}</span>
       <button type="button" class="source-pick" data-pick="${entry.source}" aria-expanded="false" aria-controls="detail-${entry.source}"><span class="source-name">${entry.label}</span><small class="source-desc">${DESCRIPTIONS[entry.source]}</small></button>
       <label class="source-toggle"><input type="checkbox" role="switch" data-toggle="${entry.source}" aria-label="启用 ${entry.label}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>
-      <div class="source-key" data-key-summary aria-label="凭据摘要">—</div><span class="source-state" data-row-status data-kind="unknown">读取中</span>
+      <div class="source-key"><span data-key-summary aria-hidden="true">—</span><span class="visually-hidden" data-key-summary-text>未配置</span></div><span class="source-state" data-row-status data-kind="unknown">读取中</span>
       <div class="source-test-state" data-row-result data-kind="idle"><span class="test-state-symbol" aria-hidden="true"></span><div><strong>未测试</strong><small>${entry.cookie ? '需要 Cookie 文件' : entry.keyed ? '点击测试验证' : '无需 API Key'}</small></div></div>
       <button type="button" class="source-test-button" data-row-test aria-label="测试 ${entry.label}">${icon('play')}<span>测试</span></button><button type="button" class="source-expand" data-expand aria-label="展开 ${entry.label}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
       <p class="row-error" data-row-error role="alert"></p><div id="detail-${entry.source}" class="source-detail" data-source-detail hidden></div>`;
-    const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
+    const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), summaryText: row.querySelector('[data-key-summary-text]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
     rows.set(entry.source, rec);
     list.append(row);
     if (!entry.keyed && !entry.cookie) setRow(rec, 'keyless', '无需凭据');
@@ -258,7 +266,8 @@ export async function mountSources(root, api, { signal } = {}) {
   try { applySettings(await api.settingsView()); }
   catch { root.querySelector('[data-list-error]').textContent = '无法读取搜索设置，开关状态未知。请重新进入本页重试。'; }
   await Promise.all(loads);
-  await toggleRow(SOURCES[0].source);
+  // No row is expanded on entry: opening a detail re-reads its status, and the overview above
+  // already has every row's status, so an automatic expansion only cost an extra request.
   refreshStats();
   return { dispose() { signal?.removeEventListener('abort', teardown); teardown(); } };
 }
