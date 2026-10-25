@@ -8,7 +8,8 @@ export const SOURCE_CATALOG = {
     "exa",
     "firecrawl",
     "serpapi",
-    "github"
+    "github",
+    "jina"
   ],
   "env": {
     "alias_priority": "last_non_empty_wins",
@@ -406,7 +407,7 @@ export const SOURCE_CATALOG = {
         "JINA_KEY"
       ],
       "key_provider": "jina",
-      "keyed": false,
+      "keyed": true,
       "kind": "scraper",
       "label": "Jina Reader",
       "mark": "J",

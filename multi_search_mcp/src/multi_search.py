@@ -1,4 +1,9 @@
-"""Compatibility multi-search presentation over the shared search-and-fetch flow."""
+"""Compatibility multi-search presentation over the shared search-and-fetch flow.
+
+The presentation helpers (summaries, briefs, display rows, route degradation)
+have one implementation in ``search.formatting``; this module only assembles
+the compatibility response around ``run_search_web``.
+"""
 from __future__ import annotations
 
 from .search.formatting import (
@@ -16,10 +21,17 @@ from .support.models import ANSWER_SOURCES, is_empty_result
 from .support.requests import MultiSearchRequest, SearchWebRequest
 
 
+OUTPUT_MODES = ("json", "markdown", "both")
+
+
 def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     """Compatibility presentation of the shared RRF search-and-fetch flow."""
     if isinstance(request, dict):
         request = MultiSearchRequest(**request)
+    if request.output not in OUTPUT_MODES:
+        raise ValueError(
+            f"invalid output mode: {request.output!r}; valid: {', '.join(OUTPUT_MODES)}"
+        )
     config = runtime.load_config_safe(request.config_path)
     plan = resolve_search_plan(
         SearchPlanRequest(
@@ -59,6 +71,8 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
     response["diagnostics"].update(
         valid_result_count=len(results),
         effective_counts=plan.effective_counts,
+        # Dead knobs (scrape_top/want_content) stay out of route_meta: every
+        # route fetches the final RRF results in the shared post-search stage.
         route_meta={**plan.route_defaults, "timeout": plan.timeout,
                     "route_default_count": plan.route_defaults["count"],
                     "route_default_timeout": plan.route_defaults["timeout"]},

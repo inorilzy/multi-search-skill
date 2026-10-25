@@ -10,14 +10,22 @@ The implementation is split by responsibility:
 - ``scrape.fetch`` / ``scrape.service``: fetching and scraping
 - ``read``: cache-only reads
 - ``search.formatting``: response projections
-- ``diagnostics``: source listing and doctor data
+- ``diagnostics``: source listing, doctor data and the config storage protocol
+- ``state.runtime``: configuration, credential and managed-cookie assembly
+- ``providers``: provider-specific helpers shared by searchers and scrapers
 
 This module only re-exports that surface for CLI, tools, tests, and snapshot
-capture. Keep it free of implementation logic.
+capture. Keep it free of implementation logic. Pipelines look configuration and
+credentials up through ``state.runtime``, so tests patch the owning module, not
+the names re-exported here.
+
+Fan-out capacity is deliberately per layer: query expansion, provider calls and
+body fetching each own an isolated ``BoundedDaemonExecutor``. Sharing one pool
+across nested fan-out risks slot starvation and deadlock.
 """
 from __future__ import annotations
 
-from .diagnostics import doctor_data, keys_file_warnings, list_sources
+from .diagnostics import config_storage, doctor_data, keys_file_warnings, list_sources
 from .multi_search import run_multi_search
 from .read import run_read_source
 from .scrape.fetch import run_fetch_source
@@ -73,6 +81,7 @@ __all__ = [
     "build_counts",
     "compact_text",
     "compat_source_summaries",
+    "config_storage",
     "display_results",
     "doctor_data",
     "extract_source_briefs",

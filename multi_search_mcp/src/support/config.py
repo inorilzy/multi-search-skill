@@ -32,20 +32,65 @@ def dev_config_path() -> Path | None:
     return DEV_CONFIG_PATH if IS_SOURCE_CHECKOUT else None
 
 
+CONFIG_DB_ENV = "MULTI_SEARCH_CONFIG_DB"
+
+
+def config_db_path(environ=None) -> Path:
+    """Locate the desktop-owned ``config.sqlite`` (settings + DPAPI credentials).
+
+    ``MULTI_SEARCH_CONFIG_DB`` selects an isolated database. It is a literal path
+    (desktop ``PathBuf`` semantics): ``~`` and environment variables are not
+    expanded. Otherwise the same home order as the desktop process applies.
+    """
+    env = os.environ if environ is None else environ
+    selected = env.get(CONFIG_DB_ENV)
+    if selected:
+        return Path(selected)
+    home = env.get("USERPROFILE") or env.get("HOME")
+    return (Path(home) if home else Path.home()) / ".multi-search" / "config.sqlite"
+
+
+def _sqlite_settings_state() -> tuple[Path, str]:
+    """Return the shared config database path and whether it holds settings.
+
+    ``present``: a settings row exists (the desktop saved settings);
+    ``absent``: no database or no settings row; ``unreadable``: the database
+    exists but cannot be read safely. Never raises.
+    """
+    path = config_db_path()
+    if not path.exists():
+        return path, "absent"
+    from .credential_store import ConfigDatabase, CredentialStoreError
+
+    try:
+        with ConfigDatabase(path).connect() as conn:
+            row = conn.execute("SELECT 1 FROM settings WHERE id=1").fetchone() if conn else None
+    except CredentialStoreError:
+        return path, "unreadable"
+    return path, "present" if row else "absent"
+
+
 def resolve_config_path_source() -> tuple[Path, str]:
-    """Resolve the config path and where it came from: ``env``, ``user``, ``dev_fallback``,
-    or ``defaults``.
+    """Resolve the config location and where it came from: ``env``, ``sqlite``,
+    ``user``, ``dev_fallback``, or ``defaults``.
 
     Order of precedence:
-    1. ``MULTI_SEARCH_CONFIG`` environment variable (e.g. injected via .mcp.json).
-    2. User-level config under ``~/.multi-search`` (matches the state DB location).
-    3. Development fallback next to the MCP source tree, only in a source checkout.
+    1. ``MULTI_SEARCH_CONFIG`` environment variable (an explicit JSON file).
+    2. The shared desktop database (``MULTI_SEARCH_CONFIG_DB`` or
+       ``~/.multi-search/config.sqlite``) once it holds saved settings. An
+       unreadable database is still selected so loading fails closed instead
+       of silently falling back to an older JSON file.
+    3. User-level JSON config under ``~/.multi-search``.
+    4. Development fallback next to the MCP source tree, only in a source checkout.
     An installed package never reads next to ``site-packages``; it reports the user path
     instead so ``doctor`` and the desktop show the same location the CLI would create.
     """
     env_value = os.environ.get(CONFIG_ENV_VAR)
     if env_value:
         return Path(env_value).expanduser(), "env"
+    database, state = _sqlite_settings_state()
+    if state != "absent":
+        return database, "sqlite"
     if USER_CONFIG_PATH.exists():
         return USER_CONFIG_PATH, "user"
     dev = dev_config_path()
@@ -77,20 +122,32 @@ def config_int(value: Any, key: str) -> int:
 def load_config(path: str | None = None) -> dict:
     """Load non-secret search defaults.
 
-    This intentionally does not replace ~/.search-keys.json. Keep API keys and
-    cookies in the keys file; use this config file for route/count/timeout
-    preferences that are safe to share.
+    An explicit ``path`` (or ``MULTI_SEARCH_CONFIG``) is a JSON file. Otherwise the
+    desktop's ``config.sqlite`` settings are authoritative once saved, then the
+    user/dev JSON files. API keys and cookies never live here.
     """
-    explicit = path is not None or bool(os.environ.get(CONFIG_ENV_VAR))
-    config_path = Path(path).expanduser() if path is not None else resolve_config_path()
+    if path is None:
+        resolved, source = resolve_config_path_source()
+        if source == "sqlite":
+            from .credential_store import ConfigDatabase, CredentialStoreError
+            try:
+                return ConfigDatabase(resolved).read_settings()
+            except CredentialStoreError as exc:
+                raise ConfigError(f"config database is unreadable: {exc}") from None
+        explicit = source == "env"
+        config_path = resolved
+    else:
+        explicit = True
+        config_path = Path(path).expanduser()
     if not config_path.exists():
         if explicit:
             raise ConfigError(f"config file not found: {config_path}")
         return {}
     try:
         data = json.loads(config_path.read_text(encoding="utf-8-sig"))
-    except Exception as exc:
-        raise ConfigError(f"config file is not valid JSON: {config_path}: {exc}") from exc
+    except Exception:
+        # Do not echo parser detail: a malformed file can contain a pasted secret.
+        raise ConfigError(f"config file is not valid JSON: {config_path}") from None
     if not isinstance(data, dict):
         raise ConfigError(f"config file must contain a JSON object: {config_path}")
     return data
