@@ -12,8 +12,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) const ARTIFACT: &str = "multi-search.exe";
-pub(crate) const ARTIFACT_REL: &str = "bin/multi-search.exe";
+/// The CLI launcher filename on this platform. On macOS the bundle ships
+/// `bin/multi-search` plus a bundled interpreter; Windows keeps its launcher.
+pub(crate) const ARTIFACT: &str = crate::CLI_FILE_NAME;
+pub(crate) const ARTIFACT_REL: &str = if cfg!(windows) {
+    "bin/multi-search.exe"
+} else {
+    "bin/multi-search"
+};
 pub(crate) const MANIFEST: &str = "manifest.json";
 const MANIFEST_SCHEMA: u32 = 1;
 /// Windows device names that must never be used as bundle path segments.
@@ -196,6 +202,42 @@ pub(crate) fn verify_files(dir: &Path, manifest: &Manifest) -> Result<(), Failur
     Ok(())
 }
 
+/// On Unix the launcher and every bundled interpreter must be executable. `fs::copy`
+/// carries permission bits into staging and `rename` keeps them on activation; checking
+/// both the source and the staged copy means a dropped mode fails before activation
+/// instead of surfacing later as an unlaunchable install.
+#[cfg(unix)]
+pub(crate) fn verify_executable_modes(dir: &Path, manifest: &Manifest) -> Result<(), Failure> {
+    use std::os::unix::fs::PermissionsExt;
+    for file in &manifest.files {
+        let required = file.path == ARTIFACT_REL || file.path.starts_with("runtime/bin/");
+        if !required {
+            continue;
+        }
+        let path = resolve(dir, &file.path)?;
+        let mode = fs::metadata(&path)
+            .map(|metadata| metadata.permissions().mode())
+            .map_err(|_| {
+                (
+                    "integrity_failed",
+                    format!("无法读取安装来源文件，已拒绝安装：{}", file.path),
+                )
+            })?;
+        if mode & 0o111 == 0 {
+            return Err((
+                "integrity_failed",
+                format!("安装包可执行文件缺少执行权限，已拒绝安装：{}", file.path),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn verify_executable_modes(_: &Path, _: &Manifest) -> Result<(), Failure> {
+    Ok(())
+}
+
 /// Reads and fully verifies a source bundle. Returns the parsed manifest and its raw bytes.
 pub(crate) fn read_source(dir: &Path, expected_anchor: &str) -> Result<(Manifest, Vec<u8>), Failure> {
     let raw = fs::read(dir.join(MANIFEST)).map_err(|_| {
@@ -206,5 +248,6 @@ pub(crate) fn read_source(dir: &Path, expected_anchor: &str) -> Result<(Manifest
     })?;
     let manifest = parse_manifest(&raw, expected_anchor)?;
     verify_files(dir, &manifest)?;
+    verify_executable_modes(dir, &manifest)?;
     Ok((manifest, raw))
 }
