@@ -53,8 +53,8 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys stat
 
 | 页面 | 能力 |
 |---|---|
-| 01 概览与测试 | 检测应用继承的 PATH 与 Windows 用户/机器持久化 PATH 中的 `multi-search.exe`，显示版本、实际路径和来源；运行或取消一次测试搜索，结果以结构化列表展示，来源错误单列，原始 JSON 折叠保留。新终端可发现不意味着已打开的终端或 Agent 已刷新环境。 |
-| 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI 到 `%LOCALAPPDATA%\MultiSearch\cli`；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本；可把受管目录加入当前用户 PATH（系统 PATH 不变）。 |
+| 01 概览与测试 | 检测应用继承的 PATH、已登记的用户 PATH（Windows 为注册表，macOS 为本工具追加到登录 Shell 配置的受管区块）中的 CLI（Windows `multi-search.exe`／macOS `multi-search`），显示版本、实际路径和来源；运行或取消一次测试搜索，结果以结构化列表展示，来源错误单列，原始 JSON 折叠保留。新终端可发现不意味着已打开的终端或 Agent 已刷新环境。 |
+| 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI：Windows 到 `%LOCALAPPDATA%\MultiSearch\cli`，macOS 到 `~/Library/Application Support/MultiSearch/cli`；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本。加入用户 PATH 需单独确认：Windows 写当前用户 PATH，macOS 只在登录 Shell 配置末尾追加带标记的区块，新开终端才生效，已运行的宿主需重启。 |
 | 03 Claude Code Skill | 以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
 | 04 搜索源与凭据 | 列出 12 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 保存在 Windows 凭据库（`config.sqlite` 中按 provider 一行、当前用户 DPAPI 加密），可保存、删除并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。不显示已保存的 Key，测试可能消耗额度。 |
 | 05 搜索设置 | 读写默认路由、全局超时（1–60 秒）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另可填写 Twitter Cookie 文件兼容路径（仅 file 模式读取），并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
@@ -479,9 +479,9 @@ GitHub Actions（`.github/workflows/test.yml`）在每次 push / PR 上运行：
 - `python`：Linux/Windows/macOS × Python 3.10/3.14，非 editable 安装后跑 smoke、隔离回归、`scripts/` 测试和文档出处检查。
 - `locked-regression`：同一矩阵按提交的 `uv.lock` 执行 `uv sync --locked` 后跑回归与文档出处检查，锁文件与依赖漂移会直接失败。
 - `desktop-js`：`npm ci` 后跑 DOM/UI 测试和 `npm run typecheck`。
-- `desktop-rust`（Windows）：按 `rust-toolchain.toml` 安装工具链，`--features test-fixtures,ts` 与 install boundary 两组 cargo test 覆盖全部测试目标，再由 `scripts/rust_ci_matrix.py` 在一次性 profile 与网络防护下跑 Rust ↔ Python interop 矩阵和 `tauri.check.conf.json` overlay 检查。overlay 不构造 bundle，不替代真实安装器、原生窗口动态 ACL 或发布验收。
+- `desktop-rust`（Windows）与 `desktop-macos`（macOS）：按 `rust-toolchain.toml` 安装工具链，`--features test-fixtures,ts`、install boundary 与 `install_release_boundary` 覆盖全部测试目标，其中 `install_platform` 显式登记（本 crate 关闭自动发现），分别验证 Windows 与 macOS 的安装、更新、回滚和卸载。Windows 侧另由 `scripts/rust_ci_matrix.py` 在一次性 profile 与网络防护下跑 Rust ↔ Python interop 矩阵和 `tauri.check.conf.json` overlay 检查。overlay 与 fixture 测试都不构造真实 bundle，不替代真实安装器、原生窗口动态 ACL 或发布验收。
 
-已签名的 Windows 安装包由手动触发的 `.github/workflows/release.yml` 构建。2026-10-22 修复轮次的验证边界与延期项见 [最终独立复验](docs/independent-review-final-2026-10-22.md)。
+已签名的 Windows 安装包由手动触发的 `.github/workflows/release.yml` 构建。macOS 的受管 bundle 用 `python scripts/build_cli_release.py --target macos` 构建，运行时为锁定的 python-build-standalone arm64 CPython；当前对 Mach-O 做本地 ad-hoc 签名，可本机运行，但**未**做 Developer ID 签名与公证，因此不构成可分发的 Gatekeeper 通过产物。2026-10-22 修复轮次的验证边界与延期项见 [最终独立复验](docs/independent-review-final-2026-10-22.md)。
 
 ### 为什么结果里没有 Twitter/X？
 

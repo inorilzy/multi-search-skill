@@ -22,7 +22,12 @@
 
 ## 桌面端
 
-**受管 CLI（Managed CLI）**：由桌面端从应用资源内的受控 bundle 安装到 `%LOCALAPPDATA%\MultiSearch\cli` 的 `multi-search.exe`。`active.json` 记录当前生效版本；桌面端只运行受管目录或 PATH 中发现的 CLI，前端不能指定可执行路径。旧版本保留为可回滚的引用，取消/关闭只结束本次 Job Object 归属的进程。
+**受管 CLI（Managed CLI）**：由桌面端从应用资源内的受控 bundle 安装，每个平台用自己的根目录和产物名：
+Windows 是 `%LOCALAPPDATA%\MultiSearch\cli` 下的 `multi-search.exe`，macOS 是 `~/Library/Application Support/MultiSearch/cli` 下的 `bin/multi-search`。
+两者的 bundle 都自带运行时：Windows 携带内置 CPython，macOS 携带 `runtime/bin/python3.12`，因此安装后不依赖仓库、开发虚拟环境或系统 Python。
+`active.json` 记录当前生效版本；桌面端只运行受管目录或 PATH 中发现的 CLI，前端不能指定可执行路径。
+Unix 上还要求产物与 `runtime/bin/*` 保持可执行位，权限被改动即判为不可验证，不再当作已安装。
+旧版本保留为可回滚的引用；取消/关闭只结束本次受管执行及其子进程（Windows 用 Job Object 归属）。
 
 **bundle 锚点（Bundle anchor）**：受控构建脚本对 bundle 的 `manifest.json` 原始字节计算的 SHA-256，编译进桌面二进制。安装或更新时先比对锚点，再解析 manifest 并逐文件核对大小与哈希；不匹配即拒绝，不覆盖未知安装。
 
