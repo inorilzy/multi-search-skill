@@ -14,7 +14,10 @@ from .url_security import (
     UrlSecurityError,
     _ensure_public_ip,
     _resolve_host_ips,
+    allow_fake_ip_default,
+    ensure_public_ip,
     resolve_host_addresses,
+    resolve_validated_addresses,
     validate_redirect_target,
 )
 
@@ -160,6 +163,67 @@ def _is_ip_literal(host: str) -> bool:
     return True
 
 
+def _configured_proxy_addresses() -> set[tuple[str, int]]:
+    """Exact endpoints explicitly configured as this process's proxies."""
+    targets: set[tuple[str, int]] = set()
+    defaults = {"http": 80, "https": 443, "socks": 1080, "socks5": 1080, "socks4": 1080}
+    for proxy_url in urllib.request.getproxies().values():
+        target = _proxy_host_port(str(proxy_url), defaults=defaults)
+        if target is not None:
+            targets.add(target)
+    return targets
+
+
+def _proxy_host_port(
+    target: str, *, defaults: dict[str, int] | None = None,
+) -> tuple[str, int] | None:
+    text = str(target or "").strip()
+    if not text:
+        return None
+    if "://" not in text:
+        text = "//" + text
+    try:
+        parts = urllib.parse.urlsplit(text)
+    except ValueError:
+        return None
+    host = (parts.hostname or "").strip("[]").lower()
+    if not host:
+        return None
+    port = parts.port
+    if port is None and defaults is not None:
+        port = defaults.get(parts.scheme.lower(), 80)
+    return (host, int(port)) if port is not None else None
+
+
+def _trusted_proxy_targets(req) -> set[tuple[str, int]]:
+    """Configured proxy hops only; request destinations never grant trust."""
+    targets = set(_configured_proxy_addresses())
+    if req.has_proxy() or bool(getattr(req, "_tunnel_host", None)):
+        request_proxy = _proxy_host_port(getattr(req, "host", ""))
+        if request_proxy is not None:
+            targets.add(request_proxy)
+    return targets
+
+
+def _is_trusted_proxy_hop(req, host: str, port: int) -> bool:
+    has_proxy = getattr(req, "has_proxy", lambda: False)
+    if not (has_proxy() or bool(getattr(req, "_tunnel_host", None))):
+        return False
+    normalized = str(host or "").strip("[]").lower()
+    return (normalized, int(port)) in _trusted_proxy_targets(req)
+
+
+def _ensure_connect_address(raw_address: str, *, resolved: bool = False) -> None:
+    ensure_public_ip(
+        str(raw_address).strip("[]"), label="HTTP connection", resolved=resolved,
+        allow_fake_ip=allow_fake_ip_default() if resolved else False,
+    )
+
+
+def _sockaddr_host(sockaddr) -> str:
+    return str(sockaddr[0]).strip("[]")
+
+
 class _DeadlineReader(io.RawIOBase):
     """Refresh the socket budget before each individual buffered-stream read.
 
@@ -223,65 +287,82 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
         if deadline is not None:
             options["timeout"] = _remaining(deadline)
         conn = connection_type(host, **options)
-        if deadline is not None:
-            conn.response_class = partial(_DeadlineHTTPResponse, deadline=deadline)
-            create_connection = conn._create_connection
-            tunnel = conn._tunnel
+        create_connection = conn._create_connection
+        tunnel = conn._tunnel
 
-            def connect_socket(address, timeout=None, source_address=None, **socket_options):
-                remaining = _remaining(deadline)
-                if timeout is not None:
-                    remaining = min(remaining, timeout)
-                target_host, target_port = address
-                pinned = getattr(req, "_multi_search_pinned_addresses", None) or {}
-                addresses = pinned.get((str(target_host).lower(), int(target_port)))
-                if addresses is None and _is_ip_literal(target_host):
-                    sock = create_connection(
-                        address, timeout=remaining,
-                        source_address=source_address, **socket_options,
-                    )
-                    try:
+        def connect_socket(address, timeout=None, source_address=None, **socket_options):
+            remaining = _remaining(deadline) if deadline is not None else timeout
+            if timeout is not None and deadline is not None:
+                remaining = min(remaining, timeout)
+            target_host, target_port = address
+            proxy_hop = _is_trusted_proxy_hop(req, target_host, target_port)
+            pinned = getattr(req, "_multi_search_pinned_addresses", None) or {}
+            addresses = pinned.get((str(target_host).lower(), int(target_port)))
+            if addresses is None and _is_ip_literal(target_host):
+                if not proxy_hop:
+                    _ensure_connect_address(str(target_host))
+                sock = create_connection(
+                    address, timeout=remaining,
+                    source_address=source_address, **socket_options,
+                )
+                try:
+                    if deadline is not None:
                         sock.settimeout(_remaining(deadline))
-                    except BaseException:
-                        sock.close()
-                        raise
-                    return sock
+                except BaseException:
+                    sock.close()
+                    raise
+                return sock
 
-                if addresses is None:
+            if addresses is None:
+                # Validate the exact answers used for connect; a second lookup
+                # is a DNS-rebinding window. Proxy hops resolve without inheriting
+                # the destination's public-address requirement.
+                if proxy_hop:
                     addresses = resolve_host_addresses(
                         target_host, target_port, deadline=deadline,
                     )
-                last_error = None
-                for family, socktype, proto, _canonname, sockaddr in addresses:
-                    sock = None
-                    try:
-                        sock = socket.socket(family, socktype, proto)
-                        sock.settimeout(_remaining(deadline))
-                        if source_address:
-                            sock.bind(source_address)
-                        sock.connect(sockaddr)
-                        sock.settimeout(_remaining(deadline))
-                        return sock
-                    except OSError as exc:
-                        last_error = exc
-                        if sock is not None:
-                            sock.close()
-                if last_error is not None:
-                    raise last_error
-                raise OSError("HTTP DNS resolution returned no addresses")
-
-            def connect_tunnel():
-                tunnel()
+                else:
+                    addresses = resolve_validated_addresses(
+                        target_host, target_port, deadline=deadline,
+                    )
+            last_error = None
+            for family, socktype, proto, _canonname, sockaddr in addresses:
+                if not proxy_hop:
+                    _ensure_connect_address(_sockaddr_host(sockaddr), resolved=True)
+                sock = None
                 try:
-                    conn.sock.settimeout(_remaining(deadline))
-                except BaseException:
-                    conn.close()
-                    raise
+                    sock = socket.socket(family, socktype, proto)
+                    if deadline is not None:
+                        sock.settimeout(_remaining(deadline))
+                    if source_address:
+                        sock.bind(source_address)
+                    sock.connect(sockaddr)
+                    if deadline is not None:
+                        sock.settimeout(_remaining(deadline))
+                    return sock
+                except OSError as exc:
+                    last_error = exc
+                    if sock is not None:
+                        sock.close()
+            if last_error is not None:
+                raise last_error
+            raise OSError("HTTP DNS resolution returned no addresses")
 
-            # Leave stdlib connect/TLS/SNI handling intact; deduct TCP and
-            # proxy CONNECT time before that flow starts the TLS handshake.
-            conn._create_connection = connect_socket
-            conn._tunnel = connect_tunnel
+        def connect_tunnel():
+            tunnel()
+            try:
+                if deadline is not None:
+                    conn.sock.settimeout(_remaining(deadline))
+            except BaseException:
+                conn.close()
+                raise
+
+        if deadline is not None:
+            conn.response_class = partial(_DeadlineHTTPResponse, deadline=deadline)
+        # Always replace the dial path, even without a deadline. Deadline only
+        # changes the timeout accounting, not the address safety checks.
+        conn._create_connection = connect_socket
+        conn._tunnel = connect_tunnel
         return conn
 
     return handler.do_open(connection, req, **connection_options)

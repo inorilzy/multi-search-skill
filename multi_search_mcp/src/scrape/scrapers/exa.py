@@ -1,5 +1,6 @@
 """Exa-backed URL scraping."""
 import json
+import time
 import urllib.error
 import urllib.request
 
