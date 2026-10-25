@@ -162,14 +162,21 @@ class TwitterFetchFlowTests(unittest.TestCase):
 
             async def next(self):
                 api.events.append(("reply-next",))
-                await asyncio.sleep(2)
+                # Never returns: the reply budget (10% below the stage deadline)
+                # must cancel it. A fixed sleep raced the stage deadline on the
+                # slower Windows runner and the whole fetch was reported as a
+                # timeout even though the body had been acquired.
+                await asyncio.Event().wait()
                 return []
 
         api.details["1"] = tweet("1", full_body, replies=Page([tweet("reply", full_reply)]))
         with api.patched():
             result = run_search_web(
                 {"query": "OpenAI", "sources": ["twitter"], "count": 1},
-                **self.options, scrape_chars=20_000, scrape_timeout=1,
+                # The reply budget is derived from this deadline, so a larger
+                # budget widens the gap between cancellation and the stage
+                # timeout while keeping the same "slow replies" behaviour.
+                **self.options, scrape_chars=20_000, scrape_timeout=3,
             )
             self.assertEqual(result["errors"], [])
             self.assertTrue(result["results"][0]["body_available"])

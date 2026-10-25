@@ -53,7 +53,7 @@ class LockedInputs(unittest.TestCase):
     def test_locked_archive_is_extracted_and_its_path_file_points_at_site_packages(self):
         runtime = extract_python(self.archive, self.root / "runtime", lock_for(self.archive, self.sha))
         self.assertEqual((runtime / "python.exe").read_bytes(), b"PY")
-        entries = (runtime / "python312._pth").read_text().split()
+        entries = (runtime / "python312._pth").read_text(encoding="utf-8").split()
         self.assertEqual(entries, ["python312.zip", ".", "Lib\\site-packages"])
         self.assertTrue((runtime / "Lib" / "site-packages").is_dir())
 
@@ -122,7 +122,7 @@ class PinnedRustc(unittest.TestCase):
     def test_repository_pins_an_exact_rustc_and_release_uses_it(self):
         version = pinned_rustc_version()
         self.assertRegex(version, r"^\d+\.\d+\.\d+$")
-        release = (Path(build_inputs.__file__).parent / "build_cli_release.py").read_text()
+        release = (Path(build_inputs.__file__).parent / "build_cli_release.py").read_text(encoding="utf-8")
         self.assertIn("check_rustc()", release)
 
     def test_matching_rustc_passes_and_any_other_version_is_refused(self):
@@ -200,7 +200,7 @@ class Signing(unittest.TestCase):
 
 class ReleaseWiring(unittest.TestCase):
     def test_tauri_signs_the_installer_through_the_shared_script(self):
-        conf = json.loads((Path(__file__).resolve().parents[1] / "desktop/src-tauri/tauri.conf.json").read_text())
+        conf = json.loads((Path(__file__).resolve().parents[1] / "desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
         windows = conf["bundle"]["windows"]
         self.assertEqual(windows["digestAlgorithm"], "sha256")
         command = windows["signCommand"]
