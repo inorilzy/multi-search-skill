@@ -96,7 +96,12 @@ def scrape_url_twitter(url: str, cookies: dict | str = "", timeout: float = 60, 
         body = text
         # Optional pagination must return before the outer stage deadline so
         # session cleanup, rendering, and caching can publish the acquired body.
-        reply_end = end - min(0.25, max(0.0, end - time.monotonic()) * 0.1)
+        # The reserve scales with the budget: a flat 0.25s was not enough on a
+        # loaded Windows runner, where the outer wait_for fired right after the
+        # reply cancellation and the whole fetch was reported as a timeout.
+        budget = max(0.0, end - time.monotonic())
+        reserve = min(1.0, max(0.25, budget * 0.15))
+        reply_end = end - min(reserve, budget)
         page = getattr(full, "replies", None)
         while page is not None:
             unread = False

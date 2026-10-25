@@ -173,10 +173,11 @@ class TwitterFetchFlowTests(unittest.TestCase):
         with api.patched():
             result = run_search_web(
                 {"query": "OpenAI", "sources": ["twitter"], "count": 1},
-                # The reply budget is derived from this deadline, so a larger
-                # budget widens the gap between cancellation and the stage
-                # timeout while keeping the same "slow replies" behaviour.
-                **self.options, scrape_chars=20_000, scrape_timeout=3,
+                # The reply budget is derived from this deadline, and the
+                # scraper reserves 15% (capped at 1s) for cleanup and caching.
+                # 6s leaves ~0.9s for that, so the stage deadline cannot fire
+                # between the reply cancellation and the acquired body.
+                **self.options, scrape_chars=20_000, scrape_timeout=6,
             )
             self.assertEqual(result["errors"], [])
             self.assertTrue(result["results"][0]["body_available"])
