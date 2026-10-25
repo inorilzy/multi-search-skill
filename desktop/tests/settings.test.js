@@ -528,3 +528,60 @@ test('the refresh-discard confirmation focuses the safe choice and Escape keeps 
   assert.equal(reads, 1);
   window.close();
 });
+
+test('bulk source buttons flip every checkbox and keep the applied-count honest', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, ({ settingsView: async () => view() }));
+  const editor = await openNew(root);
+  const boxes = () => [...editor.querySelectorAll('[data-route-source]')];
+  const tool = name => editor.querySelector(`[data-source-action="${name}"]`);
+  const count = () => editor.querySelector('[data-source-count]').textContent;
+  assert.equal(count(), '已选 0 / 12');
+  assert.equal(tool('none').disabled, true, 'nothing to clear yet');
+  tool('all').click();
+  assert.equal(boxes().filter(box => box.checked).length, 12);
+  assert.equal(count(), '已选 12 / 12');
+  assert.equal(tool('all').disabled, true, 'every source is already selected');
+  tool('none').click();
+  assert.equal(boxes().filter(box => box.checked).length, 0);
+  assert.equal(count(), '已选 0 / 12');
+  tool('invert').click();
+  assert.equal(boxes().filter(box => box.checked).length, 12);
+  assert.equal(count(), '已选 12 / 12');
+  window.close();
+});
+
+test('the group editor sits under its own card and keeps typed input across a rebuild', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, ({ settingsView: async () => view() }));
+  rowButton(root, 'fast', '编辑').click();
+  let editor = root.querySelector('.route-editor');
+  assert.equal(row(root, 'fast').nextElementSibling, editor, 'the editor opens directly under its card');
+  const label = editor.querySelector('[data-edit="label"]');
+  label.value = '快一点';
+  label.dispatchEvent(new window.Event('input'));
+  const timeout = root.querySelector('[data-field="timeout"]');
+  timeout.value = '45';
+  timeout.dispatchEvent(new window.Event('input'));
+  editor = root.querySelector('.route-editor');
+  assert.ok(editor, 're-rendering the list never drops the open editor');
+  assert.equal(editor.querySelector('[data-edit="label"]').value, '快一点', 'typed input survives the rebuild');
+  assert.equal(row(root, 'fast').nextElementSibling, editor);
+  root.querySelector('[data-action="close-editor"]').click();
+  root.querySelector('[data-action="discard-editor"]').click();
+  assert.equal(root.querySelector('.route-editor'), null, 'closing also removes it from the list');
+  window.close();
+});
+
+test('a card folds long member lists but still reports every source', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, ({ settingsView: async () => view() }));
+  const all = row(root, 'all');
+  assert.equal(all.querySelectorAll('.route-chip').length, 9, 'eight chips plus one fold');
+  assert.equal(all.textContent.includes('共 12 个搜索源'), true);
+  const folded = all.querySelector('.route-chip-more');
+  assert.equal(folded.textContent, '+4');
+  assert.match(folded.title, /Stack Overflow/);
+  assert.equal(row(root, 'fast').querySelector('.route-chip-more'), null, 'short lists are never folded');
+  window.close();
+});

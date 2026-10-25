@@ -1360,6 +1360,421 @@
     overflow-wrap: anywhere;
     font-size: 12px;
   }
+  /*
+   * 搜索设置：摘要卡、默认分组、分组卡片与就地展开的分组编辑器。
+   * 分组行的基础外观与“抓取设置”的链条列表共用同一组 `route-*` 类。
+   */
+  .settings-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+  }
+  .settings-summary {
+    display: grid;
+    grid-template-columns: repeat(3,minmax(0,1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .settings-summary article {
+    display: grid;
+    align-content: start;
+    gap: 4px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--panel);
+  }
+  .settings-summary article>span {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .settings-summary strong {
+    font-size: 20px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .settings-summary small {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .settings-default-grid {
+    display: grid;
+    grid-template-columns: minmax(220px,360px) 180px;
+    justify-content: start;
+    gap: 20px;
+  }
+  .settings-other label {
+    max-width: 560px;
+  }
+  .settings-warning:not(:empty) {
+    margin: 0 0 14px;
+  }
+  .error-message:empty {
+    display: none;
+  }
+  .settings-page .cred-status [data-status] {
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .draft-badge {
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #fff3dc;
+    color: var(--amber);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .route-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .route-actions button {
+    padding: 7px 12px;
+    font-size: 12px;
+  }
+  .route-help {
+    margin: 0 0 14px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--muted);
+  }
+  .route-list {
+    display: grid;
+    gap: 8px;
+  }
+  .route-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 14px 12px 16px;
+    border: 1px solid var(--line);
+    border-left: 3px solid transparent;
+    border-radius: 7px;
+    background: var(--panel);
+  }
+  .route-row.is-current {
+    border-left-color: var(--teal);
+    background: #f7fbfa;
+  }
+  .route-main {
+    display: grid;
+    gap: 6px;
+    flex: 1;
+    min-width: 220px;
+  }
+  .route-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .route-title strong {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .route-title code {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #f1f4f8;
+    color: var(--muted);
+    font-family: Consolas,monospace;
+    font-size: 12px;
+  }
+  .current-badge {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #e6f4ef;
+    color: var(--teal-strong);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .route-timeout {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .route-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .route-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border: 1px solid #dde7e3;
+    border-radius: 999px;
+    background: #f2f7f5;
+    color: #24453e;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .route-chip small {
+    font-size: 12px;
+    color: var(--amber);
+  }
+  .route-chip.is-disabled {
+    border-style: dashed;
+    background: #f7f8f9;
+    color: var(--muted);
+  }
+  .route-chip-more {
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+  }
+  button.route-chip {
+    cursor: pointer;
+  }
+  button.route-chip:hover:not(:disabled) {
+    border-color: var(--teal);
+    color: var(--teal-strong);
+  }
+  .route-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+  }
+  .route-row-actions button {
+    padding: 6px 12px;
+    border-color: #dce5ee;
+    font-size: 12px;
+  }
+  .route-remove-blocked {
+    display: inline-flex;
+  }
+  .scrape-order {
+    font-family: Consolas,monospace;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  /* 分组编辑器：就地插在所属卡片下方。 */
+  .route-editor {
+    display: grid;
+    gap: 16px;
+    padding: 18px 20px;
+    border: 1px solid var(--teal);
+    border-radius: 7px;
+    background: #f8fcfb;
+  }
+  .route-editor-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .route-editor-head h3 {
+    margin: 4px 0 0;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .route-editor-grid {
+    display: grid;
+    grid-template-columns: minmax(120px,220px) minmax(180px,1fr) 150px;
+    gap: 14px;
+    align-items: start;
+  }
+  .route-editor-grid small {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .route-editor-grid input[readonly] {
+    background: #f1f4f8;
+    color: var(--muted);
+  }
+  .route-sources {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .route-sources-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 12px;
+    margin-bottom: 10px;
+  }
+  .route-sources-label {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .route-sources-count {
+    font-family: Consolas,monospace;
+    font-size: 12px;
+    color: var(--teal-strong);
+  }
+  .route-source-tools {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+  }
+  .route-source-tools button {
+    padding: 4px 10px;
+    border-color: #cfe0da;
+    border-radius: 4px;
+    color: var(--teal-strong);
+    font-size: 12px;
+  }
+  .route-source-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill,minmax(150px,1fr));
+    gap: 8px;
+  }
+  .route-source-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid #dce5ee;
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--ink);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .route-source-option:hover {
+    border-color: #b9cfc8;
+  }
+  .route-source-option input {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: var(--teal);
+  }
+  .route-source-option>span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .route-source-option small {
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--amber);
+  }
+  /* :has 让整张卡片随着勾选状态变化；不支持时复选框本身仍是选中的青色。 */
+  .route-source-option:has(input:checked) {
+    border-color: var(--teal);
+    background: #eef8f5;
+    box-shadow: inset 2px 0 var(--teal);
+  }
+  .route-source-option.is-disabled {
+    background: #f7f8f9;
+    color: var(--muted);
+  }
+  .route-form-error {
+    margin: 0;
+  }
+  .route-editor-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--line);
+  }
+  .route-editor-foot small {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .route-editor-foot .run-controls {
+    margin-left: auto;
+  }
+  /* 行内确认：分组行与编辑器共用，占满整行，不再挤在一角。 */
+  .inline-confirm, .refresh-confirm {
+    flex: 1 0 100%;
+    margin-top: 10px;
+    padding: 12px 14px;
+    border: 1px solid #f0d9a8;
+    border-left: 3px solid var(--amber);
+    border-radius: 6px;
+    background: #fffaf0;
+  }
+  .route-editor .inline-confirm {
+    margin-top: 0;
+  }
+  .refresh-confirm {
+    flex: none;
+    margin: 0 0 16px;
+  }
+  .inline-confirm p, .refresh-confirm p {
+    margin: 0 0 10px;
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .inline-confirm .run-controls button, .refresh-confirm .run-controls button {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  .settings-savebar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--panel);
+    box-shadow: 0 -6px 18px rgba(23,38,53,.06);
+  }
+  .settings-savebar>div {
+    display: grid;
+    gap: 2px;
+  }
+  .settings-savebar strong[data-status] {
+    font-size: 13px;
+    color: var(--teal-strong);
+  }
+  .settings-savebar small {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .config-details {
+    margin-top: 16px;
+  }
+  .config-details summary {
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .config-details .cred-status {
+    margin-top: 10px;
+  }
+  @media (max-width:1120px) {
+    .route-editor-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  @media (max-width:880px) {
+    .settings-summary {
+      grid-template-columns: 1fr;
+    }
+    .settings-default-grid {
+      grid-template-columns: 1fr;
+    }
+    .route-editor-grid {
+      grid-template-columns: 1fr;
+    }
+    .route-source-grid {
+      grid-template-columns: repeat(auto-fill,minmax(140px,1fr));
+    }
+    .settings-savebar {
+      flex-wrap: wrap;
+    }
+  }
 }
 
 /* The `hidden` attribute must win over layout rules such as `.run-controls { display: flex }`. */

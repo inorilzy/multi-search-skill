@@ -53,7 +53,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
 
       <section class="panel route-panel"><div class="section-title"><div><p class="eyebrow">ROUTE GROUPS</p><h2>搜索分组</h2></div><div class="route-actions"><button type="button" data-action="new-route" disabled>新建分组</button><button type="button" data-action="restore" disabled>恢复内置五组</button></div></div>
         <p class="route-help">分组标识创建后不可修改。全局禁用的搜索源仍保留为分组成员，但执行时会跳过。</p>
-        <div data-route-list class="route-list"></div><div data-route-editor></div><div data-restore-confirm></div>
+        <div data-route-list class="route-list"></div><div data-restore-confirm></div>
       </section>
 
       <section class="panel settings-other"><div class="section-title"><div><p class="eyebrow">OTHER</p><h2>其他设置</h2></div></div>
@@ -146,6 +146,9 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     }
   }
 
+  // 一张分组卡只展示前几个搜索源，其余折叠成 +N：列表高度稳定，鼠标悬停仍能看到全部成员。
+  const CHIP_LIMIT = 8;
+
   function chip(source) {
     const node = doc.createElement('span');
     node.className = 'route-chip';
@@ -160,16 +163,37 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     return node;
   }
 
+  function renderChips(container, sources) {
+    for (const source of sources.slice(0, CHIP_LIMIT)) container.append(chip(source));
+    const folded = sources.slice(CHIP_LIMIT);
+    if (!folded.length) return;
+    const more = doc.createElement('span');
+    more.className = 'route-chip route-chip-more';
+    more.textContent = `+${folded.length}`;
+    more.title = `另有 ${folded.map(source => SOURCE_LABELS.get(source) || source).join('、')}`;
+    container.append(more);
+  }
+
+  // 编辑器就地插入被编辑的卡片下方；列表重建时把同一个面板节点搬回去，输入内容不会丢。
+  function mountEditor(panel) {
+    const list = q('[data-route-list]');
+    if (editor?.routeId) {
+      const target = [...list.querySelectorAll('[data-route-row]')].find(node => node.getAttribute('data-route-row') === editor.routeId);
+      if (target) { target.after(panel); return; }
+    }
+    list.prepend(panel);
+  }
+
   function closeEditor(quiet = false) {
+    editor?.panel.remove();
     editor = null;
     editorDirty = false;
-    q('[data-route-editor]').replaceChildren();
     if (!quiet) updateDraftIndicator();
   }
 
   function requestEditorAction(action) {
     if (!editor || !editorDirty) { action(); return; }
-    const panel = q('[data-route-editor] .route-editor');
+    const panel = editor.panel;
     if (panel.querySelector('[data-editor-discard]')) return;
     const confirm = doc.createElement('div');
     confirm.className = 'inline-confirm';
@@ -189,21 +213,22 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     const copy = mode === 'copy';
     const editing = mode === 'edit';
     const initial = source ? cloneRoute(source) : { label: '', sources: [], timeout: null };
-    const holder = q('[data-route-editor]');
-    holder.replaceChildren();
     editorDirty = false;
     const panel = doc.createElement('section');
     panel.className = 'route-editor';
     panel.dataset.mode = mode;
-    panel.innerHTML = `<div class="section-title"><div><p class="eyebrow">${editing ? 'EDIT' : copy ? 'COPY' : 'NEW'}</p><h3>${editing ? '编辑分组' : copy ? '复制为新分组' : '新建分组'}</h3></div><button type="button" data-action="close-editor">取消</button></div>
-      <div class="route-editor-grid"><label>标识<input data-edit="id" maxlength="64" spellcheck="false" autocomplete="off"></label><label>名称<input data-edit="label" maxlength="80"></label><label>独立超时（留空继承全局）<input data-edit="timeout" type="number" min="1" max="60" step="1"></label></div>
-      <fieldset><legend>搜索源（至少一个）</legend><div class="route-source-grid" data-edit="sources"></div></fieldset>
-      <p class="error-message route-form-error" data-edit-error ></p><div class="run-controls"><button type="button" class="primary" data-action="apply-route">应用到草稿</button><small>应用后仍需点击“保存全部设置”写入配置。</small></div>`;
-    holder.append(panel);
+    panel.innerHTML = `<div class="route-editor-head"><div><p class="eyebrow">${editing ? 'EDIT' : copy ? 'COPY' : 'NEW'}</p><h3>${editing ? '编辑分组' : copy ? '复制为新分组' : '新建分组'}</h3></div></div>
+      <div class="route-editor-grid"><label>标识<input data-edit="id" maxlength="64" spellcheck="false" autocomplete="off"><small data-edit-id-hint></small></label><label>名称<input data-edit="label" maxlength="80"></label><label>独立超时（秒）<input data-edit="timeout" type="number" min="1" max="60" step="1"><small>留空继承全局 ${globalTimeout} 秒</small></label></div>
+      <fieldset class="route-sources"><legend class="visually-hidden">搜索源（至少一个）</legend><div class="route-sources-head"><span class="route-sources-label">搜索源（至少一个）</span><span class="route-sources-count" data-source-count aria-live="polite"></span><div class="route-source-tools"><button type="button" data-source-action="all">全选</button><button type="button" data-source-action="none">全不选</button><button type="button" data-source-action="invert">反选</button></div></div><div class="route-source-grid" data-edit="sources"></div></fieldset>
+      <p class="error-message route-form-error" data-edit-error ></p>
+      <div class="route-editor-foot"><small>应用后仍需点击“保存全部设置”写入配置。</small><div class="run-controls"><button type="button" data-action="close-editor">取消</button><button type="button" class="primary" data-action="apply-route">应用到草稿</button></div></div>`;
     const idField = panel.querySelector('[data-edit="id"]');
     idField.value = editing ? routeId : '';
     idField.readOnly = editing;
     idField.title = editing ? '标识创建后不可修改' : '';
+    panel.querySelector('[data-edit-id-hint]').textContent = editing
+      ? '创建后不可修改'
+      : '小写字母、数字、下划线或连字符';
     panel.querySelector('[data-edit="label"]').value = copy ? `${initial.label} 副本` : initial.label;
     panel.querySelector('[data-edit="timeout"]').value = initial.timeout == null ? '' : String(initial.timeout);
     const sourceGrid = panel.querySelector('[data-edit="sources"]');
@@ -221,11 +246,31 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       label.append(box, name);
       if (disabledSources.has(entry.source)) {
         const note = doc.createElement('small');
-        note.textContent = '全局停用，执行时跳过';
+        note.textContent = '全局停用';
+        note.title = '已在搜索源页全局禁用；分组成员资格仍保留，执行时跳过';
         label.append(note);
       }
       sourceGrid.append(label);
     }
+    const count = panel.querySelector('[data-source-count]');
+    const sourceBoxes = () => [...panel.querySelectorAll('[data-route-source]')];
+    const syncSourcePicker = () => {
+      const boxes = sourceBoxes();
+      const checked = boxes.filter(box => box.checked).length;
+      count.textContent = `已选 ${checked} / ${boxes.length}`;
+      panel.querySelector('[data-source-action="all"]').disabled = checked === boxes.length;
+      panel.querySelector('[data-source-action="none"]').disabled = checked === 0;
+    };
+    for (const tool of panel.querySelectorAll('[data-source-action]')) {
+      tool.addEventListener('click', () => {
+        const select = tool.dataset.sourceAction;
+        for (const box of sourceBoxes()) box.checked = select === 'all' ? true : select === 'none' ? false : !box.checked;
+        markEditorDirty();
+        syncSourcePicker();
+      });
+    }
+    for (const box of sourceBoxes()) box.addEventListener('change', syncSourcePicker);
+    syncSourcePicker();
     panel.querySelector('[data-action="close-editor"]').addEventListener('click', () => requestEditorAction(() => closeEditor()));
     for (const field of panel.querySelectorAll('input')) {
       field.addEventListener(field.type === 'checkbox' ? 'change' : 'input', markEditorDirty);
@@ -248,8 +293,14 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       closeEditor(true);
       renderAll();
     });
-    editor = { mode, routeId };
-    panel.scrollIntoView?.({ block: 'nearest' });
+    editor = { mode, routeId, panel };
+    mountEditor(panel);
+    const focusTarget = panel.querySelector(editing ? '[data-edit="label"]' : '[data-edit="id"]');
+    // 聚焦不能顺手把页面滚走：只有编辑器完全不在视野里时才主动滚动。
+    focusTarget?.focus({ preventScroll: true });
+    const rect = typeof panel.getBoundingClientRect === 'function' ? panel.getBoundingClientRect() : null;
+    const viewport = panel.ownerDocument.defaultView?.innerHeight ?? 0;
+    if (rect && viewport && (rect.top < 0 || rect.top > viewport - 160)) panel.scrollIntoView?.({ block: 'start' });
   }
 
   function openDelete(row, id) {
@@ -293,13 +344,14 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       if (id === selectedRoute) { const current = doc.createElement('span'); current.textContent = '当前默认'; current.className = 'current-badge'; title.append(current); }
       const meta = doc.createElement('span');
       meta.className = 'route-timeout';
-      meta.textContent = route.timeout != null
+      const timeoutText = route.timeout != null
         ? `独立超时 · ${route.timeout} 秒`
         : !dirty && !timeoutConfigured && effectiveTimeouts.has(id)
           ? `当前配置 · ${effectiveTimeouts.get(id)} 秒（未显式全局值）`
           : `继承全局 · ${globalTimeout} 秒`;
+      meta.textContent = `${timeoutText} · 共 ${route.sources.length} 个搜索源`;
       const chips = doc.createElement('div'); chips.className = 'route-chips';
-      route.sources.forEach(source => chips.append(chip(source)));
+      renderChips(chips, route.sources);
       body.append(title, meta, chips);
       const actions = doc.createElement('div'); actions.className = 'route-row-actions';
       const edit = doc.createElement('button'); edit.type = 'button'; edit.textContent = '编辑'; edit.addEventListener('click', () => requestOpenEditor('edit', id));
@@ -307,12 +359,23 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       const remove = doc.createElement('button'); remove.type = 'button'; remove.textContent = '删除';
       const blocked = id === selectedRoute || routes.size === 1;
       remove.disabled = blocked;
-      remove.title = id === selectedRoute ? '正在使用：请先在上方切换默认路由' : routes.size === 1 ? '至少保留一个分组' : '';
+      // 禁用的按钮不接收鼠标事件，悬停提示挂在外层，原因仍然看得到。
+      const reason = id === selectedRoute ? '正在使用：请先在上方切换默认分组' : routes.size === 1 ? '至少保留一个分组' : '';
+      remove.title = reason;
       remove.addEventListener('click', () => requestEditorAction(() => openDelete(row, id)));
-      actions.append(edit, copy, remove); row.append(body, actions);
-      if (blocked) { const note = doc.createElement('small'); note.className = 'delete-note'; note.textContent = id === selectedRoute ? '正在使用，先切换默认路由后才能删除。' : '至少保留一个分组。'; row.append(note); }
+      if (blocked) {
+        const host = doc.createElement('span');
+        host.className = 'route-remove-blocked';
+        host.title = reason;
+        host.append(remove);
+        actions.append(edit, copy, host);
+      } else {
+        actions.append(edit, copy, remove);
+      }
+      row.append(body, actions);
       list.append(row);
     }
+    if (editor) mountEditor(editor.panel);
   }
 
   function renderAll() {
