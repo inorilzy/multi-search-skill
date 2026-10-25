@@ -39,14 +39,35 @@ def _commands(job: str) -> str:
 
 def _cargo_tests(manifest: str) -> list[tuple[str, set[str]]]:
     """[[test]] targets with their required features (tomllib is unavailable on 3.10)."""
+    return [(name, features) for name, features, _ in _cargo_test_targets(manifest)]
+
+
+def _cargo_test_targets(manifest: str) -> list[tuple[str, set[str], str]]:
+    """[[test]] targets with their required features and source path."""
     targets = []
     for block in re.split(r"(?m)^\[\[test\]\]\s*$", manifest)[1:]:
         block = re.split(r"(?m)^\[", block, maxsplit=1)[0]
         name = re.search(r'(?m)^name\s*=\s*"([^"]+)"', block).group(1)
         required = re.search(r"(?m)^required-features\s*=\s*\[([^\]]*)\]", block)
         features = set(re.findall(r'"([^"]+)"', required.group(1))) if required else set()
-        targets.append((name, features))
+        path = re.search(r'(?m)^path\s*=\s*"([^"]+)"', block).group(1)
+        targets.append((name, features, path))
     return targets
+
+
+def _windows_exempt(manifest: str) -> set[str]:
+    """Targets whose source is compiled out on Windows (`#![cfg(not(windows))]`).
+
+    They still must be selected somewhere: `test_managed_install_runs_on_macos_and_windows`
+    checks the macOS job, so the Windows job assertion skips them instead of pretending
+    a macOS-only acceptance target runs there.
+    """
+    exempt = set()
+    base = ROOT / "desktop/src-tauri"
+    for name, _, path in _cargo_test_targets(manifest):
+        if re.search(r"#!\[cfg\(not\(windows\)\)\]", (base / path).read_text(encoding="utf-8")):
+            exempt.add(name)
+    return exempt
 
 
 def _matrix(job: str, key: str) -> list[str]:
@@ -100,11 +121,28 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("npm ci", commands)
         self.assertIn("npm test", commands)
 
+    def test_managed_install_runs_on_macos_and_windows(self):
+        manifest = (ROOT / "desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8")
+        targets = dict(_cargo_tests(manifest))
+        self.assertIn("install_platform", targets, "autotests=false requires explicit registration")
+        for job_name, runner in (("desktop-rust", "windows-latest"),
+                                 ("desktop-macos", "macos-latest")):
+            with self.subTest(runner=runner):
+                job = self.jobs[job_name]
+                self.assertIn(f"runs-on: {runner}", job)
+                commands = _commands(job)
+                self.assertIn("--features test-fixtures,install-test-boundary", commands)
+                self.assertIn("--test install_platform", commands)
+                self.assertIn("--test install_release_boundary", commands)
+                self.assertIn("--features test-fixtures,ts", commands)
+
     def test_desktop_rust_job_runs_every_feature_gated_test_on_windows(self):
         job = self.jobs["desktop-rust"]
         self.assertIn("runs-on: windows-latest", job)
         commands = _commands(job)
-        targets = _cargo_tests((ROOT / "desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8"))
+        manifest = (ROOT / "desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8")
+        targets = _cargo_tests(manifest)
+        exempt = _windows_exempt(manifest)
         self.assertGreaterEqual(len(targets), 10)
         self.assertIn("--locked", commands)
         self.assertIn("--no-default-features", commands)
@@ -115,6 +153,8 @@ class CiWorkflowTests(unittest.TestCase):
             runs.append((set(features[0].split(",")) if features else set(), selected))
         self.assertTrue(runs, "no cargo test run")
         for name, required in targets:
+            if name in exempt:
+                continue  # macOS-only source; covered by the macOS job assertion
             with self.subTest(test=name):
                 # Some cargo test run must select this target and enable every feature it requires.
                 self.assertTrue(any(
