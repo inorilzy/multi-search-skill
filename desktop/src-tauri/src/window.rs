@@ -565,14 +565,32 @@ pub fn run() {
         environment.user_path = environment.machine_paths();
         Arc::new(crate::user_path::NativePathStore::current_user())
     };
-    // Other platforms have no registry user PATH. The process PATH is the search base, and PATH
-    // registration is kept in memory for the session instead of editing shell profiles.
-    #[cfg(not(windows))]
+    // macOS has no registry user PATH: registration is a marked block in the
+    // user's login-shell profile (.zprofile/.bash_profile), bound to a
+    // receipt under ~/.multi-search. The process PATH is the search base; the
+    // store contributes only the managed directory once registered.
+    #[cfg(target_os = "macos")]
     let path_store: Arc<dyn crate::user_path::PathStore> = {
         environment.user_path =
             std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
-        Arc::new(crate::user_path::MemoryPathStore::new(
-            crate::user_path::PathValue::expandable(&std::env::var("PATH").unwrap_or_default()),
+        match crate::macos_path::MacOsPathStore::current_user() {
+            Ok(store) => Arc::new(store),
+            Err(reason) => {
+                eprintln!("user PATH store unavailable: {reason}");
+                // A profile we cannot safely identify reports `unavailable`
+                // instead of pretending a change is possible.
+                Arc::new(crate::user_path::UnsupportedPathStore(reason))
+            }
+        }
+    };
+    // Other Unix platforms have no supported registration backend yet; report
+    // unavailability truthfully rather than an in-memory fake.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let path_store: Arc<dyn crate::user_path::PathStore> = {
+        environment.user_path =
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+        Arc::new(crate::user_path::UnsupportedPathStore(
+            "当前平台不支持用户 PATH 注册".into(),
         ))
     };
     #[cfg(all(windows, feature = "install-test-boundary"))]

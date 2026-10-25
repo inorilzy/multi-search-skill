@@ -9,6 +9,8 @@ mod errors;
 pub mod execution;
 pub mod install;
 mod journal;
+#[cfg(target_os = "macos")]
+pub mod macos_path;
 mod manager;
 mod manifest;
 mod process;
@@ -81,6 +83,18 @@ pub mod settings_fixture {
     /// Whether the execution allowlist accepts a `--source` name.
     pub fn is_allowed_source(name: &str) -> bool {
         crate::execution::is_allowed_source(name)
+    }
+}
+
+/// Test seam for PATH registration. Not a supported public API.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub mod user_path_fixture {
+    use crate::user_path::{PathReceipt, PathValue};
+
+    /// Build the receipt exactly as `UserPathManager::change` does for an add.
+    pub fn receipt(before: &PathValue, after: &PathValue, entry: &str) -> PathReceipt {
+        PathReceipt::new(before, after, entry)
     }
 }
 

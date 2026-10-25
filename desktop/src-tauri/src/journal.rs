@@ -24,8 +24,20 @@ pub(crate) fn replace_error(error: &std::io::Error) -> String {
     format!("无法替换残留文件：{error}")
 }
 
-/// `name` is the manifest-relative path; every ancestor must be a real directory.
+/// `name` is the manifest-relative path; the managed root and every path component
+/// below it must be real directories. Ancestors above the root are machine layout:
+/// macOS mounts `/var` and `/tmp` through symlinks, and a user's home may legitimately
+/// be one too. Refusing those would make every managed install impossible there;
+/// Windows keeps its stricter whole-path check because reparse points there are the
+/// redirect threat this boundary exists for.
 pub(crate) fn destination(root: &Path, name: &str) -> Result<PathBuf, Failure> {
+    #[cfg(not(windows))]
+    if let Ok(meta) = fs::symlink_metadata(root) {
+        if windows_util::is_link(&meta) || !meta.is_dir() {
+            return Err(("unknown_existing", "安装路径含链接或非目录，未修改".into()));
+        }
+    }
+    #[cfg(windows)]
     for ancestor in root.ancestors() {
         if let Ok(meta) = fs::symlink_metadata(ancestor) {
             if windows_util::is_link(&meta) || !meta.is_dir() {

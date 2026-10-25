@@ -139,7 +139,10 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
     try {
       const outcome = await api.userPathChange(removePath, true);
       const status = await api.detect();
-      result.textContent = `${statusText(outcome.status, 'PATH 已修改')}；当前应用：${detectionText(status.app?.status)}；新用户环境：${detectionText(status.user?.status)}。请重启终端或 Agent 宿主。`;
+      result.textContent = [
+        `${statusText(outcome.status, 'PATH 已修改')}；应用继承的 PATH：${detectionText(status.app?.status)}；已登记的用户 PATH：${detectionText(status.user?.status)}。`,
+        outcome.warning || '请新开终端并运行 multi-search --version；已有终端或 Agent 宿主需重启。',
+      ].join(' ');
     } catch (error) { showError(result, error, '用户 PATH 修改未确认，请重新检查；原有或被修改项目会保留。'); }
     finally { busy = false; await refreshPath(); }
   });

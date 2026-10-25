@@ -1,7 +1,8 @@
 name: Signed Windows release
 
-# Builds the signed desktop installer. Manual only: it needs the signing secrets and the
-# separately verified xkit-py checkout (out of scope here; see scripts/build_inputs.py).
+# Builds the signed desktop installer. Manual only: it needs the signing secrets.
+# xkit-py is deliberately disabled in pyproject.toml for this release, so the workflow must not
+# require an xkit checkout or pass an xkit source flag (build_cli_release.py refuses one).
 on:
   workflow_dispatch:
     inputs:
@@ -41,29 +42,17 @@ jobs:
         shell: pwsh
         run: |
           $lock = Get-Content scripts/build-inputs.lock.json | ConvertFrom-Json
+          $python = $lock.targets.windows.python
           New-Item -ItemType Directory -Force dist/inputs | Out-Null
-          Invoke-WebRequest $lock.python.url -OutFile "dist/inputs/$($lock.python.archive)"
-          "PYTHON_ARCHIVE=$(Resolve-Path "dist/inputs/$($lock.python.archive)")" >> $env:GITHUB_ENV
-      # xkit-py is verified by its author separately (out of scope for this workflow); the job
-      # needs that verified checkout and stops clearly when it is absent.
-      - name: Require the separately verified xkit-py checkout
-        shell: pwsh
-        run: |
-          if (-not $env:XKIT_SOURCE -or -not (Test-Path $env:XKIT_SOURCE)) {
-            Write-Error "XKIT_SOURCE must point at the separately verified xkit-py checkout"
-            exit 1
-          }
-        env:
-          XKIT_SOURCE: ${{ vars.XKIT_SOURCE }}
+          Invoke-WebRequest $python.url -OutFile "dist/inputs/$($python.archive)"
+          "PYTHON_ARCHIVE=$(Resolve-Path "dist/inputs/$($python.archive)")" >> $env:GITHUB_ENV
       - name: Build, verify and sign the CLI bundle
         shell: pwsh
         run: >
           python scripts/build_cli_release.py --require-signing
           --python-archive "$env:PYTHON_ARCHIVE"
           --wheel "$env:WHEEL" --wheel-sha256 "$env:WHEEL_SHA256"
-          --xkit-source "$env:XKIT_SOURCE" --version "${{ inputs.version }}"
-        env:
-          XKIT_SOURCE: ${{ vars.XKIT_SOURCE }}
+          --version "${{ inputs.version }}"
       - name: Build the signed installer
         shell: pwsh
         working-directory: desktop

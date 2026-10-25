@@ -119,6 +119,8 @@ jobs:
           if (-not $edge) { throw 'Windows Rust native tests require the WebView2 runtime' }
           rustc --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Release installation boundary ignores test selectors
+        run: cargo test --locked --manifest-path ${{ env.MANIFEST }} --no-default-features --test install_release_boundary
       - name: Native tests with the test-only fixture seams and generated UI types
         # --no-default-features skips the Tauri window; test-fixtures enables the credential and
         # settings seams, ts enables the ts-rs UI contract (ui_contract requires both).
@@ -128,9 +130,45 @@ jobs:
         # (run above) asserts the opposite, so the two feature sets are built separately.
         run: >
           cargo test --locked --manifest-path ${{ env.MANIFEST }} --no-default-features
-          --features test-fixtures,install-test-boundary --test install --test install_lifecycle
+          --features test-fixtures,install-test-boundary --test install --test install_lifecycle --test install_platform
       - name: Rust interop matrix with disposable profile and explicit native overlay
         # No --ignored: real installed CLI/bundle and type generation are separate acceptance.
         # The tauri.check.conf.json overlay disables bundle inputs only; it is not a release or
         # bundle certification. The script derives the repo root itself (no cwd/PYTHONPATH).
         run: python -B scripts/rust_ci_matrix.py
+
+  desktop-macos:
+    name: Desktop macOS installation and contracts
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      MANIFEST: desktop/src-tauri/Cargo.toml
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.12"
+      - name: Install locked Python dependencies for interop
+        run: |
+          uv sync --locked --python 3.12
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Prepare the pinned native Rust compiler
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+          cargo fetch --locked --manifest-path "$MANIFEST"
+      - name: Release installation boundary ignores test selectors
+        run: cargo test --locked --manifest-path "$MANIFEST" --no-default-features --test install_release_boundary
+      - name: Native domain tests and generated UI contract
+        run: cargo test --locked --manifest-path "$MANIFEST" --no-default-features --features test-fixtures,ts
+      - name: macOS install update rollback and uninstall
+        # Explicitly selected: this crate disables automatic test discovery.
+        # Uses disposable homes and fixture binaries. install_real_bundle is
+        # selected so it must compile; its real-bundle case is #[ignore]d and
+        # runs in the release acceptance, not here.
+        run: >
+          cargo test --locked --manifest-path "$MANIFEST" --no-default-features
+          --features test-fixtures,install-test-boundary --test install_platform --test install_real_bundle

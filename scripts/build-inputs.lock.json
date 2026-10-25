@@ -1,10 +1,27 @@
 {
   "schema": 1,
-  "python": {
-    "version": "3.12.10",
-    "archive": "python-3.12.10-embed-amd64.zip",
-    "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
-    "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
-    "provenance": "Matches messageSignature.messageDigest in the python.org Sigstore bundle python-3.12.10-embed-amd64.zip.sigstore (signer thomas@python.org, 3.12 release manager). Update both together."
+  "targets": {
+    "windows": {
+      "python": {
+        "version": "3.12.10",
+        "archive": "python-3.12.10-embed-amd64.zip",
+        "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+        "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+        "provenance": "Matches messageSignature.messageDigest in the python.org Sigstore bundle python-3.12.10-embed-amd64.zip.sigstore (signer thomas@python.org, 3.12 release manager). Update both together."
+      },
+      "rust_target": "x86_64-pc-windows-msvc",
+      "strip_symlinks": []
+    },
+    "macos": {
+      "python": {
+        "version": "3.12.15",
+        "archive": "cpython-3.12.15+20261021-aarch64-apple-darwin-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-aarch64-apple-darwin-install_only.tar.gz",
+        "sha256": "a18cc33862b53bd54a148c710def5375c1b47470cccedf817a19c2d211764584",
+        "provenance": "SHA-256 published in the SHA256SUMS asset of astral-sh/python-build-standalone release 20261021 and in that release's asset digest metadata (GitHub API digest field). The install_only archive is not header-free: it ships bundled development headers under python/include/python3.12/ (214 files) alongside libpython3.12.dylib. Both are part of the hashed archive; the headers stay in the bundle."
+      },
+      "rust_target": "aarch64-apple-darwin",
+      "strip_symlinks": ["bin/python", "bin/python3"]
+    }
   }
 }

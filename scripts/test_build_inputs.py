@@ -1,10 +1,12 @@
 """Tests for release build input verification and signing; synthetic inputs only, no network."""
 import base64
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -13,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_inputs  # noqa: E402
 from build_inputs import (  # noqa: E402
     BuildInputError, check_rustc, configure_embedded_path, extract_python, load_lock,
-    pinned_rustc_version, verify_file,
+    lock_target, pinned_rustc_version, verify_file,
 )
 from sign_windows import SigningError, sign_file  # noqa: E402
 
@@ -27,8 +29,11 @@ def make_archive(path: Path, members: dict[str, bytes]) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def lock_for(archive: Path, sha: str) -> dict:
-    return {"schema": 1, "python": {"archive": archive.name, "sha256": sha}}
+def lock_for(archive: Path, sha: str, target: str = "windows") -> dict:
+    return {"schema": 1, "targets": {target: {
+        "python": {"archive": archive.name, "sha256": sha,
+                   "url": "https://example.invalid/archive"},
+        "rust_target": "test-triple"}}}
 
 
 class Completed:
@@ -44,11 +49,16 @@ class LockedInputs(unittest.TestCase):
         self.archive = self.root / "python-3.12.10-embed-amd64.zip"
         self.sha = make_archive(self.archive, {"python.exe": b"PY", "python312._pth": PTH.encode()})
 
-    def test_repository_lock_is_valid_and_pins_an_official_archive(self):
+    def test_repository_lock_is_valid_and_pins_official_archives_for_both_targets(self):
         lock = load_lock()
-        self.assertTrue(lock["python"]["archive"].endswith("-embed-amd64.zip"))
-        self.assertRegex(lock["python"]["sha256"], r"^[0-9a-f]{64}$")
-        self.assertTrue(lock["python"]["url"].startswith("https://www.python.org/ftp/python/"))
+        windows = lock_target(lock, "windows")["python"]
+        self.assertTrue(windows["archive"].endswith("-embed-amd64.zip"))
+        self.assertRegex(windows["sha256"], r"^[0-9a-f]{64}$")
+        self.assertTrue(windows["url"].startswith("https://www.python.org/ftp/python/"))
+        macos = lock_target(lock, "macos")["python"]
+        self.assertIn("aarch64-apple-darwin-install_only", macos["archive"])
+        self.assertRegex(macos["sha256"], r"^[0-9a-f]{64}$")
+        self.assertIn("astral-sh/python-build-standalone", macos["url"])
 
     def test_locked_archive_is_extracted_and_its_path_file_points_at_site_packages(self):
         runtime = extract_python(self.archive, self.root / "runtime", lock_for(self.archive, self.sha))
@@ -110,12 +120,46 @@ class LockedInputs(unittest.TestCase):
                 verify_file(wheel, bad, "project wheel")
 
     def test_malformed_lock_files_are_refused(self):
-        for text in ("{", "[]", '{"schema": 2}', '{"schema": 1, "python": {"archive": "x.zip", "sha256": "nothex"}}'):
+        bad_locks = ("{", "[]", '{"schema": 2}',
+                     '{"schema": 1, "python": {"archive": "x.zip", "sha256": "nothex"}}',
+                     '{"schema": 1, "targets": {}}',
+                     '{"schema": 1, "targets": {"macos": {"python": {"archive": "x.tgz", "sha256": "bad"}, "rust_target": "t"}}}',
+                     '{"schema": 1, "targets": {"macos": {"python": {"archive": "x.tgz", "sha256": "' + "a" * 64 + '", "url": "http://insecure/x"}, "rust_target": "t"}}}')
+        for text in bad_locks:
             with self.subTest(text=text):
                 path = self.root / "lock.json"
                 path.write_text(text)
                 with self.assertRaises(BuildInputError):
                     load_lock(path)
+    def test_lock_target_names_the_requested_platform(self):
+        lock = load_lock()
+        with self.assertRaisesRegex(BuildInputError, "no target"):
+            lock_target(lock, "plan9")
+
+    def test_macos_provenance_matches_the_archive_contents_and_pins_are_unchanged(self):
+        """The install_only archive ships bundled headers; the lock must say so and keep its pin."""
+        macos = lock_target(load_lock(), "macos")["python"]
+        self.assertEqual(
+            macos["url"],
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/"
+            "cpython-3.12.15%2B20261021-aarch64-apple-darwin-install_only.tar.gz",
+        )
+        self.assertEqual(
+            macos["sha256"],
+            "a18cc33862b53bd54a148c710def5375c1b47470cccedf817a19c2d211764584",
+        )
+        provenance = macos["provenance"].lower()
+        self.assertNotIn("no dev headers", provenance,
+                         "the archive does contain python/include/python3.12, so this claim is false")
+        self.assertIn("include/python3.12", provenance)
+        self.assertIn("header", provenance)
+
+    def test_both_targets_declare_the_archive_links_to_drop(self):
+        """Alias policy belongs to the per-target lock table, not a hardcoded interpreter name."""
+        lock = load_lock()
+        self.assertEqual(lock_target(lock, "macos").get("strip_symlinks"),
+                         ["bin/python", "bin/python3"])
+        self.assertEqual(lock_target(lock, "windows").get("strip_symlinks"), [])
 
 
 class PinnedRustc(unittest.TestCase):
@@ -214,6 +258,26 @@ class ReleaseWiring(unittest.TestCase):
         self.assertEqual(result.returncode, 2, "an arbitrary --python-tree is no longer accepted")
         self.assertIn("--python-archive", result.stderr)
         self.assertIn("--wheel-sha256", result.stderr)
+        for target in ("windows", "macos"):
+            listed = subprocess.run([sys.executable, str(release), "--target", target, "--help"],
+                                    capture_output=True, text=True)
+            self.assertEqual(listed.returncode, 0, target)
+
+    def test_release_workflow_matches_the_xkit_disabled_contract_and_per_target_lock(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "release.yml")
+        text = workflow.read_text(encoding="utf-8")
+        self.assertNotIn("--xkit-source", text,
+                         "build_cli_release.py refuses --xkit-source, so the release would fail")
+        self.assertNotIn("XKIT_SOURCE", text,
+                         "a required xkit checkout is a build-time dependency that no longer exists")
+        self.assertIn("lock.targets.windows.python", text,
+                      "the lock is per-target; lock.python.url no longer exists")
+        self.assertIn("$python.url", text)
+        self.assertIn("$python.archive", text)
+        self.assertNotIn("lock.python.", text)
+        # The signing contract must not be weakened while fixing the xkit/lock regressions.
+        self.assertIn("--require-signing", text)
+        self.assertIn("WINDOWS_SIGN_REQUIRED", text)
 
 
 if __name__ == "__main__":
