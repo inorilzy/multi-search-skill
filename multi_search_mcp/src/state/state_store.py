@@ -13,6 +13,12 @@ DEFAULT_STATE_PATH = Path.home() / ".multi-search" / "state.sqlite"
 # contention the only blocking case, so this is a safety net, not the normal path.
 BUSY_TIMEOUT_SECONDS = 10
 
+# Bump when changing SCHEMA or adding a one-shot data rewrite. Schema creation
+# and data rewrites are guarded by ``PRAGMA user_version`` so a second process
+# does not take the write lock on every start. The desktop's read-only views of
+# ``state.sqlite`` accept versions 1 and 2 only.
+STATE_SCHEMA_VERSION = 2
+
 
 SCHEMA = (
     """
@@ -206,11 +212,19 @@ class StateStore:
                 raise
 
     def migrate(self) -> None:
+        if self._schema_is_current():
+            # Fast path: no write lock needed when the schema is already at
+            # the expected version and every required column exists.
+            return
         with self.connect() as conn:
             # WAL is persistent in the database file: after this, every connection
             # (including other processes) reads without blocking on a writer.
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("BEGIN IMMEDIATE")
+            # Re-check under the write lock: another process may have migrated
+            # while this one waited.
+            if self._schema_is_current_conn(conn):
+                return
             for statement in SCHEMA:
                 conn.execute(statement)
             self._ensure_columns(conn, "key_state", {
@@ -227,6 +241,45 @@ class StateStore:
                 "CREATE INDEX IF NOT EXISTS idx_content_sources_url_scope "
                 "ON content_sources (canonical_url, cache_scope, expires_at)"
             )
+            self._migrate_data(conn)
+
+    def _schema_is_current(self) -> bool:
+        if not self.path.exists():
+            return False
+        try:
+            with self.connect() as conn:
+                return self._schema_is_current_conn(conn)
+        except sqlite3.Error:
+            return False
+
+    @staticmethod
+    def _schema_is_current_conn(conn: sqlite3.Connection) -> bool:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < STATE_SCHEMA_VERSION:
+            return False
+        required = {
+            "key_state": {"use_count", "last_used_at", "invalid_strikes"},
+            "content_sources": {"canonical_url", "cache_scope"},
+        }
+        for table, columns in required.items():
+            existing = {
+                row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not columns.issubset(existing):
+                return False
+        return True
+
+    def _migrate_data(self, conn: sqlite3.Connection) -> None:
+        """Stamp the schema version once every migration step has run.
+
+        The one-shot data rewrite (legacy display-mask fingerprints) is done by
+        ``_scrub_key_fingerprints`` above; the version stamp keeps later opens on
+        the lock-free fast path. The desktop reads ``state.sqlite`` only at a
+        version it knows (1 or 2), so bump this together with the desktop.
+        """
+        from_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if from_version < STATE_SCHEMA_VERSION:
+            conn.execute(f"PRAGMA user_version={STATE_SCHEMA_VERSION}")
 
     @staticmethod
     def _scrub_key_fingerprints(conn: sqlite3.Connection) -> None:

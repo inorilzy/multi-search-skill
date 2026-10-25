@@ -19,8 +19,9 @@ from typing import Any
 
 from .credential_store import CredentialStore, CredentialStoreError, validate_key
 
-# Providers the credential store holds (mirrors keys.CREDENTIAL_STORE_PROVIDERS, kept in one place
-# by importing it lazily so this module stays importable without the state package).
+# Single-key search providers this command migrates into the shared SQLite/DPAPI store. Jina is
+# also store-backed (keys.CREDENTIAL_STORE_PROVIDERS), but its entries carry per-key metadata
+# (lists / ``exhausted`` flags), so it stays in the legacy file and is reported as unsupported.
 MIGRATABLE = ("baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github")
 
 

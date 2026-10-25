@@ -6,7 +6,16 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from ..support.auth import classify_error, is_key_retryable_error
+from ..support.auth import classify_error, is_key_retryable_error, row_kind, row_origin
+from ..support.models import (
+    ERROR_KIND_INVALID,
+    ERROR_KIND_NETWORK,
+    ERROR_KIND_QUOTA_EXHAUSTED,
+    ERROR_KIND_RATE_LIMIT,
+    ERROR_KIND_TARGET,
+    ERROR_KIND_TIMEOUT,
+    ERROR_ORIGIN_TARGET,
+)
 from ..support.secrets import scrub_secrets
 from .state_store import StateStore
 
@@ -102,24 +111,29 @@ class BasicKeyManager:
             return KeyOutcome(success=True, retryable=False)
         message = "; ".join(str(row.get("error", "")) for row in error_rows)
         # Target failures carry no evidence that a provider credential failed.
-        error_rows = [row for row in error_rows if row.get("error_origin") != "target"]
+        # ``row_origin``/``row_kind`` read the unified ``origin``/``kind`` keys and
+        # fall back to the public ``error_origin``/``error_type`` row fields.
+        error_rows = [row for row in error_rows if row_origin(row) != ERROR_ORIGIN_TARGET]
         if not error_rows:
-            return KeyOutcome(False, False, "target", message)
-        if any(row.get("exhausted") or row.get("key_exhausted") for row in error_rows):
-            return KeyOutcome(False, True, "quota_exhausted", message)
-        if any(row.get("rate_limited") for row in error_rows):
-            return KeyOutcome(False, True, "rate_limit", message)
+            return KeyOutcome(False, False, ERROR_KIND_TARGET, message)
         error_types = [
-            classify_error(str(row["error"]), error_type=row.get("error_type", ""))
+            classify_error(str(row["error"]), kind=row_kind(row))
             for row in error_rows
         ]
+        # Prefer the strongest credential signal; fall back to the first kind.
         error_type = next((
-            kind for kind in ("invalid", "quota_exhausted", "rate_limit", "timeout", "network")
+            kind for kind in (
+                ERROR_KIND_INVALID, ERROR_KIND_QUOTA_EXHAUSTED, ERROR_KIND_RATE_LIMIT,
+                ERROR_KIND_TIMEOUT, ERROR_KIND_NETWORK,
+            )
             if kind in error_types
         ), error_types[0])
         return KeyOutcome(False, is_key_retryable_error(error_rows), error_type, message)
 
-    def record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:
+    def record_result(
+        self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome,
+        *, started_at: datetime | None = None,
+    ) -> None:
         return None
 
     def record_use(self, provider: str, candidate: KeyCandidate) -> None:
@@ -179,99 +193,184 @@ class SQLiteKeyManager(BasicKeyManager):
         usable.sort(key=lambda item: (item[0], item[1], item[2]))
         return [cand for *_unused, cand in usable]
 
+    def reserve(self, provider: str, candidates: list[KeyCandidate]) -> KeyCandidate | None:
+        """Atomically choose the current LRU eligible candidate and record its use.
+
+        This distributes attempts, not an exclusive lease: providers allow
+        concurrent requests per credential. Health is re-checked under the write
+        lock, so a key cooled by a concurrent writer since :meth:`candidates`
+        is skipped instead of being retried.
+        """
+        now = _now()
+        with self.store.transaction() as conn:
+            usable = []
+            for order, candidate in enumerate(candidates):
+                self._ensure_row(provider, candidate)
+                row = conn.execute(
+                    "SELECT * FROM key_state WHERE provider = ? AND key_id = ?",
+                    (provider, candidate.key_id),
+                ).fetchone()
+                if row["manually_disabled"] or row["status"] in {INVALID, DISABLED}:
+                    continue
+                until = _parse_iso(
+                    row["exhausted_until"] if row["status"] == QUOTA_EXHAUSTED else row["cooldown_until"]
+                )
+                if row["status"] in {QUOTA_EXHAUSTED, COOLDOWN, TRANSIENT_INVALID} and until and until > now:
+                    continue
+                usable.append((row["last_used_at"] or "", order, candidate))
+            if not usable:
+                return None
+            candidate = min(usable, key=lambda item: item[:2])[2]
+            # Do not touch updated_at here: it is the credential-state
+            # generation used to reject late results (see record_result).
+            conn.execute(
+                "UPDATE key_state SET use_count = use_count + 1, last_used_at = ? "
+                "WHERE provider = ? AND key_id = ?",
+                (_iso(now), provider, candidate.key_id),
+            )
+            return candidate
+
     def record_use(self, provider: str, candidate: KeyCandidate) -> None:
         # Registering the row and incrementing the counter are one write: no
         # second process can observe a registered key with no use recorded.
+        # ``updated_at`` stays a state-generation marker, so use does not bump it.
         with self.store.transaction():
             self._ensure_row(provider, candidate)
-            now = _iso()
             self.store.execute(
                 """
                 UPDATE key_state
-                SET use_count = use_count + 1, last_used_at = ?, updated_at = ?
+                SET use_count = use_count + 1, last_used_at = ?
                 WHERE provider = ? AND key_id = ?
                 """,
-                (now, now, provider, candidate.key_id),
+                (_iso(), provider, candidate.key_id),
             )
 
-    def record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:
+    def record_result(
+        self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome,
+        *, started_at: datetime | None = None,
+    ) -> None:
         # Row registration, the read-modify-write decision (invalid strikes,
         # cooldown, quota) and the counters commit as one transaction. Two
         # processes can no longer interleave between the ensure-row write and the
         # outcome update, and a crash leaves no half-applied key health.
         with self.store.transaction():
-            self._record_result(provider, candidate, outcome)
+            self._record_result(provider, candidate, outcome, started_at=started_at)
 
-    def _record_result(self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome) -> None:
+    def _record_result(
+        self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome,
+        *, started_at: datetime | None = None,
+    ) -> None:
         self._ensure_row(provider, candidate)
         now = _iso()
         if outcome.success:
+            # Causality: ``updated_at`` marks the last status-affecting write.
+            # A success may only clear a verdict that predates its own request;
+            # a failure committed while this request was in flight is newer
+            # evidence and must survive. Success counters still advance.
+            started = _iso(started_at) if started_at is not None else now
+            gated = "updated_at > ?"
             self.store.execute(
-                """
+                f"""
                 UPDATE key_state
-                SET status = ?, success_count = success_count + 1, last_success_at = ?,
-                    last_error_type = NULL, last_error_message = NULL, cooldown_until = NULL,
-                    invalid_strikes = 0, updated_at = ?
+                SET status = CASE WHEN {gated} THEN status ELSE ? END,
+                    success_count = success_count + 1, last_success_at = ?,
+                    last_error_type = CASE WHEN {gated} THEN last_error_type ELSE NULL END,
+                    last_error_message = CASE WHEN {gated} THEN last_error_message ELSE NULL END,
+                    cooldown_until = CASE WHEN {gated} THEN cooldown_until ELSE NULL END,
+                    invalid_strikes = CASE WHEN {gated} THEN invalid_strikes ELSE 0 END,
+                    updated_at = ?
                 WHERE provider = ? AND key_id = ?
                 """,
-                (ACTIVE, now, now, provider, candidate.key_id),
+                (
+                    started, ACTIVE, now,
+                    started, started, started, started,
+                    now, provider, candidate.key_id,
+                ),
             )
             return
         error_type = outcome.error_type or classify_error(outcome.error_message)
-        if error_type == "target":
+        if error_type == ERROR_KIND_TARGET:
             # Target-page failures carry no credential-health evidence. The
             # scrape entry point normally filters these before this method;
             # keep the state boundary neutral if one reaches it directly.
             return
-        status = ACTIVE
+        message = scrub_secrets(outcome.error_message, candidate.key)
+        if error_type not in {ERROR_KIND_INVALID, ERROR_KIND_RATE_LIMIT, ERROR_KIND_QUOTA_EXHAUSTED}:
+            # Neutral failure (timeout/network/unclassified): record the failure
+            # but keep the credential state and strikes untouched so a transient
+            # error cannot clear a stronger concurrent verdict. ``updated_at`` is
+            # not advanced: a neutral error is not a state verdict and must not
+            # block a causally-newer success from recovering the key.
+            self.store.execute(
+                """
+                UPDATE key_state
+                SET failure_count = failure_count + 1,
+                    last_failure_at = ?, last_error_type = ?, last_error_message = ?
+                WHERE provider = ? AND key_id = ?
+                """,
+                (now, error_type, message, provider, candidate.key_id),
+            )
+            return
         cooldown_until = None
         exhausted_until = None
         rate_inc = 0
         quota_inc = 0
-        status_sql = "?"
-        cooldown_sql = "?"
-        # Every provider result other than an invalid authentication failure
+        # Every credential verdict other than an invalid authentication failure
         # breaks the consecutive-invalid streak. The invalid branch below
         # replaces this with an atomic increment.
         strike_assignment = "invalid_strikes = 0"
-        if error_type == "invalid":
+        # Failure updates never downgrade a stronger stored verdict:
+        # invalid > quota_exhausted > cooldown/transient_invalid. All CASE
+        # expressions read the same pre-update row, so concurrent outcomes
+        # settle in commit order without a lost update.
+        stronger = "status IN ('invalid', 'quota_exhausted', 'disabled')"
+        # A kept stronger verdict also keeps its own expiry: clearing
+        # ``exhausted_until`` under a retained ``quota_exhausted`` status would
+        # make the key eligible again immediately.
+        exhausted_sql = f"CASE WHEN {stronger} THEN exhausted_until ELSE ? END"
+        if error_type == ERROR_KIND_INVALID:
             # A single 401/403 is often a transient upstream blip (Cloudflare,
             # gateway, brief rate misclassification). Cool the key down and only
             # escalate to a permanent INVALID after repeated consecutive hits.
-            # All expressions in this UPDATE use the same pre-update row, so
-            # concurrent outcomes increment and choose state in commit order.
             strike_assignment = "invalid_strikes = invalid_strikes + 1"
             status_sql = (
-                f"CASE WHEN invalid_strikes + 1 >= {INVALID_STRIKE_LIMIT} "
+                f"CASE WHEN {stronger} THEN status "
+                f"WHEN invalid_strikes + 1 >= {INVALID_STRIKE_LIMIT} "
                 f"THEN '{INVALID}' ELSE ? END"
             )
             cooldown_sql = (
-                f"CASE WHEN invalid_strikes + 1 >= {INVALID_STRIKE_LIMIT} "
+                f"CASE WHEN {stronger} THEN cooldown_until "
+                f"WHEN invalid_strikes + 1 >= {INVALID_STRIKE_LIMIT} "
                 "THEN NULL ELSE ? END"
             )
             status = TRANSIENT_INVALID
             cooldown_until = _iso(_now() + INVALID_COOLDOWN)
-        elif error_type == "rate_limit":
+        elif error_type == ERROR_KIND_RATE_LIMIT:
             status = COOLDOWN
             cooldown_until = _iso(_now() + timedelta(minutes=15))
             rate_inc = 1
-        elif error_type == "quota_exhausted":
+            status_sql = f"CASE WHEN {stronger} THEN status ELSE ? END"
+            cooldown_sql = f"CASE WHEN {stronger} THEN cooldown_until ELSE ? END"
+        else:  # quota_exhausted
             status = QUOTA_EXHAUSTED
             exhausted_until = _iso(_now() + timedelta(hours=24))
             quota_inc = 1
+            status_sql = "CASE WHEN status IN ('invalid', 'disabled') THEN status ELSE ? END"
+            cooldown_sql = "?"
+            exhausted_sql = "CASE WHEN status IN ('invalid', 'disabled') THEN exhausted_until ELSE ? END"
         self.store.execute(
             f"""
             UPDATE key_state
             SET status = {status_sql}, failure_count = failure_count + 1,
                 rate_limit_count = rate_limit_count + ?, quota_error_count = quota_error_count + ?,
                 last_failure_at = ?, last_error_type = ?, last_error_message = ?,
-                cooldown_until = {cooldown_sql}, exhausted_until = ?, {strike_assignment}, updated_at = ?
+                cooldown_until = {cooldown_sql}, exhausted_until = {exhausted_sql},
+                {strike_assignment}, updated_at = ?
             WHERE provider = ? AND key_id = ?
             """,
             (
-                status, rate_inc, quota_inc, now, error_type,
-                scrub_secrets(outcome.error_message, candidate.key), cooldown_until,
-                exhausted_until, now, provider, candidate.key_id,
+                status, rate_inc, quota_inc, now, error_type, message,
+                cooldown_until, exhausted_until, now, provider, candidate.key_id,
             ),
         )
 
@@ -292,7 +391,8 @@ class SQLiteKeyManager(BasicKeyManager):
         if key_id:
             where.append("key_id = ?")
             params.append(key_id)
-        sql = "UPDATE key_state SET status = ?, cooldown_until = NULL, exhausted_until = NULL, manually_disabled = 0, invalid_strikes = 0, updated_at = ?"
+        # A health reset never clears a manual opt-out (``manually_disabled``).
+        sql = "UPDATE key_state SET status = ?, cooldown_until = NULL, exhausted_until = NULL, invalid_strikes = 0, updated_at = ?"
         if where:
             sql += " WHERE " + " AND ".join(where)
         with self.store.connect() as conn:

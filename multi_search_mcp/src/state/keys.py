@@ -168,29 +168,34 @@ def count_jina_keys(value) -> tuple[int, int]:
     return active, total
 
 
-# Single-secret key providers that may be stored in the Windows credential store
-# (one entry per provider, named <namespace>/<provider>). Jina is scrape-only and
-# twitter uses a cookie file reference, so neither is listed here.
+# Key providers held by the shared credential store: the desktop-owned
+# ``config.sqlite`` with one current-user DPAPI-encrypted entry per provider.
+# Twitter cookies are a separate managed secret (``twitter_cookies``) loaded only
+# inside an X call, so they are not listed here.
 # Resolution order: environment variable > credential store > ~/.search-keys.json.
 # Environment variables always win so automation can override a UI-saved secret.
 # A store entry overrides a file entry (including a file key list) as an explicit
 # source; the file list is never merged into the store entry's rotation.
 CREDENTIAL_STORE_PROVIDERS = (
-    "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github",
+    "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github", "jina",
 )
 TEST_ISOLATION_ENV = "MULTI_SEARCH_TEST_ISOLATION"
 CREDENTIAL_NAMESPACE_ENV = "MULTI_SEARCH_CREDENTIAL_NAMESPACE"
+CONFIG_DB_ENV = "MULTI_SEARCH_CONFIG_DB"
 
 
 def _credential_store_enabled(environ: Mapping[str, str]) -> bool:
-    """Use the Windows store only on Windows, and never inside the test runner.
+    """Use the DPAPI store only on Windows, and never inside the test runner.
 
-    Under test isolation the store stays off unless a disposable namespace is set
-    explicitly, so the regression suite cannot read or write real user entries.
+    Under test isolation the store stays off unless a disposable database or
+    namespace is selected explicitly, so the regression suite cannot read or
+    write real user entries.
     """
     if sys.platform != "win32":
         return False
-    if environ.get(TEST_ISOLATION_ENV) == "1" and not environ.get(CREDENTIAL_NAMESPACE_ENV):
+    if environ.get(TEST_ISOLATION_ENV) == "1" and not (
+        environ.get(CREDENTIAL_NAMESPACE_ENV) or environ.get(CONFIG_DB_ENV)
+    ):
         return False
     return True
 
@@ -357,7 +362,7 @@ def load_keys(
 ) -> LoadedKeys:
     """Load API keys: environment > credential store > ~/.search-keys.json.
 
-    ``credential_store`` may be injected (tests). When omitted, the Windows store
+    ``credential_store`` may be injected (tests). When omitted, the SQLite/DPAPI store
     is consulted only for the real process environment (see ``_credential_store_enabled``).
 
     A provider whose store entry is unreadable is left out of the mapping (fail

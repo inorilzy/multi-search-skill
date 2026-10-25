@@ -28,6 +28,7 @@ from .src.state.operations import (
 )
 from .src.support.backends import KNOWN_BACKENDS
 from .src.support.format import format_scrapes
+from .src.support.secrets import scrub_secrets
 
 
 OUTPUT_FORMATS = ("json", "human", "markdown")
@@ -246,11 +247,9 @@ def main(
         args = parser.parse_args(list(argv) if argv is not None else None)
         payload = args.handler(args)
         _write_payload(payload, args.format, stdout)
-        if args.command == "search":
-            statuses = payload.get("provider_status") or []
-            if statuses and all(row.get("status") == "error" for row in statuses):
-                stderr.write("error: all selected search providers failed\n")
-                return 1
+        if args.command == "search" and payload.get("outcome") == "failed":
+            stderr.write("error: all selected search providers failed\n")
+            return 1
         if args.command == "doctor" and (
             payload.get("config_error") or payload.get("keys_error")
             or payload.get("network_ok") is False
@@ -262,12 +261,15 @@ def main(
         stderr.write(f"usage error: {exc}\n")
         return 2
     except Exception as exc:  # noqa: BLE001 - CLI boundary should be explicit and terse
+        # The last line of defence for secrets: a provider or store error that
+        # embeds a key, token, or cookie is redacted before it reaches stdout/stderr.
+        message = scrub_secrets(exc, limit=2000)
         if args is not None:
             _write_payload({
-                "error": str(exc),
+                "error": message,
                 "error_type": "invalid_request" if isinstance(exc, ValueError) else "runtime_error",
             }, args.format, stdout)
-        stderr.write(f"error: {exc}\n")
+        stderr.write(f"error: {message}\n")
         return 1
 
 
@@ -292,12 +294,15 @@ def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
             use_state=not args.no_state,
         )
     )
-    statuses = payload.get("provider_status") or []
-    payload["outcome"] = (
-        "failed" if statuses and all(row.get("status") == "error" for row in statuses)
-        else "partial" if payload.get("errors")
-        else "success" if payload.get("results") else "empty"
-    )
+    # The core owns the business outcome; the CLI only maps it to an exit code.
+    # Derive it here only for a payload that predates the core field.
+    if "outcome" not in payload:
+        statuses = payload.get("provider_status") or []
+        payload["outcome"] = (
+            "failed" if statuses and all(row.get("status") == "error" for row in statuses)
+            else "partial" if payload.get("errors")
+            else "success" if payload.get("results") else "empty"
+        )
     return payload
 
 
