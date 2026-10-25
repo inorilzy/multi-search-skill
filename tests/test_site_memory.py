@@ -54,11 +54,31 @@ class SiteMemoryOrderingTests(unittest.TestCase):
     def test_cold_site_preserves_original_order(self):
         self.assertEqual(self.memory.reorder_backends(self.url, ["tavily", "jina", "exa"]), ["tavily", "jina", "exa"])
 
-    def test_cooling_failed_backend_follows_successful_and_untried_backends(self):
+    def test_cooling_backend_follows_uncooled_backends_in_user_order(self):
         self.memory.record_attempt(ScrapeAttempt(self.url, "jina", False, error_type="timeout"))
         self.memory.record_attempt(ScrapeAttempt(self.url, "tavily", True, content_length=1000))
 
-        self.assertEqual(self.memory.reorder_backends(self.url, ["jina", "exa", "tavily"]), ["tavily", "exa", "jina"])
+        self.assertEqual(self.memory.reorder_backends(self.url, ["jina", "exa", "tavily"]), ["exa", "tavily", "jina"])
+
+    def test_success_and_failure_counts_do_not_reorder_the_configured_chain(self):
+        for _ in range(5):
+            self.memory.record_attempt(ScrapeAttempt(self.url, "firecrawl", True, content_length=1000))
+        self.memory.record_attempt(ScrapeAttempt(self.url, "exa", False, error_message="bad gateway"))
+
+        self.assertEqual(
+            self.memory.reorder_backends(self.url, ["jina", "exa", "tavily", "firecrawl"]),
+            ["jina", "exa", "tavily", "firecrawl"],
+        )
+
+
+    def test_untried_backends_keep_their_user_position(self):
+        self.memory.record_attempt(ScrapeAttempt(self.url, "jina", True, content_length=1000))
+
+        self.assertEqual(
+            self.memory.reorder_backends(self.url, ["exa", "jina", "firecrawl"]),
+            ["exa", "jina", "firecrawl"],
+        )
+
 
     def test_expired_cooldown_allows_backend_to_be_tried_again(self):
         self.memory.record_attempt(ScrapeAttempt(self.url, "jina", False, error_type="blocked"))

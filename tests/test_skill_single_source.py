@@ -19,14 +19,17 @@ MANAGED_FILES = (
     "SKILL.md",
     "agents/interface.yaml",
     "references/cli.md",
-    "references/search.md",
-    "references/subagents.md",
+    "references/executor.md",
     "references/verification.md",
 )
 
 
 def _skill_rs() -> str:
-    return SKILL_RS.read_text(encoding="utf-8")
+    # Hashes/FILES moved to skill_common; the managed marker remains in skill.rs.
+    common = SKILL_RS.with_name("skill_common.rs")
+    return SKILL_RS.read_text(encoding="utf-8") + (
+        common.read_text(encoding="utf-8") if common.exists() else ""
+    )
 
 
 def _fnv1a(text: str) -> int:
@@ -66,8 +69,8 @@ class SingleSkillSourceTests(unittest.TestCase):
 
     def test_managed_version_is_derived_from_packaged_content(self):
         source = _skill_rs()
-        self.assertNotIn('SKILL_VERSION', source,
-                         "the hand-maintained SKILL_VERSION constant is gone")
+        self.assertNotRegex(source, r"\b(?:const|static)\s+SKILL_VERSION\s*[:=]",
+                            "the hand-maintained SKILL_VERSION constant is gone")
         self.assertIn("combined_hash(&FILE_HASHES)", source)
         self.assertIn("fnv1a_hash", source)
         # Reproduce the const computation: the version changes with content.
@@ -81,7 +84,7 @@ class SingleSkillSourceTests(unittest.TestCase):
     def test_marker_files_contract_lists_every_managed_file(self):
         source = _skill_rs()
         self.assertIn('"files": file_names()', source)
-        self.assertIn('[(&str, &str); 6]', source)
+        self.assertIn('[(&str, &str); 5]', source)
 
     def test_interface_declares_a_host_default_shell(self):
         interface = (SKILL_DIR / "agents" / "interface.yaml").read_text(encoding="utf-8")

@@ -126,7 +126,7 @@ class CatalogCoreParityTests(unittest.TestCase):
         self.assertEqual(
             keyed,
             {
-                "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github_repos",
+                "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github_repos", "jina",
             },
         )
         self.assertEqual(self.sources["github_repos"]["key_provider"], "github")

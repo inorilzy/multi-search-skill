@@ -300,6 +300,30 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["updated"], 3)
         reset.assert_called_once_with(provider="tavily", key_id="tavily:abcd")
 
+    def test_keys_reset_requires_a_selection_or_all(self):
+        with mock.patch.object(cli, "reset_key_state") as reset:
+            code, stdout, stderr = self.run_cli(["keys", "reset"])
+        self.assertEqual(code, 2)
+        self.assertIn("--all", stderr)
+        reset.assert_not_called()
+
+    def test_keys_reset_all_clears_every_row_via_shared_operation(self):
+        with mock.patch.object(cli, "reset_key_state", return_value=7) as reset:
+            code, stdout, stderr = self.run_cli(["keys", "reset", "--all"])
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(json.loads(stdout)["updated"], 7)
+        reset.assert_called_once_with(provider=None, key_id=None)
+
+    def test_keys_reset_all_rejects_conflicting_selectors_without_writes(self):
+        for selector in (["--provider", "exa"], ["--key-id", "exa:abcd"],
+                         ["--provider", "exa", "--key-id", "exa:abcd"]):
+            with self.subTest(selector=selector), mock.patch.object(cli, "reset_key_state") as reset:
+                code, stdout, stderr = self.run_cli(["keys", "reset", "--all", *selector])
+                self.assertEqual(code, 2)
+                self.assertIn("--all", stderr)
+                self.assertEqual(stdout, "")
+                reset.assert_not_called()
+
     def test_service_error_is_reported_to_stderr_with_nonzero_exit(self):
         with mock.patch.object(cli, "run_search_web", side_effect=ValueError("bad query")):
             code, stdout, stderr = self.run_cli(["search", "oops"])
@@ -307,6 +331,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(stdout), {"error": "bad query", "error_type": "invalid_request"})
         self.assertIn("bad query", stderr)
+
+    def test_service_exception_output_is_secret_scrubbed(self):
+        with mock.patch.object(
+            cli, "run_search_web",
+            side_effect=ValueError("failed with Authorization: Bearer super-secret-token"),
+        ):
+            code, stdout, stderr = self.run_cli(["search", "oops"])
+        self.assertEqual(code, 1)
+        self.assertNotIn("super-secret-token", stdout + stderr)
+        self.assertIn("<redacted>", stdout)
+
 
     def test_usage_error_returns_exit_code_2(self):
         code, stdout, stderr = self.run_cli([

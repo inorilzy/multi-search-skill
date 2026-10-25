@@ -49,7 +49,10 @@ class SourceCheckoutDetectionTests(unittest.TestCase):
 
             home_config = _missing_home_config(Path(temp))
             with mock.patch.object(installed, "USER_CONFIG_PATH", home_config), \
-                 mock.patch.dict(os.environ, {installed.CONFIG_ENV_VAR: ""}):
+                 mock.patch.dict(os.environ, {
+                     installed.CONFIG_ENV_VAR: "",
+                     installed.CONFIG_DB_ENV: str(Path(temp) / "absent-config.sqlite"),
+                 }):
                 self.assertIsNone(installed.DEV_CONFIG_PATH, "an installed package must not even name a dev path")
                 self.assertIsNone(installed.dev_config_path())
                 path, source = installed.resolve_config_path_source()

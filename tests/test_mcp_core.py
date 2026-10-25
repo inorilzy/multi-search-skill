@@ -379,7 +379,7 @@ class BaiduSearcherTests(unittest.TestCase):
     def test_baidu_uses_web_summary_endpoint(self):
         calls = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             calls.append(req.full_url)
             return self._FakeResp({
                 "request_id": "rid",
@@ -424,7 +424,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_tavily_want_content_maps_to_raw_content(self):
         captured = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             captured.append(json.loads(req.data.decode("utf-8")))
             return self._FakeResp({"results": [], "answer": "a"})
 
@@ -440,7 +440,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_exa_want_content_maps_to_text_contents(self):
         captured = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             captured.append(json.loads(req.data.decode("utf-8")))
             return self._FakeResp({"results": [{"title": "Doc", "url": "https://example.com", "highlights": ["h"]}]})
 
@@ -457,7 +457,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_parallel_uses_ga_search_endpoint_and_maps_excerpts(self):
         captured = {}
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             captured["url"] = req.full_url
             captured["api_key"] = req.get_header("X-api-key")
             captured["timeout"] = timeout
@@ -494,7 +494,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_parallel_clamps_count_and_drops_rows_without_urls(self):
         captured = {}
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             captured.update(json.loads(req.data.decode("utf-8")))
             return self._FakeResp({
                 "results": [
@@ -531,7 +531,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
     def test_brave_fast_disables_extra_snippets(self):
         urls = []
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             urls.append(req.full_url)
             return self._FakeResp({"web": {"results": []}})
 

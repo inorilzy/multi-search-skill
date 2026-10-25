@@ -44,9 +44,15 @@ def _local_links(path):
 class ReadmeDesktopTests(unittest.TestCase):
     def test_desktop_section_lists_exactly_the_pages_the_ui_mounts(self):
         pages = _pages()
-        self.assertEqual(len(pages), 6, "pages.js must define the six management pages")
+        self.assertEqual(len(pages), 8, "pages.js must define the eight management pages")
+        self.assertEqual(
+            [(page["number"], page["label"]) for page in pages],
+            [("01", "概览与测试"), ("02", "安装 CLI"), ("03", "Claude Code Skill"),
+             ("04", "搜索源与凭据"), ("05", "搜索设置"), ("06", "抓取设置"),
+             ("07", "Cookie 托管"), ("08", "旧配置迁移")],
+        )
         readme = README.read_text(encoding="utf-8")
-        self.assertIn("共 6 个页面", readme)
+        self.assertIn("共 8 个页面", readme)
         rows = _readme_rows(readme)
         self.assertEqual(
             rows,

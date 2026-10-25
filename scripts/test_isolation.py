@@ -414,6 +414,17 @@ class NetworkGuard:
         ):
             if name in self._child_environment:
                 child_env[name] = self._child_environment[name]
+        # Never inherit a real configuration database into a child process.
+        safe_db = self._child_environment.get("MULTI_SEARCH_CONFIG_DB")
+        if safe_db:
+            selected = child_env.get("MULTI_SEARCH_CONFIG_DB")
+            root = Path(self._child_environment["HOME"]).parent.resolve()
+            try:
+                safe = bool(selected) and Path(selected).resolve().is_relative_to(root)
+            except (OSError, ValueError):
+                safe = False
+            if not safe:
+                child_env["MULTI_SEARCH_CONFIG_DB"] = safe_db
         for name, value in self._child_environment.items():
             child_env.setdefault(name, value)
         inherited = child_env.get("PYTHONPATH", "")
@@ -494,6 +505,7 @@ def _isolated_environment_changes(paths: IsolationPaths, *, pythonpath: str) -> 
         # is exercised against the disposable home rather than as an explicit
         # path.  Tests that inject MULTI_SEARCH_CONFIG remain free to do so.
         "MULTI_SEARCH_CONFIG": "",
+        "MULTI_SEARCH_CONFIG_DB": str(paths.home / ".multi-search" / "config.sqlite"),
         ISOLATION_ENV: "1",
         REPORT_ENV: str(paths.report),
         "PYTHONPATH": pythonpath,
@@ -550,6 +562,17 @@ def isolated_test_environment(
         config_path.write_text("{}\n", encoding="utf-8")
         keys_path.write_text("{}\n", encoding="utf-8")
         report_path.touch()
+        # Emulate the desktop schema owner in the disposable profile; the CLI
+        # itself must never create or migrate its configuration database.
+        import sqlite3
+        from contextlib import closing
+        with closing(sqlite3.connect(home / ".multi-search" / "config.sqlite")) as conn:
+            conn.executescript(
+                "CREATE TABLE credentials(provider TEXT PRIMARY KEY, encrypted_value BLOB NOT NULL, saved_at REAL NOT NULL);"
+                "CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);"
+                "PRAGMA user_version=1;"
+            )
+            conn.commit()
 
         bootstrap = temp_root / "bootstrap"
         bootstrap.mkdir()

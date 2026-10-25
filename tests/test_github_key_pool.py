@@ -256,7 +256,8 @@ class GitHubKeyPoolTests(unittest.TestCase):
             self.store.execute("UPDATE key_state SET manually_disabled = 1 WHERE provider = 'github'")
             self.assertEqual(self.manager.candidates("github", "fixture-token-one"), [])
             self.assertEqual(tools.reset_key_state_tool("github"), {"updated": 1})
-            self.assertEqual(len(self.manager.candidates("github", "fixture-token-one")), 1)
+            self.assertEqual(self.manager.candidates("github", "fixture-token-one"), [])
+            self.assertEqual(self.manager.status_rows("github")[0]["manually_disabled"], 1)
 
 
 if __name__ == "__main__":

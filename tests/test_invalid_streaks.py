@@ -66,12 +66,11 @@ class InvalidStreakTests(unittest.TestCase):
             self.assertEqual(row["failure_count"], len(outcomes))
             self.assertNotEqual(row["status"], INVALID)
 
-    def test_each_non_invalid_provider_result_clears_invalid_strikes(self):
+    def test_each_credential_result_clears_invalid_strikes(self):
         cases = (
             ("success", KeyOutcome(True, False), ACTIVE),
             ("rate_limit", KeyOutcome(False, True, "rate_limit", "HTTP 429"), COOLDOWN),
             ("quota_exhausted", KeyOutcome(False, True, "quota_exhausted", "quota"), QUOTA_EXHAUSTED),
-            ("other", KeyOutcome(False, False, "network", "connection error"), ACTIVE),
         )
         for name, outcome, expected_status in cases:
             with self.subTest(result=name), tempfile.TemporaryDirectory(prefix="invalid-streak-reset-") as temp:
@@ -90,6 +89,28 @@ class InvalidStreakTests(unittest.TestCase):
                     row = manager.status_rows("exa")[0]
                 self.assertEqual(row["invalid_strikes"], 0)
                 self.assertEqual(row["status"], expected_status)
+
+    def test_neutral_network_failure_preserves_invalid_streak(self):
+        base = datetime(2026, 9, 13, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory(prefix="invalid-streak-neutral-") as temp:
+            manager = SQLiteKeyManager(StateStore(Path(temp) / "state.sqlite"))
+            candidate = manager.candidates("exa", "fixture-key")[0]
+            with mock.patch.object(key_state, "_now", return_value=base):
+                manager.record_result(
+                    "exa", candidate,
+                    KeyOutcome(False, True, "invalid", "HTTP 401 unauthorized"),
+                )
+                before = manager.status_rows("exa")[0]
+                manager.record_result(
+                    "exa", candidate,
+                    KeyOutcome(False, False, "network", "connection error"),
+                )
+                after = manager.status_rows("exa")[0]
+            self.assertEqual(after["invalid_strikes"], before["invalid_strikes"])
+            self.assertEqual(after["status"], before["status"])
+            self.assertEqual(after["cooldown_until"], before["cooldown_until"])
+            self.assertEqual(after["failure_count"], before["failure_count"] + 1)
+
 
     def test_three_consecutive_invalid_results_still_escalate(self):
         base = datetime(2026, 9, 13, tzinfo=timezone.utc)

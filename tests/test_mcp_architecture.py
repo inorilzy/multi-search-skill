@@ -190,9 +190,9 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             self.assertEqual(row["status"], INVALID)
             self.assertEqual(row["invalid_strikes"], INVALID_STRIKE_LIMIT)
 
-    def test_invalid_strikes_reset_on_success_and_other_failures(self):
-        # P0-A: the consecutive-invalid streak must reset, otherwise a key
-        # accumulates strikes across unrelated, recoverable errors.
+    def test_invalid_strikes_reset_on_success_but_not_neutral_failures(self):
+        # Credential success resets strikes; neutral transport failures cannot
+        # erase credential evidence from another request.
         with tempfile.TemporaryDirectory() as tmp:
             manager = SQLiteKeyManager(StateStore(Path(tmp) / "state.sqlite"))
             cand = self._candidate("exa", "k1")
@@ -201,9 +201,10 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             success = KeyOutcome(True, False)
 
             manager.record_result("exa", cand, invalid)
-            manager.record_result("exa", cand, timeout)  # breaks streak
+            manager.record_result("exa", cand, timeout)  # neutral: preserves streak
             row = {r["key_id"]: r for r in manager.status_rows("exa")}[cand.key_id]
-            self.assertEqual(row["invalid_strikes"], 0)
+            self.assertEqual(row["invalid_strikes"], 1)
+            self.assertEqual(row["status"], TRANSIENT_INVALID)
 
             manager.record_result("exa", cand, invalid)
             manager.record_result("exa", cand, success)  # also resets
@@ -299,7 +300,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     "statuses": [{"status": "success"}],
                 }).encode()
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             import json as _json
             captured["payload"] = _json.loads(req.data)
             return _FakeResp()
@@ -346,7 +347,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     "data": {"markdown": "ok", "metadata": {"title": "Example"}},
                 }).encode()
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             captured["headers"] = dict(req.header_items())
             return _FakeResp()
 
@@ -406,7 +407,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 import json as _json
                 return _json.dumps(self._payload).encode()
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             import json as _json
             depth = _json.loads(req.data).get("extract_depth")
             calls.append(depth)
@@ -928,8 +929,7 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertEqual(captured["sources"], {"github_repos", "baidu"})
 
     def test_expand_query_thread_pool_is_capped(self):
-        captured: dict[str, int] = {}
-        original_executor = concurrent.futures.ThreadPoolExecutor
+        from multi_search_mcp.src.search import candidates as search_pipeline
 
         class FakeRunner:
             def __init__(self, config, providers, route_resolver=None, key_manager=None):
@@ -938,16 +938,16 @@ class PluginServiceConfigTests(unittest.TestCase):
             def run(self, query, *, deadline=None):
                 return [{"source": "brave", "title": query, "url": f"https://example.com/{query}"}]
 
-        def tracking_executor(*args, **kwargs):
-            captured["max_workers"] = kwargs.get("max_workers", args[0] if args else None)
-            return original_executor(*args, **kwargs)
-
-        with mock.patch("multi_search_mcp.src.state.runtime.load_config_safe", return_value={}), \
-             mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}), \
-             mock.patch("multi_search_mcp.src.search.candidates.SearchRunner", FakeRunner), \
-             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}), \
-             mock.patch("multi_search_mcp.src.search_web.run_ranked_fetch_stage", side_effect=self._fake_fetch_stage), \
-             mock.patch("multi_search_mcp.src.search.candidates.concurrent.futures.ThreadPoolExecutor", side_effect=tracking_executor):
+        with (
+            mock.patch("multi_search_mcp.src.state.runtime.load_config_safe", return_value={}),
+            mock.patch("multi_search_mcp.src.state.runtime.load_keys", return_value={}),
+            mock.patch("multi_search_mcp.src.search.candidates.SearchRunner", FakeRunner),
+            mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value={}),
+            mock.patch(
+                "multi_search_mcp.src.search_web.run_ranked_fetch_stage",
+                side_effect=self._fake_fetch_stage,
+            ),
+        ):
             run_multi_search(MultiSearchRequest(
                 query="q",
                 route="default",
@@ -955,7 +955,11 @@ class PluginServiceConfigTests(unittest.TestCase):
                 use_state=False,
             ))
 
-        self.assertLessEqual(captured["max_workers"], 5)
+        # Expansion owns an isolated, capped executor instead of a bare pool.
+        self.assertLessEqual(search_pipeline._EXPAND_POOL._max_workers, 5)
+        self.assertEqual(
+            search_pipeline._EXPAND_POOL._thread_name_prefix, "multi-search-expand",
+        )
 
     def test_social_degradation_is_explicit_when_primary_providers_fail(self):
         class FakeRunner:
@@ -1104,7 +1108,7 @@ class PluginServiceConfigTests(unittest.TestCase):
             def read(self, size=-1):
                 return b'{"answer":"fast answer","results":[]}'
 
-        def fake_urlopen(req, timeout=0):
+        def fake_urlopen(req, timeout=0, **kwargs):
             import json as _json
             captured.update(_json.loads(req.data))
             return _FakeResp()

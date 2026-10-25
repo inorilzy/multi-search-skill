@@ -7,6 +7,8 @@ import sys
 import unittest
 
 from scripts.test_isolation import isolated_test_environment
+from multi_search_mcp.src.support.credential_store import ConfigDatabase
+from tests.desktop_schema import create_config_db
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +61,10 @@ class ProviderHTTP(urllib.request.BaseHandler):
     def https_open(self, request):
         parsed = urllib.parse.urlsplit(request.full_url)
         if parsed.hostname == "hn.algolia.com":
+            delay = float(os.environ.get("CLI_FIXTURE_HN_DELAY", "0") or 0)
+            if delay:
+                import threading
+                threading.Event().wait(delay)
             query = urllib.parse.parse_qs(parsed.query)["query"][0]
             if query == "failure":
                 raise urllib.error.HTTPError(request.full_url, 503, "fixture provider unavailable", {}, io.BytesIO(b""))
@@ -106,8 +112,15 @@ class CliProcessTests(unittest.TestCase):
         # Extend the disposable runner bootstrap, not any product installation.
         (self.isolation.root / "bootstrap" / "sitecustomize.py").write_text(BOOTSTRAP, encoding="utf-8")
         self.environment = dict(os.environ)
+        self.config_db = ConfigDatabase(self.environment["MULTI_SEARCH_CONFIG_DB"])
 
-    def run_cli(self, *args, future=False, no_http=False):
+    def write_settings(self, settings):
+        # The desktop owns schema creation; the CLI must never create it.
+        create_config_db(self.environment["MULTI_SEARCH_CONFIG_DB"])
+        self.config_db.write_settings(settings)
+
+
+    def run_cli(self, *args, future=False, no_http=False, fixture_env=None):
         if self.installed:
             import sysconfig
             console = Path(sysconfig.get_path("scripts")) / ("multi-search.exe" if os.name == "nt" else "multi-search")
@@ -116,7 +129,7 @@ class CliProcessTests(unittest.TestCase):
             command = [sys.executable, "-B", "-m", "multi_search_mcp.cli", *args]
         return subprocess.run(command, cwd=self.isolation.root,
                               env=dict(self.environment, CLI_FIXTURE_FUTURE="1" if future else "",
-                                       CLI_FIXTURE_NO_HTTP="1" if no_http else ""),
+                                       CLI_FIXTURE_NO_HTTP="1" if no_http else "", **(fixture_env or {})),
                               capture_output=True, text=True, encoding="utf-8", timeout=30)
 
     def test_keyless_source_controls_reach_real_cli_and_controlled_http_independently(self):
@@ -131,6 +144,144 @@ class CliProcessTests(unittest.TestCase):
                 rows = json.loads(result.stdout)["provider_status"]
                 self.assertEqual([row["source"] for row in rows], [source])
                 self.assertEqual(rows[0]["status"], "ok")
+
+    def test_custom_route_sources_disabled_filter_and_explicit_source_override_reach_real_cli(self):
+        self.write_settings({
+            "type": "community",
+            "routes": {
+                "community": {
+                    "label": "Community",
+                    "sources": ["hackernews", "stackoverflow"],
+                    "timeout": 5,
+                }
+            },
+            "disabled_sources": ["stackoverflow"],
+        })
+
+        grouped = self.run_cli("search", "fixture", "--no-fetch", "--format", "json")
+        self.assertEqual(grouped.returncode, 0, grouped.stderr)
+        payload = json.loads(grouped.stdout)
+        self.assertEqual(payload["route"], "community")
+        self.assertEqual(payload["diagnostics"]["route_sources"], ["hackernews", "stackoverflow"])
+        self.assertEqual(payload["diagnostics"]["active_sources"], ["hackernews"])
+        self.assertEqual([row["source"] for row in payload["provider_status"]], ["hackernews"])
+
+        overridden = self.run_cli(
+            "search", "fixture", "--source", "sov2ex", "--no-fetch", "--format", "json",
+            fixture_env={"CLI_FIXTURE_KEYLESS": "1"},
+        )
+        self.assertEqual(overridden.returncode, 0, overridden.stderr)
+        override_payload = json.loads(overridden.stdout)
+        self.assertEqual(override_payload["diagnostics"]["route_sources"], ["sov2ex"])
+        self.assertEqual([row["source"] for row in override_payload["provider_status"]], ["sov2ex"])
+
+
+    def test_leading_hyphen_route_works_from_config_and_explicit_equals_argument(self):
+        self.write_settings({
+            "type": "-focus",
+            "routes": {
+                "-focus": {
+                    "label": "Focus",
+                    "sources": ["hackernews"],
+                    "timeout": 5,
+                }
+            },
+        })
+
+        for route_arguments in ((), ("--route=-focus",)):
+            with self.subTest(route_arguments=route_arguments):
+                result = self.run_cli(
+                    "search", "fixture", *route_arguments, "--no-fetch", "--format", "json"
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload["route"], "-focus")
+                self.assertEqual(payload["diagnostics"]["active_sources"], ["hackernews"])
+                self.assertEqual(
+                    [row["source"] for row in payload["provider_status"]],
+                    ["hackernews"],
+                )
+
+
+    def test_route_timeout_precedence_reaches_real_cli_deadline(self):
+        route = {"label": "Slow", "sources": ["hackernews"], "timeout": 1}
+        self.write_settings({
+            "type": "slow",
+            "routes": {"slow": route},
+            "timeout": 3,
+        })
+        delayed = {"CLI_FIXTURE_HN_DELAY": "1.25"}
+
+        group_wins = self.run_cli(
+            "search", "fixture", "--no-fetch", "--format", "json",
+            fixture_env=delayed,
+        )
+        self.assertEqual(group_wins.returncode, 1, group_wins.stderr)
+        self.assertIn("timeout after 1s", group_wins.stdout)
+
+        explicit_wins = self.run_cli(
+            "search", "fixture", "--timeout", "3", "--no-fetch",
+            "--format", "json", fixture_env=delayed,
+        )
+        self.assertEqual(explicit_wins.returncode, 0, explicit_wins.stderr)
+        self.assertEqual(json.loads(explicit_wins.stdout)["outcome"], "success")
+
+        route["timeout"] = None
+        self.write_settings({
+            "type": "slow",
+            "routes": {"slow": route},
+            "timeout": 1,
+        })
+        config_wins = self.run_cli(
+            "search", "fixture", "--no-fetch", "--format", "json",
+            fixture_env=delayed,
+        )
+        self.assertEqual(config_wins.returncode, 1, config_wins.stderr)
+        self.assertIn("timeout after 1s", config_wins.stdout)
+
+
+    def test_real_cli_accepts_edited_builtin_deleted_builtin_and_legacy_config(self):
+        self.write_settings({
+            "type": "fast",
+            "routes": {
+                "fast": {"label": "Edited", "sources": ["hackernews"], "timeout": None}
+            },
+            "timeout": 5,
+        })
+        edited = self.run_cli("search", "fixture", "--no-fetch", "--format", "json")
+        self.assertEqual(edited.returncode, 0, edited.stderr)
+        self.assertEqual(json.loads(edited.stdout)["diagnostics"]["active_sources"], ["hackernews"])
+
+        deleted = self.run_cli("search", "fixture", "--route", "default", "--no-fetch", "--format", "json")
+        self.assertEqual(deleted.returncode, 1)
+        self.assertIn("unknown route: default; valid routes: fast", deleted.stderr)
+
+        self.write_settings({
+            "type": "dev",
+            "disabled_sources": ["github"],
+            "timeout": 5,
+        })
+        legacy = self.run_cli("search", "fixture", "--no-fetch", "--format", "json")
+        self.assertEqual(legacy.returncode, 0, legacy.stderr)
+        self.assertEqual(
+            json.loads(legacy.stdout)["diagnostics"]["active_sources"],
+            ["hackernews", "stackoverflow"],
+        )
+
+
+    def test_bad_routes_are_an_explicit_real_cli_configuration_error(self):
+        self.write_settings({
+            "type": "bad",
+            "routes": {
+                "bad": {"label": "Bad", "sources": ["hackernews"], "timeout": True}
+            },
+        })
+        result = self.run_cli("search", "fixture", "--no-fetch", "--format", "json")
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["error_type"], "invalid_request")
+        self.assertIn("routes.bad.timeout", payload["error"])
+
 
     def test_packaging_has_only_the_cli_entry_and_no_mcp_dependency(self):
         # Python 3.10 has no tomllib; use the stable declared console/dependency

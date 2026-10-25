@@ -8,6 +8,7 @@ from unittest import mock
 from multi_search_mcp import cli
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape import scrape
+from tests.scrape_ctx import context
 
 
 URL = "https://example.com/post"
@@ -116,6 +117,15 @@ class ScraperContractTests(unittest.TestCase):
                 exa_keys=["fixture-key"], tavily_keys=["fixture-key"],
                 url_resolver=lambda _host: ["93.184.216.34"],
             )
+
+    def test_context_entrypoint_preserves_the_same_contract(self):
+        with mock.patch.object(scrape, "scrape_url_exa", return_value={"markdown": BODY}):
+            result = scrape.scrape_url_smart(URL, context(backends=["exa"], keys={"exa": "key"}))
+        self.assertTrue(FIELDS <= result.keys())
+        self.assertEqual(result["markdown"], BODY)
+        self.assertEqual(result["length"], len(BODY))
+        self.assertEqual(result["via"], "exa")
+        self.assertFalse(result["truncated"])
 
     def test_all_five_backends_share_success_fields_and_preserve_markdown(self):
         for backend in ("jina", "exa", "tavily", "firecrawl", "reddit"):

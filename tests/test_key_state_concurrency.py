@@ -102,10 +102,16 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                             self.assertEqual(row, serial.status_rows("exa")[0])
                             self.assertEqual(row["failure_count"], 3 if reset.success else 4)
                             self.assertEqual(row["success_count"], int(reset.success))
-                            self.assertEqual(row["invalid_strikes"], 1 if reset_first else 0)
-                            self.assertEqual(row["status"], TRANSIENT_INVALID if reset_first else ACTIVE)
+                            # Network/timeout is not credential evidence, so it
+                            # cannot erase strikes in either commit order.
+                            if reset.success:
+                                self.assertEqual(row["invalid_strikes"], 1 if reset_first else 0)
+                                self.assertEqual(row["status"], TRANSIENT_INVALID if reset_first else ACTIVE)
+                            else:
+                                self.assertEqual(row["invalid_strikes"], 3)
+                                self.assertEqual(row["status"], INVALID)
 
-    def test_non_invalid_results_clear_strikes_and_success_preserves_quota_expiry(self):
+    def test_credential_results_update_state_and_neutral_errors_preserve_it(self):
         now = datetime(2026, 9, 12, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as temp, mock.patch(
             "multi_search_mcp.src.state.key_state._now", return_value=now
@@ -124,8 +130,8 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                  0, 4, 1, 1, 1, None, (now + timedelta(hours=24)).isoformat()),
                 (invalid, TRANSIENT_INVALID,
                  1, 5, 1, 1, 1, (now + timedelta(minutes=15)).isoformat(), None),
-                (KeyOutcome(False, False, "network", "connection error"), ACTIVE,
-                 0, 6, 1, 1, 1, None, None),
+                (KeyOutcome(False, False, "network", "connection error"), TRANSIENT_INVALID,
+                 1, 6, 1, 1, 1, (now + timedelta(minutes=15)).isoformat(), None),
             )
             fields = ("status", "invalid_strikes", "failure_count", "success_count",
                       "rate_limit_count", "quota_error_count", "cooldown_until", "exhausted_until")
@@ -156,7 +162,25 @@ class KeyStateConcurrencyTests(unittest.TestCase):
                     self.assertEqual(manager.status_rows("exa")[0]["manually_disabled"], 1)
                     self.assertEqual(manager.candidates("exa", "fixture-key"), [])
             self.assertEqual(manager.reset("exa", candidate.key_id), 1)
-            self.assertEqual(manager.candidates("exa", "fixture-key"), [candidate])
+            self.assertEqual(manager.status_rows("exa")[0]["manually_disabled"], 1)
+            self.assertEqual(manager.candidates("exa", "fixture-key"), [])
+
+    def test_success_after_permanent_invalid_is_a_verified_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            manager = SQLiteKeyManager(StateStore(Path(temp) / "state.sqlite"))
+            candidate = manager.candidates("exa", "fixture-key")[0]
+            invalid = KeyOutcome(False, True, "invalid", "HTTP 401 unauthorized")
+            for _ in range(3):
+                manager.record_result("exa", candidate, invalid)
+            self.assertEqual(manager.status_rows("exa")[0]["status"], INVALID)
+            manager.record_result("exa", candidate, KeyOutcome(True, False))
+            row = manager.status_rows("exa")[0]
+            self.assertEqual((row["status"], row["invalid_strikes"]), (ACTIVE, 0))
+            self.assertEqual(
+                [cand.key for cand in manager.candidates("exa", "fixture-key")],
+                ["fixture-key"],
+            )
+
 
     def test_existing_database_without_strikes_migrates_and_preserves_counts(self):
         with tempfile.TemporaryDirectory() as temp:

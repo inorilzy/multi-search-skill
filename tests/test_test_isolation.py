@@ -403,5 +403,17 @@ except NetworkIsolationError:
             self.assertIn("Probe.test_probe", str(error.exception))
 
 
+    def test_child_cannot_inherit_an_external_configuration_database(self):
+        with isolated_test_environment(source_root=ROOT) as isolation:
+            external = str(isolation.root.parent / "must-not-be-read.sqlite")
+            completed = subprocess.run(
+                [sys.executable, "-c", "import os;print(os.environ['MULTI_SEARCH_CONFIG_DB'])"],
+                env=dict(os.environ, MULTI_SEARCH_CONFIG_DB=external),
+                capture_output=True, text=True,
+            )
+            self.assertEqual(completed.returncode, 0)
+            self.assertEqual(completed.stdout.strip(), str(isolation.home / ".multi-search" / "config.sqlite"))
+
+
 if __name__ == "__main__":
     unittest.main()

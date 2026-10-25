@@ -2,8 +2,8 @@
 
 The desktop test (desktop/src-tauri/tests/settings.rs, handoff test) writes the real saved file
 and copies it to the path named by MS_SETTINGS_HANDOFF. This module then runs the CLI's own
-``main()`` with MULTI_SEARCH_CONFIG pointing at that file, so the CLI itself must read the
-desktop-written disabled_sources and default route. Every searcher is faked on the registry,
+``main()`` with MULTI_SEARCH_CONFIG_DB pointing at that database, so the CLI itself must read the
+desktop-written dynamic route, timeout, and disabled_sources. Every searcher is faked on the registry,
 state and keys are isolated to temp paths, and no real key, network call, or user config is used.
 
 Without MS_SETTINGS_HANDOFF the class is skipped; the gate sets it to the handoff copy.
@@ -19,8 +19,9 @@ from unittest import mock
 
 from multi_search_mcp import cli
 from multi_search_mcp.src.search import registry
-from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES
+from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES, default_routes_config
 from multi_search_mcp.src.state.state_store import StateStore
+from multi_search_mcp.src.support.credential_store import ConfigDatabase, default_store
 
 HANDOFF = os.environ.get("MS_SETTINGS_HANDOFF")
 SYNTHETIC_KEYS = {"baidu": "synthetic-baidu-0701", "brave": "synthetic-brave-0702"}
@@ -32,28 +33,32 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name)
-        self.config = root / "desktop-written.json"
+        self.config = root / "desktop-written.sqlite"
         self.config.write_bytes(Path(HANDOFF).read_bytes())
         self.calls: list[str] = []
+        self.timeouts: dict[str, list[float]] = {}
         self.failing = set()
         stack = ExitStack()
         self.addCleanup(stack.close)
         for name in ALL_SOURCE_NAMES:
             stack.enter_context(mock.patch.object(registry, f"search_{name}", self._fake(name)))
-        env = {"MULTI_SEARCH_CONFIG": str(self.config)}
-        env.pop("TWITTER_COOKIES_PATH", None)
+        env = {"MULTI_SEARCH_CONFIG_DB": str(self.config), "MULTI_SEARCH_CONFIG": "", "TWITTER_COOKIES_PATH": ""}
         stack.enter_context(mock.patch.dict(os.environ, env))
         stack.enter_context(
             mock.patch("multi_search_mcp.src.search_web.StateStore",
                        lambda *a, **k: StateStore(root / "state.sqlite"))
         )
-        stack.enter_context(
-            mock.patch("multi_search_mcp.src.state.runtime.load_keys", lambda *a, **k: dict(SYNTHETIC_KEYS))
-        )
+        # 真实运行时必须从设置所在的同一数据库加载，不能注入字典。
+        # 合成 Key 只写入一次性副本。
+        store = default_store()
+        for provider, value in SYNTHETIC_KEYS.items():
+            store.set(provider, value)
 
     def _fake(self, name):
-        def fake(*_args, **_kwargs):
+        def fake(*_args, timeout=None, **_kwargs):
             self.calls.append(name)
+            if timeout is not None:
+                self.timeouts.setdefault(name, []).append(float(timeout))
             if name in self.failing:
                 raise RuntimeError(f"fixture {name} unavailable")
             return [{
@@ -68,25 +73,46 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
 
     def run_cli(self, *extra):
         out, err = io.StringIO(), io.StringIO()
-        code = cli.main(["search", "fixture", "--format", "json", *extra], stdout=out, stderr=err)
+        code = cli.main(["search", "fixture", "--format", "json", "--no-fetch", *extra], stdout=out, stderr=err)
         payload = json.loads(out.getvalue()) if out.getvalue().strip().startswith("{") else None
         return code, payload, err.getvalue()
 
-    def test_cli_reads_the_desktop_written_route_timeout_and_disabled_sources(self):
-        desktop = json.loads(self.config.read_text(encoding="utf-8"))
+    def test_cli_reads_the_desktop_written_dynamic_route_timeout_and_disabled_sources(self):
+        from multi_search_mcp.src.search.resolve import resolve_search_plan
+        from multi_search_mcp.src.search.resolve import SearchPlanRequest
+
+        desktop = ConfigDatabase(self.config).read_settings()
+        expected_routes = default_routes_config()
+        expected_routes["handoff_custom"] = {
+            "label": "联调",
+            "sources": ["hackernews", "stackoverflow"],
+            "timeout": 11,
+        }
         self.assertEqual(desktop["disabled_sources"], ["brave"])
-        self.assertEqual(desktop["type"], "default")
+        self.assertEqual(desktop["type"], "handoff_custom")
+        self.assertEqual(desktop["routes"], expected_routes)
         self.assertEqual(desktop["timeout"], 25)
-        code, payload, _err = self.run_cli()
+        plan = resolve_search_plan(SearchPlanRequest(query="fixture"), desktop)
+        self.assertEqual(plan.route, "handoff_custom")
+        self.assertEqual(plan.route_sources, {"hackernews", "stackoverflow"})
+        self.assertEqual(plan.timeout, 11)
+
+        code, payload, err = self.run_cli()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(payload["route"], "handoff_custom")
         self.assertEqual(payload["diagnostics"]["disabled_sources"], ["brave"])
-        self.assertNotIn("brave", payload["diagnostics"]["active_sources"])
-        self.assertNotIn("brave", self.calls)
-        self.assertIn("baidu", self.calls)
+        self.assertEqual(
+            payload["diagnostics"]["active_sources"],
+            ["hackernews", "stackoverflow"],
+        )
+        self.assertEqual(sorted(self.calls), ["hackernews", "stackoverflow"])
+        for source in ("hackernews", "stackoverflow"):
+            self.assertEqual(len(self.timeouts[source]), 1)
+            self.assertGreater(self.timeouts[source][0], 0)
+            self.assertLessEqual(self.timeouts[source][0], 11)
 
     def test_desktop_saved_twitter_path_reaches_search_twitter_through_real_key_loading(self):
-        from multi_search_mcp.src.state.keys import load_keys
-
-        desktop = json.loads(self.config.read_text(encoding="utf-8"))
+        desktop = ConfigDatabase(self.config).read_settings()
         self.assertEqual(desktop["twitter_cookies_path"], "C:/synthetic/handoff-twitter-cookies.json")
         seen = []
 
@@ -94,16 +120,9 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
             seen.append(cookies)
             return []
 
-        keys_file = Path(self.tmp.name) / "keys.json"
-        keys_file.write_text("{}", encoding="utf-8")
-
-        def isolated_load_keys(*_a, twitter_cookies_path=None, **_k):
-            return load_keys(keys_file, environ={}, credential_store=None,
-                             twitter_cookies_path=twitter_cookies_path)
-
-        with mock.patch.object(registry, "search_twitter", fake_twitter), \
-                mock.patch("multi_search_mcp.src.state.runtime.load_keys", isolated_load_keys):
-            self.run_cli("--source", "twitter")
+        with mock.patch.object(registry, "search_twitter", fake_twitter):
+            code, payload, err = self.run_cli("--source", "twitter")
+        self.assertEqual(code, 0, err)
         self.assertEqual(seen, ["C:/synthetic/handoff-twitter-cookies.json"])
 
     def test_explicit_disabled_source_is_not_run_and_enabled_one_still_runs(self):
