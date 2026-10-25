@@ -94,15 +94,82 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertIn("deadline", str(error.exception))
         self._finish_late_resolution(finished)
 
-    def test_scrape_core_does_not_dispatch_after_url_preflight_deadline(self):
-        finished = threading.Event()
-        start = time.monotonic()
+    def test_scrape_core_does_not_resolve_delegated_urls_locally(self):
+        # A delegated backend fetches the URL from the provider's network, so a
+        # local DNS preflight adds no SSRF protection and wrongly rejects
+        # fake-IP/TUN routing. The resolver must not even be consulted.
+        for backend in ("firecrawl", "jina", "exa", "tavily"):
+            with self.subTest(backend=backend):
+                resolver = mock.Mock(side_effect=AssertionError("delegated URL resolved locally"))
+                with mock.patch(
+                    "multi_search_mcp.src.scrape.scrape._jina_anonymous_cooling_down",
+                    return_value=False,
+                ), mock.patch(
+                    f"multi_search_mcp.src.scrape.scrape.scrape_url_{backend}",
+                    return_value={"url": "https://slow.example/path", "error": "delegated backend error"},
+                ) as scraper:
+                    result = scrape_url_smart(
+                        "https://slow.example/path",
+                        primary=backend,
+                        backends=(backend,),
+                        **({f"{backend}_keys": ["synthetic-key"]} if backend in {"exa", "tavily"} else {}),
+                        deadline=time.monotonic() + 5,
+                        url_resolver=resolver,
+                    )
 
+                resolver.assert_not_called()
+                scraper.assert_called_once()
+                self.assertEqual(result["via"], backend)
+                self.assertIn("delegated backend error", result["error"])
+
+    def test_delegated_url_still_rejects_local_targets_without_dns(self):
+        resolver = mock.Mock(side_effect=AssertionError("unsafe URL must fail before DNS"))
+        for url, reason in (
+            ("http://127.0.0.1/admin", "loopback"),
+            ("http://[::1]/admin", "loopback"),
+            ("http://10.0.0.5/admin", "private"),
+            ("http://192.168.1.1/admin", "private"),
+            ("http://169.254.169.254/latest/meta-data", "link-local"),
+            ("http://0.0.0.0/", "unspecified"),
+            ("http://localhost/admin", "localhost"),
+            ("http://api.localhost/admin", "localhost"),
+            ("ftp://example.com/file", "unsupported URL scheme"),
+            ("file:///etc/passwd", "unsupported URL scheme"),
+            ("https://user:secret@example.com/", "credentials"),
+        ):
+            with self.subTest(url=url), \
+                 mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl") as scraper:
+                result = scrape_url_smart(
+                    url, primary="firecrawl", backends=("firecrawl",),
+                    deadline=time.monotonic() + 5, url_resolver=resolver,
+                )
+                self.assertIn(reason, result["error"])
+                self.assertNotIn("secret", result["error"])
+                scraper.assert_not_called()
+        resolver.assert_not_called()
+
+    def test_delegated_scrape_does_not_dispatch_after_deadline(self):
         with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl") as scraper:
             result = scrape_url_smart(
                 "https://slow.example/path",
                 primary="firecrawl",
                 backends=("firecrawl",),
+                deadline=time.monotonic() - 1,
+                url_resolver=mock.Mock(side_effect=AssertionError("no DNS")),
+            )
+
+        self.assertIn("deadline", result["error"])
+        scraper.assert_not_called()
+
+    def test_scrape_core_does_not_dispatch_after_url_preflight_deadline(self):
+        # Reddit is fetched locally, so its URL preflight still resolves the
+        # host under the request deadline and never dispatches after it.
+        finished = threading.Event()
+        start = time.monotonic()
+
+        with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_reddit") as scraper:
+            result = scrape_url_smart(
+                "https://www.reddit.com/r/test/comments/abc123/title",
                 deadline=time.monotonic() + 0.01,
                 url_resolver=self._slow_resolver(finished),
             )
@@ -110,6 +177,7 @@ class DnsDeadlineTests(unittest.TestCase):
 
         self.assertLess(elapsed, 1.0)
         self.assertIn("DNS", result["error"])
+        self.assertEqual(result["via"], "reddit")
         scraper.assert_not_called()
         self._finish_late_resolution(finished)
 

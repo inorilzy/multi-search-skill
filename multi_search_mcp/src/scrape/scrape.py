@@ -7,7 +7,9 @@ working while the tree migrates.
 """
 from __future__ import annotations
 
+import ipaddress
 import time
+import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,6 +20,7 @@ from ..support.auth import is_key_retryable_error
 from ..support.models import normalize_scrape_result
 from ..support.url_security import (
     UrlSecurityError,
+    _ensure_public_ip,
     validate_scrape_url,
 )
 from .scrapers import _DEFAULT_SCRAPE_TIMEOUT_SECONDS
@@ -261,10 +264,54 @@ def _scrape_with_optional_key_pool(
     return call("")
 
 
+def _validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
+    """Validate a URL handed to a third-party fetch service.
+
+    The provider resolves the URL on its own network, so a local DNS check adds
+    no SSRF protection and wrongly rejects fake-IP/TUN routing (a local proxy
+    answering 198.18.0.0/15). Everything decidable without DNS is still
+    enforced: http(s) only, a host, no embedded credentials, no localhost, and
+    no literal non-public IP destination.
+    """
+    candidate = str(url or "").strip()
+    label = "scrape URL"
+    try:
+        parts = urllib.parse.urlsplit(candidate)
+        hostname = parts.hostname
+    except ValueError as exc:
+        raise UrlSecurityError(f"{label} is not a valid URL: {exc}") from exc
+    scheme = (parts.scheme or "").lower()
+    if scheme not in {"http", "https"}:
+        raise UrlSecurityError(
+            f"{label} uses unsupported URL scheme: {parts.scheme or '<missing>'}"
+        )
+    host = (hostname or "").lower().rstrip(".")
+    if not host:
+        raise UrlSecurityError(f"{label} is missing host")
+    if parts.username is not None or parts.password is not None:
+        raise UrlSecurityError(f"{label} must not include credentials")
+    if deadline is not None and deadline - time.monotonic() <= 0:
+        raise UrlSecurityError(f"{label} deadline exceeded")
+    if host == "localhost" or host.endswith(".localhost"):
+        raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
+    try:
+        literal = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return candidate
+    _ensure_public_ip(literal, label=label, resolved=False)
+    return candidate
+
+
 def _prepare_scrape_target(
     url: str, *, resolver=None, deadline: float | None = None,
 ) -> tuple[str, str]:
-    safe_url = validate_scrape_url(url, resolver=resolver, deadline=deadline)
+    """Validate a generic (delegated) scrape target without local DNS.
+
+    ``resolver`` is accepted for signature compatibility but intentionally
+    unused: only locally fetched paths (Reddit, direct HTTP) resolve the host.
+    """
+    del resolver
+    safe_url = _validate_delegated_url(url, deadline=deadline)
     return safe_url, safe_url
 
 
@@ -509,6 +556,9 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                 )
 
     try:
+        # Generic backends delegate the fetch to a third-party service, which
+        # resolves the URL from its own network. Only literal local
+        # destinations are meaningful here; see _validate_delegated_url.
         safe_url, scrape_target = _prepare_scrape_target(
             url, resolver=ctx.url_resolver, deadline=ctx.deadline,
         )
