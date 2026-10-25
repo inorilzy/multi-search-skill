@@ -230,3 +230,29 @@ test('unverified record shows no compatibility claim', async () => {
   assert.match(root.querySelector('[data-info="compatibility"]').textContent, /^未知：/);
   window.close();
 });
+
+test('unsupported platform explains itself and hides Windows-only fields', async () => {
+  const { window, root } = setup();
+  const plan = {
+    status: 'unsupported',
+    root: '', bin: '', version: null, current_version: null, source: null,
+    compatibility: 'unknown', compatibility_reason: '尚未检查 Skill 兼容性',
+    reason: '应用内安装目前仅支持 Windows。macOS 请用独立安装包或包管理器安装 CLI。',
+    path_hint: '',
+  };
+  await mountInstall(root, {
+    installPlan: async () => plan,
+    userPathPlan: async () => ({ status: 'unavailable', directory: '', reason: '当前环境未连接用户 PATH 存储', can_add: false, can_remove: false }),
+  });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(root.querySelector('[data-status="plan"]').textContent, '此平台不支持应用内安装');
+  assert.equal(root.querySelector('[data-plan-fields]').hidden, true, 'no install root/artifact rows');
+  assert.equal(root.querySelector('[data-run-controls]').hidden, true, 'install/update/uninstall hidden');
+  assert.equal(root.querySelector('[data-path-panel]').hidden, true, 'PATH panel hidden');
+  const note = root.querySelector('[data-platform-note]');
+  assert.equal(note.hidden, false);
+  assert.match(note.textContent, /仅支持 Windows/);
+  assert.equal(root.querySelector('[data-info="reason"]').textContent, '', 'reason is a note, not an alert');
+  assert.equal(root.textContent.includes('.exe'), false, 'no Windows artifact path anywhere');
+  window.close();
+});

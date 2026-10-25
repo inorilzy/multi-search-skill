@@ -8,6 +8,7 @@ const statusLabels = {
   integrity_failed: '完整性校验失败',
   unknown_existing: '已有未知安装，未修改',
   unavailable: '不可用',
+  unsupported: '此平台不支持应用内安装',
   failed: '安装失败',
   already_installed: '已安装，未覆盖',
   update_available: '有可用更新',
@@ -36,12 +37,12 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
   root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / INSTALL CLI</p><h1 tabindex="-1">安装命令行工具。</h1><p>从受控来源安装并校验。未知安装不会被覆盖，失败不会改动已有可用版本。</p></section>
     <section class="panel install"><div class="section-title"><h2>安装计划</h2><button type="button" data-action="plan">重新检查</button></div>
       <strong data-status="plan" aria-live="polite">检查中</strong>
-      <dl class="install-plan"><dt>安装目录</dt><dd data-info="root"></dd><dt>可执行文件</dt><dd data-info="bin"></dd><dt>版本</dt><dd data-info="version"></dd><dt>当前版本</dt><dd data-info="current-version"></dd><dt>安装来源</dt><dd data-info="source"></dd><dt>Skill 兼容性</dt><dd data-info="compatibility"></dd></dl>
-      <p data-info="path-hint" class="note"></p><p data-info="reason" role="alert"></p>
-      <div class="run-controls"><button type="button" data-action="install" class="primary" disabled>安装 CLI</button><button type="button" data-action="update" disabled>更新 CLI</button><button type="button" data-action="uninstall" disabled>卸载 CLI</button><strong data-status="result" aria-live="polite"></strong></div>
+      <dl class="install-plan" data-plan-fields><dt>安装目录</dt><dd data-info="root"></dd><dt>可执行文件</dt><dd data-info="bin"></dd><dt>版本</dt><dd data-info="version"></dd><dt>当前版本</dt><dd data-info="current-version"></dd><dt>安装来源</dt><dd data-info="source"></dd><dt>Skill 兼容性</dt><dd data-info="compatibility"></dd></dl>
+      <p data-info="path-hint" class="note"></p><p data-info="reason" role="alert"></p><p data-platform-note class="note" hidden></p>
+      <div class="run-controls" data-run-controls><button type="button" data-action="install" class="primary" disabled>安装 CLI</button><button type="button" data-action="update" disabled>更新 CLI</button><button type="button" data-action="uninstall" disabled>卸载 CLI</button><strong data-status="result" aria-live="polite"></strong></div>
       <div class="run-controls" data-confirm hidden><p>卸载只删除本工具安装的 CLI 文件；配置、凭据和 Skill 会保留。</p><button type="button" data-action="uninstall-confirm" class="danger">确认卸载</button><button type="button" data-action="uninstall-cancel">取消</button></div>
       <ol data-steps aria-label="安装步骤"></ol></section>
-    <section class="panel"><h2>用户 PATH 与宿主发现</h2><p data-path-directory></p><p data-path-reason></p>
+    <section class="panel" data-path-panel><h2>用户 PATH 与宿主发现</h2><p data-path-directory></p><p data-path-reason></p>
       <button type="button" data-action="path-add" disabled>将 CLI 加入当前用户 PATH</button>
       <button type="button" data-action="path-remove" disabled>移除本工具添加的 PATH 项</button>
       <div data-path-confirm hidden><p>确认仅修改上方目录对应的当前用户 PATH 项？系统 PATH 不变。完成后请重启终端或 Agent 宿主。</p><button type="button" data-action="path-confirm">确认修改用户 PATH</button><button type="button" data-action="path-cancel">取消</button></div>
@@ -71,9 +72,20 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
     const compatLabel = { compatible: '兼容', incompatible: '不兼容', unknown: '未知' }[status.compatibility];
     root.querySelector('[data-info="compatibility"]').textContent = status.compatibility
       ? `${compatLabel || `未知状态（${status.compatibility}）`}：${status.compatibility_reason || ''}` : '';
-    root.querySelector('[data-info="path-hint"]').textContent = ['ready', 'installed'].includes(status.status) ? status.path_hint : '';
+    // A platform without the managed bundle has nothing to show: no root, no
+    // artifact path, no PATH entry. Explain it once instead of rendering
+    // Windows-only fields that do not exist here.
+    const unsupported = status.status === 'unsupported';
+    root.querySelector('[data-plan-fields]').hidden = unsupported;
+    root.querySelector('[data-run-controls]').hidden = unsupported;
+    root.querySelector('[data-path-panel]').hidden = unsupported;
+    root.querySelector('[data-platform-note]').hidden = !unsupported;
+    root.querySelector('[data-platform-note]').textContent = unsupported ? (status.reason || '') : '';
+    const pathHint = root.querySelector('[data-info="path-hint"]');
+    pathHint.textContent = ['ready', 'installed'].includes(status.status) ? status.path_hint : '';
+    pathHint.hidden = unsupported || !pathHint.textContent;
     // A ready plan must not erase the reason of the previous install result.
-    if (status.status !== 'ready') root.querySelector('[data-info="reason"]').textContent = status.reason || '';
+    if (!unsupported && status.status !== 'ready') root.querySelector('[data-info="reason"]').textContent = status.reason || '';
     install.disabled = busy || status.status !== 'ready';
     update.disabled = busy || status.status !== 'update_available';
     uninstall.disabled = busy || status.status !== 'installed';

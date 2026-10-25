@@ -4,6 +4,8 @@ mod common;
 use multi_search_desktop::DesktopManager;
 use std::fs;
 
+// Windows release boundary: the managed install bundle is Windows-only.
+#[cfg(windows)]
 #[test]
 fn default_build_ignores_isolation_and_anchor_test_keys() {
     let profile = common::Profile::new();
@@ -26,6 +28,8 @@ fn default_build_ignores_isolation_and_anchor_test_keys() {
     assert!(!localappdata.exists());
 }
 
+// Windows release boundary: the managed install bundle is Windows-only.
+#[cfg(windows)]
 #[test]
 fn default_build_plan_ignores_isolation_keys() {
     let profile = common::Profile::new();
