@@ -267,26 +267,47 @@ def _scrape_with_optional_key_pool(
 
 
 def _validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
-    """Validate a URL handed to a third-party fetch service.
+    """Validate a URL handed to a third-party fetch service and rebuild it.
 
     The provider resolves the URL on its own network, so a local DNS check adds
     no SSRF protection and wrongly rejects fake-IP/TUN routing (a local proxy
     answering 198.18.0.0/15). Everything decidable without DNS is still
     enforced: http(s) only, a host, no embedded credentials, no localhost, and
     no literal non-public IP destination.
+
+    The provider parses the URL with its own (WHATWG) parser, which may read a
+    different host than ``urllib.parse`` from the same string (a backslash
+    ends the authority there). So the raw string is only input: the returned
+    URL is rebuilt from the validated components, and that is what the backend
+    receives.
     """
     candidate = str(url or "").strip()
     label = "scrape URL"
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
+        # urllib silently drops tab/CR/LF; never let two parsers disagree.
+        raise UrlSecurityError(f"unsafe {label}: URL contains control characters")
+    match = re.match(r"([A-Za-z][A-Za-z0-9+.-]*):", candidate)
+    scheme = match.group(1).lower() if match else ""
+    if scheme not in {"http", "https"}:
+        raise UrlSecurityError(
+            f"{label} uses unsupported URL scheme: {match.group(1) if match else '<missing>'}"
+        )
+    rest = candidate[match.end():]
+    if not rest.startswith("//"):
+        raise UrlSecurityError(f"{label} is missing host")
+    # The authority as urllib sees it. WHATWG also stops at a backslash, so any
+    # backslash here means the provider would fetch a different host.
+    authority = re.split(r"[/?#]", rest[2:], maxsplit=1)[0]
+    if "@" in authority:
+        raise UrlSecurityError(f"{label} must not include credentials")
+    if "\\" in authority:
+        raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
     try:
         parts = urllib.parse.urlsplit(candidate)
         hostname = parts.hostname
+        port = parts.port
     except ValueError as exc:
         raise UrlSecurityError(f"{label} is not a valid URL: {exc}") from exc
-    scheme = (parts.scheme or "").lower()
-    if scheme not in {"http", "https"}:
-        raise UrlSecurityError(
-            f"{label} uses unsupported URL scheme: {parts.scheme or '<missing>'}"
-        )
     if not hostname:
         raise UrlSecurityError(f"{label} is missing host")
     if parts.username is not None or parts.password is not None:
@@ -298,14 +319,42 @@ def _validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
         raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
     literal = _literal_ip(host, label=label)
     if literal is not None:
+        if getattr(literal, "scope_id", None):
+            raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
         _ensure_public_ip(literal, label=label, resolved=False)
-    return candidate
+        # Forward the address exactly as validated, never its alternate spelling.
+        host = f"[{literal.compressed}]" if literal.version == 6 else str(literal)
+    netloc = host if port is None else f"{host}:{port}"
+    try:
+        path = urllib.parse.quote(parts.path, safe=_URL_PATH_SAFE)
+        query = urllib.parse.quote(parts.query, safe=_URL_QUERY_SAFE)
+        fragment = urllib.parse.quote(parts.fragment, safe=_URL_QUERY_SAFE)
+    except UnicodeError as exc:
+        raise UrlSecurityError(f"{label} is not a valid URL: {exc}") from exc
+    return urllib.parse.urlunsplit((scheme, netloc, path, query, fragment))
+
+
+# Characters kept verbatim when re-encoding a rebuilt URL. Existing ``%XX``
+# escapes survive; a backslash, space or ``<>^|`` in the path becomes ``%5C``
+# etc., so no parser can treat it as an authority or path separator.
+_URL_PATH_SAFE = "/%!$&'()*+,;=:@-._~"
+_URL_QUERY_SAFE = _URL_PATH_SAFE + "?"
 
 
 # Dots that IDNA/WHATWG URL parsers treat as label separators.
 _IDNA_DOTS = str.maketrans({"\u3002": ".", "\uff0e": ".", "\uff61": "."})
 # A label the platform IPv4 parser (inet_aton) may read as a number.
 _NUMERIC_LABEL = re.compile(r"^(?:0x[0-9a-f]*|[0-9]+)$")
+# Host names are ASCII letters, digits, hyphens, underscores and dots. Anything
+# else (backslash, percent escapes, control characters, ^|<> and space) is not
+# a host: WHATWG parsers either terminate the authority there or reject the
+# URL, so the host the provider fetches would differ from the one checked here.
+_HOSTNAME_CHARS = re.compile(
+    r"[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?)*\.?"
+)
+# Returned by _parse_inet_aton for a leading-zero label: libc reads ``010`` as
+# decimal on BSD/macOS and as octal in WHATWG/glibc, so neither guess is safe.
+_AMBIGUOUS = object()
 
 
 def _normalize_delegated_host(hostname: str, *, label: str) -> str:
@@ -324,6 +373,8 @@ def _normalize_delegated_host(hostname: str, *, label: str) -> str:
         return raw.strip("[]").lower()
     # WHATWG URL parsers percent-decode the host (``127.0.0.%31``) before use.
     decoded = urllib.parse.unquote(raw)
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in decoded):
+        raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
     host = unicodedata.normalize("NFKC", decoded).translate(_IDNA_DOTS).lower().rstrip(".")
     if not host:
         raise UrlSecurityError(f"{label} is missing host")
@@ -331,15 +382,23 @@ def _normalize_delegated_host(hostname: str, *, label: str) -> str:
         ascii_host = host.encode("idna").decode("ascii")
     except UnicodeError as exc:
         raise UrlSecurityError(f"{label} host is not a valid domain name") from exc
-    return ascii_host.lower().rstrip(".")
+    ascii_host = ascii_host.lower().rstrip(".")
+    if not _HOSTNAME_CHARS.fullmatch(ascii_host):
+        # Backslash terminates the authority in WHATWG parsing (the provider
+        # would fetch a different host than the one validated here); percent
+        # escapes, control characters and ^|<> are equally not part of a host.
+        raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
+    return ascii_host
 
 
 def _parse_inet_aton(host: str) -> ipaddress.IPv4Address | None:
     """IPv4 parse with inet_aton semantics, as used by platform resolvers.
 
-    Accepts 1-4 dot-separated parts, each decimal, ``0x`` hex or ``0`` octal;
-    the last part fills the remaining bytes (``127.1`` → ``127.0.0.1``,
-    ``2130706433`` → ``127.0.0.1``). Returns None when ``host`` is not numeric.
+    Accepts 1-4 dot-separated parts, each decimal or ``0x`` hex; the last part
+    fills the remaining bytes (``127.1`` → ``127.0.0.1``, ``2130706433`` →
+    ``127.0.0.1``). Returns None when ``host`` is not numeric, and the
+    ``_AMBIGUOUS`` sentinel for a leading-zero label, whose base differs
+    between libc implementations.
     """
     labels = host.split(".")
     if not 1 <= len(labels) <= 4:
@@ -352,7 +411,11 @@ def _parse_inet_aton(host: str) -> ipaddress.IPv4Address | None:
             if part.startswith("0x"):
                 value = int(part[2:] or "0", 16)
             elif len(part) > 1 and part.startswith("0"):
-                value = int(part, 8)
+                # ``010`` is octal to glibc/WHATWG but decimal to BSD libc; do
+                # not guess which address the provider ends up fetching.
+                if not part.isdigit():
+                    return None
+                return _AMBIGUOUS
             else:
                 value = int(part, 10)
         except ValueError:
@@ -383,6 +446,8 @@ def _literal_ip(host: str, *, label: str):
     except ValueError:
         pass
     parsed = _parse_inet_aton(host)
+    if parsed is _AMBIGUOUS:
+        raise UrlSecurityError(f"unsafe {label}: host is a non-canonical numeric address")
     if parsed is not None:
         return parsed
     if _NUMERIC_LABEL.match(host.rsplit(".", 1)[-1]):

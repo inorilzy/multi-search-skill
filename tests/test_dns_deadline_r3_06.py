@@ -143,12 +143,14 @@ class DnsDeadlineTests(unittest.TestCase):
             ("http://0x7f000001/", "loopback"),
             ("http://127.1/", "loopback"),
             ("http://127.0.1/", "loopback"),
-            ("http://017700000001/", "loopback"),
-            ("http://127.000.000.001/", "loopback"),
+            # Leading-zero labels are octal to glibc/WHATWG but decimal to
+            # BSD libc: rejected as ambiguous instead of guessing a base.
+            ("http://017700000001/", "non-canonical numeric"),
+            ("http://127.000.000.001/", "non-canonical numeric"),
             ("http://0/", "unspecified"),
             ("http://2852039166/latest/meta-data/", "link-local"),
             ("http://0xa9fea9fe/", "link-local"),
-            ("http://0251.0376.0251.0376/", "link-local"),
+            ("http://0251.0376.0251.0376/", "non-canonical numeric"),
             ("http://169.254.43518/", "link-local"),
             ("http://167772165/", "private"),
             ("http://0x0a.0.0.5/", "private"),
@@ -166,6 +168,36 @@ class DnsDeadlineTests(unittest.TestCase):
             ("http://%6cocalhost/", "localhost"),
             # Credentials stay out of the error even for an unsafe host.
             ("http://user:secret@2130706433/", "credentials"),
+            # A backslash ends the authority for WHATWG parsers (the provider
+            # side), so these would fetch the local host after the backslash.
+            ("http://127.0.0.1\\admin", "not a valid hostname"),
+            ("http://127.0.0.1\\.evil.com/", "not a valid hostname"),
+            ("http://169.254.169.254\\latest\\meta-data", "not a valid hostname"),
+            ("http://localhost\\admin", "not a valid hostname"),
+            ("http://LOCALHOST\\admin", "not a valid hostname"),
+            ("http://10.0.0.5\\admin", "not a valid hostname"),
+            ("http://2130706433\\admin", "not a valid hostname"),
+            ("http://\\127.0.0.1/", "not a valid hostname"),
+            ("http://evil.com\\@127.0.0.1/", "credentials"),
+            ("http://user:secret@evil.com\\@127.0.0.1/", "credentials"),
+            # Tab/CR/LF are silently dropped by WHATWG parsers.
+            ("http://127.0.0.1\t/", "control characters"),
+            ("http://127.0.0\n.1/", "control characters"),
+            # Ambiguous leading-zero labels (decimal on BSD libc, octal elsewhere).
+            ("http://010.0.0.05/", "non-canonical numeric"),
+            ("http://010.0.0.01/", "non-canonical numeric"),
+            ("http://0010.0.0.5/", "non-canonical numeric"),
+            ("http://0127.0.0.1/", "non-canonical numeric"),
+            ("http://0177.0.0.1/", "non-canonical numeric"),
+            ("http://012.0.0.1/", "non-canonical numeric"),
+            # Characters outside the hostname set fail closed.
+            ("http://127.0.0.1%00/", "not a valid hostname"),
+            ("http://127.0.0.1%1f/", "not a valid hostname"),
+            ("http://exa^mple.com/", "not a valid hostname"),
+            ("http://exa|mple.com/", "not a valid hostname"),
+            ("http://exa<mple.com/", "not a valid hostname"),
+            ("http://exa mple.com/", "not a valid hostname"),
+            ("http://[fe80::1%25eth0]/", "not a valid hostname"),
         ):
             with self.subTest(url=url), \
                  mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl") as scraper:
@@ -187,7 +219,9 @@ class DnsDeadlineTests(unittest.TestCase):
             "https://fake-ip.tun.example/article",
             "https://163.com/news",
             "https://1password.com/",
+            "https://123.example.com/",
             "https://0x.example.com/",
+            "https://exa_mple.com/",
             "https://m\u00fcnchen.de/",
             "https://93.184.216.34/",
             "https://134744072/",
@@ -203,6 +237,34 @@ class DnsDeadlineTests(unittest.TestCase):
                 self.assertNotIn("error", result)
                 self.assertEqual(result["via"], "firecrawl")
                 scraper.assert_called_once()
+        resolver.assert_not_called()
+
+    def test_delegated_backend_receives_the_rebuilt_url_not_the_raw_string(self):
+        # The provider parses the URL itself; it must receive the components
+        # that were validated, never the raw input another parser may read
+        # differently.
+        resolver = mock.Mock(side_effect=AssertionError("delegated URL resolved locally"))
+        for raw, rebuilt in (
+            ("HTTPS://Example.COM:8443/a\\b c?q=1 2#frag",
+             "https://example.com:8443/a%5Cb%20c?q=1%202#frag"),
+            ("https://m\u00fcnchen.de/stra\u00dfe?x=\u00fc",
+             "https://xn--mnchen-3ya.de/stra%C3%9Fe?x=%C3%BC"),
+            ("https://134744072/path", "https://8.8.8.8/path"),
+            ("https://[2606:4700:0:0::1111]/p", "https://[2606:4700::1111]/p"),
+            ("https://example.com/%E4%B8%AD?a=%20b", "https://example.com/%E4%B8%AD?a=%20b"),
+        ):
+            with self.subTest(url=raw), mock.patch(
+                "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl",
+                return_value={"url": rebuilt, "markdown": "body", "via": "firecrawl"},
+            ) as scraper:
+                result = scrape_url_smart(
+                    raw, primary="firecrawl", backends=("firecrawl",),
+                    deadline=time.monotonic() + 5, url_resolver=resolver,
+                )
+                self.assertNotIn("error", result)
+                scraper.assert_called_once()
+                self.assertEqual(scraper.call_args.args[0], rebuilt)
+                self.assertEqual(result["url"], rebuilt)
         resolver.assert_not_called()
 
     def test_delegated_scrape_does_not_dispatch_after_deadline(self):
