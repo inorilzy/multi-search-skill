@@ -533,9 +533,9 @@ fn python_cli_reads_desktop_written_settings_and_rejects_future_versions() {
     let read_script = r#"
 import json, sys
 from multi_search_mcp.src.support.credential_store import ConfigDatabase
-from multi_search_mcp.src.search.resolve import resolve_scrape_backends
+from multi_search_mcp.src.scrape.service import configured_scrape_backends
 data = ConfigDatabase(sys.argv[1]).read_settings()
-assert resolve_scrape_backends(data) == ['firecrawl', 'jina']
+assert list(configured_scrape_backends(data)) == ['firecrawl', 'jina']
 print(json.dumps({"type": data.get("type"), "timeout": data.get("timeout"), "disabled_sources": data.get("disabled_sources")}))
 "#;
     let output = std::process::Command::new("python")
