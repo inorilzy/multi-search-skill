@@ -227,14 +227,23 @@ class StateStore:
             # the expected version and every required column exists.
             return
         with self.connect() as conn:
-            # WAL is persistent in the database file: after this, every connection
-            # (including other processes) reads without blocking on a writer.
+            # The reserved lock must be held before the version is trusted: a
+            # newer release can upgrade the file in the gap between the fast
+            # path's read and here. ``journal_mode`` persists immediately and
+            # SQLite forbids changing it inside a transaction, so WAL is
+            # switched on only after this locked check has accepted the file.
+            conn.execute("BEGIN IMMEDIATE")
+            self._refuse_future_version(conn)
+            if self._schema_is_current_conn(conn):
+                return
+            # WAL lets readers proceed while another process writes; the busy
+            # timeout covers the short write contention that remains.
+            conn.commit()
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("BEGIN IMMEDIATE")
-            # Decide on the locked snapshot, before any DDL or data rewrite.
-            # A newer release may have upgraded the file while this process
-            # waited for the lock; refusing first means that upgrade is never
-            # migrated over, whatever its layout looks like.
+            # Re-decide on the new locked snapshot. The commit above released
+            # the lock, so a concurrent upgrade that landed in between is
+            # caught here, before any DDL or data rewrite.
             self._refuse_future_version(conn)
             if self._schema_is_current_conn(conn):
                 return

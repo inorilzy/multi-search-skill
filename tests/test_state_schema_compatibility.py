@@ -17,6 +17,7 @@ Version contract (``PRAGMA user_version``):
 The desktop's scrape-memory views accept versions 1 and 2 only, so this stays
 at 2.
 """
+import hashlib
 import sqlite3
 import tempfile
 import unittest
@@ -174,6 +175,38 @@ class SchemaCompatibilityTests(unittest.TestCase):
 
     def test_future_version_with_other_incompatible_layout_is_refused(self):
         self._assert_future_version_refused(extra_ddl="ALTER TABLE key_state DROP COLUMN invalid_strikes")
+
+    def test_future_version_in_delete_mode_is_not_switched_to_wal(self):
+        self._assert_future_delete_mode_untouched()
+
+    def test_future_version_missing_column_in_delete_mode_is_not_switched_to_wal(self):
+        self._assert_future_delete_mode_untouched(drop_truncated=True)
+
+    def _assert_future_delete_mode_untouched(self, *, drop_truncated=False):
+        """A future version is refused before the persistent journal-mode change.
+
+        ``PRAGMA journal_mode`` writes the file immediately and cannot run
+        inside a transaction, so it must not precede the locked version check.
+        """
+        StateStore(self.path)
+        self._write_marker()
+        with _connect(self.path) as conn, conn:
+            conn.execute("PRAGMA journal_mode=DELETE")
+            if drop_truncated:
+                conn.execute("ALTER TABLE content_sources DROP COLUMN truncated")
+            conn.execute("PRAGMA user_version=99")
+        before = _snapshot(self.path)
+        digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
+
+        with self.assertRaises(StateSchemaVersionError):
+            StateStore(self.path)
+
+        self.assertEqual(_snapshot(self.path), before)
+        self.assertEqual(_version(self.path), 99)
+        with _connect(self.path) as conn:
+            self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0], "delete")
+        # Every connection is closed, and nothing else writes this temp file.
+        self.assertEqual(hashlib.sha256(self.path.read_bytes()).hexdigest(), digest)
 
     def _assert_future_version_refused(self, *, drop_truncated=False, extra_ddl=None):
         StateStore(self.path)
