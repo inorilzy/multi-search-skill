@@ -1,10 +1,12 @@
+#[cfg(windows)]
 use crate::windows_util;
 use crate::RuntimeEnvironment;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// `%VAR%` expansion now lives in `windows_util`; kept as a forwarding alias
-/// for callers that already import it from here.
+/// for callers that already import it from here. Registry-only concept.
+#[cfg(windows)]
 pub(crate) fn expand(value: &str, variables: &BTreeMap<String, String>) -> String {
     windows_util::expand(value, variables)
 }
@@ -52,6 +54,10 @@ impl RuntimeEnvironment {
             ))
             .collect()
         };
+        // POSIX: the process PATH is the only honest base; there is no
+        // registry to consult and reading the login-shell profile here would
+        // execute nothing anyway. The store (when connected) contributes its
+        // registered directory on top of this.
         #[cfg(not(windows))]
         #[allow(unused_mut)]
         let mut user_path = Vec::new();

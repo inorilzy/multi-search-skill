@@ -41,6 +41,17 @@ pub struct CliStatus {
 /// the same CLI is installed as a plain `multi-search` script, so discovery must look for that.
 pub const CLI_FILE_NAME: &str = if cfg!(windows) { "multi-search.exe" } else { "multi-search" };
 
+/// Store text → PATH entries: `%VAR%` expansion is a registry concept and
+/// applies only on Windows; POSIX profile values are already literal paths.
+#[cfg(windows)]
+fn expand_path_value(text: &str, variables: &BTreeMap<String, String>) -> String {
+    crate::windows_util::expand(text, variables)
+}
+#[cfg(not(windows))]
+fn expand_path_value(text: &str, _variables: &BTreeMap<String, String>) -> String {
+    text.to_string()
+}
+
 fn find_cli(paths: &[PathBuf]) -> Option<PathBuf> {
     paths
         .iter()
@@ -84,7 +95,16 @@ impl<'a> CliDiscovery<'a> {
                 .variables
                 .insert("PATH".into(), path.to_string_lossy().into_owned());
         }
-        let user = CliDiscovery::new(&user_environment, None, None).probe(find_cli(&paths), &secrets);
+        let mut user = CliDiscovery::new(&user_environment, None, None).probe(find_cli(&paths), &secrets);
+        // Truthful labelling: this row reflects the *registered* PATH entry,
+        // not an executed login shell (which could run arbitrary config).
+        // A shell we cannot inspect may still resolve differently — say so
+        // instead of implying we verified the user's interactive PATH.
+        if self.user_path_store.is_some() && user.status == "ready" {
+            user.reason = "反映已注册的用户 PATH 配置块；未执行登录 Shell 验证。\
+                若交互终端结果不同，请检查是否存在其他 PATH 配置。"
+                .into();
+        }
         let restart_required = app.status != "ready" && user.status == "ready";
         let (execution, managed) = match &self.managed {
             // A verified managed install always wins, so a same-named file earlier on PATH
@@ -167,10 +187,9 @@ impl<'a> CliDiscovery<'a> {
         };
         let mut paths = self.environment.user_path.clone();
         // The production base is the machine PATH, not a stale snapshot of the user's PATH.
-        paths.extend(std::env::split_paths(&crate::windows_util::expand(
-            &value.text,
-            &self.environment.variables,
-        )));
+        // Registry values may carry `%VAR%` on Windows; POSIX profile entries are literal.
+        let text = expand_path_value(&value.text, &self.environment.variables);
+        paths.extend(std::env::split_paths(&text));
         paths
     }
 
