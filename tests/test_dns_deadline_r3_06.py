@@ -68,7 +68,7 @@ class DnsDeadlineTests(unittest.TestCase):
             with self.assertRaises((TimeoutError, urllib.error.URLError)) as error:
                 http.urlopen_retry(
                     "http://slow.example/path",
-                    timeout=0.01,
+                    timeout=0.1,
                     extra_handlers=(urllib.request.ProxyHandler({}),),
                 )
         elapsed = time.monotonic() - start
@@ -671,7 +671,7 @@ class DnsDeadlineTests(unittest.TestCase):
 
         result = scrape_url_reddit(
             "https://www.reddit.com/r/test/comments/abc123/title",
-            timeout=0.01,
+            timeout=0.1,
             url_resolver=self._slow_resolver(finished),
         )
 
@@ -695,7 +695,7 @@ class DnsDeadlineTests(unittest.TestCase):
         with self.assertRaises(UrlSecurityError) as error:
             http.urlopen_retry(
                 "http://" + PUBLIC_IP + "/start",
-                timeout=0.01,
+                timeout=0.1,
                 redirect_resolver=self._slow_resolver(finished),
                 extra_handlers=(RedirectHandler(),),
             )
