@@ -134,7 +134,8 @@ SCHEMA = (
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       canonical_url TEXT NOT NULL DEFAULT '',
-      cache_scope TEXT NOT NULL DEFAULT ''
+      cache_scope TEXT NOT NULL DEFAULT '',
+      truncated INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
@@ -233,9 +234,14 @@ class StateStore:
                 "invalid_strikes": "INTEGER NOT NULL DEFAULT 0",
             })
             self._scrub_key_fingerprints(conn)
+            # ``truncated`` is the one column version 2 adds over version 1 (see the
+            # source branch and the desktop's scrape-memory migration fixture). It is
+            # acquisition metadata only: nothing here reads it back, so it never makes
+            # a truncated body look complete.
             self._ensure_columns(conn, "content_sources", {
                 "canonical_url": "TEXT NOT NULL DEFAULT ''",
                 "cache_scope": "TEXT NOT NULL DEFAULT ''",
+                "truncated": "INTEGER NOT NULL DEFAULT 0",
             })
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_content_sources_url_scope "
@@ -259,7 +265,7 @@ class StateStore:
             return False
         required = {
             "key_state": {"use_count", "last_used_at", "invalid_strikes"},
-            "content_sources": {"canonical_url", "cache_scope"},
+            "content_sources": {"canonical_url", "cache_scope", "truncated"},
         }
         for table, columns in required.items():
             existing = {
