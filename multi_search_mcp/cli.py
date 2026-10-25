@@ -182,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
     keys_reset_parser = keys_subparsers.add_parser("reset", help="reset key health rows")
     keys_reset_parser.add_argument("--provider")
     keys_reset_parser.add_argument("--key-id")
+    keys_reset_parser.add_argument(
+        "--all", action="store_true",
+        help="confirm resetting all key health rows; cannot be combined with selectors",
+    )
     _add_format_argument(keys_reset_parser)
     keys_reset_parser.set_defaults(handler=_handle_keys_reset)
 
@@ -385,6 +389,11 @@ def _handle_keys_status(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _handle_keys_reset(args: argparse.Namespace) -> dict[str, Any]:
+    # Confirm the scope before entering the shared operation (and opening a DB).
+    if args.all and (args.provider is not None or args.key_id is not None):
+        raise CLIUsageError("--all cannot be combined with --provider or --key-id")
+    if not (args.all or args.provider or args.key_id):
+        raise CLIUsageError("keys reset requires --all or a --provider/--key-id selection")
     return {"updated": reset_key_state(provider=args.provider, key_id=args.key_id)}
 
 

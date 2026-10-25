@@ -55,6 +55,9 @@ def run_read_source(
         "end": end,
         "match_offset": match_offset,
         "has_more": end < len(body),
+        # Paging only describes the cached text; the acquisition may be partial
+        # even when the last cached page has been reached.
+        "truncated": bool(cached.get("truncated")),
         "next_offset": (offset + (end - start)) if end < len(body) else None,
         "content_length": len(body),
         "content_hash": cached["content_hash"],

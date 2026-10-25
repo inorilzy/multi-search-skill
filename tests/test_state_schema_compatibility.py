@@ -8,8 +8,9 @@ Version contract (``PRAGMA user_version``):
 - version 1: the source branch's first versioned schema. It has the content
   columns but not ``content_sources.truncated``.
 - version 2: current. The only thing it adds over version 1 is
-  ``content_sources.truncated``, an inert acquisition-metadata flag. Nothing in
-  this tree reads it, so it cannot make a truncated body look complete.
+  ``content_sources.truncated``, a per-acquisition metadata flag. Legacy v1
+  bindings default to False; existing v2 flags must reach cache/fetch/read
+  callers without changing the stored body or weakening cache byte limits.
 - anything newer: refused. A database written by a future release is never
   migrated, even when its layout happens to match; opening it raises
   ``StateSchemaVersionError`` and leaves the file unchanged.
@@ -131,10 +132,10 @@ class SchemaCompatibilityTests(unittest.TestCase):
         self.assertEqual(cached["content"], BODY)
         with _connect(self.path) as conn:
             stored = conn.execute("SELECT truncated FROM content_sources WHERE source_id='src-1'").fetchone()[0]
-        # Existing rows default the new metadata to "not truncated"; the flag is
-        # never read back, so it cannot change what a caller receives.
+        # Legacy v1 rows carry no evidence of acquisition truncation. The new
+        # metadata defaults to False and is exposed without changing the body.
         self.assertEqual(stored, 0)
-        self.assertNotIn("truncated", cached)
+        self.assertFalse(cached["truncated"])
 
     def test_source_branch_v2_database_opens_unchanged(self):
         StateStore(self.path)

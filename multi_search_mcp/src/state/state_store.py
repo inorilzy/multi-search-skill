@@ -238,7 +238,7 @@ class StateStore:
                 return
             # WAL lets readers proceed while another process writes; the busy
             # timeout covers the short write contention that remains.
-            conn.commit()
+            conn.execute("COMMIT")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("BEGIN IMMEDIATE")
             # Re-decide on the new locked snapshot. The commit above released
@@ -255,10 +255,9 @@ class StateStore:
                 "invalid_strikes": "INTEGER NOT NULL DEFAULT 0",
             })
             self._scrub_key_fingerprints(conn)
-            # ``truncated`` is the one column version 2 adds over version 1 (see the
-            # source branch and the desktop's scrape-memory migration fixture). It is
-            # acquisition metadata only: nothing here reads it back, so it never makes
-            # a truncated body look complete.
+            # Version 2 adds binding-local acquisition completeness metadata.
+            # Cache/fetch/read preserve this flag, independently of preview limits;
+            # it does not authorize cropping oversized bodies to fit the cache.
             self._ensure_columns(conn, "content_sources", {
                 "canonical_url": "TEXT NOT NULL DEFAULT ''",
                 "cache_scope": "TEXT NOT NULL DEFAULT ''",

@@ -152,7 +152,9 @@ def run_fetch_source(
             "backend": "content-store",
             "cache_hit": True,
             "persisted": True,
-            "truncated": max_chars is not None and len(str(cached["content"])) > max_chars,
+            "truncated": bool(cached.get("truncated")) or (
+                max_chars is not None and len(str(cached["content"])) > max_chars
+            ),
             "untrusted_content": True,
         }
 
@@ -164,10 +166,8 @@ def run_fetch_source(
             ScrapeRequest(
                 url=url,
                 backends=request.backends,
-                # Preview size must not truncate the cached acquisition. The
-                # character bound is derived from the cache's byte bound: no body
-                # longer than this can ever be stored, and the exact UTF-8 size
-                # is checked when persisting.
+                # Acquire independently of preview size. Byte limits are checked
+                # only when persisting, never by cropping a body to fit the cache.
                 scrape_chars=max_acquisition_chars(DEFAULT_MAX_OBJECT_BYTES),
                 timeout=request.timeout,
                 output="json",
@@ -186,6 +186,7 @@ def run_fetch_source(
     body = str(result.get("markdown") or "")
     if not body:
         raise ValueError("fetch_source returned empty body")
+    acquisition_truncated = bool(result.get("truncated"))  # Before max_chars preview.
     stored = None
     persist_error = None
     if content_store and source_id and retention.persist_body:
@@ -194,6 +195,7 @@ def run_fetch_source(
                 source_id, body,
                 canonical_url=canonicalize_url(url) if cache_scope else "",
                 cache_scope=cache_scope,
+                truncated=acquisition_truncated,
             )
         except ContentTooLargeError as exc:
             # The cache limit is UTF-8 bytes, so a large CJK page can exceed it
@@ -219,7 +221,7 @@ def run_fetch_source(
         "backend": str(result.get("via") or "unknown"),
         "cache_hit": False,
         "persisted": stored is not None,
-        "truncated": max_chars is not None and len(body) > max_chars,
+        "truncated": acquisition_truncated or (max_chars is not None and len(body) > max_chars),
         "untrusted_content": True,
         "site_scraper_updates": updates,
     }
