@@ -52,6 +52,24 @@ test('unknown existing installation is reported as untouched and not installable
   window.close();
 });
 
+test('a ready plan shows the bundle it will install from, not a blank source', async () => {
+  const { window, root } = setup();
+  await mountInstall(root, {
+    installPlan: async () => plan('ready', {
+      root: '/Users/fixture/Library/Application Support/MultiSearch/cli',
+      bin: '/Users/fixture/Library/Application Support/MultiSearch/cli/bin/multi-search',
+      version: '0.4.0',
+      source: '/Applications/Multi Search.app/Contents/Resources/cli-bundle',
+    }),
+  });
+  assert.equal(root.querySelector('[data-info="source"]').textContent,
+    '/Applications/Multi Search.app/Contents/Resources/cli-bundle',
+    'the page answers "what am I about to install" before the user clicks');
+  assert.equal(root.querySelector('[data-info="root"]').textContent,
+    '/Users/fixture/Library/Application Support/MultiSearch/cli');
+  window.close();
+});
+
 test('ready plan shows target and PATH hint; success shows steps and version', async () => {
   const { window, root } = setup();
   const api = {
