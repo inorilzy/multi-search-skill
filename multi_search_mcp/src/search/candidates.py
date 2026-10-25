@@ -17,6 +17,7 @@ from ..state.key_state import BasicKeyManager, SQLiteKeyManager, classify_error,
 from ..state.source_registry import SourceRegistry
 from ..state.state_store import StateStore
 from ..scrape.scrapers.twitter import is_twitter_url
+from ..support.concurrency import BoundedDaemonExecutor
 from ..support.config import config_list
 from ..support.models import ANSWER_SOURCES, is_empty_result, search_content
 from ..support.requests import SearchWebRequest
@@ -33,7 +34,16 @@ from .resolve import (
 from .search_runner import SearchRunner, SearchRunnerConfig
 
 
+# Query expansion is a shallow, short fan-out (one task per variant query).
+# Capacity is intentionally small and isolated from the provider pool inside
+# ``SearchRunner``: a parent expansion task occupies an expansion slot while
+# waiting for provider work, so sharing one pool would let nested fan-out
+# occupy every slot and deadlock.
 MAX_EXPAND_CONCURRENCY = 5
+_EXPAND_POOL = BoundedDaemonExecutor(
+    max_workers=MAX_EXPAND_CONCURRENCY,
+    thread_name_prefix="multi-search-expand",
+)
 
 
 def run_search_candidates(
@@ -94,7 +104,7 @@ def run_search_candidates(
 
         providers = build_provider_registry()
     base_sources, active_sources = resolve_active_sources(
-        plan.route, plan.sources, plan.disabled_sources
+        plan.route, plan.sources, plan.disabled_sources, plan.route_sources
     )
     if base_sources and not active_sources:
         raise ValueError(
@@ -103,7 +113,7 @@ def run_search_candidates(
 
     def route_resolver(_route):
         _selected, active = resolve_active_sources(
-            _route, plan.sources, plan.disabled_sources
+            _route, plan.sources, plan.disabled_sources, plan.route_sources
         )
         return active
 
@@ -125,22 +135,32 @@ def run_search_candidates(
     if len(queries) == 1:
         query_results[queries[0]] = runner.run(queries[0], deadline=search_deadline)
     else:
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=min(len(queries), MAX_EXPAND_CONCURRENCY)
-        ) as pool:
-            futures = {
-                pool.submit(runner.run, query, deadline=search_deadline): query
-                for query in queries
-            }
-            for future in concurrent.futures.as_completed(futures):
-                query = futures[future]
-                try:
-                    query_results[query] = future.result()
-                except Exception as exc:  # provider boundary diagnostic
-                    query_results[query] = [{
-                        "source": "multi-search",
-                        "error": scrub_secrets(exc, runtime_keys),
-                    }]
+        # The expansion pool bounds *admission*, not each query's runtime: a
+        # queued variant that never gets a slot still reports through its own
+        # deadline-bounded runner call, which keeps error accounting identical
+        # to a plain bounded executor.
+        futures = {
+            _EXPAND_POOL.submit_before(search_deadline, runner.run, query, deadline=search_deadline): query
+            for query in queries
+        }
+        futures = {future: query for future, query in futures.items() if future is not None}
+        pending_queries = set(queries) - set(futures.values())
+        for future in concurrent.futures.as_completed(futures):
+            query = futures[future]
+            try:
+                query_results[query] = future.result()
+            except Exception as exc:  # provider boundary diagnostic
+                query_results[query] = [{
+                    "source": "multi-search",
+                    "error": scrub_secrets(exc, runtime_keys),
+                }]
+        for query in pending_queries:
+            # No worker slot freed up before the search deadline: this is
+            # local capacity, not a slow provider.
+            query_results[query] = [{
+                "source": "multi-search",
+                "error": f"timeout after {plan.timeout}s",
+            }]
     query_runs = [(query, query_results[query]) for query in queries]
     if query_runs_observer is not None:
         query_runs_observer(query_runs)
@@ -224,12 +244,14 @@ def run_search_candidates(
                     "source_id": hit["source_id"],
                     "error": str(exc),
                 })
+    provider_status = query_provider_status(query_runs)
     return {
         "query": request.query,
         "route": plan.route,
         "response_id": response_id,
         "results": hits,
-        "provider_status": query_provider_status(query_runs),
+        "outcome": search_outcome(provider_status, failures, hits),
+        "provider_status": provider_status,
         "key_status_summary": summarize_key_status(key_manager.status_rows()),
         "errors": failures,
         "diagnostics": {
@@ -255,6 +277,15 @@ def run_search_candidates(
         },
     }
 
+
+
+def search_outcome(provider_status: list[dict], errors: list[dict], results: list[dict]) -> str:
+    """Business outcome shared by the CLI, service and desktop adapters."""
+    if provider_status and all(row.get("status") == "error" for row in provider_status):
+        return "failed"
+    if errors:
+        return "partial"
+    return "success" if results else "empty"
 
 
 def query_provider_status(

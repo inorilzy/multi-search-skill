@@ -35,7 +35,7 @@ def _decode_response(resp) -> bytes:
     raise ValueError(f"unsupported Content-Encoding: {encoding}")
 
 
-def search_stackoverflow(query: str, count: int = 10, timeout: float = 20) -> list:
+def search_stackoverflow(query: str, count: int = 10, timeout: float = 20, deadline: float | None = None) -> list:
     """Search Stack Overflow questions by relevance."""
     params = {
         "order": "desc",
@@ -53,7 +53,7 @@ def search_stackoverflow(query: str, count: int = 10, timeout: float = 20) -> li
         },
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(_decode_response(resp))
             if not isinstance(data, dict):
                 raise ValueError("Stack Exchange response must be a JSON object")

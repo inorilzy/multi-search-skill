@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from threading import Lock
 from typing import Any, Callable
 
 from .capabilities import PROVIDER_CAPABILITIES
+from ..state.key_state import _now
 from ..support.concurrency import (
     POOL_SATURATED_ERROR_TYPE,
     BoundedDaemonExecutor,
@@ -36,9 +38,9 @@ SOURCE_ALIASES = {
     "v2ex": "sov2ex",
 }
 
-# Ordered display/contract form of ROUTE_PROFILES. Route membership is defined
-# once here; ``search.catalog`` exports this order to the CLI/desktop so output
-# and documentation stay deterministic.
+# Ordered display/contract form of the built-in routes. Route membership is
+# defined once here; ``search.catalog`` exports this order to the CLI/desktop so
+# output and documentation stay deterministic.
 ROUTE_SOURCE_ORDER = {
     "default": ("brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"),
     "fast": ("baidu", "tavily", "firecrawl", "exa"),
@@ -55,6 +57,30 @@ ROUTE_PROFILES = {route: set(sources) for route, sources in ROUTE_SOURCE_ORDER.i
 ROUTE_ALIASES = {
     "web": "default",
 }
+
+BUILTIN_ROUTE_LABELS = {
+    "default": "默认（网页综合）",
+    "fast": "快速",
+    "all": "全部",
+    "social": "社交（Twitter）",
+    "dev": "开发者（Stack Overflow / GitHub / Hacker News）",
+}
+
+
+def default_routes_config() -> dict[str, dict[str, Any]]:
+    """Return the built-in route groups in the desktop JSON shape.
+
+    A missing ``routes`` config key means these defaults. Each call returns
+    fresh lists and dicts so validators and UI code may mutate the result.
+    """
+    return {
+        route_id: {
+            "label": BUILTIN_ROUTE_LABELS[route_id],
+            "sources": list(ROUTE_SOURCE_ORDER[route_id]),
+            "timeout": None,
+        }
+        for route_id in ("default", "fast", "all", "social", "dev")
+    }
 
 # Route-level behavior that still runs: fan-out membership plus display defaults.
 # Body fetching is always the shared post-RRF stage, so routes carry no scrape
@@ -288,15 +314,38 @@ def run_keyed_source(
         return missing(source, "missing API key")
     last_results: list[dict] = []
     partial_rows: list[dict] = []
-    for idx, candidate in enumerate(candidates):
+    remaining_candidates = list(candidates)
+    while remaining_candidates:
         if deadline is not None and time.monotonic() >= deadline:
             break
+        if hasattr(manager, "reserve") and all(
+            isinstance(candidate, KeyCandidate) for candidate in remaining_candidates
+        ):
+            # State-aware managers re-check health under a write lock and pick
+            # the least-recently-used eligible key, so concurrent workers spread
+            # attempts instead of all retrying the head of the list.
+            candidate = manager.reserve(provider, remaining_candidates)
+            if candidate is None:
+                break
+            remaining_candidates.remove(candidate)
+        else:
+            candidate = remaining_candidates.pop(0)
+            if hasattr(manager, "record_use") and isinstance(candidate, KeyCandidate):
+                manager.record_use(provider, candidate)
         key = candidate.key if isinstance(candidate, KeyCandidate) else str(candidate)
-        if hasattr(manager, "record_use") and isinstance(candidate, KeyCandidate):
-            manager.record_use(provider, candidate)
+        # Generation marker for causal gating: a failure recorded after this
+        # call started is newer evidence than a success returned by it.
+        started_at = _now()
         results = _attach_provider_ranks(as_dicts(call_with_key(key) or []))
         outcome = manager.classify_result(provider, results)
-        manager.record_result(provider, candidate, outcome)
+        if outcome.error_type != "target":
+            # ``started_at`` gates late successes against newer failures on
+            # managers that implement causal recording; managers without it
+            # keep the plain signature.
+            try:
+                manager.record_result(provider, candidate, outcome, started_at=started_at)
+            except TypeError:
+                manager.record_result(provider, candidate, outcome)
         if not outcome.retryable:
             return (
                 _merge_partial_rows(source, partial_rows, results)
@@ -304,8 +353,6 @@ def run_keyed_source(
             )
         partial_rows.extend(row for row in results if "error" not in row)
         last_results = results
-        if idx == len(candidates) - 1:
-            break
     error_rows = [row for row in last_results if "error" in row]
     # Prefer a provider-origin row: target failures are not evidence about the key.
     chosen = next(
@@ -323,8 +370,21 @@ def run_keyed_source(
     return _merge_partial_rows(source, partial_rows, [error]) if partial_rows else [error]
 
 
+def _search_pool_workers() -> int:
+    """Worker budget for the shared search pool, tunable per process.
+
+    ``MULTI_SEARCH_SEARCH_CONCURRENCY`` overrides the default of one slot
+    per known source; the pool stays bounded either way.
+    """
+    raw = os.environ.get("MULTI_SEARCH_SEARCH_CONCURRENCY")
+    try:
+        return max(1, int(raw)) if raw is not None else max(1, len(ALL_SOURCE_NAMES))
+    except ValueError:
+        return max(1, len(ALL_SOURCE_NAMES))
+
+
 _SEARCH_POOL = BoundedDaemonExecutor(
-    max_workers=max(1, len(ALL_SOURCE_NAMES)),
+    max_workers=_search_pool_workers(),
     thread_name_prefix="multi-search-search",
 )
 
@@ -332,11 +392,15 @@ _SEARCH_POOL = BoundedDaemonExecutor(
 class SearchRunner:
     """Run configured searchers in parallel under a shared deadline."""
 
-    def __init__(self, config: SearchRunnerConfig, providers: dict[str, ProviderSpec], route_resolver=None, key_manager=None):
+    def __init__(self, config: SearchRunnerConfig, providers: dict[str, ProviderSpec], route_resolver=None, key_manager=None, executor=None):
         self.config = config
         self.providers = providers
         self.route_resolver = route_resolver or resolve_route
         self.key_manager = key_manager or BasicKeyManager()
+        # Runtime-injected capacity: embedders and tests can supply their own
+        # bounded executor instead of the process-wide default. ``None`` keeps
+        # the module-level pool (looked up per run so it stays patchable).
+        self.executor = executor
 
     def run(self, query: str, *, deadline: float | None = None) -> list[dict]:
         results: list[dict] = []
@@ -415,7 +479,8 @@ class SearchRunner:
         saturated: set[str] = set()
         for name, call in jobs:
             had_budget = source_deadline - time.monotonic() > 0
-            future = _SEARCH_POOL.submit_before(source_deadline, call)
+            executor = self.executor or _SEARCH_POOL
+            future = executor.submit_before(source_deadline, call)
             if future is not None:
                 future_sources[future] = name
             elif had_budget:
@@ -456,7 +521,7 @@ class SearchRunner:
         for future in future_sources:
             # The caller has given up on these; do not let them block later searches.
             if not future.done():
-                _SEARCH_POOL.abandon(future)
+                (self.executor or _SEARCH_POOL).abandon(future)
         for source in sorted(pending):
             with partial_lock:
                 results.extend(partial_results.get(source, []))

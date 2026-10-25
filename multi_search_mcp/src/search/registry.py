@@ -55,35 +55,35 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             "brave",
             missing_message="missing BRAVE_SEARCH_API_KEY / BRAVE_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_brave, q, key, cfg.counts["brave"], timeout=ctx.timeout,
+                search_brave, q, key, cfg.counts["brave"], timeout=ctx.timeout, deadline=ctx.deadline,
             ),
         ),
         "parallel": _provider_spec(
             "parallel",
             missing_message="missing PARALLEL_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_parallel, q, key, cfg.counts["parallel"], timeout=ctx.timeout,
+                search_parallel, q, key, cfg.counts["parallel"], timeout=ctx.timeout, deadline=ctx.deadline,
             ),
         ),
         "baidu": _provider_spec(
             "baidu",
             missing_message="missing BAIDU_QIANFAN_API_KEY / QIANFAN_API_KEY / APPBUILDER_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_baidu, q, key, cfg.counts["baidu"], timeout=ctx.timeout,
+                search_baidu, q, key, cfg.counts["baidu"], timeout=ctx.timeout, deadline=ctx.deadline,
             ),
         ),
         "tavily": _provider_spec(
             "tavily",
             missing_message="missing TAVILY_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_tavily, q, key, cfg.counts["tavily"], timeout=ctx.timeout,
+                search_tavily, q, key, cfg.counts["tavily"], timeout=ctx.timeout, deadline=ctx.deadline,
             ),
         ),
         "exa": _provider_spec(
             "exa",
             missing_message="missing EXA_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_exa, q, key, cfg.counts["exa"], timeout=ctx.timeout,
+                search_exa, q, key, cfg.counts["exa"], timeout=ctx.timeout, deadline=ctx.deadline,
             ),
         ),
         "serpapi": _provider_spec(
@@ -99,13 +99,13 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
             "firecrawl",
             missing_message="missing FIRECRAWL_API_KEY",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout,
+                search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, deadline=ctx.deadline,
             ),
         ),
         "sov2ex": _provider_spec(
             "sov2ex",
             call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_sov2ex, q, cfg.counts["sov2ex"], timeout=ctx.timeout,
+                search_sov2ex, q, cfg.counts["sov2ex"], timeout=ctx.timeout, deadline=ctx.deadline,
             ),
         ),
         "github_repos": _provider_spec(
@@ -117,11 +117,11 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
         ),
         "hackernews": _provider_spec(
             "hackernews",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(search_hackernews, q, cfg.counts["hackernews"], timeout=ctx.timeout),
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_hackernews, q, cfg.counts["hackernews"], timeout=ctx.timeout, deadline=ctx.deadline),
         ),
         "stackoverflow": _provider_spec(
             "stackoverflow",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(search_stackoverflow, q, cfg.counts["stackoverflow"], timeout=ctx.timeout),
+            call=lambda q, cfg, ctx, key: call_optional_timeout(search_stackoverflow, q, cfg.counts["stackoverflow"], timeout=ctx.timeout, deadline=ctx.deadline),
         ),
         "twitter": _provider_spec(
             "twitter",

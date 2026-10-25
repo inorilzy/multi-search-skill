@@ -13,6 +13,7 @@ def search_brave(
     count: int = 10,
     timeout: float = 15,
     search_depth: str = "normal",
+    deadline: float | None = None,
 ) -> list:
     """Call Brave Search API.
     Uses extra_snippets=true: returns up to 5 additional excerpts per result (free, no extra cost).
@@ -32,7 +33,7 @@ def search_brave(
         },
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             raw = read_limited(resp)
             if (resp.headers.get("Content-Encoding") or "").strip().lower() == "gzip":
                 raw = decompress_limited(raw, "gzip")

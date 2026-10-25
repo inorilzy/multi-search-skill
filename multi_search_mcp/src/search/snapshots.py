@@ -93,6 +93,7 @@ def capture_snapshot(request, *, expand: list[str], providers=None, keys=None, c
 
     Provider wrappers count actual attempts (including key retries). The Core
     observer supplies the post-timeout, post-retry rows and original provider ranks.
+
     """
     from .registry import build_provider_registry
 

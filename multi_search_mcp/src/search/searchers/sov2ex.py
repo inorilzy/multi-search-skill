@@ -80,7 +80,7 @@ def _row_from_hit(hit: dict) -> dict:
     return row
 
 
-def search_sov2ex(query: str, count: int = 10, timeout: float = 20) -> list:
+def search_sov2ex(query: str, count: int = 10, timeout: float = 20, deadline: float | None = None) -> list:
     """Search SOV2EX's V2EX index by relevance, returning only candidates."""
     size = min(50, max(1, count))
     params = {"q": query, "from": 0, "size": size, "sort": "sumup"}
@@ -89,7 +89,7 @@ def search_sov2ex(query: str, count: int = 10, timeout: float = 20) -> list:
         headers={"User-Agent": "multi-search/1.0", "Accept": "application/json"},
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(read_limited(resp))
         if not isinstance(data, dict):
             raise ValueError("response must be an object")
