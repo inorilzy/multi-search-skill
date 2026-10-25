@@ -149,6 +149,15 @@ SCHEMA = (
 )
 
 
+class StateSchemaVersionError(RuntimeError):
+    """The database was written by a newer release than this one understands.
+
+    Raised before any schema or data change: a future version may have renamed,
+    retyped, or dropped columns, so migrating it would corrupt it. The file is
+    left exactly as it was.
+    """
+
+
 class StateStore:
     """Small SQLite helper with lazy schema migration.
 
@@ -222,8 +231,11 @@ class StateStore:
             # (including other processes) reads without blocking on a writer.
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("BEGIN IMMEDIATE")
-            # Re-check under the write lock: another process may have migrated
-            # while this one waited.
+            # Decide on the locked snapshot, before any DDL or data rewrite.
+            # A newer release may have upgraded the file while this process
+            # waited for the lock; refusing first means that upgrade is never
+            # migrated over, whatever its layout looks like.
+            self._refuse_future_version(conn)
             if self._schema_is_current_conn(conn):
                 return
             for statement in SCHEMA:
@@ -250,13 +262,34 @@ class StateStore:
             self._migrate_data(conn)
 
     def _schema_is_current(self) -> bool:
+        """True only for a database this release can use without migrating.
+
+        A version newer than this release is not current: it must be refused,
+        not treated as compatible just because its columns are a superset.
+        """
         if not self.path.exists():
             return False
         try:
             with self.connect() as conn:
-                return self._schema_is_current_conn(conn)
+                version = conn.execute("PRAGMA user_version").fetchone()[0]
+                return version <= STATE_SCHEMA_VERSION and self._schema_is_current_conn(conn)
         except sqlite3.Error:
             return False
+
+    @staticmethod
+    def _refuse_future_version(conn: sqlite3.Connection) -> None:
+        """Reject a database stamped by a release newer than this one.
+
+        Must run before every schema or data statement: a future version's
+        layout is not a subset of ours, so ``_ensure_columns`` would rebuild
+        tables the newer release deliberately changed.
+        """
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version > STATE_SCHEMA_VERSION:
+            raise StateSchemaVersionError(
+                f"state database version {version} is newer than this release "
+                f"supports (version {STATE_SCHEMA_VERSION}); refusing to modify it"
+            )
 
     @staticmethod
     def _schema_is_current_conn(conn: sqlite3.Connection) -> bool:

@@ -10,8 +10,9 @@ Version contract (``PRAGMA user_version``):
 - version 2: current. The only thing it adds over version 1 is
   ``content_sources.truncated``, an inert acquisition-metadata flag. Nothing in
   this tree reads it, so it cannot make a truncated body look complete.
-- anything newer: left untouched. A database written by a future release is
-  never downgraded or rewritten.
+- anything newer: refused. A database written by a future release is never
+  migrated, even when its layout happens to match; opening it raises
+  ``StateSchemaVersionError`` and leaves the file unchanged.
 
 The desktop's scrape-memory views accept versions 1 and 2 only, so this stays
 at 2.
@@ -25,7 +26,12 @@ from pathlib import Path
 from multi_search_mcp.src.state.content_store import ContentStore
 from multi_search_mcp.src.state.key_state import key_fingerprint, key_id_for
 from multi_search_mcp.src.state.site_memory import SiteScraperMemory
-from multi_search_mcp.src.state.state_store import STATE_SCHEMA_VERSION, SCHEMA, StateStore
+from multi_search_mcp.src.state.state_store import (
+    STATE_SCHEMA_VERSION,
+    SCHEMA,
+    StateSchemaVersionError,
+    StateStore,
+)
 
 
 BODY = "完整正文，没有被截断 stored in full"
@@ -158,14 +164,30 @@ class SchemaCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(_snapshot(self.path), first)
 
-    def test_future_version_is_not_downgraded_or_rewritten(self):
+    def test_future_version_with_current_layout_is_refused_unchanged(self):
+        self._assert_future_version_refused()
+
+    def test_future_version_missing_truncated_is_refused_not_repaired(self):
+        # The reported hole: a future version whose layout is not a superset of
+        # ours used to fall through the fast path and be migrated anyway.
+        self._assert_future_version_refused(drop_truncated=True)
+
+    def test_future_version_with_other_incompatible_layout_is_refused(self):
+        self._assert_future_version_refused(extra_ddl="ALTER TABLE key_state DROP COLUMN invalid_strikes")
+
+    def _assert_future_version_refused(self, *, drop_truncated=False, extra_ddl=None):
         StateStore(self.path)
         self._write_marker()
         with _connect(self.path) as conn, conn:
+            if drop_truncated:
+                conn.execute("ALTER TABLE content_sources DROP COLUMN truncated")
+            if extra_ddl:
+                conn.execute(extra_ddl)
             conn.execute("PRAGMA user_version=99")
         before = _snapshot(self.path)
 
-        StateStore(self.path)
+        with self.assertRaises(StateSchemaVersionError):
+            StateStore(self.path)
 
         self.assertEqual(_snapshot(self.path), before)
         self.assertEqual(_version(self.path), 99)
