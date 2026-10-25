@@ -1,5 +1,6 @@
 import email.message
 import io
+import socket
 import ssl
 import unittest
 import urllib.error
@@ -224,13 +225,16 @@ class HttpDeadlineTests(unittest.TestCase):
             http._ssl_ctx, "wrap_socket", side_effect=handshake,
         ), mock.patch.object(sock, "sendall", side_effect=sent.append), mock.patch.object(
             sock, "close", wraps=sock.close,
-        ) as closed:
+        ) as closed, mock.patch("socket.getaddrinfo", return_value=[
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("151.101.1.69", 443)),
+        ]) as target_dns:
             with self.assertRaises((TimeoutError, urllib.error.URLError)):
                 http.urlopen_retry(request, timeout=1, extra_handlers=(
                     urllib.request.ProxyHandler({"https": "http://93.184.216.34:3128"}),
                 ))
+        target_dns.assert_called_once_with("origin.example.test", 443, type=socket.SOCK_STREAM)
         self.assertEqual(hostnames, ["origin.example.test"])
-        self.assertIn(b"CONNECT origin.example.test:443", b"".join(sent))
+        self.assertIn(b"CONNECT 151.101.1.69:443", b"".join(sent))
         self.assertIn(b"Proxy-Authorization: Basic SYNTHETIC", b"".join(sent))
         self.assertAlmostEqual(handshake_timeouts[0], 0.5)
         self.assertAlmostEqual(self.clock.now, 1)
@@ -295,13 +299,18 @@ class HttpDeadlineTests(unittest.TestCase):
         })
         with mock.patch("socket.create_connection", return_value=sock), mock.patch.object(
             http._ssl_ctx, "wrap_socket", side_effect=handshake,
-        ), mock.patch.object(sock, "sendall", side_effect=sent.append):
+        ), mock.patch.object(sock, "sendall", side_effect=sent.append), mock.patch(
+            "socket.getaddrinfo", return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("151.101.1.69", 443)),
+            ],
+        ) as target_dns:
             with http.urlopen_retry(request, timeout=1, extra_handlers=(
                 urllib.request.ProxyHandler({"https": "http://93.184.216.34:3128"}),
             )) as response:
                 self.assertEqual(response.read(), b"ok")
+        target_dns.assert_called_once_with("origin.example.test", 443, type=socket.SOCK_STREAM)
         self.assertEqual(hostnames, ["origin.example.test"])
-        self.assertIn(b"CONNECT origin.example.test:443", sent[0])
+        self.assertIn(b"CONNECT 151.101.1.69:443", sent[0])
         self.assertIn(b"Proxy-Authorization: Basic SYNTHETIC", sent[0])
         origin_request = b"".join(sent[1:])
         self.assertIn(b"GET /page HTTP/1.1", origin_request)

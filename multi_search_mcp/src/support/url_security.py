@@ -5,8 +5,10 @@ from __future__ import annotations
 import concurrent.futures
 import ipaddress
 import os
+import re
 import socket
 import time
+import unicodedata
 import urllib.parse
 from collections.abc import Callable, Iterable
 
@@ -74,22 +76,8 @@ def _validate_url(
     allow_fake_ip: bool | None = None,
 ) -> str:
     candidate = str(url or "").strip()
-    try:
-        parts = urllib.parse.urlsplit(candidate)
-    except Exception as exc:
-        raise UrlSecurityError(f"{label} is not a valid URL: {exc}") from exc
-
-    scheme = (parts.scheme or "").lower()
-    if scheme not in {"http", "https"}:
-        shown = parts.scheme or "<missing>"
-        raise UrlSecurityError(f"{label} uses unsupported URL scheme: {shown}")
-    if not parts.hostname:
-        raise UrlSecurityError(f"{label} is missing host")
-    if parts.username is not None or parts.password is not None:
-        raise UrlSecurityError(f"{label} must not include credentials")
-
-    host = parts.hostname
-    direct_ip = _parse_ip(host)
+    _parts, host, _port = http_target(candidate, label=label)
+    direct_ip = numeric_host(host)
     if direct_ip is not None:
         _ensure_deadline(deadline, label)
         _ensure_public_ip(direct_ip, label=label, resolved=False)
@@ -117,11 +105,89 @@ def _validate_url(
     return candidate
 
 
+def normalize_http_host(host: str) -> str:
+    """Normalize local-transport hosts before distinguishing DNS from literals."""
+    try:
+        decoded = urllib.parse.unquote(str(host).strip("[]"), errors="strict")
+        if any(ord(char) < 32 or ord(char) == 127 for char in decoded):
+            raise ValueError("control character")
+        normalized = unicodedata.normalize("NFKC", decoded).translate(
+            str.maketrans({"\u3002": ".", "\uff0e": ".", "\uff61": "."}),
+        ).lower().removesuffix(".")
+        if ":" in normalized:
+            ip = ipaddress.IPv6Address(normalized)
+            if ip.scope_id is not None:
+                raise ValueError("scope identifier")
+            return ip.compressed
+        normalized = normalized.encode("idna").decode("ascii").lower()
+        if not re.fullmatch(r"[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?)*", normalized):
+            raise ValueError("invalid characters")
+        return normalized
+    except (ValueError, UnicodeError) as exc:
+        raise UrlSecurityError("unsafe URL: host is not a valid hostname") from exc
+
+
+def http_target(url: str, *, label: str = "URL") -> tuple:
+    """Parse a logical HTTP target without DNS, never disclosing credentials."""
+    candidate = str(url or "").strip()
+    try:
+        parts = urllib.parse.urlsplit(candidate)
+        if parts.scheme.lower() not in {"http", "https"}:
+            raise UrlSecurityError(f"{label} uses unsupported URL scheme")
+        if not parts.hostname:
+            raise UrlSecurityError(f"{label} is missing host")
+        if parts.username is not None or parts.password is not None:
+            raise UrlSecurityError(f"{label} must not include credentials")
+        if "\\" in parts.netloc or any(ord(c) < 32 or ord(c) == 127 for c in candidate):
+            raise UrlSecurityError(f"unsafe {label}: invalid authority or control characters")
+        port = parts.port if parts.port is not None else (443 if parts.scheme.lower() == "https" else 80)
+        host = normalize_http_host(parts.hostname)
+    except ValueError as exc:
+        if isinstance(exc, UrlSecurityError):
+            raise
+        raise UrlSecurityError(f"{label} is not a valid URL") from exc
+    return parts, host, port
+
+
+def numeric_host(host: str):
+    """Classify literal/alternate numeric addresses before any DNS exemption."""
+    host = normalize_http_host(host)
+    literal = _parse_ip(host)
+    if literal is not None:
+        return literal
+    if not re.fullmatch(r"(?:0x[0-9a-f]*|[0-9]+)", host.rsplit(".", 1)[-1]):
+        return None
+    labels = host.split(".")
+    if not 1 <= len(labels) <= 4:
+        raise UrlSecurityError("unsafe URL: non-canonical numeric address")
+    values = []
+    for part in labels:
+        if not re.fullmatch(r"(?:0x[0-9a-f]+|[0-9]+)", part) or (
+            len(part) > 1 and part.startswith("0") and not part.startswith("0x")
+        ):
+            raise UrlSecurityError("unsafe URL: non-canonical numeric address")
+        values.append(int(part, 16 if part.startswith("0x") else 10))
+    if any(v > 255 for v in values[:-1]) or values[-1] >= 1 << (8 * (5-len(values))):
+        raise UrlSecurityError("unsafe URL: non-canonical numeric address")
+    number = values[-1]
+    for i, value in enumerate(values[:-1]):
+        number += value << (8 * (3-i))
+    return ipaddress.IPv4Address(number)
+
+
 def resolve_validated_addresses(
     host: str, port: int, *, deadline: float | None = None,
     allow_fake_ip: bool | None = None,
 ) -> list[tuple]:
     """Resolve once and validate exactly the addresses that will be dialed."""
+    _ensure_deadline(deadline, "HTTP connection")
+    host = normalize_http_host(host)
+    literal = numeric_host(host)
+    if literal is not None:
+        _ensure_public_ip(literal, label="HTTP connection", resolved=False)
+        family = socket.AF_INET6 if literal.version == 6 else socket.AF_INET
+        sockaddr = (str(literal), port, 0, 0) if literal.version == 6 else (str(literal), port)
+        return [(family, socket.SOCK_STREAM, 6, "", sockaddr)]
     addresses = resolve_host_addresses(host, port, deadline=deadline)
     accept_fake_ip = allow_fake_ip_default() if allow_fake_ip is None else bool(allow_fake_ip)
     for family, _socktype, _proto, _canonname, sockaddr in addresses:
@@ -241,7 +307,7 @@ def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
 
 def _unsafe_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
     if isinstance(ip, ipaddress.IPv6Address):
-        embedded = _embedded_ipv4(ip)
+        embedded = ip.ipv4_mapped or _embedded_ipv4(ip)
         if embedded is not None:
             # Judge the tunnel by its actual IPv4 destination.
             return _unsafe_reason(embedded)
