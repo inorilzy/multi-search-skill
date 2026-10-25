@@ -151,17 +151,26 @@ class BoundedDaemonExecutor:
                 self._running.pop(future, None)
             self._slots.release()
             return
+        result = None
+        failure: BaseException | None = None
         try:
-            future.set_result(fn(*args, **kwargs))
-        except BaseException as exc:
-            future.set_exception(exc)
-        finally:
-            with self._lock:
-                detached = self._running.pop(future, False)
-                if detached:
-                    self._detached -= 1
-            if not detached:
-                self._slots.release()
+            result = fn(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the future
+            failure = exc
+        # Return the admission slot *before* publishing the result. Setting the
+        # result first let a caller that immediately submits the next task find
+        # every permit taken by work that had already finished, which surfaced
+        # as a spurious "capacity exhausted" under a burst of ranked fetches.
+        with self._lock:
+            detached = self._running.pop(future, False)
+            if detached:
+                self._detached -= 1
+        if not detached:
+            self._slots.release()
+        if failure is not None:
+            future.set_exception(failure)
+        else:
+            future.set_result(result)
 
     def _worker(self) -> None:
         while True:

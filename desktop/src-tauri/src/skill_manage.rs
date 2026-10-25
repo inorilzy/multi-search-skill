@@ -541,8 +541,25 @@ impl SkillManager<'_> {
         if !content_left && fs::remove_file(target.join(MARKER)).is_ok() {
             deleted.push(MARKER.into());
         }
-        // Remove the now-empty references folder and the skill folder only if nothing else is left.
-        let _ = fs::remove_dir(target.join("references"));
+        // Managed files live in subfolders as well (agents/, references/). Remove
+        // those folders once they are empty, deepest first, so the skill folder
+        // itself can go; otherwise a leftover empty folder is later classified as
+        // Unknown and a completed removal looks half-done.
+        let mut managed_parents: Vec<String> = plan
+            .will_delete
+            .iter()
+            .filter_map(|name| match name.rsplit_once('/') {
+                Some((parent, _)) => Some(parent.to_string()),
+                None => None,
+            })
+            .collect();
+        managed_parents.sort_by_key(|name| std::cmp::Reverse(name.matches('/').count()));
+        managed_parents.dedup();
+        for name in &managed_parents {
+            // remove_dir refuses a non-empty folder, which is exactly the guard
+            // we want: user content in there is never deleted.
+            let _ = fs::remove_dir(target.join(name));
+        }
         let _ = fs::remove_dir(&target);
         let kept = plan.will_keep.clone();
         // Success means every managed file is gone; kept user content never counts against it.

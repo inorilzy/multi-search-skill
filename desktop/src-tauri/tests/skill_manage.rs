@@ -338,6 +338,32 @@ fn removal_requires_confirmation_and_deletes_only_tool_owned_files() {
         profile.root.join(".claude/skills").is_dir(),
         "skills folder never deleted"
     );
+    // The user file keeps the skill folder alive; it is no longer ours, so it
+    // is reported as Unknown rather than Absent, and nothing else was deleted.
+    assert_eq!(
+        manager(&profile).skill_status("global", None).unwrap().state,
+        multi_search_desktop::InstallState::Unknown
+    );
+}
+
+#[test]
+fn complete_removal_clears_managed_subfolders_and_reports_absent() {
+    // Managed files live in agents/ and references/ too. If those folders are
+    // left behind, the skill folder survives and the status flips to Unknown,
+    // so a finished removal looks half-done.
+    let profile = common::Profile::new();
+    install_global(&profile);
+    let target = skill_dir(&profile.root);
+    assert!(target.join("agents/interface.yaml").is_file());
+    let removed = manager(&profile).skill_remove("global", None, true);
+    assert_eq!(removed.status, "removed", "{}", removed.reason);
+    assert!(!target.join("agents").exists(), "empty agents/ is gone too");
+    assert!(!target.exists(), "the skill folder itself is gone");
+    assert!(profile.root.join(".claude/skills").is_dir());
+    assert_eq!(
+        manager(&profile).skill_status("global", None).unwrap().state,
+        multi_search_desktop::InstallState::Absent
+    );
 }
 
 /// The UI reads these exact JSON keys; a rename on either side would silently break the panel.

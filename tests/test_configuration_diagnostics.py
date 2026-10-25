@@ -38,7 +38,11 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
             config.load_config()
 
     def test_missing_implicit_default_uses_defaults(self):
-        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(config, "resolve_config_path", return_value=self.path):
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(config, "resolve_config_path", return_value=self.path), \
+                mock.patch.object(config, "USER_CONFIG_PATH", self.path), \
+                mock.patch.object(config, "_sqlite_settings_state", return_value=(Path(self.temp.name) / "absent.sqlite", "absent")), \
+                mock.patch.object(config, "IS_SOURCE_CHECKOUT", False):
             self.assertEqual(config.load_config(), {})
 
     def test_doctor_parses_and_validates_configuration(self):

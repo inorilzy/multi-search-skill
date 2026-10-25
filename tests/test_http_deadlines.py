@@ -227,7 +227,7 @@ class HttpDeadlineTests(unittest.TestCase):
             sock, "close", wraps=sock.close,
         ) as closed, mock.patch("socket.getaddrinfo", return_value=[
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("151.101.1.69", 443)),
-        ]) as target_dns:
+        ]) as target_dns, mock.patch.object(urllib.request, "proxy_bypass", return_value=False):
             with self.assertRaises((TimeoutError, urllib.error.URLError)):
                 http.urlopen_retry(request, timeout=1, extra_handlers=(
                     urllib.request.ProxyHandler({"https": "http://93.184.216.34:3128"}),
@@ -303,7 +303,7 @@ class HttpDeadlineTests(unittest.TestCase):
             "socket.getaddrinfo", return_value=[
                 (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("151.101.1.69", 443)),
             ],
-        ) as target_dns:
+        ) as target_dns, mock.patch.object(urllib.request, "proxy_bypass", return_value=False):
             with http.urlopen_retry(request, timeout=1, extra_handlers=(
                 urllib.request.ProxyHandler({"https": "http://93.184.216.34:3128"}),
             )) as response:

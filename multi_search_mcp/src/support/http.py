@@ -405,6 +405,9 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
                     conn._tunnel_host = proxy_target
                     authority = f"[{proxy_target}]" if ":" in proxy_target else proxy_target
                     conn._tunnel_headers["Host"] = f"{authority}:{conn._tunnel_port}"
+                    # Python 3.10 renders CONNECT without RFC IPv6 brackets.
+                    if not hasattr(conn, "_wrap_ipv6") and ":" in conn._tunnel_host:
+                        conn._tunnel_host = authority
                 tunnel()
                 conn.sock.settimeout(_socket_budget(deadline, conn.timeout))
             except BaseException:
