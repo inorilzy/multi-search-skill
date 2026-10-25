@@ -6,8 +6,12 @@ import urllib.request
 
 from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
-from ...support.tavily import tavily_http_error
-from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
+from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url, error_fields
+
+try:  # provider abstraction lands with providers/; keep both import homes working
+    from ...providers.tavily import tavily_http_error
+except ImportError:  # pragma: no cover - current layout
+    from ...support.tavily import tavily_http_error
 
 
 def scrape_url_tavily(
@@ -53,7 +57,7 @@ def scrape_url_tavily(
             message = failed[0].get("error", "no content") if failed else "no results"
             error = {"url": url, "error": f"Tavily {depth}: {scrub_secrets(message, api_key)}"}
             if failed:
-                error.update(error_origin="target", error_type="target")
+                error.update(error_fields(kind="target", origin="target"))
             return error
         result = results[0]
         markdown = result.get("raw_content") or ""
@@ -83,18 +87,19 @@ def scrape_url_tavily(
             "error": f"{advanced['error']}; fallback {basic['error']}",
         }
         if (
-            advanced.get("error_origin") == "target"
+            advanced.get("origin") == "target"
+            or advanced.get("error_origin") == "target"
+            or basic.get("origin") == "target"
             or basic.get("error_origin") == "target"
         ):
-            merged.update(error_origin="target", error_type="target")
+            merged.update(error_fields(kind="target", origin="target"))
         return merged
     except urllib.error.HTTPError as exc:
-        message, error_type = tavily_http_error(exc, api_key)
+        message, kind = tavily_http_error(exc, api_key)
         return {
             "url": url,
             "error": f"Tavily: {message}",
-            "error_origin": "provider",
-            "error_type": error_type,
+            **error_fields(kind=kind, origin="provider"),
         }
     except Exception as exc:
         return {"url": url, "error": f"Tavily: {scrub_secrets(exc, api_key)}"}

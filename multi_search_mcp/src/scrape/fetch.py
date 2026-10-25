@@ -7,7 +7,7 @@ import time
 import uuid
 
 from ..search.candidate import canonicalize_url, make_source_id
-from ..search.capabilities import retention_policy_for_sources
+from ..search.capabilities import PROVIDER_CAPABILITIES, retention_policy_for_sources
 from ..state import runtime
 from ..state.content_store import (
     ContentStore,
@@ -21,8 +21,10 @@ from ..support.config import resolve_nonnegative
 from ..support.requests import FetchSourceRequest, ScrapeRequest
 from ..support.url_security import validate_public_http_url
 from ..support.validation import request_int
+from .scrape import scrape_url_smart, uses_delegated_backends, validate_delegated_url
+from .scrapers.reddit import is_reddit_url
 from .scrapers.twitter import is_twitter_url, validate_twitter_url
-from .service import run_scrape_raw
+from .service import configured_scrape_backends, run_scrape_raw
 
 
 def run_fetch_source(
@@ -71,7 +73,19 @@ def run_fetch_source(
     if is_twitter_url(url):
         validate_twitter_url(url)
     else:
-        validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
+        chain = ()
+        if (scraper is None or scraper is scrape_url_smart) and not prefetched_body and not is_reddit_url(url):
+            if resolved_config is None and not request.backends:
+                resolved_config = runtime.load_config_safe(request.config_path)
+            chain = request.backends or configured_scrape_backends(resolved_config)
+        if uses_delegated_backends(url, chain, scraper=scraper):
+            # The provider resolves its target; local DNS can be a TUN fake IP.
+            url = validate_delegated_url(url, deadline=deadline)
+            if is_reddit_url(url):  # Normalization can reveal a local platform.
+                validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
+        else:
+            # Custom callbacks, local platforms and unknown chains fail closed.
+            validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
     source_providers = list((source or {}).get("providers") or ["direct"])
     retention = retention_policy_for_sources(source_providers)
     source_id = str(request.source_id or "")
@@ -113,12 +127,14 @@ def run_fetch_source(
         if not prefetched_body:
             runtime_keys = runtime.load_runtime_keys(resolved_config) if keys is None else dict(keys)
             if content_store and retention.persist_body:
-                # Hash the permission context; never persist credentials. Provider
-                # prefetches and older unscoped entries remain source-ID-only.
+                # Hash only the credentials that can affect this source's body,
+                # not every configured provider: an unrelated key rotation must
+                # not invalidate a still-authorized cached body.
+                scope_backends = list(request.backends or configured_scrape_backends(resolved_config))
                 cache_scope = hashlib.sha256(json.dumps({
                     "providers": sorted(source_providers),
-                    "backends": list(request.backends or []),
-                    "keys": runtime_keys,
+                    "backends": scope_backends,
+                    "keys": _scope_keys(runtime_keys, source_providers, scope_backends),
                 }, sort_keys=True).encode("utf-8")).hexdigest()
                 if is_twitter_url(url):
                     cache_scope = "twitter-detail-v1:" + cache_scope
@@ -210,3 +226,33 @@ def run_fetch_source(
     if persist_error is not None:
         response["persist_error"] = persist_error
     return response
+
+
+def _scope_keys(keys: dict, source_providers: list, backends) -> dict:
+    """Credentials relevant to this body: provider names plus their key ids."""
+    wanted = {str(name) for name in source_providers} | {str(name) for name in (backends or [])}
+    if "twitter" in wanted:
+        wanted.add("twitter_cookies_path")
+    if "github_repos" in wanted:
+        wanted.add("github")
+    for name in list(wanted):
+        capability = PROVIDER_CAPABILITIES.get(name)
+        key_name = getattr(getattr(capability, "operation", None), "key_name", None)
+        if key_name:
+            wanted.add(key_name)
+    managed_type = _managed_cookie_type()
+    # Managed auth is mutable behind a stable reference: do not cross-source
+    # reuse it without an authorization version. Source-id cache remains TTL-bound.
+    return {
+        name: ("managed:" + uuid.uuid4().hex if managed_type and isinstance(value, managed_type) else value)
+        for name, value in keys.items() if name in wanted
+    }
+
+
+def _managed_cookie_type():
+    """The provider-owned managed-cookie reference type, when providers/ exists."""
+    try:
+        from ..providers.xkit import ManagedTwitterCookies
+    except ImportError:  # pragma: no cover - providers/ lands with the provider port
+        return None
+    return ManagedTwitterCookies
