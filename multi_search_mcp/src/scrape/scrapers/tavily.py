@@ -8,10 +8,7 @@ from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url, error_fields
 
-try:  # provider abstraction lands with providers/; keep both import homes working
-    from ...providers.tavily import tavily_http_error
-except ImportError:  # pragma: no cover - current layout
-    from ...support.tavily import tavily_http_error
+from ...providers.tavily import tavily_http_error
 
 
 def scrape_url_tavily(

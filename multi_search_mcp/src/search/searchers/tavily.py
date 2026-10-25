@@ -5,7 +5,7 @@ import urllib.request
 
 from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
-from ...support.tavily import tavily_http_error
+from ...providers.tavily import tavily_http_error
 
 
 def search_tavily(

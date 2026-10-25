@@ -2,7 +2,7 @@
 import time
 from collections.abc import Callable
 
-from ...support.xkit import load_twitter_cookies, scrub_twitter_error
+from ...providers.xkit import load_twitter_cookies, scrub_twitter_error
 
 
 def search_twitter(
