@@ -58,4 +58,12 @@ AI 参与开发选择时冻结状态为 `ai_selected`；纯人工选择保留 `h
 
 blind、private、review、报告及 Markdown 副本继承快照 TTL，过期加载明确拒绝；维护者负责到期前删除全部副本，工具不启动后台服务。冻结记录只含配置、版本、题集／报告摘要 hash 和复核选择信息，不复制候选或正文。所有写入拒绝覆盖既有文件。
 
+## 模型重排与离线回放限制
+
+可选模型重排（`ranking.mode="rrf_model"`，见 README「可选模型重排」）**不在**上述离线评测契约内：`replay_snapshot` 的保证是「no registry, provider, keys or networking」，而模型重排本质上是一次外部服务调用，既不在快照里冻结模型分数，也无法离线复现。v1 的处理方式：
+
+- `apply_rerank` 的 `reranker` 参数可注入；未来如需回放，可以把采集时冻结的模型分数包成注入式 reranker 喂回去，但当前快照格式不保存模型分，`replay`／`compare`／`prepare_review` 一律只回放纯 RRF 路径。
+- 在实现冻结分数回放之前，任何一次 `rrf_model` 响应的排序结果**不得**被当作已通过 `freeze_development` / `evaluate_heldout` 的评测资产，也不得据其报告 `heldout_thresholds_met`。
+- 已知未验项：Jev wire format（`jev-1.14.0`、`POST /v1/systemone`、0–4 分制）未经在线核实，开发机上 `docs.typesafe.ai` 解析到非公网地址；相关结论属待实测确认，不作为质量证据。
+
 验证：`.venv/Scripts/python.exe -m unittest tests.test_query_evaluation -v`。

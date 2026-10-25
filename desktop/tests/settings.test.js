@@ -24,6 +24,16 @@ function setup() {
 }
 test.afterEach(() => { try { current?.close(); } catch { /* already closed */ } current = null; });
 
+const RANKING_DEFAULTS = { mode: 'rrf', reranker_profile_id: 'jev_default', candidate_limit: 50, batch_size: 20, rerank_timeout: 5 };
+const RANKING_BOUNDS_FIELDS = {
+  ranking_candidate_limit_min: 10,
+  ranking_candidate_limit_max: 200,
+  ranking_batch_size_min: 1,
+  ranking_batch_size_max: 50,
+  ranking_rerank_timeout_min: 1,
+  ranking_rerank_timeout_max: 60,
+};
+
 function view(overrides = {}) {
   const routes = clone(overrides.routes || BUILTINS);
   const route = overrides.route || 'default';
@@ -49,6 +59,10 @@ function view(overrides = {}) {
     disabled_sources: disabled,
     twitter_cookies_path: null,
     active_sources: selected?.sources.filter(source => !disabled.includes(source)) || [],
+    ranking: clone(RANKING_DEFAULTS),
+    ranking_invalid: false,
+    ...RANKING_BOUNDS_FIELDS,
+    reranker_profiles: [{ id: 'jev_default', label: 'JEV 默认重排' }],
     status: 'ok',
     message: '',
     ...overrides,
@@ -583,5 +597,108 @@ test('a card folds long member lists but still reports every source', async () =
   assert.equal(folded.textContent, '+4');
   assert.match(folded.title, /Stack Overflow/);
   assert.equal(row(root, 'fast').querySelector('.route-chip-more'), null, 'short lists are never folded');
+  window.close();
+});
+
+test('ranking toggle is off by default and saving without touching it submits an rrf block', async () => {
+  const { window, root } = setup();
+  let sent = null;
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    settingsSave: async input => { sent = input; return savedView(input); },
+  }));
+  const toggle = root.querySelector('[data-field="ranking-enabled"]');
+  assert.equal(toggle.checked, false);
+  assert.equal(root.querySelector('[data-ranking-advanced]').hidden, true);
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(sent.ranking, { mode: 'rrf', reranker_profile_id: 'jev_default', candidate_limit: 50, batch_size: 20, rerank_timeout: 5 });
+  window.close();
+});
+
+test('enabling model rerank reveals profile and advanced fields and submits rrf_model', async () => {
+  const { window, root } = setup();
+  let sent = null;
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    settingsSave: async input => { sent = input; return savedView(input); },
+  }));
+  const toggle = root.querySelector('[data-field="ranking-enabled"]');
+  toggle.checked = true;
+  toggle.dispatchEvent(new window.Event('change'));
+  assert.equal(root.querySelector('[data-ranking-advanced]').hidden, false);
+  const profile = root.querySelector('[data-field="reranker-profile"]');
+  assert.equal(profile.disabled, false);
+  assert.equal(profile.value, 'jev_default');
+  assert.equal(root.querySelector('[data-field="candidate-limit"]').disabled, false);
+  root.querySelector('[data-field="candidate-limit"]').value = '80';
+  root.querySelector('[data-field="candidate-limit"]').dispatchEvent(new window.Event('input'));
+  root.querySelector('[data-field="rerank-timeout"]').value = '9';
+  root.querySelector('[data-field="rerank-timeout"]').dispatchEvent(new window.Event('input'));
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.ranking.mode, 'rrf_model');
+  assert.equal(sent.ranking.reranker_profile_id, 'jev_default');
+  assert.equal(sent.ranking.candidate_limit, 80);
+  assert.equal(sent.ranking.rerank_timeout, 9);
+  window.close();
+});
+
+test('a stored rrf_model ranking arrives with the toggle on', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, ({ settingsView: async () => view({ ranking: { ...RANKING_DEFAULTS, mode: 'rrf_model', candidate_limit: 70 } }) }));
+  assert.equal(root.querySelector('[data-field="ranking-enabled"]').checked, true);
+  assert.equal(root.querySelector('[data-ranking-advanced]').hidden, false);
+  assert.equal(root.querySelector('[data-field="candidate-limit"]').value, '70');
+  window.close();
+});
+
+test('invalid saved ranking is flagged and shown as a warning', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, ({ settingsView: async () => view({ ranking_invalid: true }) }));
+  assert.equal(root.querySelector('[data-field="ranking-enabled"]').checked, false);
+  assert.match(root.querySelector('[data-info="ranking-warning"]').textContent, /重排配置非法/);
+  assert.match(root.querySelector('[data-info="env"]').textContent, /重排配置非法/);
+  window.close();
+});
+
+test('out-of-range ranking edits are refused locally before save', async () => {
+  const { window, root } = setup();
+  let saves = 0;
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    settingsSave: async input => { saves += 1; return savedView(input); },
+  }));
+  const toggle = root.querySelector('[data-field="ranking-enabled"]');
+  toggle.checked = true;
+  toggle.dispatchEvent(new window.Event('change'));
+  const field = root.querySelector('[data-field="candidate-limit"]');
+  field.value = '9';
+  field.dispatchEvent(new window.Event('input'));
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(saves, 0);
+  assert.match(root.querySelector('[data-info="error"]').textContent, /候选数必须是 10 到 200/);
+  field.value = '60';
+  field.dispatchEvent(new window.Event('input'));
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(saves, 1);
+  window.close();
+});
+
+test('ranking save failure surfaces a readable error instead of a false success', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    settingsSave: async () => { throw new Error('重排超时必须在 1 到 60 秒之间'); },
+  }));
+  const toggle = root.querySelector('[data-field="ranking-enabled"]');
+  toggle.checked = true;
+  toggle.dispatchEvent(new window.Event('change'));
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.match(root.querySelector('[data-info="error"]').textContent, /重排超时必须在 1 到 60 秒之间/);
+  assert.notEqual(root.querySelector('[data-status="save"]').textContent, '已保存。');
   window.close();
 });

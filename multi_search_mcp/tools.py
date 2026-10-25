@@ -38,6 +38,23 @@ from .src.state.operations import (
 _VALID_OUTPUT = {"json", "markdown", "both"}
 
 
+def _ranking_override(rerank: bool, rerank_profile: str | None) -> dict | None:
+    """Map the ``rerank`` flags to a request ``ranking`` override.
+
+    ``None`` keeps the config/default behavior (pure RRF). The core's
+    ``RerankPolicy.from_config`` rejects unknown modes, fields and profile ids
+    (validated against core's ``RERANKER_PROFILES`` registry), so no silent
+    fallback happens on a bad value. Core also builds the adapter itself from
+    the merged policy, so this surface never constructs a reranker.
+    """
+    if not rerank:
+        return None
+    ranking: dict = {"mode": "rrf_model"}
+    if rerank_profile is not None:
+        ranking["reranker_profile_id"] = rerank_profile
+    return ranking
+
+
 def _error(message: str, error_type: str, **extra: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {"error": message, "error_type": error_type}
     payload.update(extra)
@@ -61,16 +78,25 @@ def search_web_tool(
     timeout: int | None = None,
     expand: list[str] | None = None,
     use_state: bool = True,
+    rerank: bool = False,
+    rerank_profile: str | None = None,
 ) -> dict[str, Any]:
-    return _safe_call(lambda: run_search_web(SearchWebRequest(
-        query=query,
-        route=route,
-        count=count,
-        sources=sources,
-        timeout=timeout,
-        expand=None if expand is None else list(expand),
-        use_state=use_state,
-    )))
+    ranking = _ranking_override(rerank, rerank_profile)
+
+    def call() -> dict[str, Any]:
+        request = SearchWebRequest(
+            query=query,
+            route=route,
+            count=count,
+            sources=sources,
+            timeout=timeout,
+            expand=None if expand is None else list(expand),
+            use_state=use_state,
+            ranking=ranking,
+        )
+        return run_search_web(request)
+
+    return _safe_call(call)
 
 
 def fetch_source_tool(
@@ -120,6 +146,8 @@ def multi_search_tool(
     expand: list[str] | None = None,
     use_state: bool = True,
     output: Literal["json", "markdown", "both"] = "both",
+    rerank: bool = False,
+    rerank_profile: str | None = None,
 ) -> dict[str, Any]:
     if output not in _VALID_OUTPUT:
         return _error(
@@ -127,18 +155,25 @@ def multi_search_tool(
             "invalid_request",
             valid_output=sorted(_VALID_OUTPUT),
         )
-    return _safe_call(lambda: run_multi_search(MultiSearchRequest(
-        query=query,
-        route=route,
-        count=count,
-        sources=sources,
-        scrape_chars=scrape_chars,
-        timeout=timeout,
-        scrape_timeout=scrape_timeout,
-        expand=None if expand is None else list(expand),
-        output=output,
-        use_state=use_state,
-    )))
+    ranking = _ranking_override(rerank, rerank_profile)
+
+    def call() -> dict[str, Any]:
+        request = MultiSearchRequest(
+            query=query,
+            route=route,
+            count=count,
+            sources=sources,
+            scrape_chars=scrape_chars,
+            timeout=timeout,
+            scrape_timeout=scrape_timeout,
+            expand=None if expand is None else list(expand),
+            output=output,
+            use_state=use_state,
+            ranking=ranking,
+        )
+        return run_multi_search(request)
+
+    return _safe_call(call)
 
 
 def scrape_url_tool(

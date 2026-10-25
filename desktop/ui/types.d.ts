@@ -142,6 +142,26 @@ will_delete: Array<string>,
  */
 will_keep: Array<string>, can_remove: boolean, };
 
+/**
+ * 保存时提交的 `ranking` 块；字段名与 core 的配置键严格一致。
+ */
+export type RankingInput = { 
+/**
+ * 只允许 "rrf" / "rrf_model"。
+ */
+mode: string, reranker_profile_id: string, candidate_limit: number, batch_size: number, rerank_timeout: number, };
+
+/**
+ * `SettingsView` 回传的当前生效 `ranking`；非法存储值被回退成出厂默认并伴随
+ * `ranking_invalid` 标志。
+ */
+export type RankingState = { mode: string, reranker_profile_id: string, candidate_limit: number, batch_size: number, rerank_timeout: number, };
+
+/**
+ * 模型重排的可选 profile；v1 只有 `jev_default`。密钥只走后端环境变量，UI 不持有。
+ */
+export type RerankerProfileOption = { id: string, label: string, };
+
 export type RouteConfig = { label: string, sources: Array<string>, timeout: number | null, };
 
 export type ScrapeBackendOption = { name: string, label: string, };
@@ -173,7 +193,12 @@ timeout: number | null, disabled_sources: Array<string>, routes: { [key in strin
 /**
  * `None` 表示本次保存不动该键；`Some(vec)` 才写入。
  */
-scrape_backends: Array<string> | null, };
+scrape_backends: Array<string> | null, 
+/**
+ * `None` 表示本次保存整块 `ranking` 都不动；`Some` 时按块内已知键合并，
+ * 块里不认识的同级键原样保留。
+ */
+ranking: RankingInput | null, };
 
 export type SettingsView = { config_path: string | null, path_source: string, file_present: boolean, read_source: string, route: string, timeout: number, timeout_configured: boolean, 
 /**
@@ -198,6 +223,23 @@ scrape_backends: Array<string>,
  * 此时 `scrape_backends` 是回退值，CLI 会报配置错误，UI 必须提示。
  */
 scrape_backends_invalid: boolean, builtin_scrape_backends: Array<string>, scrape_backend_options: Array<ScrapeBackendOption>, active_sources: Array<string>, 
+/**
+ * 当前生效的 `ranking` 块（缺失/非法时回退出厂默认）。
+ */
+ranking: RankingState, 
+/**
+ * 已保存的 `ranking` 块非法（非对象、未知 mode/profile、数值缺省或越界）；
+ * 此时 `ranking` 是回退值，UI 必须提示而不是假装有效。
+ */
+ranking_invalid: boolean, 
+/**
+ * `ranking` 数值键的可编辑上下界；越界的已存值仍以原样展示并保留。
+ */
+ranking_candidate_limit_min: number, ranking_candidate_limit_max: number, ranking_batch_size_min: number, ranking_batch_size_max: number, ranking_rerank_timeout_min: number, ranking_rerank_timeout_max: number, 
+/**
+ * 可选的重排 profile；v1 只有 `jev_default`。
+ */
+reranker_profiles: Array<RerankerProfileOption>, 
 /**
  * ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
  */

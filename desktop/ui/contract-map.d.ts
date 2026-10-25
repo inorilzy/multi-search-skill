@@ -42,6 +42,9 @@ export interface ContractMap {
   TestOutcome: T.TestOutcome;
   ProviderInfo: T.ProviderInfo;
   RouteConfig: T.RouteConfig;
+  RankingInput: T.RankingInput;
+  RankingState: T.RankingState;
+  RerankerProfileOption: T.RerankerProfileOption;
   ScrapeBackendOption: T.ScrapeBackendOption;
   ScrapeMemoryRow: T.ScrapeMemoryRow;
   ScrapeMemoryView: T.ScrapeMemoryView;

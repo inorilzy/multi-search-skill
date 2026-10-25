@@ -73,6 +73,9 @@ macro_rules! for_each_contract_type {
             contract::TestOutcome,
             contract::ProviderInfo,
             contract::RouteConfig,
+            contract::RankingInput,
+            contract::RankingState,
+            contract::RerankerProfileOption,
             contract::ScrapeBackendOption,
             contract::ScrapeMemoryRow,
             contract::ScrapeMemoryView,
@@ -269,6 +272,7 @@ fn normalise_js_tag(tag: &str) -> String {
         "x" => "x".into(),
         "xn" => "x|null".into(),
         "RouteMapN" => "RouteMap|null".into(),
+        "RankingInputN" => "RankingInput|null".into(),
         // Compound type names are quoted in payloads.js (`'Discovery'`).
         other => other.to_string(),
     }

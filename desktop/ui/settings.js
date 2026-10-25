@@ -23,6 +23,24 @@ const cloneRoutes = routes => new Map(Object.entries(routes || {}).map(([id, rou
 const routesObject = routes => Object.fromEntries([...routes].map(([id, route]) => [id, cloneRoute(route)]));
 const charLength = value => Array.from(value).length;
 
+// core 的出厂 ranking 块；SettingsView 缺失字段时的兜底展示值。
+const RANKING_FACTORY = { mode: 'rrf', reranker_profile_id: 'jev_default', candidate_limit: 50, batch_size: 20, rerank_timeout: 5 };
+const RANKING_BOUNDS = {
+  candidate_limit: [10, 200],
+  batch_size: [1, 50],
+  rerank_timeout: [1, 60],
+};
+const RANKING_FIELD_NAMES = { candidate_limit: '候选数', batch_size: '重排批量', rerank_timeout: '重排超时（秒）' };
+const RANKING_MODE_LABELS = { rrf: 'RRF（不调用模型）', rrf_model: '模型重排' };
+
+const cloneRanking = ranking => ({
+  mode: String(ranking?.mode ?? RANKING_FACTORY.mode),
+  reranker_profile_id: String(ranking?.reranker_profile_id ?? RANKING_FACTORY.reranker_profile_id),
+  candidate_limit: Number(ranking?.candidate_limit ?? RANKING_FACTORY.candidate_limit),
+  batch_size: Number(ranking?.batch_size ?? RANKING_FACTORY.batch_size),
+  rerank_timeout: Number(ranking?.rerank_timeout ?? RANKING_FACTORY.rerank_timeout),
+});
+
 function validateRoute(id, route, routes, originalId = null) {
   if (!ID_PATTERN.test(id) || id === 'web') return '标识需为 1–64 个 ASCII 小写字母、数字、下划线或连字符，且不能使用 web。';
   if (id !== originalId && routes.has(id)) return '该路由标识已存在。';
@@ -56,6 +74,15 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
         <div data-route-list class="route-list"></div><div data-restore-confirm></div>
       </section>
 
+      <section class="panel ranking-panel"><div class="section-title"><div><p class="eyebrow">RANKING</p><h2>模型重排</h2></div></div>
+        <label class="ranking-toggle"><input type="checkbox" data-field="ranking-enabled" disabled><span>启用模型重排<small>开启后会把你的搜索问题与结果摘要发送给第三方模型服务；关闭时完全不调用模型。</small></span></label>
+        <p class="error-message" data-info="ranking-warning" role="alert"></p>
+        <div class="ranking-advanced" data-ranking-advanced hidden>
+          <label>重排模型配置<select data-field="reranker-profile" disabled></select></label>
+          <div class="settings-default-grid"><label>候选数<input data-field="candidate-limit" type="number" step="1" disabled></label><label>重排批量<input data-field="batch-size" type="number" step="1" disabled></label><label>重排超时（秒）<input data-field="rerank-timeout" type="number" step="1" disabled></label></div>
+        </div>
+      </section>
+
       <section class="panel settings-other"><div class="section-title"><div><p class="eyebrow">OTHER</p><h2>其他设置</h2></div></div>
         <label>Twitter Cookie 文件兼容路径（仅 file 模式读取明文）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json" disabled></label>
         <details class="config-details"><summary>配置数据库信息</summary><dl class="cred-status"><dt>配置数据库</dt><dd class="status-text" data-status="path"></dd><dt>路径来源</dt><dd class="status-text" data-status="path-source"></dd></dl><p class="note" data-info="env" role="status"></p></details>
@@ -80,6 +107,11 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   let effectiveTimeouts = new Map();
   let disabledSources = new Set();
   let twitterPath = '';
+  let rankingEnabled = false;
+  let ranking = cloneRanking(null);
+  let rankingInvalid = false;
+  let rankingBounds = JSON.parse(JSON.stringify(RANKING_BOUNDS));
+  let rerankerProfiles = [];
   let loadedView = null;
   let dirty = false;
   let editorDirty = false;
@@ -91,9 +123,13 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   let refreshTicket = 0;
 
   function setEnabled(enabled) {
-    for (const selector of ['[data-field="route"]', '[data-field="timeout"]', '[data-field="twitter"]', '[data-action="new-route"]', '[data-action="restore"]', '[data-action="save"]']) {
+    for (const selector of ['[data-field="route"]', '[data-field="timeout"]', '[data-field="twitter"]', '[data-field="ranking-enabled"]', '[data-action="new-route"]', '[data-action="restore"]', '[data-action="save"]']) {
       const node = q(selector);
       if (node) node.disabled = !enabled || (selector === '[data-action="save"]' && saving);
+    }
+    for (const selector of ['[data-field="reranker-profile"]', '[data-field="candidate-limit"]', '[data-field="batch-size"]', '[data-field="rerank-timeout"]']) {
+      const node = q(selector);
+      if (node) node.disabled = !enabled || !rankingEnabled;
     }
   }
 
@@ -378,11 +414,60 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     if (editor) mountEditor(editor.panel);
   }
 
+  function renderRanking() {
+    const toggle = q('[data-field="ranking-enabled"]');
+    toggle.checked = rankingEnabled;
+    q('[data-ranking-advanced]').hidden = !rankingEnabled;
+    const select = q('[data-field="reranker-profile"]');
+    select.replaceChildren();
+    const options = rerankerProfiles.length ? rerankerProfiles : [{ id: ranking.reranker_profile_id || RANKING_FACTORY.reranker_profile_id, label: ranking.reranker_profile_id || RANKING_FACTORY.reranker_profile_id }];
+    for (const option of options) {
+      const node = doc.createElement('option');
+      node.value = option.id;
+      node.textContent = option.label && option.label !== option.id ? `${option.label} / ${option.id}` : option.id;
+      node.selected = option.id === ranking.reranker_profile_id;
+      select.append(node);
+    }
+    if (!options.some(option => option.id === ranking.reranker_profile_id)) select.value = options[0].id;
+    select.disabled = toggle.disabled || !rankingEnabled;
+    const fields = { candidate_limit: '[data-field="candidate-limit"]', batch_size: '[data-field="batch-size"]', rerank_timeout: '[data-field="rerank-timeout"]' };
+    for (const [key, selector] of Object.entries(fields)) {
+      const node = q(selector);
+      const [min, max] = rankingBounds[key];
+      node.min = String(min);
+      node.max = String(max);
+      node.value = String(ranking[key]);
+      node.disabled = toggle.disabled || !rankingEnabled;
+    }
+    const boundsText = Object.entries(fields).map(([key]) => `${RANKING_FIELD_NAMES[key]} ${rankingBounds[key][0]}–${rankingBounds[key][1]}`).join('，');
+    text('[data-info="ranking-warning"]', rankingInvalid ? `已保存的重排配置非法（应为 ${boundsText}），当前显示默认值；重新保存可修复。` : '');
+  }
+
+  // null = 合法；否则返回中文错误。关闭时只有「已保存值非法」本身会阻止保存。
+  function rankingError() {
+    if (!rankingEnabled) return rankingInvalid ? '已保存的重排配置非法，请先开启模型重排并修正后再保存。' : null;
+    if (ranking.mode !== 'rrf' && ranking.mode !== 'rrf_model') return '重排模式只能是 rrf 或 rrf_model。';
+    if (!rerankerProfiles.length) return '没有可选的重排模型配置。';
+    if (!rerankerProfiles.some(option => option.id === ranking.reranker_profile_id)) return '重排模型配置无效。';
+    const fields = { candidate_limit: '[data-field="candidate-limit"]', batch_size: '[data-field="batch-size"]', rerank_timeout: '[data-field="rerank-timeout"]' };
+    for (const [key, selector] of Object.entries(fields)) {
+      const raw = q(selector).value.trim();
+      const value = Number(raw);
+      const [min, max] = rankingBounds[key];
+      if (!raw || !Number.isInteger(value) || value < min || value > max) {
+        return `${RANKING_FIELD_NAMES[key]}必须是 ${min} 到 ${max} 之间的整数。`;
+      }
+      ranking[key] = value;
+    }
+    return null;
+  }
+
   function renderAll() {
     renderRouteSelect();
     q('[data-field="route"]').value = selectedRoute;
     renderRoutes();
     renderSummary();
+    renderRanking();
   }
 
   function openRestoreConfirm() {
@@ -415,6 +500,15 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     effectiveTimeouts = new Map(Object.entries(view.effective_timeouts || { [view.route]: view.effective_timeout }));
     disabledSources = new Set(view.disabled_sources || []);
     twitterPath = view.twitter_cookies_path || '';
+    ranking = cloneRanking(view.ranking);
+    rankingEnabled = ranking.mode === 'rrf_model';
+    rankingInvalid = view.ranking_invalid === true;
+    rerankerProfiles = Array.isArray(view.reranker_profiles) ? view.reranker_profiles : [];
+    rankingBounds = {
+      candidate_limit: [Number(view.ranking_candidate_limit_min ?? RANKING_BOUNDS.candidate_limit[0]), Number(view.ranking_candidate_limit_max ?? RANKING_BOUNDS.candidate_limit[1])],
+      batch_size: [Number(view.ranking_batch_size_min ?? RANKING_BOUNDS.batch_size[0]), Number(view.ranking_batch_size_max ?? RANKING_BOUNDS.batch_size[1])],
+      rerank_timeout: [Number(view.ranking_rerank_timeout_min ?? RANKING_BOUNDS.rerank_timeout[0]), Number(view.ranking_rerank_timeout_max ?? RANKING_BOUNDS.rerank_timeout[1])],
+    };
     const timeoutField = q('[data-field="timeout"]');
     timeoutField.min = String(timeoutMin);
     timeoutField.max = String(timeoutMax);
@@ -427,6 +521,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     if (view.timeout_configured === false) notes.push('配置中没有显式的全局超时，当前显示的是 CLI 内置值；不修改则保存时不会写入。');
     if (view.timeout_out_of_range) notes.push(`已保存的超时 ${view.timeout} 秒超出 ${timeoutMin} 到 ${timeoutMax} 秒；不修改则原样保留。`);
     if (view.unknown_disabled_sources?.length) notes.push(`配置中还有无法识别的禁用项（${view.unknown_disabled_sources.join('、')}），保存时会原样保留。`);
+    if (rankingInvalid) notes.push('已保存的模型重排配置非法，当前按默认值显示；请修正后重新保存。');
     text('[data-info="env"]', notes.join(' '));
     dirty = false;
     editorDirty = false;
@@ -453,6 +548,8 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       const error = validateRoute(id, route, new Map([...routes].filter(([other]) => other !== id)), id);
       if (error) return `${route.label || id}：${error}`;
     }
+    const rankingProblem = rankingError();
+    if (rankingProblem) return rankingProblem;
     return '';
   }
 
@@ -477,6 +574,8 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       disabled_sources: [...disabledSources],
       routes: routesObject(routes),
       twitter_cookies_path: twitterPath,
+      // 关闭时提交 rrf 块（沿用当前 profile/数值草稿），core 完全不调用模型。
+      ranking: { mode: rankingEnabled ? 'rrf_model' : 'rrf', reranker_profile_id: ranking.reranker_profile_id, candidate_limit: ranking.candidate_limit, batch_size: ranking.batch_size, rerank_timeout: ranking.rerank_timeout },
     };
   }
 
@@ -581,6 +680,16 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     renderSummary();
   });
   q('[data-field="twitter"]').addEventListener('input', event => { twitterPath = event.target.value; setDirty(); });
+  q('[data-field="ranking-enabled"]').addEventListener('change', event => {
+    rankingEnabled = event.target.checked;
+    ranking.mode = rankingEnabled ? 'rrf_model' : 'rrf';
+    setDirty();
+    renderRanking();
+  });
+  q('[data-field="reranker-profile"]').addEventListener('change', event => { ranking.reranker_profile_id = event.target.value; setDirty(); });
+  for (const [key, selector] of Object.entries({ candidate_limit: '[data-field="candidate-limit"]', batch_size: '[data-field="batch-size"]', rerank_timeout: '[data-field="rerank-timeout"]' })) {
+    q(selector).addEventListener('input', event => { ranking[key] = Number(event.target.value); setDirty(); });
+  }
   q('[data-action="new-route"]').addEventListener('click', () => requestOpenEditor('new'));
   q('[data-action="restore"]').addEventListener('click', openRestoreConfirm);
   q('[data-action="refresh"]').addEventListener('click', () => { void refresh(); });

@@ -32,6 +32,81 @@ pub const TIMEOUT_MAX: u32 = 90;
 /// 通用网页抓取后端的出厂 fallback 链；顺序即默认尝试顺序。
 pub const SCRAPE_BACKENDS: &[&str] = &["jina", "exa", "tavily", "firecrawl"];
 
+/// 模型重排的可编辑边界（与 core 的 `ranking` 配置键一致）。
+/// mode 只允许 "rrf" / "rrf_model"；profile 见 RERANKER_PROFILES。
+pub const RANKING_MODES: &[&str] = &["rrf", "rrf_model"];
+pub const RERANKER_PROFILES: &[&str] = &["jev_default"];
+pub const RANKING_CANDIDATE_LIMIT_MIN: u32 = 10;
+pub const RANKING_CANDIDATE_LIMIT_MAX: u32 = 200;
+pub const RANKING_BATCH_SIZE_MIN: u32 = 1;
+pub const RANKING_BATCH_SIZE_MAX: u32 = 50;
+pub const RANKING_RERANK_TIMEOUT_MIN: u32 = 1;
+pub const RANKING_RERANK_TIMEOUT_MAX: u32 = 60;
+
+/// core 的出厂 `ranking` 块；配置缺失或整体非法时作为回退值展示。
+fn default_ranking() -> RankingState {
+    RankingState {
+        mode: "rrf".into(),
+        reranker_profile_id: "jev_default".into(),
+        candidate_limit: 50,
+        batch_size: 20,
+        rerank_timeout: 5,
+    }
+}
+
+fn reranker_profile_label(id: &str) -> &'static str {
+    match id {
+        "jev_default" => "JEV 默认重排",
+        _ => "",
+    }
+}
+
+fn reranker_profile_options() -> Vec<RerankerProfileOption> {
+    RERANKER_PROFILES
+        .iter()
+        .map(|id| RerankerProfileOption {
+            id: (*id).into(),
+            label: reranker_profile_label(id).into(),
+        })
+        .collect()
+}
+
+/// 宽容读取已保存的 `ranking`：块缺失或为 null 时回落默认且不报错；
+/// 块存在但任一键非法时回落默认并标记 invalid，供 UI 提示而不是假装有效。
+/// 未知的同级键不属错误，由 merge 原样保留。
+fn ranking_state(object: &Map<String, Value>) -> (RankingState, bool) {
+    let value = match object.get("ranking") {
+        None | Some(Value::Null) => return (default_ranking(), false),
+        Some(value) => value,
+    };
+    let Some(map) = value.as_object() else {
+        return (default_ranking(), true);
+    };
+    let mode = map.get("mode").and_then(Value::as_str);
+    let profile = map.get("reranker_profile_id").and_then(Value::as_str);
+    let candidate_limit = map.get("candidate_limit").and_then(Value::as_u64);
+    let batch_size = map.get("batch_size").and_then(Value::as_u64);
+    let rerank_timeout = map.get("rerank_timeout").and_then(Value::as_u64);
+    let valid = mode.is_some_and(|m| RANKING_MODES.contains(&m))
+        && profile.is_some_and(|p| RERANKER_PROFILES.contains(&p))
+        && candidate_limit.is_some_and(|v| v >= RANKING_CANDIDATE_LIMIT_MIN as u64 && v <= RANKING_CANDIDATE_LIMIT_MAX as u64)
+        && batch_size.is_some_and(|v| v >= RANKING_BATCH_SIZE_MIN as u64 && v <= RANKING_BATCH_SIZE_MAX as u64)
+        && rerank_timeout.is_some_and(|v| v >= RANKING_RERANK_TIMEOUT_MIN as u64 && v <= RANKING_RERANK_TIMEOUT_MAX as u64);
+    if !valid {
+        return (default_ranking(), true);
+    }
+    (
+        RankingState {
+            mode: mode.unwrap_or_default().to_string(),
+            reranker_profile_id: profile.unwrap_or_default().to_string(),
+            candidate_limit: candidate_limit.unwrap_or_default() as u32,
+            batch_size: batch_size.unwrap_or_default() as u32,
+            rerank_timeout: rerank_timeout.unwrap_or_default() as u32,
+        },
+        false,
+    )
+}
+
 pub fn scrape_backend_label(name: &str) -> &'static str {
     match name {
         "jina" => "Jina Reader",
@@ -98,6 +173,41 @@ fn scrape_chain(object: &Map<String, Value>) -> (Vec<String>, bool) {
 pub struct ScrapeBackendOption {
     pub name: String,
     pub label: String,
+}
+
+/// 模型重排的可选 profile；v1 只有 `jev_default`。密钥只走后端环境变量，UI 不持有。
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct RerankerProfileOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// 保存时提交的 `ranking` 块；字段名与 core 的配置键严格一致。
+#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct RankingInput {
+    /// 只允许 "rrf" / "rrf_model"。
+    pub mode: String,
+    pub reranker_profile_id: String,
+    pub candidate_limit: u32,
+    pub batch_size: u32,
+    pub rerank_timeout: u32,
+}
+
+/// `SettingsView` 回传的当前生效 `ranking`；非法存储值被回退成出厂默认并伴随
+/// `ranking_invalid` 标志。
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct RankingState {
+    pub mode: String,
+    pub reranker_profile_id: String,
+    pub candidate_limit: u32,
+    pub batch_size: u32,
+    pub rerank_timeout: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -191,6 +301,10 @@ pub struct SettingsInput {
     /// `None` 表示本次保存不动该键；`Some(vec)` 才写入。
     #[serde(default)]
     pub scrape_backends: Option<Vec<String>>,
+    /// `None` 表示本次保存整块 `ranking` 都不动；`Some` 时按块内已知键合并，
+    /// 块里不认识的同级键原样保留。
+    #[serde(default)]
+    pub ranking: Option<RankingInput>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -201,6 +315,7 @@ pub struct Validated {
     pub routes: Option<RouteMap>,
     pub twitter_cookies_path: Option<String>,
     pub scrape_backends: Option<Vec<String>>,
+    pub ranking: Option<RankingState>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -236,6 +351,20 @@ pub struct SettingsView {
     pub builtin_scrape_backends: Vec<String>,
     pub scrape_backend_options: Vec<ScrapeBackendOption>,
     pub active_sources: Vec<String>,
+    /// 当前生效的 `ranking` 块（缺失/非法时回退出厂默认）。
+    pub ranking: RankingState,
+    /// 已保存的 `ranking` 块非法（非对象、未知 mode/profile、数值缺省或越界）；
+    /// 此时 `ranking` 是回退值，UI 必须提示而不是假装有效。
+    pub ranking_invalid: bool,
+    /// `ranking` 数值键的可编辑上下界；越界的已存值仍以原样展示并保留。
+    pub ranking_candidate_limit_min: u32,
+    pub ranking_candidate_limit_max: u32,
+    pub ranking_batch_size_min: u32,
+    pub ranking_batch_size_max: u32,
+    pub ranking_rerank_timeout_min: u32,
+    pub ranking_rerank_timeout_max: u32,
+    /// 可选的重排 profile；v1 只有 `jev_default`。
+    pub reranker_profiles: Vec<RerankerProfileOption>,
     /// ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub message: String,
@@ -392,6 +521,7 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
             Some(chain)
         }
     };
+    let ranking = input.ranking.as_ref().map(validate_ranking).transpose()?;
     Ok(Validated {
         route,
         timeout: input.timeout,
@@ -399,6 +529,45 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
         routes,
         twitter_cookies_path: twitter,
         scrape_backends,
+        ranking,
+    })
+}
+
+/// 校验提交的 `ranking` 块：mode 白名单、profile 白名单、三个数值各自的上下界。
+/// 错误文案与 `timeout` 一样用中文说明合法范围。
+fn validate_ranking(input: &RankingInput) -> Result<RankingState, String> {
+    let mode = input.mode.trim();
+    if !RANKING_MODES.contains(&mode) {
+        return Err("重排模式必须是 rrf 或 rrf_model".into());
+    }
+    let profile = input.reranker_profile_id.trim();
+    if !RERANKER_PROFILES.contains(&profile) {
+        return Err("不支持的重排模型配置".into());
+    }
+    if !(RANKING_CANDIDATE_LIMIT_MIN..=RANKING_CANDIDATE_LIMIT_MAX)
+        .contains(&input.candidate_limit)
+    {
+        return Err(format!(
+            "候选数必须在 {RANKING_CANDIDATE_LIMIT_MIN} 到 {RANKING_CANDIDATE_LIMIT_MAX} 之间"
+        ));
+    }
+    if !(RANKING_BATCH_SIZE_MIN..=RANKING_BATCH_SIZE_MAX).contains(&input.batch_size) {
+        return Err(format!(
+            "重排批量必须在 {RANKING_BATCH_SIZE_MIN} 到 {RANKING_BATCH_SIZE_MAX} 之间"
+        ));
+    }
+    if !(RANKING_RERANK_TIMEOUT_MIN..=RANKING_RERANK_TIMEOUT_MAX).contains(&input.rerank_timeout)
+    {
+        return Err(format!(
+            "重排超时必须在 {RANKING_RERANK_TIMEOUT_MIN} 到 {RANKING_RERANK_TIMEOUT_MAX} 秒之间"
+        ));
+    }
+    Ok(RankingState {
+        mode: mode.to_string(),
+        reranker_profile_id: profile.to_string(),
+        candidate_limit: input.candidate_limit,
+        batch_size: input.batch_size,
+        rerank_timeout: input.rerank_timeout,
     })
 }
 
@@ -455,6 +624,23 @@ fn merge(mut map: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
     }
     if let Some(chain) = &valid.scrape_backends {
         map.insert("scrape_backends".into(), serde_json::json!(chain));
+    }
+    if let Some(ranking) = &valid.ranking {
+        // 合并进既有 ranking 对象而不是整块替换：块里不认识的同级键原样保留；
+        // 已有值不是对象时由校验后的完整块替换。
+        let mut block = match map.get("ranking") {
+            Some(Value::Object(existing)) => existing.clone(),
+            _ => Map::new(),
+        };
+        block.insert("mode".into(), Value::String(ranking.mode.clone()));
+        block.insert(
+            "reranker_profile_id".into(),
+            Value::String(ranking.reranker_profile_id.clone()),
+        );
+        block.insert("candidate_limit".into(), Value::from(ranking.candidate_limit));
+        block.insert("batch_size".into(), Value::from(ranking.batch_size));
+        block.insert("rerank_timeout".into(), Value::from(ranking.rerank_timeout));
+        map.insert("ranking".into(), Value::Object(block));
     }
     map
 }
@@ -559,6 +745,15 @@ fn unreadable_view(path: Option<PathBuf>, environment: &RuntimeEnvironment) -> S
         builtin_scrape_backends: default_scrape_backends(),
         scrape_backend_options: scrape_backend_options(),
         active_sources: vec![],
+        ranking: default_ranking(),
+        ranking_invalid: false,
+        ranking_candidate_limit_min: RANKING_CANDIDATE_LIMIT_MIN,
+        ranking_candidate_limit_max: RANKING_CANDIDATE_LIMIT_MAX,
+        ranking_batch_size_min: RANKING_BATCH_SIZE_MIN,
+        ranking_batch_size_max: RANKING_BATCH_SIZE_MAX,
+        ranking_rerank_timeout_min: RANKING_RERANK_TIMEOUT_MIN,
+        ranking_rerank_timeout_max: RANKING_RERANK_TIMEOUT_MAX,
+        reranker_profiles: reranker_profile_options(),
         status: "config_unreadable".into(),
         message: "配置数据库无法读取，或 routes/type 不是有效配置；保存已被阻止。".into(),
     }
@@ -644,6 +839,7 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
         ("ok", String::new())
     };
     let (scrape_backends, scrape_backends_invalid) = scrape_chain(&object);
+    let (ranking, ranking_invalid) = ranking_state(&object);
     SettingsView {
         config_path: path.map(|path| path.to_string_lossy().into_owned()),
         path_source: if environment
@@ -680,6 +876,15 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
         builtin_scrape_backends: default_scrape_backends(),
         scrape_backend_options: scrape_backend_options(),
         active_sources,
+        ranking,
+        ranking_invalid,
+        ranking_candidate_limit_min: RANKING_CANDIDATE_LIMIT_MIN,
+        ranking_candidate_limit_max: RANKING_CANDIDATE_LIMIT_MAX,
+        ranking_batch_size_min: RANKING_BATCH_SIZE_MIN,
+        ranking_batch_size_max: RANKING_BATCH_SIZE_MAX,
+        ranking_rerank_timeout_min: RANKING_RERANK_TIMEOUT_MIN,
+        ranking_rerank_timeout_max: RANKING_RERANK_TIMEOUT_MAX,
+        reranker_profiles: reranker_profile_options(),
         status: status.into(),
         message,
     }

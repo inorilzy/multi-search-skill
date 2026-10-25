@@ -54,7 +54,8 @@ pub mod contract {
     pub use crate::provider::ProviderInfo;
     pub use crate::scrape_memory::{ScrapeMemoryRow, ScrapeMemoryView};
     pub use crate::settings::{
-        RouteConfig, ScrapeBackendOption, SettingsInput, SettingsView,
+        RankingInput, RankingState, RerankerProfileOption, RouteConfig, ScrapeBackendOption,
+        SettingsInput, SettingsView,
     };
     pub use crate::skill::{SkillInstall, SkillPlan};
     pub use crate::skill_manage::{
@@ -70,8 +71,8 @@ pub mod contract {
 pub mod settings_fixture {
     pub use crate::settings::{
         builtin_routes, config_path, route_default_timeout, save, save_with_dev, validate, view,
-        view_with_dev, RouteConfig, RouteMap, SettingsInput, SettingsView, Validated, TIMEOUT_MAX,
-        TIMEOUT_MIN,
+        view_with_dev, RankingInput, RouteConfig, RouteMap, SettingsInput, SettingsView, Validated,
+        TIMEOUT_MAX, TIMEOUT_MIN,
     };
     /// Dev fallback location for the real app: the repo-root file the CLI reads when no user file exists.
     pub fn default_dev_config() -> std::path::PathBuf {

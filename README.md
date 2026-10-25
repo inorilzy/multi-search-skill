@@ -57,7 +57,7 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys stat
 | 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI：Windows 到 `%LOCALAPPDATA%\MultiSearch\cli`，macOS 到 `~/Library/Application Support/MultiSearch/cli`；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本。加入用户 PATH 需单独确认：Windows 写当前用户 PATH，macOS 只在登录 Shell 配置末尾追加带标记的区块，新开终端才生效，已运行的宿主需重启。 |
 | 03 Claude Code Skill | 以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
 | 04 搜索源与凭据 | 列出 12 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 保存在 Windows 凭据库（`config.sqlite` 中按 provider 一行、当前用户 DPAPI 加密），可保存、删除并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。不显示已保存的 Key，测试可能消耗额度。 |
-| 05 搜索设置 | 读写默认路由、全局超时（1–60 秒）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另可填写 Twitter Cookie 文件兼容路径（仅 file 模式读取），并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
+| 05 搜索设置 | 读写默认路由、全局超时（1–60 秒）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另有「模型重排」开关（默认关闭）：开启后显示重排模型配置选择（v1 仅 `jev_default`）与候选数 / 批量 / 超时高级项，写入配置块的 `ranking` 键；非法的已存 `ranking` 块回退默认值并提示。模型密钥只从后端环境变量读取，UI 不持有。另可填写 Twitter Cookie 文件兼容路径（仅 file 模式读取），并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
 | 06 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Reddit / Twitter 按域名固定使用专用抓取器，不受抓取链影响。 |
 | 07 Cookie 托管 | 显示 Twitter/X Cookie 当前模式；用户显式确认后把 Cookie 文件导入为当前用户 DPAPI 加密的托管条目（切换到 `managed`），或删除托管 Cookie。导入和删除都不修改或删除原文件，本页不读取或显示 Cookie 内容；删除后仍保持 `managed` 且不可用，不回退旧文件。 |
 | 08 旧配置迁移 | 预览并迁移 `~/.search-keys.json` 中的单 Key 条目到 Windows 凭据库；多 Key 列表、Jina、Cookie 对象和无法识别的条目保留在旧文件。预览只显示掩码指纹，迁移前逐项确认，旧文件永不删除，并在结果中提示残留明文和文件权限。 |
@@ -305,14 +305,14 @@ flowchart LR
 术语固定如下：
 
 - **Service 服务层**：`multi_search_mcp/src/service.py` 是对外 facade；实现按职责拆在 `search/candidates.py`（候选搜索）、`search_web.py`（搜索+抓取编排）、`scrape/fetch.py`（抓取）、`read.py`（缓存读取）、`multi_search.py`（兼容展示）、`diagnostics.py`（诊断）、`state/runtime.py`（配置、凭据与 Cookie 模式的运行时装配）等模块，CLI 只做参数适配。
-- **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口，最后取前 15 条；分数相同按 canonical URL 排序。
+- **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口，最后取前 15 条；分数相同按 canonical URL 排序。`ranking.mode="rrf_model"` 时融合先扩展到 `candidate_limit` 条供模型重排，重排或回退后再截取前 15 条。
 - **SourceRegistry / ContentStore**：短期 SQLite 状态。前者把本次响应的 `source_id` 映射到 URL；后者按 TTL、单条/总容量限制保存正文并以内容哈希去重。provider 的 retention policy 可禁止保存结果、摘要或正文。
 
 同 canonical URL、相同来源集合、显式后端顺序及凭据上下文的有效抓取正文可跨响应复用，每次响应仍生成独立 `source_id`。关联新 ID 不延长原正文 TTL；来源策略更严格时服从当前限制。不同来源上下文（包括 direct 与搜索来源）、provider 预取正文及旧的无复用元数据缓存不跨 ID 混用。凭据上下文只存 SHA-256 摘要；旧缓存仍可按原 ID 读取。SQLite 首次运行自动兼容增加 URL/scope 字段与索引。
 - **Searcher 搜索器**：`multi_search_mcp/src/search/searchers/*`，只负责 query -> `SearchResult`/dict，输出 title、url、description、source、score、raw metadata。
 - **SearchRunner 搜索调度器**：`multi_search_mcp/src/search/search_runner.py`，负责 route、并发、timeout、SQLite key state 和 source status。
 - **统一排序与抓取**：两个公共搜索入口共用 RRF 结果；`run_ranked_fetch_stage` 获取最终列表正文，按输入顺序回填。正文长度、抓取成功与否和 stars 不再改变排名；`support/dedup.py` 中的旧排序辅助函数不参与公共搜索排序。
-- **抓取后端选择**：`scrape/service.run_scrape_raw` 按设置中的抓取链（`scrape_backends`）确定通用后端顺序、从共享 key manager 获取可用 key，`scrape/scrape.py` 结合站点抓取记忆逐次尝试；搜索最终列表不再按每源 quota 二次截取。旧 `run_scrape_stage`、planner 和正文回写链已删除，`multi_search` 仅包装共享流程的展示结果；`support/dedup.py` 只保留展示用的 `consensus_weight`；RRF 顺序是唯一排序来源，格式化不再重排。清理依据及公共契约验证见 [旧抓取链清理记录](docs/legacy-scrape-cleanup-2026-09-12.md)。
+- **抓取后端选择**：`scrape/service.run_scrape_raw` 按设置中的抓取链（`scrape_backends`）确定通用后端顺序、从共享 key manager 获取可用 key，`scrape/scrape.py` 结合站点抓取记忆逐次尝试；搜索最终列表不再按每源 quota 二次截取。旧 `run_scrape_stage`、planner 和正文回写链已删除，`multi_search` 仅包装共享流程的展示结果；`support/dedup.py` 只保留展示用的 `consensus_weight`；默认 RRF 顺序是唯一排序来源，格式化不再重排；仅当显式开启 `ranking.mode="rrf_model"` 时，融合与抓取之间插入可选模型重排（见「配置和参数 → 可选模型重排」），任何模型失败整体回退 RRF。清理依据及公共契约验证见 [旧抓取链清理记录](docs/legacy-scrape-cleanup-2026-09-12.md)。
 - **Scraper 抓取器 backend**：`multi_search_mcp/src/scrape/scrapers/*`，负责 url -> 正文。Jina、Exa、Tavily、Firecrawl 都是 backend。
 - **Scrape orchestration 抓取调度执行器**：`multi_search_mcp/src/scrape/scrape.py`，负责单 URL fallback 链、站点策略和 key 使用结果记录。
 - **Renderer 渲染器**：`multi_search_mcp/src/support/format.py`，负责诊断信息、搜索结果、抓取正文和 untrusted 安全围栏。
@@ -335,11 +335,11 @@ flowchart LR
 `search_web` 与 `multi_search` 返回相同 RRF 顺序的搜索结果，摘要与正文分字段表达：
 
 - `source_id`、`title`、`url`、`canonical_url`、`content`、`content_kind`
-- `source`、`providers`、`provider_ranks`、`rrf_score`
+- `source`、`providers`、`provider_ranks`、`rrf_score`、`relevance_score`（模型重排打分时为 [0,1] 浮点，否则恒为 `null`）
 - `published_at`、`body_available`、`content_ref`、`untrusted_content`
 - 抓取成功时：`body_available`、`body_truncated`、`body_backend`；失败时：`body_error`。正文只在同一 `source_id` 的 `scrapes[].markdown` 中出现一次。
 
-响应同时包含 `response_id`、`provider_status`、`scrapes`、`errors` 和 `diagnostics`。预览限制不截短已取得并允许缓存的正文。`fetch_source` 返回单页 `body`、cache/retention 状态；`full_content=True` 返回全部已取得文本。这里的全文受现有抓取限制约束，Reddit 包括已加载评论，不会因此加载未展开评论。缓存容量、TTL 和 retention 规则继续生效。`read_source` 只读缓存中的有界片段，用于定向查证。
+响应同时包含 `response_id`、`provider_status`、`scrapes`、`errors`、`diagnostics`，以及排序元数据 `mode_requested` / `mode_used` / `fallback_reason`（默认三者分别为 `rrf` / `rrf` / `null`；含义见「可选模型重排」）。预览限制不截短已取得并允许缓存的正文。`fetch_source` 返回单页 `body`、cache/retention 状态；`full_content=True` 返回全部已取得文本。这里的全文受现有抓取限制约束，Reddit 包括已加载评论，不会因此加载未展开评论。缓存容量、TTL 和 retention 规则继续生效。`read_source` 只读缓存中的有界片段，用于定向查证。
 
 抓取失败和 `body_error` 应显式保留。缓存缺失或过期但 `source_id` 有效时，`fetch_source(source_id=..., full_content=True)` 按原 ID 重新抓取。只有来源 ID 本身未知或失效时，Agent 才使用已观察到的 URL 显式调用 `fetch_source(url=..., full_content=True)`，后续使用返回的新 `source_id`。正文始终标记为 untrusted。
 
@@ -381,7 +381,7 @@ search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
 search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，以及站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`，和旧 Key 文件迁移的 `migrate-legacy plan|apply`。`search --no-fetch` 只返回融合排序的候选，不抓正文、不写正文缓存；`--no-state` 跳过 SQLite key 轮换、正文缓存与站点记忆。
+CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，以及站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`，和旧 Key 文件迁移的 `migrate-legacy plan|apply`。`search --no-fetch` 只返回融合排序的候选，不抓正文、不写正文缓存；`--no-state` 跳过 SQLite key 轮换、正文缓存与站点记忆。`search --rerank [--rerank-profile jev_default]` 对本次请求启用模型重排（ranking 覆盖，默认仍纯 RRF），用法与回退语义见「配置和参数 → 可选模型重排」。
 
 ## 配置和参数
 
@@ -400,6 +400,7 @@ CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写�
 | `timeout` | 60 | 搜索阶段整批 deadline |
 | `expand` | — | 额外扩展查询（list），常用于给中文查询补英文 |
 | `use_state` | true | 是否使用 SQLite key 状态与站点抓取器记忆 |
+| `ranking` | — | 本次请求的重排配置覆盖（dict，键同配置块 `ranking`）；`None` 时用配置值，默认纯 RRF |
 
 站点抓取记忆使用目标 URL 的标准 `hostname` 作为站点键：忽略 userinfo 和端口，主机名按小写处理；保留完整 IPv6 地址；继续去掉一个 `www.` 前缀，并保留 Reddit 的 host 分组和 GitHub 的路径分组。知乎只有精确的 `zhihu.com` 或真正的 `.zhihu.com` 子域会归入 `zhihu.com`，例如 `evilzhihu.com` 保持独立。CLI 的 `site stats`、`site set-preference` 和 `site reset` 使用该站点键（兼容适配器中的同名函数只是调用同一 Core 操作）；带 `site` 的 reset 只删除该键的统计和抓取尝试，省略时才清空全部站点。修复前由错误键聚合的历史行（例如截断的 IPv6 键）无法可靠还原归属，不自动猜测迁移或全表清理；需要处理时先查看统计，再用既有 reset 定向删除明确的旧键。
 
@@ -425,6 +426,32 @@ JSON 配置支持 `disabled_sources`（默认为 `[]`）用来全局关闭某些
 | `error` | 仅失败时存在；失败正文为空、长度为 0 |
 
 上游的 `text`、`raw_content`、JSON 等由各适配器解析，共享入口校验并归一化；非法或空正文明确报错。`search_web` 在抓取结果上附加 `source_id`。`fetch_source` 和 `read_source` 保留各自现有的单页、缓存读取协议。
+
+### 可选模型重排（默认关闭）
+
+排序默认是纯两级 RRF（`k=40`），最终取前 15 条，不调用任何模型。配置块 `ranking` 可以把 RRF 之后、正文抓取之前的这一段换成模型重排：RRF 先融合出最多 `candidate_limit` 条候选，模型给每条打 `relevance_score`（[0,1]），被打分的候选按分数降序写回自己原来的 RRF 槽位（同分保持 RRF 顺序，未打分的候选不动），最后再取前 15 条并抓取正文。模型分数不与 RRF 分数相加。
+
+| `ranking` 键 | 默认 | 取值 | 说明 |
+|---|---|---|---|
+| `mode` | `rrf` | `rrf` / `rrf_model` | `rrf` 为纯 RRF；`rrf_model` 启用模型重排。 |
+| `reranker_profile_id` | `jev_default` | 已在 core 注册的 profile id（v1 仅 `jev_default`） | 重排模型配置标识；core 按它从注册表构造适配器，未注册的 id 是 `ConfigError`。 |
+| `candidate_limit` | `50` | 整数 10–200，超出即报错 | 进入重排的融合候选数；不足时全部候选参与。 |
+| `batch_size` | `20` | 整数 1–50，超出即报错 | 每批送模型打分的候选数；任一批失败即整段回退。 |
+| `rerank_timeout` | `5` | 数值 1–60（秒），超出即报错 | 重排阶段的总时间预算。 |
+
+上述区间由 core（`rerank.py` 的 `CANDIDATE_LIMIT_RANGE` / `BATCH_SIZE_RANGE` / `RERANK_TIMEOUT_RANGE`）硬校验，与桌面端设置页的上下界一致，二者接受的配置相同。profile 注册表 `RERANKER_PROFILES`（`multi_search_mcp/src/search/rerank.py`）是唯一权威来源，CLI 直接读取它校验 `--rerank-profile`；新增 profile 需同时在两处登记：core 的 `multi_search_mcp/src/search/rerank.py` → `RERANKER_PROFILES`（注册适配器工厂），以及桌面端 `desktop/src-tauri/src/settings.rs` → `RERANKER_PROFILES`（设置页可选 id 白名单）。`ranking` 中的未知键、错误类型、越界值是 `ConfigError`（CLI 退出码 1，Python 适配层报 `invalid_request`），不会静默忽略或回退。按评审结论刻意不提供的键：`rrf_k`（RRF 常数固定 40 且计入快照指纹，可调会使全部已冻结评测资产失效）、`top_k`（输出恒为前 15 条）、`keep_per_source`（每源召回只有 10–20 条时恒为死配置）。
+
+**默认关闭且关闭时零模型调用**：不设置 `ranking` 或 `mode="rrf"` 时，不构造重排器、不读 `TYPESAFE_API_KEY`、不产生任何模型请求。单次请求可用 CLI `search --rerank`（等价 `ranking={"mode":"rrf_model"}`）与 `--rerank-profile jev_default` 覆盖；`--rerank-profile` 不带 `--rerank` 或传入未注册的 profile（包括旧写法 `jev`）是用法错误（退出码 2），不是静默回退。Python 适配层 `search_web_tool` / `multi_search_tool` 暴露同名 `rerank` / `rerank_profile` 参数；Core 请求 `SearchWebRequest.ranking` / `MultiSearchRequest.ranking` 也可直接传入同名字典覆盖。
+
+**回退语义**：模型阶段任何失败——缺 key、超时、限流（429）、鉴权（401/403）、响应非法（缺/多 `source_id`、分数越界或非有限值）——都整体放弃重排且不部分应用：结果保留完整 RRF 顺序，响应标记 `mode_requested`（请求的 mode）、`mode_used="rrf"` 和不含凭据的 `fallback_reason`（`timeout` / `rate_limit` / `auth` / `invalid_response` / `unavailable`），全部 `relevance_score=null`。human / Markdown 输出的排序行（`ranking:` / `**排序：**`）据此显示 `RRF 排序`、`模型重排` 或 `模型暂不可用，已使用 RRF`；`relevance_score` 只在模型实际打分时显示（human 输出 `relevance: 0.xxx`，Markdown 输出 `rel=0.xxx`）。
+
+**数据外发（开启前必读）**：`mode="rrf_model"` 会把**你的搜索问题文本**和每条候选的 `source_id`、`url`、`title`、摘要 `content`、`published_at` 发给第三方模型服务（v1 唯一 profile `jev_default` 对应 Typesafe Jev 端点 `POST https://api.typesafe.ai/v1/systemone`，可用 `TYPESAFE_JEV_ENDPOINT` 改指）。`provider_ranks`、`rrf_score` 等排序元信息不送入模型，避免模型锚定它要改进的顺序；问题 ID 只作 wire bookkeeping 不展示给模型。密钥**只从后端环境变量 `TYPESAFE_API_KEY` 读取**：不写入配置文件、不进入凭据库轮换、桌面端 UI 不持有；缺 key 时 fail-closed 报 `auth` 回退。对一个默认本地、无后台服务的工具，这意味着开启重排是当前唯一会把查询内容主动发往第三方模型服务的路径——关闭时此路径完全不存在。
+
+**已知未验项（v1）**：Jev 适配器的 wire format 未经在线核实——开发机上 `docs.typesafe.ai` 解析到非公网地址，无法对照官方文档确认。「`jev-1.14.0` 模型名」「`POST /v1/systemone`」「0–4 分制归一化到 [0,1]」「响应为 `{"scores":[{"id":...,"grade":...}]}`」「问题 ID 不送入模型」均为按约定实现的**待实测确认**结论，集中封装在 `JevReranker` 内，协议修正只需改这一个类。
+
+**接线方式**：适配器由 core 构造——`run_search_candidates` 在 `mode="rrf_model"` 且调用方未注入 `reranker=` 时，按合并后（配置文件 + 请求覆盖）的 `reranker_profile_id` 经 `build_reranker` 从 `RERANKER_PROFILES` 构造适配器，因此 CLI `--rerank`、Python 适配层参数以及桌面端写入的配置块（无需 `--rerank`）都会真正触发重排。**只要 `TYPESAFE_API_KEY` 存在，开启后每次搜索都会向第三方服务发送请求**；密钥缺失时适配器 fail-closed，不发请求并按 `auth` 回退 RRF；服务不可达、超时、限流等按对应 `fallback_reason`（`unavailable`、`timeout`、`rate_limit` 等）回退。显式注入的 `reranker=` 仍优先，用于测试与将来的离线回放。
+
+**评测不可回放**：`replay_snapshot` 的契约是「no registry, provider, keys or networking」，模型重排天然不在离线回放范围内。v1 的处理见 [评测可复现性限制](docs/query-fusion-evaluation.md#模型重排与离线回放限制)。
 
 ## 输出
 
