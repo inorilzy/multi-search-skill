@@ -98,6 +98,33 @@ pub mod user_path_fixture {
     }
 }
 
+/// Test seam for the bundled-resource install entrypoints the window calls.
+///
+/// `install_plan_from` / `install_from` / `update_from` take the app's own
+/// `cli-bundle` resource directory and are crate-private. An acceptance test
+/// needs exactly that path — the compiled anchor plus the real platform root —
+/// without going through the env-override boundary, so this forwards them.
+/// Not a supported public API; compiled only with `test-fixtures`.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub mod install_fixture {
+    use crate::install::{InstallOutcome, InstallPlan};
+    use crate::DesktopManager;
+    use std::path::Path;
+
+    pub fn plan(manager: &DesktopManager, bundled: Option<&Path>) -> InstallPlan {
+        manager.install_plan_from(bundled)
+    }
+
+    pub fn install(manager: &DesktopManager, bundled: Option<&Path>) -> InstallOutcome {
+        manager.install_from(bundled)
+    }
+
+    pub fn update(manager: &DesktopManager, bundled: Option<&Path>) -> InstallOutcome {
+        manager.update_from(bundled)
+    }
+}
+
 /// Test seam for the CLI child-process environment boundary. Not a supported public API.
 #[cfg(feature = "test-fixtures")]
 #[doc(hidden)]

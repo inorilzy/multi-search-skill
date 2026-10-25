@@ -134,6 +134,12 @@ class CiWorkflowTests(unittest.TestCase):
                 self.assertIn("--features test-fixtures,install-test-boundary", commands)
                 self.assertIn("--test install_platform", commands)
                 self.assertIn("--test install_release_boundary", commands)
+                if runner == "macos-latest":
+                    # macOS-only sources (`#![cfg(not(windows))]`): they must at least
+                    # compile there — the env-override real-bundle check and the
+                    # compiled-anchor/real-platform-root check.
+                    self.assertIn("--test install_real_bundle", commands)
+                    self.assertIn("--test install_production_path", commands)
                 self.assertIn("--features test-fixtures,ts", commands)
 
     def test_desktop_rust_job_runs_every_feature_gated_test_on_windows(self):

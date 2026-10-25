@@ -171,4 +171,4 @@ jobs:
         # runs in the release acceptance, not here.
         run: >
           cargo test --locked --manifest-path "$MANIFEST" --no-default-features
-          --features test-fixtures,install-test-boundary --test install_platform --test install_real_bundle
+          --features test-fixtures,install-test-boundary --test install_platform --test install_real_bundle --test install_production_path

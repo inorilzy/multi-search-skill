@@ -45,6 +45,11 @@ path = "tests/install_real_bundle.rs"
 required-features = ["install-test-boundary", "test-fixtures"]
 
 [[test]]
+name = "install_production_path"
+path = "tests/install_production_path.rs"
+required-features = ["install-test-boundary", "test-fixtures"]
+
+[[test]]
 name = "install_release_boundary"
 path = "tests/install_release_boundary.rs"
 

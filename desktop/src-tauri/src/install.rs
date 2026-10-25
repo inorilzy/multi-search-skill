@@ -634,6 +634,9 @@ impl InstallManager<'_> {
         match manifest::read_source(&source, &expected) {
             Ok((manifest, _)) => {
                 let mut plan = row("ready", &lay.root, Some(manifest.version), "将安装到以下目录");
+                // The page shows where the bundle comes from; a ready plan is exactly the
+                // moment that matters, so it must carry the source like the update plan does.
+                plan.source = Some(source.to_string_lossy().into_owned());
                 self.preview_compatibility(&mut plan, &source.join("bin").join(ARTIFACT));
                 plan
             }
