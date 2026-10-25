@@ -140,7 +140,10 @@ class RunAllBeforeDeadlineTests(unittest.TestCase):
             elapsed = time.monotonic() - started
             release.set()
             pool.shutdown(wait=False, cancel_futures=True)
-        self.assertLess(elapsed, 0.18)
+        # The slow task waits a full second; returning in under half a second
+        # proves the stage does not wait for it. The previous 0.18s bound was
+        # 3.6x the 0.05s budget and tripped on a loaded macOS 3.10 runner.
+        self.assertLess(elapsed, 0.5)
         self.assertEqual(len(result["results"]), 2)
         self.assertEqual([row["source_id"] for row in result["errors"]], ["a", "b"])
         for row in result["errors"]:
