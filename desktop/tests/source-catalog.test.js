@@ -61,7 +61,7 @@ test('credentials and settings derive from the same catalog', () => {
   assert.deepEqual(SETTINGS_SOURCES.map(entry => entry.source), SOURCES.map(entry => entry.source));
   assert.deepEqual(SETTINGS_ROUTES.map(route => route.value), ROUTES.map(route => route.name));
   assert.deepEqual(SOURCE_CATALOG.credential_store_providers, [
-    'baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github',
+    'baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github', 'jina',
   ]);
   for (const source of SEARCH_SOURCES) {
     assert.ok(source.label && source.description && source.mark, `${source.name} keeps display metadata`);

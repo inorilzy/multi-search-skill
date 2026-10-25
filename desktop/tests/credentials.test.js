@@ -335,8 +335,11 @@ test('catalog drives the source list: labels are literal text and scrape-only pr
     'baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi',
     'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter',
   ]);
-  // Jina is a scrape backend without a keyed credential in today's catalog; nothing is hardcoded.
-  assert.deepEqual(scrapeCredentialProviders(), []);
+  // Jina is the only scrape-only provider that owns a keyed credential, so it appears here
+  // from the catalog alone; nothing in this list is hardcoded by the UI.
+  assert.deepEqual(scrapeCredentialProviders(), [
+    { source: 'jina', label: 'Jina Reader', keyed: true, cookie: false, search: false },
+  ]);
   const ctx = setup();
   await mountCredentials(ctx.root, api(), { source: 'github_repos' });
   assert.match(ctx.root.querySelector('h1').textContent, /^GitHub 仓库 凭据$/);

@@ -24,6 +24,38 @@ function setup() {
 }
 const readyDetect = () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } });
 
+/// Every `offload(..)`/`offload_value(..)` call ends in a `"<code>_failed"` literal. Walk to the
+/// matching close paren instead of guessing a character window, so long closures and multi-line
+/// rustfmt formatting still have to name a coded worker error.
+function offloadCodes(source) {
+  const codes = [];
+  for (const match of source.matchAll(/offload(?:_value)?\(/g)) {
+    let depth = 1;
+    let i = match.index + match[0].length;
+    let lastLiteral = '';
+    while (i < source.length && depth > 0) {
+      const char = source[i];
+      if (char === '"') {
+        let j = i + 1;
+        let literal = '';
+        while (j < source.length && source[j] !== '"') {
+          if (source[j] === '\\') { literal += source[j]; j += 1; }
+          literal += source[j];
+          j += 1;
+        }
+        lastLiteral = literal;
+        i = j + 1;
+        continue;
+      }
+      if (char === '(') depth += 1;
+      else if (char === ')') depth -= 1;
+      i += 1;
+    }
+    if (lastLiteral) codes.push(lastLiteral);
+  }
+  return codes;
+}
+
 test('normalizeError maps codes to Chinese, keeps localized reasons and hides English details', () => {
   const mapped = normalizeError(coded('settings_view_failed', 'settings viewer failed'));
   assert.equal(mapped.code, 'settings_view_failed');
@@ -67,7 +99,7 @@ test('backend commands use the {code,message} contract and localize every worker
   const errors = read('../src-tauri/src/errors.rs');
   assert.match(errors, /pub struct CommandError\s*\{[^}]*pub code: String,[^}]*pub message: String,/s);
   assert.match(errors, /serde_json::to_string\(&error\)/, 'CommandError serializes to JSON');
-  const used = [...window.matchAll(/offload(?:_value)?\([\s\S]{0,600}?, "([a-z_]+)"\)/g)].map(m => m[1]);
+  const used = offloadCodes(window);
   assert.ok(used.length >= 20, `expected every command to use a coded worker error, found ${used.length}`);
   const mapped = new Set([...errors.matchAll(/^\s*"([a-z_]+)" => /gm)].map(m => m[1]));
   for (const code of new Set(used)) assert.ok(mapped.has(code), `errors.rs has no Chinese message for ${code}`);
