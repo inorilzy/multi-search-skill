@@ -363,6 +363,191 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertIsInstance(error.exception.reason, socket.gaierror)
         socket_factory.assert_not_called()
 
+    def test_fetch_delegated_backends_bypass_tun_dns_for_urls_and_sources(self):
+        url = "https://tun.example/article"
+        for backend in ("jina", "exa", "tavily", "firecrawl"):
+            for by_source in (False, True):
+                for scraper in (None, scrape_url_smart):
+                    with self.subTest(backend=backend, by_source=by_source, explicit_scraper=scraper is not None):
+                        resolver = mock.Mock(return_value=["198.18.0.93"])
+                        source = {"source_id": "src-fixture", "url": url, "providers": ["brave"]}
+                        request = {"source_id": source["source_id"]} if by_source else {"url": url}
+                        with mock.patch(
+                            f"multi_search_mcp.src.scrape.scrape.scrape_url_{backend}",
+                            return_value={"markdown": "fetched via provider", "via": backend},
+                        ) as fetch, mock.patch(
+                            "multi_search_mcp.src.scrape.scrape._jina_anonymous_cooling_down", return_value=False,
+                        ):
+                            response = service.run_fetch_source(
+                                {**request, "backends": [backend], "use_state": False},
+                                scraper=scraper, keys={backend: "synthetic-key"}, config={},
+                                source_record=source if by_source else None, url_resolver=resolver,
+                            )
+                        self.assertEqual(response["body"], "fetched via provider")
+                        self.assertEqual(response["backend"], backend)
+                        fetch.assert_called_once()
+                        self.assertEqual(fetch.call_args.args[0], url)
+                        resolver.assert_not_called()
+
+    def test_fetch_uses_the_same_configured_chain_as_dispatch(self):
+        from multi_search_mcp.src.scrape import service as scrape_service
+
+        for config in ({}, {"scrape_backends": None}, {"scrape_backends": ["firecrawl", "exa", "firecrawl"]}):
+            with self.subTest(config=config):
+                chain = scrape_service.configured_scrape_backends(config)
+                expected = "firecrawl" if config.get("scrape_backends") else "jina"
+                resolver = mock.Mock(return_value=["198.18.0.93"])
+                with mock.patch(
+                    "multi_search_mcp.src.scrape.scrape._jina_anonymous_cooling_down", return_value=False,
+                ), mock.patch(
+                    f"multi_search_mcp.src.scrape.scrape.scrape_url_{expected}",
+                    return_value={"markdown": "configured body"},
+                ) as backend:
+                    result = service.run_fetch_source(
+                        {"url": "https://tun.example/config", "use_state": False},
+                        keys={}, config=config, url_resolver=resolver,
+                    )
+                self.assertEqual(result["backend"], expected)
+                self.assertEqual(chain[0], expected)
+                self.assertEqual(len(chain), len(set(chain)))
+                backend.assert_called_once()
+                resolver.assert_not_called()
+
+    def test_fetch_delegated_config_file_load_and_explicit_backend_precedence(self):
+        for backends, expected in ((None, "firecrawl"), (["jina"], "jina")):
+            with self.subTest(backends=backends):
+                resolver = mock.Mock(return_value=["198.18.0.93"])
+                with mock.patch(
+                    "multi_search_mcp.src.scrape.fetch.runtime.load_config_safe",
+                    return_value={"scrape_backends": ["firecrawl"]},
+                ) as load, mock.patch(
+                    "multi_search_mcp.src.scrape.scrape._jina_anonymous_cooling_down", return_value=False,
+                ), mock.patch(
+                    f"multi_search_mcp.src.scrape.scrape.scrape_url_{expected}",
+                    return_value={"markdown": "configured body"},
+                ) as backend:
+                    result = service.run_fetch_source(
+                        {"url": "https://tun.example/config", "use_state": False,
+                         "config_path": "fixture.json", "timeout": 2, "backends": backends},
+                        keys={}, url_resolver=resolver,
+                    )
+                load.assert_called_once_with("fixture.json")
+                backend.assert_called_once()
+                resolver.assert_not_called()
+                self.assertEqual(result["backend"], expected)
+
+    def test_fetch_delegated_rejects_unsafe_urls_before_acquisition(self):
+        resolver = mock.Mock(return_value=["198.18.0.93"])
+        for url in (
+            "http://127.0.0.1/", "http://[::1]/", "http://10.0.0.5/",
+            "http://169.254.169.254/", "http://198.18.0.93/",
+            "http://localhost/", "http://api.localhost/",
+            "file:///etc/passwd", "ftp://example.com/", "https://user:secret@example.com/",
+            "http://2130706433/", "http://0x7f000001/", "http://010.0.0.05/",
+            "http://127\u30020\u30020\u30021/", "http://127.0.0.1%00/",
+            "http://127.0.0.1\\admin", "http://exa^mple.com/",
+        ):
+            with self.subTest(url=url), mock.patch(
+                "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl",
+            ) as backend:
+                with self.assertRaises(UrlSecurityError) as error:
+                    service.run_fetch_source(
+                        {"url": url, "backends": ["firecrawl"], "use_state": False},
+                        keys={}, config={}, url_resolver=resolver,
+                    )
+                self.assertNotIn("secret", str(error.exception))
+                backend.assert_not_called()
+        resolver.assert_not_called()
+
+    def test_fetch_delegated_dispatches_rebuilt_url_under_original_deadline(self):
+        raw = "HTTPS://Example.COM:8443/a\\b c?q=1 2"
+        rebuilt = "https://example.com:8443/a%5Cb%20c?q=1%202"
+        resolver = mock.Mock(return_value=["198.18.0.93"])
+        deadline = time.monotonic() + 2
+        with mock.patch(
+            "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl", return_value={"markdown": "body"},
+        ) as backend:
+            result = service.run_fetch_source(
+                {"url": raw, "backends": ["firecrawl"], "use_state": False},
+                keys={}, config={}, url_resolver=resolver, deadline=deadline,
+            )
+            backend.assert_called_once()
+            self.assertEqual(backend.call_args.args[0], rebuilt)
+            self.assertLessEqual(backend.call_args.kwargs["timeout"], 2)
+            self.assertEqual(result["url"], rebuilt)
+            backend.reset_mock()
+            with self.assertRaisesRegex(UrlSecurityError, "deadline"):
+                service.run_fetch_source(
+                    {"url": raw, "backends": ["firecrawl"], "use_state": False},
+                    keys={}, config={}, url_resolver=resolver, deadline=time.monotonic() - 1,
+                )
+            backend.assert_not_called()
+        resolver.assert_not_called()
+
+    def test_search_to_fetch_delegates_without_tun_dns(self):
+        from multi_search_mcp.src.search.search_runner import ProviderSpec
+
+        provider = ProviderSpec(name="hackernews", public_name="hackernews", call=lambda *_: [{
+            "source": "hackernews", "url": "https://tun.example/article", "title": "Fixture",
+            "description": "candidate only", "content_kind": "excerpt",
+        }])
+        resolver = mock.Mock(return_value=["198.18.0.93"])
+        with mock.patch(
+            "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl", return_value={"markdown": "body"},
+        ) as backend:
+            result = service.run_search_web(
+                {"query": "fixture", "sources": ["hackernews"], "use_state": False},
+                providers={"hackernews": provider}, keys={},
+                config={"scrape_backends": ["firecrawl"]}, url_resolver=resolver,
+            )
+        self.assertEqual(result["diagnostics"]["body_success_count"], 1)
+        backend.assert_called_once()
+        resolver.assert_not_called()
+
+    def test_fetch_custom_or_local_paths_keep_dns_preflight(self):
+        # A caller-supplied scraper may connect locally: backend labels cannot
+        # grant it the no-DNS exemption. Prefetched bodies and Reddit likewise
+        # keep their existing validation boundary.
+        for options in (
+            {"scraper": mock.Mock(return_value={"markdown": "unsafe"})},
+            {"prefetched_body": "already fetched"},
+            {"url": "https://www.reddit.com/r/test/comments/abc123/title"},
+            {"backends": ["firecrawl", "direct"]},
+        ):
+            with self.subTest(options=list(options)), mock.patch(
+                "multi_search_mcp.src.scrape.scrape.scrape_url_reddit",
+            ) as reddit, mock.patch(
+                "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl",
+            ) as delegated:
+                resolver = mock.Mock(return_value=["10.0.0.5"])
+                args = dict(options)
+                url = args.pop("url", "https://local.example/path")
+                backends = args.pop("backends", ["firecrawl"])
+                with self.assertRaisesRegex(UrlSecurityError, "private"):
+                    service.run_fetch_source(
+                        {"url": url, "backends": backends, "use_state": False},
+                        keys={}, config={}, url_resolver=resolver, **args,
+                    )
+                resolver.assert_called_once()
+                reddit.assert_not_called()
+                delegated.assert_not_called()
+                if "scraper" in args:
+                    args["scraper"].assert_not_called()
+
+    def test_fetch_rejects_invalid_configured_chains_before_dispatch(self):
+        for chain in ([], ["unknown"], ["firecrawl", "direct"], "firecrawl"):
+            with self.subTest(chain=chain), mock.patch(
+                "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl",
+            ) as backend:
+                resolver = mock.Mock(return_value=["198.18.0.93"])
+                with self.assertRaises(ValueError):
+                    service.run_fetch_source(
+                        {"url": "https://tun.example/path", "use_state": False},
+                        keys={}, config={"scrape_backends": chain}, url_resolver=resolver,
+                    )
+                backend.assert_not_called()
+                resolver.assert_not_called()
+
     def test_fetch_core_passes_supplied_deadline_to_url_preflight(self):
         finished = threading.Event()
         scraper = mock.Mock(return_value={"markdown": "late", "via": "fixture"})

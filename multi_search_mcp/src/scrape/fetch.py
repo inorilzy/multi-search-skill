@@ -21,6 +21,8 @@ from ..support.config import resolve_nonnegative
 from ..support.requests import FetchSourceRequest, ScrapeRequest
 from ..support.url_security import validate_public_http_url
 from ..support.validation import request_int
+from .scrape import scrape_url_smart, uses_delegated_backends, validate_delegated_url
+from .scrapers.reddit import is_reddit_url
 from .scrapers.twitter import is_twitter_url, validate_twitter_url
 from .service import configured_scrape_backends, run_scrape_raw
 
@@ -71,7 +73,19 @@ def run_fetch_source(
     if is_twitter_url(url):
         validate_twitter_url(url)
     else:
-        validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
+        chain = ()
+        if (scraper is None or scraper is scrape_url_smart) and not prefetched_body and not is_reddit_url(url):
+            if resolved_config is None and not request.backends:
+                resolved_config = runtime.load_config_safe(request.config_path)
+            chain = request.backends or configured_scrape_backends(resolved_config)
+        if uses_delegated_backends(url, chain, scraper=scraper):
+            # The provider resolves its target; local DNS can be a TUN fake IP.
+            url = validate_delegated_url(url, deadline=deadline)
+            if is_reddit_url(url):  # Normalization can reveal a local platform.
+                validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
+        else:
+            # Custom callbacks, local platforms and unknown chains fail closed.
+            validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
     source_providers = list((source or {}).get("providers") or ["direct"])
     retention = retention_policy_for_sources(source_providers)
     source_id = str(request.source_id or "")

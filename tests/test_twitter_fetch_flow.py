@@ -350,12 +350,21 @@ class TwitterFetchFlowTests(unittest.TestCase):
             self.assertEqual(len(api.clients), 1)
 
             private_resolver = mock.Mock(return_value=["198.18.0.123"])
-            with self.assertRaisesRegex(ValueError, "private"):
+            # Exa fetches from its own network. A TUN DNS answer must not mask
+            # the actual configuration error (no Exa key is configured here).
+            with self.assertRaisesRegex(ValueError, "missing key for backend: exa"):
                 run_fetch_source(
                     {"url": "https://evidence.example/article", "backends": ["exa"]},
                     **{**self.options, "url_resolver": private_resolver},
                 )
-            private_resolver.assert_called_once_with("evidence.example")
+            private_resolver.assert_not_called()
+            # Literal private targets are still denied, without consulting DNS.
+            with self.assertRaisesRegex(ValueError, "private"):
+                run_fetch_source(
+                    {"url": "https://10.0.0.5/article", "backends": ["exa"]},
+                    **{**self.options, "url_resolver": private_resolver},
+                )
+            private_resolver.assert_not_called()
             self.assertEqual(api.events, [("detail", "1")])
             self.assertEqual(len(api.clients), 1)
 

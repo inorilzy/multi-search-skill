@@ -8,7 +8,7 @@ from ..state.key_state import BasicKeyManager, SQLiteKeyManager
 from ..state.keys import jina_config_keys
 from ..state.site_memory import SiteScraperMemory
 from ..state.state_store import StateStore
-from ..support.config import resolve_int, resolve_nonnegative
+from ..support.config import ConfigError, config_list, resolve_int, resolve_nonnegative
 from ..support.format import format_scrapes
 from ..support.models import normalize_scrape_result
 from ..support.requests import ScrapeRequest
@@ -17,16 +17,20 @@ from .scrapers.twitter import is_twitter_url
 
 
 def configured_scrape_backends(config: dict | None) -> tuple[str, ...]:
-    """Resolve the ordered fallback chain for generic scrape backends.
+    """Resolve the shared ordered fallback chain used by scrape and fetch.
 
-    ``search.resolve`` owns the configuration parsing; until that module lands in
-    this branch, the default jina → exa → tavily → firecrawl order applies.
+    Absent/null keeps jina → exa → tavily → firecrawl. An explicit empty list
+    is an error; duplicates keep their first position.
     """
-    try:
-        from ..search.resolve import resolve_scrape_backends
-    except ImportError:  # pragma: no cover - search.resolve port lands separately
+    config = config or {}
+    if config.get("scrape_backends") is None:
         return KNOWN_BACKENDS
-    return tuple(resolve_scrape_backends(config or {}))
+    chain = tuple(dict.fromkeys(config_list(config, "scrape_backends")))
+    if not chain:
+        raise ConfigError("scrape_backends requires at least one backend")
+    if any(name not in KNOWN_BACKENDS for name in chain):
+        raise ConfigError(f"unknown scrape backend; valid backends: {', '.join(KNOWN_BACKENDS)}")
+    return chain
 
 
 def run_scrape(

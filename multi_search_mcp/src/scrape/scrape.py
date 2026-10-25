@@ -82,6 +82,9 @@ KNOWN_BACKENDS = tuple(spec.name for spec in _SCRAPE_BACKENDS)
 # Backends that require a configured key. Used to distinguish "no key
 # configured" from "backend unknown" when a caller forces an explicit list.
 KEYED_BACKENDS = tuple(spec.name for spec in _SCRAPE_BACKENDS if spec.key_required)
+# Every generic backend is a third-party service that fetches the URL from its
+# own network; only these may skip the local DNS preflight.
+DELEGATED_BACKENDS = KNOWN_BACKENDS
 
 
 DEFAULT_SCRAPE_POLICY = {
@@ -453,6 +456,25 @@ def _literal_ip(host: str, *, label: str):
     if _NUMERIC_LABEL.match(host.rsplit(".", 1)[-1]):
         raise UrlSecurityError(f"unsafe {label}: host is a non-canonical numeric address")
     return None
+
+
+def uses_delegated_backends(url: str, backends, *, scraper=None) -> bool:
+    """Whether the known dispatcher can only delegate this acquisition.
+
+    A custom fetch callback is an unknown/local trust boundary regardless of
+    backend names. Platform dispatch also wins over any generic backend list.
+    Unknown or mixed chains keep the local URL preflight (fail closed).
+    """
+    if scraper is not None and scraper is not scrape_url_smart:
+        return False
+    if is_reddit_url(url) or is_twitter_url(url):
+        return False
+    return bool(backends) and all(name in DELEGATED_BACKENDS for name in backends)
+
+
+def validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
+    """Public entry for the delegated-backend URL policy (no DNS, fail-closed)."""
+    return _validate_delegated_url(url, deadline=deadline)
 
 
 def _prepare_scrape_target(
