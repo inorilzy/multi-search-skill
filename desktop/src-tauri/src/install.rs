@@ -102,6 +102,26 @@ fn isolated(_: &RuntimeEnvironment) -> bool {
     false
 }
 
+
+/// The managed install ships a Windows launcher bundle (`bin/multi-search.exe`
+/// plus a bundled CPython). Other platforms get the CLI from their own package
+/// manager, so the in-app installer reports `unsupported` with guidance instead
+/// of rendering Windows paths that do not exist here.
+fn platform_unsupported() -> Option<Failure> {
+    if cfg!(windows) {
+        return None;
+    }
+    let platform = if cfg!(target_os = "macos") { "macOS" } else { "Linux" };
+    Some((
+        "unsupported",
+        format!(
+            "应用内安装目前仅支持 Windows。{platform} 请用独立安装包或包管理器安装 CLI\
+             （例如 uv tool install multi-search-mcp，然后确认 `multi-search --version` 可用）。\
+             配置、凭据与 Skill 页面不受影响。",
+        ),
+    ))
+}
+
 /// `bundled` is the app's own resource directory (`<resources>/cli-bundle`), supplied by the Tauri shell.
 fn layout(env: &RuntimeEnvironment, bundled: Option<&Path>) -> Result<Layout, String> {
     if isolated(env) {
@@ -520,6 +540,13 @@ impl InstallManager<'_> {
 
     /// `bundled` is the app's own `cli-bundle` resource directory; `None` means the resource is absent.
     pub(crate) fn install_plan_from(&self, bundled: Option<&Path>) -> InstallPlan {
+        if let Some((status, reason)) = platform_unsupported() {
+            // No layout is resolved here, so no Windows artifact path is shown.
+            let mut plan = row(&status, Path::new(""), None, &reason);
+            plan.bin.clear();
+            plan.path_hint.clear();
+            return plan;
+        }
         let lay = match layout(&self.environment, bundled) {
             Ok(lay) => lay,
             Err(reason) => return row("unavailable", Path::new(""), None, &reason),
@@ -611,6 +638,9 @@ impl InstallManager<'_> {
     }
 
     pub(crate) fn update_from(&self, bundled: Option<&Path>) -> InstallOutcome {
+        if let Some((status, reason)) = platform_unsupported() {
+            return outcome(&status, Vec::new(), None, reason);
+        }
         let lay = match layout(&self.environment, bundled) {
             Ok(lay) => lay,
             Err(reason) => return outcome("unavailable", Vec::new(), None, reason),
@@ -637,6 +667,9 @@ impl InstallManager<'_> {
     /// Removes only the entries the recorded install owns. Config, credentials and Skills are never touched.
     /// The owned marker is kept so a later reinstall is still recognised as ours.
     pub fn uninstall(&self) -> InstallOutcome {
+        if let Some((status, reason)) = platform_unsupported() {
+            return outcome(&status, Vec::new(), None, reason);
+        }
         let lay = match layout(&self.environment, None) {
             Ok(lay) => lay,
             Err(reason) => return outcome("unavailable", Vec::new(), None, reason),
@@ -675,6 +708,9 @@ impl InstallManager<'_> {
     }
 
     pub(crate) fn install_from(&self, bundled: Option<&Path>) -> InstallOutcome {
+        if let Some((status, reason)) = platform_unsupported() {
+            return outcome(&status, Vec::new(), None, reason);
+        }
         let lay = match layout(&self.environment, bundled) {
             Ok(lay) => lay,
             Err(reason) => return outcome("unavailable", Vec::new(), None, reason),
