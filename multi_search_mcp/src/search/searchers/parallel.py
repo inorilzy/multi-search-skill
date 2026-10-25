@@ -15,6 +15,7 @@ def search_parallel(
     api_key: str,
     count: int = 10,
     timeout: float = 15,
+    deadline: float | None = None,
 ) -> list:
     """Search the web through Parallel's current GA Search endpoint.
 
@@ -39,7 +40,7 @@ def search_parallel(
         method="POST",
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(read_limited(resp))
     except Exception as exc:
         return [{"source": "parallel", "error": scrub_secrets(exc, api_key)}]

@@ -12,6 +12,7 @@ def search_exa(
     count: int = 10,
     timeout: float = 20,
     want_content: bool = False,
+    deadline: float | None = None,
 ) -> list:
     """Search via Exa.ai.
 
@@ -39,7 +40,7 @@ def search_exa(
         method="POST",
     )
     try:
-        with urlopen_retry(req, timeout=timeout) as resp:
+        with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(read_limited(resp))
     except Exception as e:
         return [{"source": "exa", "error": scrub_secrets(e, api_key)}]

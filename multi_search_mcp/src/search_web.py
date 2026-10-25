@@ -6,7 +6,7 @@ import time
 from .scrape.fetch import run_fetch_source
 from .scrape.stage import run_ranked_fetch_stage
 from .search.candidate import SEARCH_RESULT_LIMIT
-from .search.candidates import run_search_candidates
+from .search.candidates import run_search_candidates, search_outcome
 from .state import runtime
 from .state.state_store import StateStore
 from .support.config import resolve_int, resolve_nonnegative
@@ -145,6 +145,9 @@ def run_search_web(
         for row in scrapes if row.get("error")
     ]
     response["errors"].extend({**error, "stage": "fetch"} for error in body_errors)
+    response["outcome"] = search_outcome(
+        response.get("provider_status") or [], response["errors"], response["results"],
+    )
     response["diagnostics"].update(
         result_limit=SEARCH_RESULT_LIMIT,
         body_fetch_count=len(response["results"]),

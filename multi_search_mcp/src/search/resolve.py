@@ -1,6 +1,7 @@
 """Resolve search request/config defaults into one execution plan."""
 from __future__ import annotations
 
+import re
 import warnings
 from dataclasses import dataclass
 from typing import Any
@@ -11,12 +12,12 @@ from ..support.config import (
     config_list,
     resolve_int,
     resolve_nonnegative,
-    resolve_value,
 )
 from .capabilities import PROVIDER_CAPABILITIES
 from .search_runner import (
     ALL_SOURCE_NAMES,
     ROUTE_PROFILES,
+    default_routes_config,
     normalize_route,
     normalize_source_name,
     resolve_route,
@@ -38,6 +39,15 @@ _COUNT_PROVIDERS = [
 
 COUNT_CAPS = {cap.count_key: cap.search.max_count for cap in _COUNT_PROVIDERS}
 DEFAULT_COUNTS = {cap.count_key: DEFAULT_SOURCE_COUNT for cap in _COUNT_PROVIDERS}
+
+_ROUTE_ID_PATTERN = re.compile(r"[a-z0-9_-]{1,64}\Z", re.ASCII)
+
+
+@dataclass(frozen=True)
+class RouteDefinition:
+    label: str
+    sources: tuple[str, ...]
+    timeout: int | None
 
 
 @dataclass
@@ -65,6 +75,8 @@ class SearchPlanRequest:
 class ResolvedSearchPlan:
     route: str
     sources: set[str] | None
+    route_sources: set[str]
+    available_routes: tuple[str, ...]
     disabled_sources: set[str]
     route_defaults: dict[str, Any]
     effective_counts: dict[str, int]
@@ -102,17 +114,37 @@ def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSea
     if not isinstance(request, SearchPlanRequest):
         raise TypeError("resolve_search_plan requires a SearchPlanRequest")
     _warn_deprecated_config(config)
-    route = normalize_route(str(resolve_value(request.route, config, "type", "default")))
-    meta = route_meta(route)
-    source_names = _resolve_sources(route, request.sources)
+    routes = resolve_configured_routes(config)
+    configured_route = _resolve_configured_route(config, routes)
+    route = (
+        normalize_route(str(request.route))
+        if request.route is not None
+        else configured_route
+    )
+    if route not in routes:
+        raise ValueError(
+            f"unknown route: {route}; valid routes: {', '.join(sorted(routes))}"
+        )
+    route_definition = routes[route]
+    # Built-in route ids keep their behavior metadata even when the user
+    # edits labels/sources; custom ids inherit the ``default`` metadata rather
+    # than the bare DEFAULT_ROUTE_META floor.
+    meta = route_meta(route if route in ROUTE_PROFILES else "default")
+    meta["primary_success_sources"] = set(route_definition.sources)
+    source_names = _resolve_sources(route, request.sources, set(routes))
 
-    timeout = resolve_nonnegative(request.timeout, config, "timeout", meta["timeout"])
+    timeout = _resolve_route_timeout(
+        request.timeout, config, route_definition.timeout, meta["timeout"]
+    )
+    scrape_timeout = resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
     scrape_timeout = resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
 
     return ResolvedSearchPlan(
         route=route,
         sources=source_names,
         disabled_sources=resolve_disabled_sources(config),
+        route_sources=set(route_definition.sources),
+        available_routes=tuple(sorted(routes)),
         route_defaults=meta,
         effective_counts=build_counts(config, request.count, route_default=meta["count"]),
         timeout=timeout,
@@ -125,6 +157,106 @@ def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSea
         show_snippet=bool(meta.get("show_snippet")),
         serpapi_engine=str(config.get("serpapi_engine", "google_light")),
     )
+
+
+def resolve_configured_routes(config: dict) -> dict[str, RouteDefinition]:
+    """Validate and normalize the complete route map from desktop JSON."""
+    raw_routes = default_routes_config() if "routes" not in config else config.get("routes")
+    if not isinstance(raw_routes, dict):
+        raise ConfigError("routes requires a JSON object")
+    if not raw_routes:
+        raise ConfigError("routes requires at least one route")
+
+    routes: dict[str, RouteDefinition] = {}
+    for route_id, raw_definition in raw_routes.items():
+        if not isinstance(route_id, str) or not _ROUTE_ID_PATTERN.fullmatch(route_id):
+            raise ConfigError(
+                "routes ids require 1-64 ASCII lowercase letters, digits, underscores, or hyphens"
+            )
+        if route_id == "web":
+            raise ConfigError("routes.web is reserved as an alias for default")
+        if not isinstance(raw_definition, dict):
+            raise ConfigError(f"routes.{route_id} requires a JSON object")
+        unknown_fields = set(raw_definition) - {"label", "sources", "timeout"}
+        if unknown_fields:
+            raise ConfigError(
+                f"routes.{route_id} contains unknown field(s): "
+                f"{', '.join(sorted(str(field) for field in unknown_fields))}"
+            )
+
+        raw_label = raw_definition.get("label")
+        if not isinstance(raw_label, str):
+            raise ConfigError(f"routes.{route_id}.label requires a string")
+        label = raw_label.strip()
+        if not 1 <= len(label) <= 80:
+            raise ConfigError(f"routes.{route_id}.label requires 1-80 characters after trimming")
+
+        raw_sources = raw_definition.get("sources")
+        if not isinstance(raw_sources, list) or not raw_sources:
+            raise ConfigError(f"routes.{route_id}.sources requires at least one source")
+        normalized_sources: list[str] = []
+        seen_sources: set[str] = set()
+        for raw_source in raw_sources:
+            if not isinstance(raw_source, str):
+                raise ConfigError(f"routes.{route_id}.sources requires a list of strings")
+            source_name = raw_source.strip()
+            source = normalize_source_name(source_name)
+            if source not in ALL_SOURCE_NAMES:
+                raise ConfigError(
+                    f"routes.{route_id}.sources contains unknown source: {source_name}; "
+                    f"valid sources: {', '.join(sorted(ALL_SOURCE_NAMES))}"
+                )
+            if source not in seen_sources:
+                normalized_sources.append(source)
+                seen_sources.add(source)
+        if not normalized_sources:
+            raise ConfigError(f"routes.{route_id}.sources requires at least one source")
+
+        raw_timeout = raw_definition.get("timeout")
+        if raw_timeout is not None and (
+            isinstance(raw_timeout, bool)
+            or not isinstance(raw_timeout, int)
+            or not 1 <= raw_timeout <= 60
+        ):
+            raise ConfigError(f"routes.{route_id}.timeout requires null or an integer from 1 to 60")
+        routes[route_id] = RouteDefinition(
+            label=label,
+            sources=tuple(normalized_sources),
+            timeout=raw_timeout,
+        )
+    return routes
+
+
+def _resolve_configured_route(
+    config: dict, routes: dict[str, RouteDefinition]
+) -> str:
+    raw_route = config.get("type", "default")
+    if raw_route is None:
+        raw_route = "default"
+    if not isinstance(raw_route, str):
+        raise ConfigError("type requires a route id string")
+    route = normalize_route(raw_route)
+    if route not in routes:
+        raise ConfigError(
+            f"type references unknown route: {raw_route}; "
+            f"valid routes: {', '.join(sorted(routes))}"
+        )
+    return route
+
+
+def _resolve_route_timeout(
+    request_timeout: Any,
+    config: dict,
+    route_timeout: int | None,
+    meta_timeout: int,
+) -> int:
+    if request_timeout is not None:
+        return max(0, config_int(request_timeout, "timeout"))
+    if route_timeout is not None:
+        return route_timeout
+    if config.get("timeout") is not None:
+        return max(0, config_int(config.get("timeout"), "timeout"))
+    return meta_timeout
 
 
 def build_counts(config: dict, global_count: int | None = None, route_default: int = 10) -> dict[str, int]:
@@ -158,7 +290,11 @@ def build_counts(config: dict, global_count: int | None = None, route_default: i
     return counts
 
 
-def _resolve_sources(route: str, requested_sources: list[str] | None) -> set[str] | None:
+def _resolve_sources(
+    route: str,
+    requested_sources: list[str] | None,
+    valid_routes: set[str] | None = None,
+) -> set[str] | None:
     if requested_sources:
         source_names = {normalize_source_name(str(source)) for source in requested_sources}
         unknown_sources = source_names - ALL_SOURCE_NAMES
@@ -168,11 +304,14 @@ def _resolve_sources(route: str, requested_sources: list[str] | None) -> set[str
                 f"valid sources: {', '.join(sorted(ALL_SOURCE_NAMES))}"
             )
         return source_names
-    if route in ROUTE_PROFILES:
+    known_routes = set(ROUTE_PROFILES) if valid_routes is None else valid_routes
+    if route in known_routes:
         return None
     raise ValueError(
-        f"unknown route: {route}; valid routes: {', '.join(sorted(ROUTE_PROFILES))}"
+        f"unknown route: {route}; valid routes: {', '.join(sorted(known_routes))}"
     )
+
+
 
 
 def resolve_disabled_sources(config: dict) -> set[str]:
@@ -195,7 +334,8 @@ def resolve_active_sources(
     route: str,
     requested_sources: set[str] | None,
     disabled_sources: set[str],
+    route_sources: set[str] | None = None,
 ) -> tuple[set[str], set[str]]:
     """Return (selected, active) sources, where active drops disabled ones."""
-    selected = requested_sources or resolve_route(route)
+    selected = requested_sources or route_sources or resolve_route(route)
     return selected, selected - disabled_sources

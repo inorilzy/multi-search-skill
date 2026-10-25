@@ -1,6 +1,7 @@
 """GitHub repository search via REST API (or gh CLI fallback)."""
 import json
 import re
+import shutil
 import subprocess
 import time
 import urllib.error
@@ -168,6 +169,10 @@ def _run_gh(
     """
     if deadline is None:
         deadline = time.monotonic() + timeout
+    # Resolve the executable to give an explicit message when gh is absent;
+    # keep the original argv so the child still resolves through PATH.
+    if shutil.which(args[0]) is None:
+        return -1, "", "gh CLI not found on PATH"
     for attempt in range(retries + 1):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
