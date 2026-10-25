@@ -231,6 +231,58 @@ test('unverified record shows no compatibility claim', async () => {
   window.close();
 });
 
+test('macOS managed bundle installs without Windows paths or automatic PATH mutation', async () => {
+  const { window, root } = setup();
+  let installed = false, pathCalls = 0;
+  const base = '/Users/fixture/Library/Application Support/MultiSearch/cli';
+  const api = {
+    installPlan: async () => plan(installed ? 'installed' : 'ready', {
+      root: base, bin: `${base}/bin/multi-search`, version: '0.4.0',
+      source: '/Applications/Multi Search.app/Contents/Resources/cli-bundle',
+      path_hint: '安装后应用可直接使用；终端 PATH 需单独确认。',
+    }),
+    userPathPlan: async () => ({ status: 'absent', directory: `${base}/bin`,
+      can_add: installed, can_remove: false, reason: '确认后写入 ~/.zprofile 的受管区块。' }),
+    userPathChange: async () => { pathCalls++; throw new Error('must require consent'); },
+    install: async () => {
+      installed = true;
+      return { status: 'installed', version: '0.4.0', bin: `${base}/bin/multi-search`,
+        steps: [{ name: '验证独立运行时', ok: true, detail: 'multi-search 0.4.0' }] };
+    },
+  };
+  await mountInstall(root, api);
+  assert.equal(root.querySelector('[data-plan-fields]').hidden, false);
+  assert.equal(root.querySelector('[data-platform-note]').hidden, true);
+  assert.equal(root.querySelector('[data-action="install"]').disabled, false);
+  assert.equal(root.querySelector('[data-action="path-add"]').disabled, true);
+  root.querySelector('[data-action="install"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(root.querySelector('[data-status="plan"]').textContent, '已由本工具安装');
+  assert.equal(root.querySelector('[data-action="uninstall"]').disabled, false);
+  assert.equal(root.querySelector('[data-action="path-add"]').disabled, false);
+  assert.equal(pathCalls, 0, 'install must not silently change shell profiles');
+  assert.doesNotMatch(root.textContent, /\.exe|LOCALAPPDATA|不支持应用内安装/);
+  window.close();
+});
+
+test('PATH result preserves native registration warning instead of claiming a new shell was tested', async () => {
+  const { window, root } = setup();
+  await mountInstall(root, {
+    installPlan: async () => plan('installed'),
+    userPathPlan: async () => ({ directory: '/fixture/bin', reason: '只修改 .zprofile',
+      can_add: true, can_remove: false }),
+    userPathChange: async () => ({ status: 'added', warning: '登录 shell 才会加载 .zprofile；已有宿主请重启。' }),
+    detect: async () => ({ app: { status: 'missing' }, user: { status: 'ready' } }),
+  });
+  root.querySelector('[data-action="path-add"]').click();
+  root.querySelector('[data-action="path-confirm"]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const text = root.querySelector('[data-path-result]').textContent;
+  assert.match(text, /登录 shell.*\.zprofile/);
+  assert.doesNotMatch(text, /新用户环境/);
+  window.close();
+});
+
 test('unsupported platform explains itself and hides Windows-only fields', async () => {
   const { window, root } = setup();
   const plan = {
