@@ -136,6 +136,36 @@ class DnsDeadlineTests(unittest.TestCase):
             ("ftp://example.com/file", "unsupported URL scheme"),
             ("file:///etc/passwd", "unsupported URL scheme"),
             ("https://user:secret@example.com/", "credentials"),
+            # Non-canonical numeric IPv4 forms (inet_aton semantics) that
+            # platform resolvers map to local addresses.
+            ("http://2130706433/admin", "loopback"),
+            ("http://0x7f.0.0.1/admin", "loopback"),
+            ("http://0x7f000001/", "loopback"),
+            ("http://127.1/", "loopback"),
+            ("http://127.0.1/", "loopback"),
+            ("http://017700000001/", "loopback"),
+            ("http://127.000.000.001/", "loopback"),
+            ("http://0/", "unspecified"),
+            ("http://2852039166/latest/meta-data/", "link-local"),
+            ("http://0xa9fea9fe/", "link-local"),
+            ("http://0251.0376.0251.0376/", "link-local"),
+            ("http://169.254.43518/", "link-local"),
+            ("http://167772165/", "private"),
+            ("http://0x0a.0.0.5/", "private"),
+            # Numeric-looking hosts that are not a valid address fail closed.
+            ("http://1.2.3.999/", "numeric"),
+            ("http://08/", "numeric"),
+            # Hosts that normalize (NFKC, IDNA dots, percent-decoding) to local
+            # targets.
+            ("http://\u24db\u24de\u24d2\u24d0\u24db\u24d7\u24de\u24e2\u24e3/", "localhost"),
+            ("http://\uff11\uff12\uff17.\uff10.\uff10.\uff11/", "loopback"),
+            ("http://127\u30020\u30020\u30021/", "loopback"),
+            ("http://127\uff0e0\uff0e0\uff0e1/", "loopback"),
+            ("http://127\uff610\uff610\uff611/", "loopback"),
+            ("http://127.0.0.%31/", "loopback"),
+            ("http://%6cocalhost/", "localhost"),
+            # Credentials stay out of the error even for an unsafe host.
+            ("http://user:secret@2130706433/", "credentials"),
         ):
             with self.subTest(url=url), \
                  mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl") as scraper:
@@ -146,6 +176,33 @@ class DnsDeadlineTests(unittest.TestCase):
                 self.assertIn(reason, result["error"])
                 self.assertNotIn("secret", result["error"])
                 scraper.assert_not_called()
+        resolver.assert_not_called()
+
+    def test_delegated_url_accepts_public_and_fake_ip_domains_without_dns(self):
+        # Fake-IP/TUN routing only shows up in DNS answers, which the delegated
+        # path never requests. Real domains (including numeric labels before
+        # the TLD and IDNs) and public literals still dispatch.
+        resolver = mock.Mock(side_effect=AssertionError("delegated URL resolved locally"))
+        for url in (
+            "https://fake-ip.tun.example/article",
+            "https://163.com/news",
+            "https://1password.com/",
+            "https://0x.example.com/",
+            "https://m\u00fcnchen.de/",
+            "https://93.184.216.34/",
+            "https://134744072/",
+        ):
+            with self.subTest(url=url), mock.patch(
+                "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl",
+                return_value={"url": url, "markdown": "body", "via": "firecrawl"},
+            ) as scraper:
+                result = scrape_url_smart(
+                    url, primary="firecrawl", backends=("firecrawl",),
+                    deadline=time.monotonic() + 5, url_resolver=resolver,
+                )
+                self.assertNotIn("error", result)
+                self.assertEqual(result["via"], "firecrawl")
+                scraper.assert_called_once()
         resolver.assert_not_called()
 
     def test_delegated_scrape_does_not_dispatch_after_deadline(self):
