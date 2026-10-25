@@ -99,7 +99,12 @@ function memoryView(overrides = {}) {
 
 const chainNames = root => [...root.querySelectorAll('[data-chain-row]')].map(row => row.getAttribute('data-chain-row'));
 const chainRow = (root, name) => root.querySelector(`[data-chain-row="${name}"]`);
-const chainButton = (root, name, label) => [...chainRow(root, name).querySelectorAll('button')].find(button => button.textContent === label);
+const ACTION_LABELS = { up: '上移', down: '下移', disable: '停用' };
+const chainButton = (root, name, label) => {
+  const action = Object.entries(ACTION_LABELS).find(([, text]) => text === label)?.[0];
+  if (action) return chainRow(root, name).querySelector(`[data-chain-action="${action}"]`);
+  return [...chainRow(root, name).querySelectorAll('button')].find(button => button.textContent === label);
+};
 
 function api(overrides = {}) {
   return {

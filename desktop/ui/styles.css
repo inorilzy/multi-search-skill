@@ -19,6 +19,9 @@
   --red-strong: #8b2f27;
   --sidebar-text: #e5efed;
   --sidebar-muted: #a9bfb9;
+  --scrape-tint: #f0f8f5;
+  --scrape-warning-bg: #fff8eb;
+  --scrape-warning-border: #ebd8b2;
   font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   color: var(--ink);
   background: var(--paper);
@@ -1775,6 +1778,449 @@
       flex-wrap: wrap;
     }
   }
+  /* ---- 抓取设置页 ----------------------------------------------------
+   * The scrape page carries its own layout: a heading block, the priority
+   * chain rendered as draggable cards, and the site-memory table. Everything
+   * here is scoped under .scrape-page so other settings pages stay untouched. */
+  .scrape-page {
+    display: grid;
+    gap: 20px;
+  }
+  .scrape-page-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+    margin-bottom: 4px;
+  }
+  .scrape-page-head h1 {
+    margin: 6px 0 8px;
+  }
+  .scrape-page-head p:not(.eyebrow) {
+    margin: 0;
+    max-width: 62ch;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--muted);
+  }
+  .scrape-page-head button {
+    flex-shrink: 0;
+  }
+  .scrape-page .panel {
+    padding: 22px 24px 24px;
+  }
+  .scrape-chain-panel .section-title {
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+  .scrape-count {
+    font-family: Consolas,"Microsoft YaHei",monospace;
+    font-size: 12px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 12px;
+    white-space: nowrap;
+  }
+  .scrape-intro {
+    margin: 0 0 16px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--muted);
+  }
+  .scrape-notice {
+    margin: 0 0 14px;
+    padding: 11px 14px;
+    border: 1px solid var(--scrape-warning-border);
+    border-radius: 7px;
+    background: var(--scrape-warning-bg);
+    font-size: 12px;
+    line-height: 1.75;
+    color: var(--amber);
+  }
+  .scrape-notice[data-kind=error] {
+    border-color: #eccdcf;
+    background: #fdf2f2;
+    color: var(--red);
+  }
+  .scrape-sort-list {
+    display: grid;
+    gap: 10px;
+    margin: 0 0 18px;
+    padding: 0;
+    list-style: none;
+  }
+  .scrape-chain-row {
+    display: grid;
+    grid-template-columns: 26px 34px 40px minmax(0,1fr) auto;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--panel);
+    box-shadow: 0 1px 2px var(--scrape-shadow);
+    transition: box-shadow .15s ease,border-color .15s ease,transform .15s ease;
+  }
+  .scrape-chain-row:hover {
+    border-color: #cfdde7;
+    box-shadow: 0 4px 14px var(--scrape-shadow);
+  }
+  .scrape-chain-row:focus-within {
+    border-color: var(--teal);
+    box-shadow: 0 0 0 3px var(--scrape-focus-shadow);
+  }
+  /* Drag affordances: the source card lifts, the target edge shows a drop line. */
+  .scrape-chain-row.is-dragging {
+    opacity: .45;
+    border-style: dashed;
+  }
+  .scrape-chain-row.drop-before {
+    box-shadow: inset 0 3px 0 0 var(--teal),0 4px 14px var(--scrape-shadow);
+  }
+  .scrape-chain-row.drop-after {
+    box-shadow: inset 0 -3px 0 0 var(--teal),0 4px 14px var(--scrape-shadow);
+  }
+  .scrape-drag-handle {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    cursor: grab;
+    touch-action: none;
+  }
+  .scrape-drag-handle:hover:not(:disabled) {
+    background: var(--scrape-tint);
+    color: var(--teal-strong);
+  }
+  .scrape-drag-handle:active:not(:disabled) {
+    cursor: grabbing;
+  }
+  /* Six dots drawn with layered radial gradients: no image request, CSP-safe. */
+  .scrape-drag-handle::before {
+    content: "";
+    width: 12px;
+    height: 18px;
+    background-image: radial-gradient(currentColor 1.4px,transparent 1.5px);
+    background-size: 6px 6px;
+    background-position: 0 0;
+  }
+  .scrape-order {
+    font-family: Consolas,monospace;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .scrape-provider-mark {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 9px;
+    background: var(--scrape-tint);
+    color: var(--teal-strong);
+    font-family: Georgia,serif;
+    font-size: 17px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .scrape-backend-main {
+    min-width: 0;
+  }
+  .scrape-backend-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .scrape-backend-title strong {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .scrape-backend-title code {
+    font-family: Consolas,monospace;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+  .scrape-primary-badge {
+    font-size: 12px;
+    color: var(--teal-strong);
+    background: var(--scrape-tint);
+    border: 1px solid #cfe8dd;
+    border-radius: 999px;
+    padding: 1px 9px;
+  }
+  .scrape-backend-detail {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 5px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .scrape-backend-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .scrape-backend-state::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+  .scrape-backend-state[data-kind=ready] {
+    color: var(--teal);
+  }
+  .scrape-backend-state[data-kind=warning] {
+    color: var(--amber);
+  }
+  .scrape-backend-state[data-kind=unknown] {
+    color: var(--muted);
+  }
+  .scrape-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .scrape-row-actions button {
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--muted);
+    border-color: transparent;
+    background: transparent;
+  }
+  .scrape-row-actions button:hover:not(:disabled) {
+    color: var(--teal-strong);
+    background: var(--scrape-tint);
+    border-color: #d6e9e0;
+  }
+  .scrape-row-actions button[data-chain-action=disable]:hover:not(:disabled) {
+    color: var(--red-strong);
+    background: #fdf2f2;
+    border-color: #f0d5d5;
+  }
+  .scrape-empty {
+    margin: 0;
+    padding: 30px;
+    border: 1px dashed var(--line);
+    border-radius: 9px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .scrape-inactive {
+    border-top: 1px dashed var(--line);
+    padding-top: 16px;
+  }
+  .scrape-inactive-title {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .scrape-add-chip {
+    border: 1px dashed #c6d8d0;
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-size: 12px;
+    color: var(--teal-strong);
+    background: transparent;
+  }
+  .scrape-add-chip:hover:not(:disabled) {
+    background: var(--scrape-tint);
+    border-style: solid;
+  }
+  .scrape-chain-actions {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px dashed var(--line);
+  }
+  .scrape-savebar {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-top: 4px;
+    padding: 14px 18px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #fffffff2;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 -2px 12px var(--scrape-shadow);
+  }
+  .scrape-save-copy {
+    display: grid;
+    gap: 2px;
+  }
+  .scrape-save-copy small {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  /* ---- 站点记忆 ---- */
+  .scrape-memory-panel .section-title {
+    margin-bottom: 12px;
+  }
+  .scrape-memory-toolbar {
+    display: flex;
+    gap: 12px;
+    margin: 14px 0;
+  }
+  .scrape-memory-toolbar label {
+    max-width: 320px;
+  }
+  .scrape-table {
+    display: grid;
+    gap: 2px;
+  }
+  .scrape-table-head, .scrape-table-row {
+    display: grid;
+    grid-template-columns: minmax(120px,1.2fr) 110px 150px 110px 150px 130px 120px auto;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+  }
+  .scrape-table-head {
+    font-size: 12px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+  }
+  .scrape-table-row {
+    font-size: 12px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+  }
+  .scrape-table-row:nth-child(odd) {
+    background: #fbfdfd;
+  }
+  .scrape-table-row:hover {
+    border-color: var(--line);
+    background: var(--panel);
+  }
+  .scrape-site, .scrape-backend {
+    font-weight: 600;
+    overflow-wrap: break-word;
+    hyphens: auto;
+    min-width: 0;
+  }
+  /* Memory rows reuse the legacy .route-row-actions wrapper; lay its buttons out in one line. */
+  .scrape-table-row>.route-row-actions, .scrape-table-row>div:last-child {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .scrape-table-row>.route-row-actions button, .scrape-table-row>div:last-child button {
+    padding: 6px 11px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .scrape-table .scrape-counts, .scrape-table .scrape-muted {
+    font-family: Consolas,monospace;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  @media (max-width:1350px) {
+    .scrape-chain-row {
+      grid-template-columns: 24px 30px 36px minmax(0,1fr) auto;
+      gap: 10px;
+      padding: 12px;
+    }
+    /* Drop only "最近成功"; cooling and pinning are the columns users act on,
+     * so the header and the row keep exactly seven visible tracks in step. */
+    .scrape-table-head, .scrape-table-row {
+      grid-template-columns:
+        minmax(112px,1.25fr) minmax(76px,88px) minmax(112px,124px)
+        minmax(88px,96px) minmax(104px,1fr) minmax(96px,110px) max-content;
+      gap: 10px;
+    }
+    .scrape-table-head span:nth-child(5), .scrape-table-row>span:nth-child(5) {
+      display: none;
+    }
+  }
+  @media (max-width:1120px) {
+    .scrape-savebar {
+      flex-wrap: wrap;
+    }
+    .scrape-table-head {
+      display: none;
+    }
+    .scrape-table-row {
+      grid-template-columns: minmax(0,1fr) auto;
+      gap: 6px 10px;
+      padding: 12px;
+      border-color: var(--line);
+      margin-bottom: 8px;
+    }
+    .scrape-table-row>span {
+      grid-column: 1;
+    }
+    .scrape-table-row>.route-row-actions, .scrape-table-row>div:last-child {
+      grid-column: 1/-1;
+    }
+  }
+  @media (max-width:760px) {
+    .scrape-page-head {
+      display: block;
+    }
+    .scrape-page-head button {
+      margin-top: 12px;
+    }
+    .scrape-chain-row {
+      grid-template-columns: 34px 40px minmax(0,1fr);
+      grid-template-areas:
+        "handle mark main"
+        "order order actions";
+      row-gap: 10px;
+    }
+    .scrape-drag-handle {
+      grid-area: handle;
+      height: 34px;
+    }
+    .scrape-order {
+      grid-area: order;
+      text-align: left;
+      align-self: center;
+    }
+    .scrape-provider-mark {
+      grid-area: mark;
+      width: 34px;
+      height: 34px;
+      font-size: 15px;
+    }
+    .scrape-backend-main {
+      grid-area: main;
+    }
+    .scrape-row-actions {
+      grid-area: actions;
+      justify-content: flex-end;
+    }
+    .scrape-memory-toolbar {
+      display: block;
+    }
+    .scrape-memory-toolbar label {
+      max-width: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .scrape-chain-row, .scrape-drag-handle {
+      transition: none;
+    }
+  }
 }
 
 /* The `hidden` attribute must win over layout rules such as `.run-controls { display: flex }`. */
@@ -1783,7 +2229,7 @@
 }
 
 /* Visually hidden text that screen readers still announce. */
-.visually-hidden {
+.visually-hidden, .sr-only {
   position: absolute;
   width: 1px;
   height: 1px;
