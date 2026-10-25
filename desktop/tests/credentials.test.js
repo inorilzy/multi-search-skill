@@ -1,352 +1,466 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
-import { mountCredentials, SOURCES } from '../ui/credentials.js';
-
-const SYNTHETIC_KEY = 'synthetic-ui-key-0001';
-
-function setup() {
-  const window = new Window();
-  const root = window.document.createElement('main');
-  window.document.body.append(root);
-  return { window, root };
-}
-
-function status(overrides = {}) {
-  return {
-    store: { state: 'absent', saved_at: null, error: null },
-    effective_source: 'none',
-    env_overrides_store: false,
-    env_var: '',
-    file_key_count: 0,
-    ...overrides,
-  };
-}
-
+import { mountCredentials, mountCredentialBody, SOURCES, scrapeCredentialProviders } from '../ui/credentials.js';
+import { managementApi } from '../ui/api.js';
+const KEY = 'synthetic-ui-key-0001';
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+const flush2 = async () => { await flush(); await flush(); };
+const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'sqlite' : 'none', key_application_available: false, ...extra });
+function setup() { const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root); return { window, root }; }
+const submit = ({ window, root }) => root.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+function api(overrides = {}) { return { credentialStatus: async () => status(), credentialRead: async () => ({ value: '' }), credentialAppend: async () => status(true), credentialRemove: async () => status(), ...overrides }; }
+const coded = (code, message = '') => JSON.stringify({ code, message });
+const savedInputs = root => [...root.querySelectorAll('[data-saved-list] input')].map(input => input.value);
+const draftInputs = root => [...root.querySelectorAll('[data-draft-list] input')];
 
-test('reveal only shows newly typed input and saved keys are never fetched', async () => {
-  const { window, root } = setup();
-  await mountCredentials(root, {
-    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1 }, effective_source: 'credential_store' }),
-    credentialSave: async () => status({ store: { state: 'present', saved_at: 2 }, effective_source: 'credential_store' }),
+test('saved values render one readonly input per line, never through HTML', async () => {
+  const ctx = setup(); const seen = [];
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(true), credentialRead: async source => { seen.push(source); return { value: KEY + '\nsecond-key' }; } }));
+  assert.equal(ctx.root.querySelector('textarea'), null);
+  assert.deepEqual(seen, ['tavily']);
+  assert.deepEqual(savedInputs(ctx.root), [KEY, 'second-key']);
+  assert.equal(ctx.root.querySelectorAll('[data-saved-list] input')[0].readOnly, true);
+  assert.equal(ctx.root.querySelectorAll('[type="password"]').length, 2);
+  assert.ok(!ctx.root.innerHTML.includes(KEY), 'saved values go through .value, not HTML interpolation');
+  assert.equal(ctx.root.querySelectorAll('[data-draft-list] input').length, 1, 'one empty draft row initially');
+  ctx.window.close();
+});
+
+test('all keyed sources query their own overview and read command', async () => {
+  assert.equal(SOURCES.filter(s => s.keyed).length, 8);
+  for (const entry of SOURCES.filter(s => s.keyed)) {
+    const ctx = setup(), calls = [];
+    await mountCredentials(ctx.root, api({ credentialStatus: async s => { calls.push(['status', s]); return status(); }, credentialRead: async s => { calls.push(['read', s]); return { value: '' }; } }), { source: entry.source });
+    assert.deepEqual(calls, [['status', entry.source], ['read', entry.source]]); assert.ok(ctx.root.textContent.includes(entry.label)); ctx.window.close();
+  }
+});
+
+test('append sends only non-empty draft rows, keeps old keys and clears submitted drafts', async () => {
+  const ctx = setup(); let calls = [];
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value: KEY + '\nsecond-key' }),
+    credentialAppend: async (source, keys) => { calls.push(keys); return status(true); },
+    credentialTest: async () => { assert.fail('must not test automatically'); },
+  }));
+  draftInputs(ctx.root)[0].value = '  new-key-1  ';
+  ctx.root.querySelector('[data-action="add"]').click();
+  draftInputs(ctx.root)[1].value = 'new-key-2';
+  ctx.root.querySelector('[data-action="add"]').click(); // third draft left empty
+  submit(ctx); await flush2();
+  assert.deepEqual(calls, [['new-key-1', 'new-key-2']]);
+  assert.deepEqual(savedInputs(ctx.root), [KEY, 'second-key'], 'readback value unchanged by stub');
+  assert.deepEqual(draftInputs(ctx.root).map(i => i.value), [''], 'submitted drafts cleared');
+  assert.equal(ctx.root.querySelector('[data-status="source"]').textContent, 'SQLite / DPAPI');
+  assert.match(ctx.root.querySelector('[data-info="test"]').textContent, /已保存.*尚未测试/);
+  ctx.window.close();
+});
+
+test('append failure retains drafts and shows the backend error', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({ credentialAppend: async () => { throw '数据库拒绝，未保存'; } }));
+  draftInputs(ctx.root)[0].value = KEY;
+  submit(ctx); await flush2();
+  assert.equal(draftInputs(ctx.root)[0].value, KEY);
+  assert.match(ctx.root.querySelector('[data-info="error"]').textContent, /未保存/);
+  assert.equal(ctx.root.querySelector('[data-status="store"]').textContent, '未保存');
+  ctx.window.close();
+});
+
+test('row delete confirms with row number, cancel writes nothing, confirm removes only that row', async () => {
+  const ctx = setup(); const removed = [];
+  let value = KEY + '\nsecond-key\nthird-key';
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value, snapshot: 'opaque-revision' }),
+    credentialRemove: async (source, index, expected) => { removed.push([index, expected]); value = value.split('\n').filter((_, i) => i !== index).join('\n'); return status(true); },
+  }));
+  const buttons = ctx.root.querySelectorAll('[data-action="remove"]');
+  buttons[1].click();
+  const confirm = ctx.root.querySelector('[data-confirm="remove"]');
+  assert.match(confirm.textContent, /第 2 行/);
+  assert.ok(!confirm.textContent.includes('second-key'), 'confirm names the row, never the key');
+  assert.equal(removed.length, 0);
+  confirm.querySelector('[data-action="cancel-remove"]').click();
+  assert.equal(removed.length, 0);
+  assert.deepEqual(savedInputs(ctx.root), [KEY, 'second-key', 'third-key']);
+  ctx.root.querySelectorAll('[data-action="remove"]')[1].click();
+  ctx.root.querySelector('[data-action="confirm-remove"]').click(); await flush2();
+  assert.deepEqual(removed, [[1, 'opaque-revision']]);
+  assert.deepEqual(savedInputs(ctx.root), [KEY, 'third-key']);
+  ctx.window.close();
+});
+
+test('deleting the last saved row shows the empty state', async () => {
+  const ctx = setup();
+  let value = KEY;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value, snapshot: 'opaque-revision' }),
+    credentialRemove: async () => { value = ''; return status(); },
+  }));
+  ctx.root.querySelector('[data-action="remove"]').click();
+  ctx.root.querySelector('[data-action="confirm-remove"]').click(); await flush2();
+  assert.deepEqual(savedInputs(ctx.root), []);
+  assert.equal(ctx.root.querySelector('[data-saved-empty]').hidden, false);
+  ctx.window.close();
+});
+
+test('failed row delete keeps saved values and reports the failure', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value: KEY }),
+    credentialRemove: async () => { throw '未删除'; },
+  }));
+  ctx.root.querySelector('[data-action="remove"]').click();
+  ctx.root.querySelector('[data-action="confirm-remove"]').click(); await flush2();
+  assert.deepEqual(savedInputs(ctx.root), [KEY]);
+  assert.match(ctx.root.querySelector('[data-info="error"]').textContent, /未删除/);
+  ctx.window.close();
+});
+
+test('drafts survive refresh and a row delete', async () => {
+  const ctx = setup(); let value = KEY;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value, snapshot: 'opaque-revision' }),
+    credentialRemove: async () => { value = 'second-key'; return status(true); },
+  }));
+  draftInputs(ctx.root)[0].value = 'draft-key';
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  assert.equal(draftInputs(ctx.root)[0].value, 'draft-key', 'refresh preserves drafts');
+  ctx.root.querySelector('[data-action="remove"]').click();
+  ctx.root.querySelector('[data-action="confirm-remove"]').click(); await flush2();
+  assert.equal(draftInputs(ctx.root)[0].value, 'draft-key', 'delete preserves drafts');
+  ctx.window.close();
+});
+
+test('read failure disables writes until a refresh succeeds', async () => {
+  const ctx = setup(); let fail = true;
+  const apiMock = api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => { if (fail) throw '读取失败'; return { value: KEY }; },
   });
-  const input = root.querySelector('[data-field="key"]');
-  const reveal = root.querySelector('[data-action="reveal"]');
-  assert.equal(input.value, '');
-  assert.equal(input.type, 'password');
-  input.value = SYNTHETIC_KEY;
-  reveal.click();
-  assert.equal(input.type, 'text');
-  assert.equal(reveal.getAttribute('aria-pressed'), 'true');
-  reveal.click();
-  assert.equal(input.type, 'password');
-  root.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
-  await flush();
-  assert.equal(input.value, '');
-  assert.ok(!root.innerHTML.includes(SYNTHETIC_KEY));
-  window.close();
+  await mountCredentials(ctx.root, apiMock);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true);
+  assert.equal(draftInputs(ctx.root)[0].disabled, true);
+  assert.equal(ctx.root.querySelectorAll('[data-action="remove"]').length, 0, 'no saved rows without a read');
+  fail = false;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  assert.equal(draftInputs(ctx.root)[0].disabled, false);
+  ctx.window.close();
 });
 
-test('page shows saved state, effective source, and env override notice without values', async () => {
-  const { window, root } = setup();
-  const api = { credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'env', env_overrides_store: true, env_var: 'TAVILY_API_KEY' }) };
-  await mountCredentials(root, api);
-  assert.equal(root.querySelector('[data-status="store"]').textContent, '已保存');
-  assert.equal(root.querySelector('[data-status="source"]').textContent, '环境变量 TAVILY_API_KEY');
-  assert.match(root.querySelector('[data-info="override"]').textContent, /覆盖已保存的 API Key|覆盖已保存的 Key/);
-  assert.match(root.querySelector('[data-info="override"]').textContent, /TAVILY_API_KEY/);
-  window.close();
+test('write success followed by read failure does not duplicate the append on retry', async () => {
+  const ctx = setup(); let appended = []; let readCalls = 0;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => { readCalls += 1; if (readCalls > 1) throw '刷新读取失败'; return { value: KEY }; },
+    credentialAppend: async (source, keys) => { appended.push(keys); return status(true); },
+  }));
+  draftInputs(ctx.root)[0].value = 'new-key';
+  submit(ctx); await flush2();
+  assert.deepEqual(appended, [['new-key']]);
+  assert.equal(draftInputs(ctx.root)[0].value, '', 'draft cleared so a retry cannot re-append');
+  assert.match(ctx.root.querySelector('[data-info="error"]').textContent, /已保存.*刷新读取失败/);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true, 'mutations disabled until refresh');
+  ctx.window.close();
 });
 
-test('a keyed source mounts its own panel and queries the backend by public name', async () => {
-  assert.deepEqual(
-    SOURCES.filter(item => item.keyed).map(item => item.source),
-    ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github_repos'],
-  );
-  for (const entry of SOURCES.filter(item => item.keyed)) {
-    const { window, root } = setup();
-    const seen = [];
-    const api = { credentialStatus: async source => { seen.push(source); return status(); } };
-    await mountCredentials(root, api, { source: entry.source });
-    assert.deepEqual(seen, [entry.source]);
-    assert.match(root.querySelector('.eyebrow').textContent, new RegExp(entry.source));
-    assert.ok(root.textContent.includes(entry.label), entry.source);
-    window.close();
-  }
-});
-
-test('saving clears the input, never renders the key, and does not run a test', async () => {
-  const { window, root } = setup();
-  let saved = null;
-  const api = {
-    credentialStatus: async () => status(),
-    credentialSave: async (source, key) => { saved = { source, key }; return status({ store: { state: 'present', saved_at: 2, error: null }, effective_source: 'credential_store' }); },
-  };
-  await mountCredentials(root, api);
-  const field = root.querySelector('[data-field="key"]');
-  field.value = SYNTHETIC_KEY;
-  root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
-  await flush();
-  assert.deepEqual(saved, { source: 'tavily', key: SYNTHETIC_KEY });
-  assert.equal(field.value, '');
-  assert.equal(root.querySelector('[data-status="store"]').textContent, '已保存');
-  assert.equal(root.querySelector('[data-status="test"]').textContent, '尚未测试');
-  assert.match(root.querySelector('[data-info="save"]').textContent, /尚未测试/);
-  assert.ok(!root.innerHTML.includes(SYNTHETIC_KEY));
-  window.close();
-});
-
-test('successful test expires on replacement, deletion and provenance refresh', async () => {
-  const { window, root } = setup();
-  let overview = status({ store: { state: 'present', saved_at: 1 }, effective_source: 'credential_store' });
-  const api = {
-    credentialStatus: async () => overview,
-    credentialTest: async () => ({ result: 'success' }),
-    credentialSave: async () => overview,
-    credentialDelete: async () => status(),
-  };
-  await mountCredentials(root, api);
-  for (const operation of ['save', 'delete', 'refresh']) {
-    root.querySelector('[data-action="test"]').click();
-    await flush();
-    assert.match(root.querySelector('[data-status="test"]').textContent, /测试成功/);
-    if (operation === 'save') {
-      root.querySelector('[data-field="key"]').value = SYNTHETIC_KEY;
-      root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
-    } else if (operation === 'delete') {
-      root.querySelector('[data-action="delete"]').click();
-      root.querySelector('[data-action="confirm-delete"]').click();
-    } else {
-      overview = status({ effective_source: 'env', env_var: 'TAVILY_API_KEY' });
-      root.querySelector('[data-action="refresh"]').click();
-    }
-    await flush();
-    assert.equal(root.querySelector('[data-status="test"]').textContent, '尚未测试', operation);
-  }
-  root.querySelector('[data-action="test"]').click();
-  await flush();
-  assert.match(root.querySelector('[data-status="test"]').textContent, /环境变量 TAVILY_API_KEY/);
-  assert.doesNotMatch(root.querySelector('[data-status="test"]').textContent, /已保存的 Key/);
-  window.close();
-});
-
-test('late credential test cannot validate a replacement key', async () => {
-  const { window, root } = setup();
-  let resolveTest;
-  const overview = status({ store: { state: 'present', saved_at: 1 }, effective_source: 'credential_store' });
-  await mountCredentials(root, {
-    credentialStatus: async () => overview,
+test('busy and dispose guards ignore late responses and rebuilt controls', async () => {
+  const ctx = setup(); let resolveAppend, resolveTest;
+  const mounted = await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value: KEY }),
+    credentialAppend: () => new Promise(resolve => { resolveAppend = resolve; }),
     credentialTest: () => new Promise(resolve => { resolveTest = resolve; }),
-    credentialSave: async () => overview,
-  });
-  root.querySelector('[data-action="test"]').click();
-  root.querySelector('[data-field="key"]').value = SYNTHETIC_KEY;
-  root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  }));
+  draftInputs(ctx.root)[0].value = 'new-key';
+  submit(ctx);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true);
+  mounted.dispose();
+  resolveAppend(status(true));
+  if (resolveTest) resolveTest({ result: 'success', message: 'late' });
   await flush();
-  resolveTest({ result: 'success', message: 'old credential response' });
-  await flush();
-  assert.equal(root.querySelector('[data-status="test"]').textContent, '尚未测试');
-  assert.doesNotMatch(root.textContent, /old credential response/);
-  window.close();
+  assert.doesNotMatch(ctx.root.textContent, /late/);
+  ctx.window.close();
 });
 
-test('save errors are shown as-is and the key value is not echoed back', async () => {
-  const { window, root } = setup();
-  const api = {
-    credentialStatus: async () => status(),
-    credentialSave: async () => { throw '凭据库不可用，未保存 key。'; },
-  };
-  await mountCredentials(root, api);
-  const field = root.querySelector('[data-field="key"]');
-  field.value = SYNTHETIC_KEY;
-  root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
-  await flush();
-  assert.match(root.querySelector('[data-info="error"]').textContent, /未保存/);
-  assert.equal(field.value, '');
-  assert.ok(!root.innerHTML.includes(SYNTHETIC_KEY));
-  window.close();
+test('multiline paste into a draft row is refused instead of merged silently', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api());
+  const input = draftInputs(ctx.root)[0];
+  input.value = KEY;
+  const event = new ctx.window.Event('paste', { cancelable: true, bubbles: true });
+  Object.defineProperty(event, 'clipboardData', { value: { getData: () => 'a\nb' } });
+  input.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true);
+  assert.match(ctx.root.querySelector('[data-info="error"]').textContent, /逐行/);
+  ctx.window.close();
 });
 
-test('save with a file key list asks for confirmation; cancel writes nothing', async () => {
-  const { window, root } = setup();
-  let saveCalls = 0;
-  const api = {
-    credentialStatus: async () => status({ file_key_count: 2, effective_source: 'file' }),
-    credentialSave: async () => { saveCalls += 1; return status(); },
-  };
-  await mountCredentials(root, api, { source: 'github_repos' });
-  const field = root.querySelector('[data-field="key"]');
-  field.value = SYNTHETIC_KEY;
-  root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
-  await flush();
-  assert.equal(saveCalls, 0, 'nothing is written before confirmation');
-  const prompt = root.querySelector('[data-confirm="save"]');
-  assert.ok(prompt);
-  assert.match(prompt.textContent, /保存后使用凭据库 Key，文件中的 2 个 Key 保留但不参与本来源轮换/);
-  root.querySelector('[data-action="cancel-save"]').click();
-  await flush();
-  assert.equal(saveCalls, 0);
-  assert.equal(root.querySelector('[data-confirm="save"]'), null);
-  assert.ok(!root.innerHTML.includes(SYNTHETIC_KEY));
-  window.close();
+test('draft editing invalidates a previous test result', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(true), credentialRead: async () => ({ value: KEY }), credentialTest: async () => ({ result: 'success', message: 'ok' }) }));
+  ctx.root.querySelector('[data-action="test"]').click(); await flush();
+  assert.equal(ctx.root.querySelector('[data-test-result]').dataset.kind, 'success');
+  const input = draftInputs(ctx.root)[0];
+  input.value = 'changed';
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  assert.equal(ctx.root.querySelector('[data-test-result]').dataset.kind, 'idle');
+  ctx.window.close();
 });
 
-test('confirmed save with a file key list writes exactly once with the source name', async () => {
-  const { window, root } = setup();
-  const calls = [];
-  const api = {
-    credentialStatus: async () => status({ file_key_count: 2, effective_source: 'file' }),
-    credentialSave: async (source, key) => { calls.push({ source, key }); return status({ file_key_count: 2, store: { state: 'present', saved_at: 3, error: null }, effective_source: 'credential_store' }); },
-  };
-  await mountCredentials(root, api, { source: 'github_repos' });
-  const field = root.querySelector('[data-field="key"]');
-  field.value = SYNTHETIC_KEY;
-  root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
-  await flush();
-  root.querySelector('[data-action="confirm-save"]').click();
-  await flush();
-  assert.deepEqual(calls, [{ source: 'github_repos', key: SYNTHETIC_KEY }]);
-  assert.equal(root.querySelector('[data-confirm="save"]'), null);
-  assert.equal(root.querySelector('[data-status="source"]').textContent, 'Windows 凭据库');
-  assert.match(root.querySelector('[data-info="override"]').textContent, /文件中的 2 个 Key 已保留/);
-  assert.ok(!root.innerHTML.includes(SYNTHETIC_KEY));
-  window.close();
-});
-
-test('delete reports removal and refreshes store state', async () => {
-  const { window, root } = setup();
-  let deleted = false;
-  const api = {
-    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store' }),
-    credentialDelete: async () => { deleted = true; return status(); },
-  };
-  await mountCredentials(root, api);
-  root.querySelector('[data-action="delete"]').click();
-  await flush();
-  root.querySelector('[data-action="confirm-delete"]').click();
-  await flush();
-  assert.equal(deleted, true);
-  assert.equal(root.querySelector('[data-status="store"]').textContent, '未保存');
-  assert.equal(root.querySelector('[data-status="source"]').textContent, '未配置');
-  window.close();
-});
-
-test('delete warning with a file list says the file keys will be restored', async () => {
-  const { window, root } = setup();
-  const api = {
-    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store', file_key_count: 2 }),
-    credentialDelete: async () => status({ file_key_count: 2, effective_source: 'file' }),
-  };
-  await mountCredentials(root, api, { source: 'github_repos' });
-  root.querySelector('[data-action="delete"]').click();
-  await flush();
-  const text = root.querySelector('[data-confirm="delete"]').textContent;
-  assert.match(text, /删除后将恢复使用文件中的 2 个 Key/);
-  assert.doesNotMatch(text, /需要重新粘贴/);
-  root.querySelector('[data-action="confirm-delete"]').click();
-  await flush();
-  assert.match(root.querySelector('[data-info="save"]').textContent, /已恢复使用文件中的 2 个 Key/);
-  window.close();
-});
-
-test('delete warning with an env var says the env var still overrides and never claims no credentials', async () => {
-  const { window, root } = setup();
-  const api = {
-    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'env', env_overrides_store: true, env_var: 'TAVILY_API_KEY' }),
-    credentialDelete: async () => status({ effective_source: 'env', env_overrides_store: true, env_var: 'TAVILY_API_KEY' }),
-  };
-  await mountCredentials(root, api);
-  root.querySelector('[data-action="delete"]').click();
-  await flush();
-  const text = root.querySelector('[data-confirm="delete"]').textContent;
-  assert.match(text, /环境变量 TAVILY_API_KEY 仍会覆盖/);
-  assert.doesNotMatch(text, /没有|需要重新粘贴/);
-  root.querySelector('[data-action="confirm-delete"]').click();
-  await flush();
-  const message = root.querySelector('[data-info="save"]').textContent;
-  assert.match(message, /仍由环境变量 TAVILY_API_KEY 生效/);
-  assert.doesNotMatch(message, /当前没有可用的 Key/);
-  window.close();
-});
-
-test('delete warning with no fallback says the key must be pasted again', async () => {
-  const { window, root } = setup();
-  const api = {
-    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store' }),
-  };
-  await mountCredentials(root, api);
-  root.querySelector('[data-action="delete"]').click();
-  await flush();
-  assert.match(root.querySelector('[data-confirm="delete"]').textContent, /需要重新粘贴 Key/);
-  window.close();
-});
-
-test('test results distinguish success, auth, quota, and network outcomes', async () => {
-  const cases = [
-    ['success', '测试成功：Tavily 本次使用 Windows 凭据库。'],
-    ['auth_failed', '认证失败：Tavily 拒绝了该 Key。'],
-    ['quota', '额度不足：Tavily 额度已用尽。'],
-    ['missing_key', '缺少 Key：请先保存。'],
-    ['credential_store', '凭据库错误：无法读取这个来源的 Key，请重新保存。'],
-    ['network', '网络错误：无法连接 Tavily。'],
-  ];
-  for (const [result, label] of cases) {
-    const { window, root } = setup();
-    const api = {
-      credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store' }),
-      credentialTest: async () => ({ result, message: '' }),
-    };
-    await mountCredentials(root, api);
-    root.querySelector('[data-action="test"]').click();
-    await flush();
-    assert.equal(root.querySelector('[data-status="test"]').textContent, label, result);
-    window.close();
+test('application link stays disabled without mapping, configured entry passes source only', async () => {
+  for (const available of [false, true]) {
+    const ctx = setup(), opened = [];
+    await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: available }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'github_repos' });
+    const button = ctx.root.querySelector('[data-action="application"]'); assert.equal(button.disabled, !available); button.click(); await flush(); assert.deepEqual(opened, available ? ['github_repos'] : []);
+    if (!available) assert.match(ctx.root.textContent, /申请链接待配置/); ctx.window.close();
   }
 });
 
-test('delete requires an in-page confirmation; cancel never calls the API', async () => {
-  const { window, root } = setup();
-  let deleteCalls = 0;
-  const api = {
-    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store' }),
-    credentialDelete: async () => { deleteCalls += 1; return status(); },
-  };
-  await mountCredentials(root, api);
-  root.querySelector('[data-action="delete"]').click();
-  await flush();
-  assert.equal(deleteCalls, 0);
-  assert.ok(root.querySelector('[data-confirm="delete"]'));
-  root.querySelector('[data-action="cancel-delete"]').click();
-  await flush();
-  assert.equal(deleteCalls, 0);
-  assert.equal(root.querySelector('[data-confirm="delete"]'), null);
-  assert.equal(root.querySelector('[data-status="store"]').textContent, '已保存');
-  window.close();
+test('test outcomes retain provider error messages and external request warning', async () => {
+  for (const result of ['success', 'auth_failed', 'quota', 'network']) {
+    const ctx = setup(); await mountCredentials(ctx.root, api({ credentialTest: async () => ({ result, message: 'provider:' + result }) }));
+    assert.match(ctx.root.textContent, /外部搜索请求.*额度/); ctx.root.querySelector('[data-action="test"]').click(); await flush();
+    assert.equal(ctx.root.querySelector('[data-test-result]').dataset.kind, result === 'success' ? 'success' : 'error'); assert.equal(ctx.root.querySelector('[data-info="test"]').textContent, 'provider:' + result);
+    const titles = { success: /^测试成功：Tavily 本次使用 未配置。$/, auth_failed: /^认证失败：Tavily 拒绝了该 Key。$/, quota: /^额度不足：Tavily 额度已用尽。$/, network: /^网络错误：无法连接 Tavily。$/ };
+    assert.match(ctx.root.querySelector('[data-status="test"]').textContent, titles[result]); ctx.window.close();
+  }
 });
 
-test('confirmed delete calls the API exactly once and a failure stays visible', async () => {
-  const { window, root } = setup();
-  let deleteCalls = 0;
-  const api = {
-    credentialStatus: async () => status({ store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store' }),
-    credentialDelete: async () => { deleteCalls += 1; throw '凭据库不可用，未删除 key。'; },
-  };
-  await mountCredentials(root, api);
-  root.querySelector('[data-action="delete"]').click();
-  await flush();
-  root.querySelector('[data-action="confirm-delete"]').click();
-  await flush();
-  assert.equal(deleteCalls, 1);
-  assert.match(root.querySelector('[data-info="error"]').textContent, /未删除/);
-  window.close();
+test('typed Tauri adapter sends append and remove contracts and keeps save/delete adapters', async () => {
+  const calls = [], client = managementApi(async (cmd, args) => {
+    calls.push([cmd, args]);
+    if (cmd === 'credential_read' || cmd === 'credential_reveal') return { value: '', snapshot: 'opaque-revision' };
+    if (cmd === 'credential_append' || cmd === 'credential_remove' || cmd === 'credential_save' || cmd === 'credential_delete') return { ...status(true), source: args.source };
+    return null;
+  });
+  await client.credentialRead('tavily');
+  await client.credentialReveal('tavily');
+  await client.credentialAppend('tavily', ['a', 'b']);
+  await client.credentialRemove('tavily', 1, 'opaque-revision');
+  await client.credentialSave('tavily', 'k');
+  await client.credentialDelete('tavily');
+  await client.credentialApplicationOpen('brave');
+  assert.deepEqual(calls, [
+    ['credential_read', { source: 'tavily' }],
+    ['credential_reveal', { source: 'tavily' }],
+    ['credential_append', { source: 'tavily', keys: ['a', 'b'] }],
+    ['credential_remove', { source: 'tavily', index: 1, expected: 'opaque-revision' }],
+    ['credential_save', { source: 'tavily', key: 'k' }],
+    ['credential_delete', { source: 'tavily' }],
+    ['credential_application_open', { source: 'brave' }],
+  ]);
 });
 
-test('test page warns about external requests and quota before running', async () => {
-  const { window, root } = setup();
-  await mountCredentials(root, { credentialStatus: async () => status() });
-  assert.match(root.querySelector('[data-info="warning"]').textContent, /外部搜索请求/);
-  assert.match(root.querySelector('[data-info="warning"]').textContent, /额度/);
-  assert.equal(root.querySelector('[data-status="test"]').textContent, '尚未测试');
-  window.close();
+
+test('programmatic double submit and Enter submit are guarded while busy', async () => {
+  const ctx = setup(); let appended = []; let release;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value: KEY }),
+    credentialAppend: (source, keys) => new Promise(resolve => { release = () => { appended.push(keys); resolve(status(true)); }; }),
+  }));
+  draftInputs(ctx.root)[0].value = 'new-key';
+  submit(ctx); submit(ctx); submit(ctx);
+  release(); await flush();
+  assert.deepEqual(appended, [['new-key']], 'one in-flight append only; repeats while busy are ignored');
+  ctx.window.close();
+});
+
+test('submit is refused after read failure until refresh restores health', async () => {
+  const ctx = setup(); let calls = 0;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => { throw '读取失败'; },
+    credentialAppend: async (source, keys) => { calls += 1; return status(true); },
+  }));
+  draftInputs(ctx.root)[0].value = 'new-key';
+  submit(ctx); await flush2();
+  assert.equal(calls, 0, 'no write without a successful read anchor');
+  ctx.window.close();
+});
+
+
+test('empty submit surfaces a prompt instead of silently doing nothing', async () => {
+  const ctx = setup(); let calls = 0;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value: KEY }),
+    credentialAppend: async () => { calls += 1; return status(true); },
+  }));
+  submit(ctx); await flush();
+  assert.equal(calls, 0);
+  assert.match(ctx.root.querySelector('[data-info="error"]').textContent, /请先输入至少一条 Key/);
+  ctx.window.close();
+});
+
+test('remove-draft is disabled while reads are unhealthy', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => { throw '读取失败'; },
+  }));
+  assert.equal(ctx.root.querySelector('[data-action="remove-draft"]').disabled, true);
+  ctx.window.close();
+});
+
+
+test('masked keys reveal only on demand and copy is disabled until revealed', async () => {
+  const ctx = setup(); let reveals = 0;
+  const mounted = await mountCredentials(ctx.root, api({
+    credentialRead: async () => ({ value: '••••••••', snapshot: 'revision-1' }),
+    credentialReveal: async () => { reveals++; return { value: KEY, snapshot: 'revision-1' }; },
+  }));
+  assert.equal(reveals, 0); assert.deepEqual(savedInputs(ctx.root), ['••••••••']);
+  assert.equal(ctx.root.querySelector('[data-action="copy"]').disabled, true);
+  ctx.root.querySelector('[data-action="reveal"]').click(); await flush2();
+  assert.equal(reveals, 1); assert.deepEqual(savedInputs(ctx.root), [KEY]);
+  assert.equal(ctx.root.querySelector('[data-action="copy"]').disabled, false);
+  ctx.root.querySelector('[data-action="reveal"]').click();
+  assert.deepEqual(savedInputs(ctx.root), ['••••••••']);
+  assert.equal(ctx.root.querySelector('[data-action="copy"]').disabled, true);
+  ctx.root.querySelector('[data-action="reveal"]').click(); await flush2();
+  mounted.dispose(); assert.equal(ctx.root.querySelector('[data-saved-input]'), null); ctx.window.close();
+});
+
+
+test('catalog drives the source list: labels are literal text and scrape-only providers come from the catalog', async () => {
+  assert.deepEqual(SOURCES.map(entry => entry.source), [
+    'baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi',
+    'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter',
+  ]);
+  // Jina is a scrape backend without a keyed credential in today's catalog; nothing is hardcoded.
+  assert.deepEqual(scrapeCredentialProviders(), []);
+  const ctx = setup();
+  await mountCredentials(ctx.root, api(), { source: 'github_repos' });
+  assert.match(ctx.root.querySelector('h1').textContent, /^GitHub 仓库 凭据$/);
+  assert.equal(ctx.root.querySelector('img'), null);
+  ctx.window.close();
+});
+
+test('full credential page uses its navigation number and a focusable heading', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api(), { number: '09' });
+  assert.match(ctx.root.querySelector('.eyebrow').textContent, /^09 \/ /);
+  assert.equal(ctx.root.querySelector('h1').getAttribute('tabindex'), '-1');
+  ctx.window.close();
+});
+
+test('status and saved values are read exactly once on mount', async () => {
+  const ctx = setup(); const calls = [];
+  await mountCredentialBody(ctx.root, api({
+    credentialStatus: async source => { calls.push(['status', source]); return status(true); },
+    credentialRead: async source => { calls.push(['read', source]); return { value: KEY, snapshot: 's' }; },
+  }), { source: 'brave' });
+  assert.deepEqual(calls, [['status', 'brave'], ['read', 'brave']]);
+  ctx.window.close();
+});
+
+test('an English backend reason is never shown; the raw reason stays in the tooltip', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({ credentialAppend: async () => { throw 'Credential append worker failed'; } }));
+  draftInputs(ctx.root)[0].value = KEY;
+  submit(ctx); await flush2();
+  const error = ctx.root.querySelector('[data-info="error"]');
+  assert.match(error.textContent, /保存失败，编辑值已保留/);
+  assert.doesNotMatch(error.textContent, /worker/);
+  assert.equal(error.title, 'Credential append worker failed');
+  assert.equal(draftInputs(ctx.root)[0].value, KEY, 'the draft is kept for a retry');
+  ctx.window.close();
+});
+
+test('a coded backend failure shows the mapped Chinese message', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+    credentialRemove: async () => { throw coded('credential_remove_failed', 'Credential remove worker failed'); },
+  }));
+  ctx.root.querySelector('[data-action="remove"]').click();
+  ctx.root.querySelector('[data-action="confirm-remove"]').click(); await flush2();
+  assert.equal(ctx.root.querySelector('[data-info="error"]').textContent, '凭据删除失败，已保存的值没有改变。');
+  assert.deepEqual(savedInputs(ctx.root), [KEY]);
+  ctx.window.close();
+});
+
+test('a failed save writes nothing into the test-result area', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({ credentialAppend: async () => { throw coded('credential_append_failed'); } }));
+  draftInputs(ctx.root)[0].value = KEY;
+  submit(ctx); await flush2();
+  assert.equal(ctx.root.querySelector('[data-status="test"]').textContent, '尚未测试');
+  assert.equal(ctx.root.querySelector('[data-info="test"]').textContent, '');
+  ctx.window.close();
+});
+
+test('a test that cannot start reports through the error slot, not as a provider verdict', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({ credentialTest: async () => { throw coded('credential_test_failed', 'Test worker failed'); } }));
+  ctx.root.querySelector('[data-action="test"]').click(); await flush2();
+  assert.equal(ctx.root.querySelector('[data-info="error"]').textContent, '凭据测试启动失败，请检查 CLI 后重试。');
+  assert.equal(ctx.root.querySelector('[data-status="test"]').textContent, '测试失败');
+  assert.equal(ctx.root.querySelector('[data-info="test"]').textContent, '');
+  ctx.window.close();
+});
+
+test('no saved key value reaches the markup, even after reveal', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value: '••••0001', snapshot: 'r1' }),
+    credentialReveal: async () => ({ value: KEY, snapshot: 'r1' }),
+  }));
+  ctx.root.querySelector('[data-action="reveal"]').click(); await flush2();
+  assert.deepEqual(savedInputs(ctx.root), [KEY]);
+  assert.ok(!ctx.root.innerHTML.includes(KEY), 'revealed values live only in input.value');
+  ctx.window.close();
+});
+
+test('row delete confirmation focuses cancel, closes on Escape and returns focus to its button', async () => {
+  const ctx = setup(); const removed = [];
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value: KEY + '\nsecond-key', snapshot: 'r1' }),
+    credentialRemove: async (...args) => { removed.push(args); return status(true); },
+  }));
+  const trigger = ctx.root.querySelectorAll('[data-action="remove"]')[1];
+  trigger.focus();
+  trigger.click();
+  const panel = ctx.root.querySelector('[data-confirm="remove"]');
+  assert.equal(panel.getAttribute('role'), 'group');
+  assert.equal(ctx.window.document.activeElement, panel.querySelector('[data-action="cancel-remove"]'));
+  panel.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(ctx.root.querySelector('[data-confirm="remove"]'), null);
+  assert.equal(ctx.window.document.activeElement, trigger);
+  assert.deepEqual(removed, []);
+  ctx.window.close();
+});
+
+test('the typed adapter sends no executable path with a credential test', async () => {
+  const calls = [];
+  const client = managementApi(async (cmd, args) => { calls.push([cmd, args]); return { result: 'success', message: '' }; });
+  await client.credentialTest('tavily', 'C:\\evil\\multi-search.exe');
+  assert.deepEqual(calls, [['credential_test', { source: 'tavily' }]]);
+});
+
+test('Core-reported provenance is labelled; the optional fields may be absent', async () => {
+  const cases = [
+    [status(true, { effective_source: 'env', env_var: 'TAVILY_API_KEY', env_overrides_store: true }), '环境变量 TAVILY_API_KEY'],
+    [status(true, { effective_source: 'file', file_key_count: 3 }), '旧 Key 文件中的 3 个 Key'],
+    [status(true, { effective_source: 'credential_store' }), '本机凭据库'],
+    [status(true), 'SQLite / DPAPI'],
+    [status(true, { effective_source: 'future_store' }), '未知来源（future_store）'],
+  ];
+  for (const [view, label] of cases) {
+    const ctx = setup();
+    await mountCredentials(ctx.root, api({ credentialStatus: async () => view, credentialRead: async () => ({ value: KEY, snapshot: 's' }) }));
+    assert.equal(ctx.root.querySelector('[data-status="source"]').textContent, label);
+    ctx.window.close();
+  }
 });

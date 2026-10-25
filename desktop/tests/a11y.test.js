@@ -120,40 +120,34 @@ test('PATH confirmation supports Esc and cancel with focus restore', async () =>
   window.close();
 });
 
-test('credential delete and save confirmations are keyboard operable', async () => {
+test('credential row delete confirmation is keyboard operable and drafts are labelled', async () => {
   const { window, root } = setup();
-  const overview = { store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store', env_overrides_store: false, env_var: '', file_key_count: 2 };
-  let deletes = 0;
+  const overview = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false };
+  let removes = 0;
   await mountCredentialBody(root, {
     credentialStatus: async () => overview,
-    credentialDelete: async () => { deletes += 1; return { ...overview, store: { state: 'absent' }, effective_source: 'file' }; },
-    credentialSave: async () => overview,
+    credentialRead: async () => ({ value: 'masked-a\nmasked-b', snapshot: 'r1' }),
+    credentialRemove: async () => { removes += 1; return overview; },
   }, { source: 'tavily' });
-  const remove = root.querySelector('[data-action="delete"]');
+  const remove = root.querySelectorAll('[data-action="remove"]')[0];
+  assert.equal(remove.getAttribute('aria-label'), '删除第 1 行 Key');
   remove.focus();
   remove.click();
-  const panel = root.querySelector('[data-confirm="delete"]');
+  const panel = root.querySelector('[data-confirm="remove"]');
   assert.equal(panel.getAttribute('role'), 'group');
-  assert.equal(window.document.activeElement, panel.querySelector('[data-action="cancel-delete"]'));
+  assert.equal(window.document.activeElement, panel.querySelector('[data-action="cancel-remove"]'), 'the safe choice has focus');
   panel.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal(root.querySelector('[data-confirm="delete"]'), null);
-  assert.equal(window.document.activeElement, remove);
-  assert.equal(deletes, 0);
+  assert.equal(root.querySelector('[data-confirm="remove"]'), null);
+  assert.equal(window.document.activeElement, remove, 'focus returns to the row button');
+  assert.equal(removes, 0, 'Esc never confirms');
 
   remove.click();
-  root.querySelector('[data-action="confirm-delete"]').click();
-  await flush();
-  assert.equal(deletes, 1);
-  assert.equal(window.document.activeElement, remove, 'focus returns after the delete finishes');
-
-  root.querySelector('[data-field="key"]').value = 'synthetic-a11y-key';
-  root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
-  const save = root.querySelector('[data-confirm="save"]');
-  assert.match(save.textContent, /保存后使用凭据库 Key，文件中的 2 个 Key/);
-  assert.equal(window.document.activeElement, save.querySelector('[data-action="cancel-save"]'));
-  save.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.equal(root.querySelector('[data-confirm="save"]'), null);
-  assert.equal(window.document.activeElement, root.querySelector('[data-action="save"]'));
+  root.querySelector('[data-action="confirm-remove"]').click();
+  await flush(); await flush();
+  assert.equal(removes, 1);
+  for (const input of root.querySelectorAll('[data-draft-list] input, [data-saved-list] input')) {
+    assert.ok(input.getAttribute('aria-label') || input.closest('label'), 'every key input has an accessible name');
+  }
   window.close();
 });
 
@@ -208,7 +202,7 @@ test('sources page expands nothing on entry and sends no extra status request', 
   const statusCalls = [];
   const mounted = await mountSources(root, {
     settingsView: async () => ({ route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null }),
-    credentialStatus: async source => { statusCalls.push(source); return { store: { state: 'absent' }, effective_source: 'none', env_var: '', file_key_count: 0 }; },
+    credentialStatus: async source => { statusCalls.push(source); return { source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false }; },
   });
   await flush();
   assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0);
@@ -223,8 +217,8 @@ test('the credential summary has a real accessible text instead of an aria-label
   const mounted = await mountSources(root, {
     settingsView: async () => ({ route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null }),
     credentialStatus: async source => source === 'brave'
-      ? { store: { state: 'present', saved_at: 1 }, effective_source: 'credential_store', env_var: '', file_key_count: 0 }
-      : { store: { state: 'absent' }, effective_source: 'none', env_var: '', file_key_count: 0 },
+      ? { source, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false }
+      : { source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false },
   });
   for (const node of root.querySelectorAll('div[aria-label], span[aria-label]')) {
     assert.ok(node.getAttribute('role'), `${node.className} has aria-label without a role`);
@@ -252,7 +246,7 @@ test('shortcut hint follows the platform', async () => {
 });
 
 test('UI copy uses consistent Key/Cookie casing and spaces between Chinese and Latin text', () => {
-  const files = ['credentials.js', 'sources.js', 'settings.js', 'migration.js', 'diagnostics.js', 'install.js', 'skill.js'];
+  const files = ['credentials.js', 'sources.js', 'settings.js', 'migration.js', 'diagnostics.js', 'install.js', 'skill.js', 'cookies.js', 'scrape.js'];
   for (const file of files) {
     const source = readFileSync(new URL(`../ui/${file}`, import.meta.url), 'utf8');
     // Only user-facing strings: drop comments, then check text adjacent to CJK characters.

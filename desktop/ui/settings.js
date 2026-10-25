@@ -1,162 +1,533 @@
-// Search defaults: route, timeout and the Twitter cookie file path reference. Everything here is
-// non-secret and is written by the Rust settings command. Per-source enable/disable lives on the
-// sources page now, beside each source's key and test controls; this page only reports which
-// sources the current route would run. It never sends or displays a key, and never reads a cookie.
+import { pageRoot, confirmInline, disposePage } from './dom.js';
+import { showError } from './api.js';
+// 搜索默认设置与可编辑路由分组。Rust SettingsView 是路由定义的唯一来源；
+// 本页面不复制内置表，并始终保存完整草稿。
 
 import { SOURCES } from './credentials.js';
 import { ROUTES as CATALOG_ROUTES } from './catalog.js';
-import { showError } from './api.js';
 
-// Both lists come from the catalog generated from Python core metadata; Rust
-// reads the same `desktop/source-catalog.json` at compile time.
+// 搜索源与路由的名字来自同一份生成目录（catalog.py），因此这里不再通过 IPC 另取一份清单。
 export const SETTINGS_SOURCES = SOURCES.map(({ source, label }) => ({ source, label }));
-
 export const ROUTES = CATALOG_ROUTES.map(({ name, label }) => ({ value: name, label }));
+const SOURCE_LABELS = new Map(SETTINGS_SOURCES.map(entry => [entry.source, entry.label]));
+const ID_PATTERN = /^[a-z0-9_-]{1,64}$/;
 
-const statusText = {
-  ok: '',
-  no_active_source: '当前路由没有可用的搜索源，搜索不会运行。请至少启用一个搜索源。',
-  config_unreadable: '现有配置文件无法读取，保存已被阻止。',
-};
+const cloneRoute = route => ({
+  label: String(route.label),
+  sources: [...route.sources],
+  timeout: route.timeout == null ? null : Number(route.timeout),
+});
+const cloneRoutes = routes => new Map(Object.entries(routes || {}).map(([id, route]) => [id, cloneRoute(route)]));
+// Object.fromEntries 即使遇到 "__proto__" 也会创建自有数据属性；直接给普通对象赋值会改写原型。
+// 这样 Rust 收到的常规 JSON 对象能完整保留每个 ID。
+const routesObject = routes => Object.fromEntries([...routes].map(([id, route]) => [id, cloneRoute(route)]));
+const charLength = value => Array.from(value).length;
 
-// Source labels come from the CLI's `doctor --format json`, so this page shows the path the CLI
-// actually reads instead of re-deriving it.
-const pathSourceText = {
-  env: '环境变量 MULTI_SEARCH_CONFIG',
-  user: '用户配置',
-  dev_fallback: '开发目录回退',
-  defaults: '内置默认值',
-};
+function validateRoute(id, route, routes, originalId = null) {
+  if (!ID_PATTERN.test(id) || id === 'web') return '标识需为 1–64 个 ASCII 小写字母、数字、下划线或连字符，且不能使用 web。';
+  if (id !== originalId && routes.has(id)) return '该路由标识已存在。';
+  const label = route.label.trim();
+  if (charLength(label) < 1 || charLength(label) > 80) return '名称需为 1–80 个字符。';
+  if (!route.sources.length) return '请至少选择一个搜索源。';
+  if (route.timeout != null && (!Number.isInteger(route.timeout) || route.timeout < 1 || route.timeout > 60)) return '独立超时需为 1–60 秒，留空则继承全局。';
+  return '';
+}
 
 export async function mountSettings(root, api, { number = '05' } = {}) {
-  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / SETTINGS</p><h1 tabindex="-1">搜索默认设置。</h1>`
-    + '<p>路由、超时和 Twitter Cookie 文件路径保存在 CLI 的配置文件中。API Key 不写入该文件。</p></section>'
-    + '<section class="panel"><div class="section-title"><h2>配置文件</h2><button type="button" data-action="refresh">刷新</button></div>'
-    + '<dl class="cred-status"><dt>配置文件</dt><dd data-status="path"></dd><dt>路径来源</dt><dd data-status="path-source"></dd>'
-    + '<dt>当前路由会运行</dt><dd data-status="active"></dd></dl>'
-    + '<p class="note" data-info="env" role="status"></p><p data-info="active-warning" role="alert"></p><p data-info="error" role="alert"></p><button type="button" data-action="retry" hidden>重试读取</button></section>'
-    + '<section class="panel"><div class="section-title"><h2>默认路由与超时</h2></div>'
-    + '<form data-settings-form><label>默认路由<select data-field="route">'
-    + ROUTES.map(r => `<option value="${r.value}">${r.label}</option>`).join('')
-    + '</select></label><label><span data-label="timeout">超时（秒）</span><input data-field="timeout" type="number" min="1" max="90" step="1"></label>'
-    + '<p class="note" data-info="timeout" role="status"></p>'
-    + '<label>Twitter Cookie 文件路径（可选，仅保存路径）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json"></label>'
-    + '<div class="run-controls"><button type="submit" class="primary" data-action="save">保存设置</button><strong data-status="save" aria-live="polite"></strong></div>'
-    + '</form></section>';
+  root = pageRoot(root);
+  const doc = root.ownerDocument;
+  root.classList.add('settings-page');
+  root.innerHTML = `<section class="heading settings-head"><div><p class="eyebrow">${number} / SETTINGS / ROUTES</p><h1 tabindex="-1">搜索设置</h1><p>配置默认分组、全局超时和每组搜索源。设置保存在本机 SQLite；搜索仍由独立 CLI 按需执行。</p></div><button type="button" data-action="refresh">刷新</button></section>
+    <form data-settings-form>
+      <section class="settings-summary" aria-label="当前搜索设置摘要">
+        <article><span>当前默认路由</span><strong data-summary="route">—</strong><small data-summary="route-id">—</small></article>
+        <article><span>实际超时</span><strong><b data-summary="effective-timeout">—</b> 秒</strong><small data-summary="timeout-kind">—</small></article>
+        <article><span>实际搜索源</span><strong data-summary="active-count">—</strong><small data-summary="active">状态未知</small></article>
+      </section>
+      <p class="error-message settings-warning" data-info="active-warning" ></p>
+      <p data-info="error" class="error-message" role="alert"></p><button type="button" data-action="retry" hidden>重试读取</button>
+
+      <section class="panel settings-defaults"><div class="section-title"><div><p class="eyebrow">DEFAULTS</p><h2>默认路由与全局超时</h2></div><span class="draft-badge" data-dirty hidden>有未保存修改</span></div>
+        <div class="settings-default-grid"><label>默认路由<select data-field="route" disabled></select></label><label>全局超时（秒）<input data-field="timeout" type="number" min="1" max="60" step="1" disabled></label></div>
+      </section>
+
+      <section class="panel route-panel"><div class="section-title"><div><p class="eyebrow">ROUTE GROUPS</p><h2>搜索分组</h2></div><div class="route-actions"><button type="button" data-action="new-route" disabled>新建分组</button><button type="button" data-action="restore" disabled>恢复内置五组</button></div></div>
+        <p class="route-help">分组标识创建后不可修改。全局禁用的搜索源仍保留为分组成员，但执行时会跳过。</p>
+        <div data-route-list class="route-list"></div><div data-route-editor></div><div data-restore-confirm></div>
+      </section>
+
+      <section class="panel settings-other"><div class="section-title"><div><p class="eyebrow">OTHER</p><h2>其他设置</h2></div></div>
+        <label>Twitter Cookie 文件兼容路径（仅 file 模式读取明文）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json" disabled></label>
+        <details class="config-details"><summary>配置数据库信息</summary><dl class="cred-status"><dt>配置数据库</dt><dd class="status-text" data-status="path"></dd><dt>路径来源</dt><dd class="status-text" data-status="path-source"></dd></dl><p class="note" data-info="env" role="status"></p></details>
+      </section>
+
+      <div class="settings-savebar"><div><strong class="status-text" data-status="save" aria-live="polite"></strong><small class="status-text" data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存全部设置</button></div>
+    </form>
+    <div data-refresh-confirm></div>`;
 
   const q = selector => root.querySelector(selector);
-  const text = (selector, value) => { q(selector).textContent = value; };
-  let disabled = new Set();
-  let saved = null;
-  let saving = false;
-  // The timeout exactly as loaded. Saving sends `timeout: null` unless the user changed it, so the
-  // stored value (or its absence, which means the route default) is never silently rewritten.
+  const text = (selector, value) => { const node = q(selector); if (node) node.textContent = value; };
+  let routes = new Map();
+  let builtinRoutes = new Map();
+  let selectedRoute = '';
+  let globalTimeout = 60;
+  let timeoutConfigured = true;
+  let timeoutMin = 1;
+  let timeoutMax = 90;
+  // The timeout exactly as loaded: saving sends `timeout: null` unless the user changed it, so the
+  // stored value (or its absence) is never silently rewritten.
   let loadedTimeout = '';
-  const saveButton = q('[data-action="save"]');
-  const refreshButton = q('[data-action="refresh"]');
-  const retryButton = q('[data-action="retry"]');
-  retryButton.addEventListener('click', () => { void refresh(); });
-  function syncControls() {
-    // Without a successfully read view there is nothing safe to save: never submit placeholders.
-    saveButton.disabled = saving || saved === null || saved.status === 'config_unreadable';
-    refreshButton.disabled = saving;
-    saveButton.setAttribute('aria-busy', String(saving));
-    saveButton.textContent = saving ? '保存中…' : '保存设置';
+  let effectiveTimeouts = new Map();
+  let disabledSources = new Set();
+  let twitterPath = '';
+  let loadedView = null;
+  let dirty = false;
+  let editorDirty = false;
+  let revision = 0;
+  let saving = false;
+  let refreshing = false;
+  let disposed = false;
+  let editor = null;
+  let refreshTicket = 0;
+
+  function setEnabled(enabled) {
+    for (const selector of ['[data-field="route"]', '[data-field="timeout"]', '[data-field="twitter"]', '[data-action="new-route"]', '[data-action="restore"]', '[data-action="save"]']) {
+      const node = q(selector);
+      if (node) node.disabled = !enabled || (selector === '[data-action="save"]' && saving);
+    }
+  }
+
+  function updateDraftIndicator(message) {
+    q('[data-dirty]').hidden = !(dirty || editorDirty);
+    text('[data-status="draft"]', message || (dirty ? '草稿尚未保存' : editorDirty ? '编辑器有未应用输入' : '当前显示已保存设置'));
+    text('[data-status="save"]', '');
+  }
+
+  function setDirty(message = '草稿尚未保存') {
+    dirty = true;
+    revision += 1;
+    updateDraftIndicator(message);
+  }
+
+  function markEditorDirty() {
+    if (editorDirty) return;
+    editorDirty = true;
+    revision += 1;
+    updateDraftIndicator('编辑器有未应用输入，请先应用或取消');
+  }
+
+  function sourceState(route) {
+    const active = route ? route.sources.filter(source => !disabledSources.has(source)) : [];
+    const savedPreview = !dirty && loadedView && effectiveTimeouts.has(selectedRoute);
+    return { active, timeout: savedPreview ? effectiveTimeouts.get(selectedRoute) : route?.timeout ?? globalTimeout, savedPreview };
+  }
+
+  function renderSummary() {
+    const route = routes.get(selectedRoute);
+    const state = sourceState(route);
+    text('[data-summary="route"]', route?.label || '—');
+    text('[data-summary="route-id"]', route ? selectedRoute : '未选择');
+    text('[data-summary="effective-timeout"]', route ? String(state.timeout) : '—');
+    text('[data-summary="timeout-kind"]', route ? route.timeout != null ? '分组独立超时' : state.savedPreview && !timeoutConfigured ? '当前 CLI 内置值；保存后使用全局设置' : `继承全局 ${globalTimeout} 秒` : '状态未知');
+    text('[data-summary="active-count"]', route ? `${state.active.length} / ${route.sources.length}` : '—');
+    text('[data-summary="active"]', route ? state.active.map(source => SOURCE_LABELS.get(source) || source).join('、') || '无可执行搜索源' : '状态未知');
+    text('[data-info="active-warning"]', route && state.active.length === 0 ? '当前分组的所有成员都被全局禁用，搜索不会运行。请到“搜索源”页启用至少一个。' : '');
+  }
+
+  function renderRouteSelect() {
+    const select = q('[data-field="route"]');
+    select.replaceChildren();
+    for (const [id, route] of routes) {
+      const option = doc.createElement('option');
+      option.value = id;
+      option.textContent = `${route.label} / ${id}`;
+      option.selected = id === selectedRoute;
+      select.append(option);
+    }
+  }
+
+  function chip(source) {
+    const node = doc.createElement('span');
+    node.className = 'route-chip';
+    node.textContent = SOURCE_LABELS.get(source) || source;
+    if (disabledSources.has(source)) {
+      node.classList.add('is-disabled');
+      node.title = '已在搜索源页全局禁用；分组成员资格仍保留';
+      const note = doc.createElement('small');
+      note.textContent = '全局停用';
+      node.append(note);
+    }
+    return node;
+  }
+
+  function closeEditor(quiet = false) {
+    editor = null;
+    editorDirty = false;
+    q('[data-route-editor]').replaceChildren();
+    if (!quiet) updateDraftIndicator();
+  }
+
+  function requestEditorAction(action) {
+    if (!editor || !editorDirty) { action(); return; }
+    const panel = q('[data-route-editor] .route-editor');
+    if (panel.querySelector('[data-editor-discard]')) return;
+    const confirm = doc.createElement('div');
+    confirm.className = 'inline-confirm';
+    confirm.setAttribute('data-editor-discard', '');
+    confirm.innerHTML = '<p>当前编辑器有尚未应用的输入。丢弃后才能继续。</p><div class="run-controls"><button type="button" class="danger" data-action="discard-editor">丢弃输入</button><button type="button" data-action="keep-editor">继续编辑</button></div>';
+    panel.append(confirm);
+    confirm.querySelector('[data-action="keep-editor"]').addEventListener('click', () => confirm.remove());
+    confirm.querySelector('[data-action="discard-editor"]').addEventListener('click', () => { closeEditor(); action(); });
+  }
+
+  function requestOpenEditor(mode, routeId = null) {
+    requestEditorAction(() => { if (editor) closeEditor(true); openEditor(mode, routeId); });
+  }
+
+  function openEditor(mode, routeId = null) {
+    const source = routeId == null ? null : routes.get(routeId);
+    const copy = mode === 'copy';
+    const editing = mode === 'edit';
+    const initial = source ? cloneRoute(source) : { label: '', sources: [], timeout: null };
+    const holder = q('[data-route-editor]');
+    holder.replaceChildren();
+    editorDirty = false;
+    const panel = doc.createElement('section');
+    panel.className = 'route-editor';
+    panel.dataset.mode = mode;
+    panel.innerHTML = `<div class="section-title"><div><p class="eyebrow">${editing ? 'EDIT' : copy ? 'COPY' : 'NEW'}</p><h3>${editing ? '编辑分组' : copy ? '复制为新分组' : '新建分组'}</h3></div><button type="button" data-action="close-editor">取消</button></div>
+      <div class="route-editor-grid"><label>标识<input data-edit="id" maxlength="64" spellcheck="false" autocomplete="off"></label><label>名称<input data-edit="label" maxlength="80"></label><label>独立超时（留空继承全局）<input data-edit="timeout" type="number" min="1" max="60" step="1"></label></div>
+      <fieldset><legend>搜索源（至少一个）</legend><div class="route-source-grid" data-edit="sources"></div></fieldset>
+      <p class="error-message route-form-error" data-edit-error ></p><div class="run-controls"><button type="button" class="primary" data-action="apply-route">应用到草稿</button><small>应用后仍需点击“保存全部设置”写入配置。</small></div>`;
+    holder.append(panel);
+    const idField = panel.querySelector('[data-edit="id"]');
+    idField.value = editing ? routeId : '';
+    idField.readOnly = editing;
+    idField.title = editing ? '标识创建后不可修改' : '';
+    panel.querySelector('[data-edit="label"]').value = copy ? `${initial.label} 副本` : initial.label;
+    panel.querySelector('[data-edit="timeout"]').value = initial.timeout == null ? '' : String(initial.timeout);
+    const sourceGrid = panel.querySelector('[data-edit="sources"]');
+    for (const entry of SETTINGS_SOURCES) {
+      const label = doc.createElement('label');
+      label.className = 'route-source-option';
+      if (disabledSources.has(entry.source)) label.classList.add('is-disabled');
+      const box = doc.createElement('input');
+      box.type = 'checkbox';
+      box.value = entry.source;
+      box.checked = initial.sources.includes(entry.source);
+      box.setAttribute('data-route-source', entry.source);
+      const name = doc.createElement('span');
+      name.textContent = entry.label;
+      label.append(box, name);
+      if (disabledSources.has(entry.source)) {
+        const note = doc.createElement('small');
+        note.textContent = '全局停用，执行时跳过';
+        label.append(note);
+      }
+      sourceGrid.append(label);
+    }
+    panel.querySelector('[data-action="close-editor"]').addEventListener('click', () => requestEditorAction(() => closeEditor()));
+    for (const field of panel.querySelectorAll('input')) {
+      field.addEventListener(field.type === 'checkbox' ? 'change' : 'input', markEditorDirty);
+    }
+    panel.querySelector('[data-action="apply-route"]').addEventListener('click', () => {
+      const id = idField.value.trim();
+      const timeoutText = panel.querySelector('[data-edit="timeout"]').value.trim();
+      const candidate = {
+        label: panel.querySelector('[data-edit="label"]').value.trim(),
+        sources: [...panel.querySelectorAll('[data-route-source]:checked')].map(box => box.value),
+        timeout: timeoutText === '' ? null : Number(timeoutText),
+      };
+      const error = validateRoute(id, candidate, routes, editing ? routeId : null);
+      panel.querySelector('[data-edit-error]').textContent = error;
+      if (error) return;
+      routes.set(id, candidate);
+      if (!selectedRoute) selectedRoute = id;
+      editorDirty = false;
+      setDirty(`${editing ? '分组修改' : '新分组'}已应用到草稿，尚未保存`);
+      closeEditor(true);
+      renderAll();
+    });
+    editor = { mode, routeId };
+    panel.scrollIntoView?.({ block: 'nearest' });
+  }
+
+  function openDelete(row, id) {
+    row.querySelector('[data-inline-confirm]')?.remove();
+    const confirm = doc.createElement('div');
+    confirm.className = 'inline-confirm';
+    confirm.setAttribute('data-inline-confirm', 'delete');
+    const message = doc.createElement('p');
+    message.textContent = `删除“${routes.get(id).label}”后，仍需保存全部设置才会写入配置。`;
+    const actions = doc.createElement('div');
+    actions.className = 'run-controls';
+    const yes = doc.createElement('button');
+    yes.type = 'button'; yes.className = 'danger'; yes.textContent = '确认删除'; yes.setAttribute('data-action', 'confirm-delete');
+    const no = doc.createElement('button');
+    no.type = 'button'; no.textContent = '取消'; no.setAttribute('data-action', 'cancel-delete');
+    actions.append(yes, no); confirm.append(message, actions); row.append(confirm);
+    no.addEventListener('click', () => confirm.remove());
+    yes.addEventListener('click', () => {
+      routes.delete(id);
+      if (editor?.routeId === id) closeEditor();
+      setDirty('分组删除已应用到草稿，尚未保存');
+      renderAll();
+    });
+  }
+
+  function renderRoutes() {
+    const list = q('[data-route-list]');
+    list.replaceChildren();
+    for (const [id, route] of routes) {
+      const row = doc.createElement('article');
+      row.className = 'route-row';
+      row.setAttribute('data-route-row', id);
+      if (id === selectedRoute) row.classList.add('is-current');
+      const body = doc.createElement('div');
+      body.className = 'route-main';
+      const title = doc.createElement('div');
+      title.className = 'route-title';
+      const heading = doc.createElement('strong'); heading.textContent = route.label;
+      const code = doc.createElement('code'); code.textContent = id;
+      title.append(heading, code);
+      if (id === selectedRoute) { const current = doc.createElement('span'); current.textContent = '当前默认'; current.className = 'current-badge'; title.append(current); }
+      const meta = doc.createElement('span');
+      meta.className = 'route-timeout';
+      meta.textContent = route.timeout != null
+        ? `独立超时 · ${route.timeout} 秒`
+        : !dirty && !timeoutConfigured && effectiveTimeouts.has(id)
+          ? `当前配置 · ${effectiveTimeouts.get(id)} 秒（未显式全局值）`
+          : `继承全局 · ${globalTimeout} 秒`;
+      const chips = doc.createElement('div'); chips.className = 'route-chips';
+      route.sources.forEach(source => chips.append(chip(source)));
+      body.append(title, meta, chips);
+      const actions = doc.createElement('div'); actions.className = 'route-row-actions';
+      const edit = doc.createElement('button'); edit.type = 'button'; edit.textContent = '编辑'; edit.addEventListener('click', () => requestOpenEditor('edit', id));
+      const copy = doc.createElement('button'); copy.type = 'button'; copy.textContent = '复制'; copy.addEventListener('click', () => requestOpenEditor('copy', id));
+      const remove = doc.createElement('button'); remove.type = 'button'; remove.textContent = '删除';
+      const blocked = id === selectedRoute || routes.size === 1;
+      remove.disabled = blocked;
+      remove.title = id === selectedRoute ? '正在使用：请先在上方切换默认路由' : routes.size === 1 ? '至少保留一个分组' : '';
+      remove.addEventListener('click', () => requestEditorAction(() => openDelete(row, id)));
+      actions.append(edit, copy, remove); row.append(body, actions);
+      if (blocked) { const note = doc.createElement('small'); note.className = 'delete-note'; note.textContent = id === selectedRoute ? '正在使用，先切换默认路由后才能删除。' : '至少保留一个分组。'; row.append(note); }
+      list.append(row);
+    }
+  }
+
+  function renderAll() {
+    renderRouteSelect();
+    q('[data-field="route"]').value = selectedRoute;
+    renderRoutes();
+    renderSummary();
+  }
+
+  function openRestoreConfirm() {
+    const holder = q('[data-restore-confirm]');
+    holder.replaceChildren();
+    const panel = doc.createElement('div');
+    panel.className = 'inline-confirm restore-confirm';
+    panel.innerHTML = '<p>恢复会把五个内置标识重置为工厂名称、搜索源和继承超时；其他自定义分组不会改变。</p><div class="run-controls"><button type="button" class="primary" data-action="confirm-restore">确认恢复</button><button type="button" data-action="cancel-restore">取消</button></div>';
+    holder.append(panel);
+    panel.querySelector('[data-action="cancel-restore"]').addEventListener('click', () => holder.replaceChildren());
+    panel.querySelector('[data-action="confirm-restore"]').addEventListener('click', () => {
+      for (const [id, route] of builtinRoutes) routes.set(id, cloneRoute(route));
+      if (!routes.has(selectedRoute)) selectedRoute = routes.keys().next().value || '';
+      holder.replaceChildren();
+      setDirty('内置五组已恢复到草稿，自定义分组保持不变');
+      renderAll();
+    });
   }
 
   function fill(view) {
-    saved = view;
-    text('[data-status="path"]', view.config_path || '无法确定配置文件位置');
-    const sourceLabel = pathSourceText[view.path_source] || '未知来源';
-    text('[data-status="path-source"]', `${sourceLabel}（${view.file_present ? '文件已存在' : '文件尚未创建'}）`);
-    const notes = [];
-    if (view.path_source === 'env') notes.push('检测到 MULTI_SEARCH_CONFIG，保存会写入该路径，而不是用户配置文件。');
-    if (view.read_source === 'dev_fallback') notes.push('当前显示的是开发目录中的配置（用户配置尚不存在）。');
-    if (view.save_creates_override) notes.push('保存会创建用户配置文件，之后 CLI 将使用它，不再读取开发目录配置。');
-    text('[data-info="env"]', notes.join(' '));
-    text('[data-status="active"]', view.active_sources.length ? view.active_sources.join('、') : '无');
-    retryButton.hidden = true;
-    text('[data-info="active-warning"]', statusText[view.status] ?? view.message ?? '');
-    q('[data-field="route"]').value = view.route;
-    const min = view.timeout_min ?? 1;
-    const max = view.timeout_max ?? 90;
+    q('[data-action="retry"]').hidden = true;
+    loadedView = view;
+    routes = cloneRoutes(view.routes);
+    builtinRoutes = cloneRoutes(view.builtin_routes);
+    selectedRoute = String(view.route || '');
+    globalTimeout = Number(view.timeout ?? 60);
+    timeoutConfigured = view.timeout_configured !== false;
+    timeoutMin = Number(view.timeout_min ?? 1);
+    timeoutMax = Number(view.timeout_max ?? 90);
+    effectiveTimeouts = new Map(Object.entries(view.effective_timeouts || { [view.route]: view.effective_timeout }));
+    disabledSources = new Set(view.disabled_sources || []);
+    twitterPath = view.twitter_cookies_path || '';
     const timeoutField = q('[data-field="timeout"]');
-    timeoutField.min = String(min);
-    timeoutField.max = String(max);
-    text('[data-label="timeout"]', `超时（秒，${min} 到 ${max}）`);
-    timeoutField.value = String(view.timeout);
+    timeoutField.min = String(timeoutMin);
+    timeoutField.max = String(timeoutMax);
+    timeoutField.value = String(globalTimeout);
     loadedTimeout = timeoutField.value;
-    const timeoutNotes = [];
-    if (view.timeout_configured === false) timeoutNotes.push('配置文件未设置超时，当前显示的是该路由的 CLI 默认值；不修改则保存时不会写入。');
-    if (view.timeout_out_of_range) timeoutNotes.push(`已保存的超时 ${view.timeout} 秒超出 ${min} 到 ${max} 秒；不修改则原样保留。`);
-    text('[data-info="timeout"]', timeoutNotes.join(' '));
-    // Enable/disable moved to the sources page; keep the value here so a save never clears it.
-    disabled = new Set(view.disabled_sources);
-    q('[data-field="twitter"]').value = view.twitter_cookies_path || '';
-    text('[data-info="error"]', '');
-    if (view.unknown_disabled_sources?.length) {
-      text('[data-info="env"]', `${q('[data-info="env"]').textContent} 配置中还有无法识别的禁用项（${view.unknown_disabled_sources.join('、')}），保存时会原样保留。`.trim());
-    }
-    if (view.twitter_env_overrides) {
-      text('[data-info="env"]', `${q('[data-info="env"]').textContent} 检测到 TWITTER_COOKIES_PATH，它优先于这里保存的路径。`.trim());
-    }
+    q('[data-field="twitter"]').value = twitterPath;
+    text('[data-status="path"]', view.config_path || '无法确定配置文件位置');
+    text('[data-status="path-source"]', view.path_source === 'env' ? `隔离数据库 MULTI_SEARCH_CONFIG_DB（${view.file_present ? '已存在' : '尚未创建'}）` : `用户 SQLite 配置（${view.file_present ? '已存在' : '尚未创建'}）`);
+    const notes = ['SQLite 是唯一生效配置来源；旧 JSON、环境变量和旧凭据文件不会自动生效。'];
+    if (view.timeout_configured === false) notes.push('配置中没有显式的全局超时，当前显示的是 CLI 内置值；不修改则保存时不会写入。');
+    if (view.timeout_out_of_range) notes.push(`已保存的超时 ${view.timeout} 秒超出 ${timeoutMin} 到 ${timeoutMax} 秒；不修改则原样保留。`);
+    if (view.unknown_disabled_sources?.length) notes.push(`配置中还有无法识别的禁用项（${view.unknown_disabled_sources.join('、')}），保存时会原样保留。`);
+    text('[data-info="env"]', notes.join(' '));
+    dirty = false;
+    editorDirty = false;
+    revision += 1;
+    q('[data-dirty]').hidden = true;
+    text('[data-status="draft"]', view.status === 'config_unreadable' ? '配置不可读，保存已禁用' : '当前显示已保存设置');
+    text('[data-status="save"]', '');
+    text('[data-info="error"]', view.status === 'config_unreadable' ? view.message || '现有配置无法读取，保存已被阻止。' : '');
+    closeEditor(true);
+    renderAll();
+    setEnabled(view.status !== 'config_unreadable' && routes.size > 0 && routes.has(selectedRoute));
   }
 
-  async function refresh() {
-    if (saving) return;
-    refreshButton.disabled = true;
-    try { fill(await api.settingsView()); retryButton.hidden = true; }
-    catch (error) {
-      saved = null;
-      showError(q('[data-info="error"]'), error, '无法读取搜索设置，保存已暂停。');
-      retryButton.hidden = false;
-    } finally { syncControls(); }
+  function validateDraft() {
+    if (!routes.size) return '至少需要一个搜索分组。';
+    if (!routes.has(selectedRoute)) return '请选择存在的默认路由。';
+    // An untouched stored timeout is sent as null and kept verbatim, even when it is out of range;
+    // only a value the user typed is checked against the backend bounds.
+    const timeoutEdited = q('[data-field="timeout"]').value.trim() !== loadedTimeout;
+    if (timeoutEdited && (!Number.isInteger(globalTimeout) || globalTimeout < timeoutMin || globalTimeout > timeoutMax)) {
+      return `全局超时需为 ${timeoutMin} 到 ${timeoutMax} 秒之间的整数。`;
+    }
+    for (const [id, route] of routes) {
+      const error = validateRoute(id, route, new Map([...routes].filter(([other]) => other !== id)), id);
+      if (error) return `${route.label || id}：${error}`;
+    }
+    return '';
   }
 
-  q('[data-action="refresh"]').addEventListener('click', refresh);
-
-  q('[data-settings-form]').addEventListener('submit', async event => {
-    event.preventDefault();
-    if (saving || saved === null || saved.status === 'config_unreadable') return;
+  function draftPayload() {
     const rawTimeout = q('[data-field="timeout"]').value.trim();
+    // `null` keeps the stored timeout (including "no explicit value") untouched.
     let timeout = null;
     if (rawTimeout !== loadedTimeout) {
-      const min = saved.timeout_min ?? 1;
-      const max = saved.timeout_max ?? 90;
       const value = Number(rawTimeout);
-      if (!rawTimeout || !Number.isInteger(value) || value < min || value > max) {
-        text('[data-status="save"]', '');
-        text('[data-info="error"]', `超时时间必须是 ${min} 到 ${max} 之间的整数秒。`);
-        return;
+      if (!rawTimeout || !Number.isInteger(value) || value < timeoutMin || value > timeoutMax) {
+        throw new Error(`全局超时必须是 ${timeoutMin} 到 ${timeoutMax} 秒之间的整数。`);
       }
+      globalTimeout = value;
       timeout = value;
     }
-    const input = {
-      route: q('[data-field="route"]').value,
+    twitterPath = q('[data-field="twitter"]').value;
+    const error = validateDraft();
+    if (error) throw new Error(error);
+    return {
+      route: selectedRoute,
       timeout,
-      // Unknown entries are kept by the backend from the file itself; only known names are sent.
-      disabled_sources: [...disabled],
-      twitter_cookies_path: q('[data-field="twitter"]').value,
+      disabled_sources: [...disabledSources],
+      routes: routesObject(routes),
+      twitter_cookies_path: twitterPath,
     };
+  }
+
+  async function saveDraft() {
+    if (saving || !loadedView || loadedView.status === 'config_unreadable') return;
+    if (refreshing) { text('[data-info="error"]', '正在刷新设置，请稍后再保存。'); return; }
+    if (editorDirty) { text('[data-info="error"]', '分组编辑器还有未应用输入，请先“应用到草稿”或取消编辑。'); return; }
+    let payload;
+    try { payload = draftPayload(); }
+    catch (error) { text('[data-info="error"]', error.message); return; }
     saving = true;
-    syncControls();
+    const savedRevision = revision;
+    q('[data-action="save"]').disabled = true;
+    q('[data-action="refresh"]').disabled = true;
     text('[data-status="save"]', '保存中…');
     text('[data-info="error"]', '');
     try {
-      fill(await api.settingsSave(input));
-      text('[data-status="save"]', '已保存。');
+      const saved = await api.settingsSave(payload);
+      if (disposed) return;
+      if (revision === savedRevision) {
+        fill(saved);
+        text('[data-status="save"]', '已保存。');
+      } else {
+        loadedView = saved;
+        text('[data-status="save"]', '先前草稿已保存。');
+        text('[data-status="draft"]', '保存期间又有修改，当前草稿仍未保存');
+      }
     } catch (error) {
-      text('[data-status="save"]', '');
-      showError(q('[data-info="error"]'), error, '保存失败，原配置未改变。');
+      if (!disposed) {
+        text('[data-status="save"]', '');
+        showError(q('[data-info="error"]'), error, '保存失败，原配置未改变。');
+      }
     } finally {
       saving = false;
-      syncControls();
+      if (!disposed) {
+        q('[data-action="save"]').disabled = loadedView?.status === 'config_unreadable';
+        q('[data-action="refresh"]').disabled = false;
+      }
     }
-  });
+  }
 
-  await refresh();
+  async function refresh(force = false) {
+    if (saving) { text('[data-info="error"]', '正在保存设置，完成后再刷新。'); return; }
+    if (refreshing) return;
+    if ((dirty || editorDirty) && !force) {
+      const holder = q('[data-refresh-confirm]');
+      if (holder.firstChild) return;
+      const panel = doc.createElement('div');
+      panel.className = 'refresh-confirm';
+      panel.innerHTML = '<p>刷新会丢弃未保存草稿。确定继续吗？</p><div class="run-controls"><button type="button" class="danger" data-action="confirm-refresh">丢弃并刷新</button><button type="button" data-action="cancel-refresh">取消</button></div>';
+      holder.append(panel);
+      panel.querySelector('[data-action="cancel-refresh"]').addEventListener('click', () => holder.replaceChildren());
+      panel.querySelector('[data-action="confirm-refresh"]').addEventListener('click', () => { holder.replaceChildren(); void refresh(true); });
+      // Wired synchronously so focus moves to the safe choice the moment the panel opens.
+      const release = confirmInline(panel, () => { holder.replaceChildren(); release(); });
+      panel.querySelector('[data-action="cancel-refresh"]').addEventListener('click', release);
+      return;
+    }
+    const ticket = ++refreshTicket;
+    const startedRevision = revision;
+    refreshing = true;
+    q('[data-action="refresh"]').disabled = true;
+    q('[data-action="save"]').disabled = true;
+    try {
+      const view = await api.settingsView();
+      if (!disposed && ticket === refreshTicket && revision === startedRevision) fill(view);
+      else if (!disposed && ticket === refreshTicket) text('[data-info="error"]', '刷新期间草稿发生变化，刷新结果未应用。');
+    } catch (error) {
+      if (!disposed && ticket === refreshTicket) {
+        if (loadedView) {
+          showError(q('[data-info="error"]'), error, '刷新失败，当前草稿和已加载设置保持不变，请重试。');
+        } else {
+          routes = new Map();
+          effectiveTimeouts = new Map();
+          setEnabled(false);
+          showError(q('[data-info="error"]'), error, '无法读取搜索设置，保存已暂停。');
+          // Error boundary: a failed first read offers an explicit retry next to its reason.
+          q('[data-action="retry"]').hidden = false;
+          text('[data-status="draft"]', '设置状态未知');
+          renderAll();
+        }
+      }
+    } finally {
+      if (!disposed && ticket === refreshTicket) {
+        refreshing = false;
+        q('[data-action="refresh"]').disabled = false;
+        q('[data-action="save"]').disabled = !loadedView || loadedView.status === 'config_unreadable';
+      }
+    }
+  }
+
+  q('[data-field="route"]').addEventListener('change', event => {
+    selectedRoute = event.target.value;
+    setDirty('默认路由已在草稿中切换');
+    renderRoutes();
+    renderSummary();
+  });
+  q('[data-field="timeout"]').addEventListener('input', event => {
+    globalTimeout = Number(event.target.value);
+    setDirty();
+    renderRoutes();
+    renderSummary();
+  });
+  q('[data-field="twitter"]').addEventListener('input', event => { twitterPath = event.target.value; setDirty(); });
+  q('[data-action="new-route"]').addEventListener('click', () => requestOpenEditor('new'));
+  q('[data-action="restore"]').addEventListener('click', openRestoreConfirm);
+  q('[data-action="refresh"]').addEventListener('click', () => { void refresh(); });
+  q('[data-action="retry"]').addEventListener('click', () => { void refresh(true); });
+  q('[data-settings-form]').addEventListener('submit', event => { event.preventDefault(); void saveDraft(); });
+
+  await refresh(true);
   return {
-    dispose() {},
-    get saved() { return saved; },
+    dispose() { disposePage(root); disposed = true; refreshTicket += 1; root.classList.remove('settings-page'); },
+    get saved() { return loadedView; },
+    get dirty() { return dirty; },
   };
 }

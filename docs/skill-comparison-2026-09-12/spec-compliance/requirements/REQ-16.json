@@ -1,0 +1,68 @@
+{
+  "requirementId": "REQ-16",
+  "title": "禁止正文持久化的provider策略优先",
+  "document": "README.md",
+  "location": "README.md:L252",
+  "quote": "provider 的 retention policy 可禁止保存结果、摘要或正文。",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'persist_body|persist_content|persist_search_result' multi_search_mcp/src/search/capabilities.py multi_search_mcp/src/service.py",
+      "result": "15 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/service.py:232:    if cached is not None and not retention.persist_body:",
+        "multi_search_mcp/src/service.py:244:            if content_store and retention.persist_body:",
+        "multi_search_mcp/src/service.py:302:        if content_store and source_id and retention.persist_body",
+        "multi_search_mcp/src/service.py:459:            if not retention.persist_search_result:",
+        "multi_search_mcp/src/service.py:462:            if not retention.persist_content:",
+        "multi_search_mcp/src/service.py:487:            if not retention.persist_body:",
+        "multi_search_mcp/src/search/capabilities.py:91:    persist_search_result: bool = True",
+        "multi_search_mcp/src/search/capabilities.py:92:    persist_content: bool = True",
+        "multi_search_mcp/src/search/capabilities.py:93:    persist_body: bool = True",
+        "multi_search_mcp/src/search/capabilities.py:149:            \"persist_search_result\": self.retention.persist_search_result,",
+        "multi_search_mcp/src/search/capabilities.py:150:            \"persist_content\": self.retention.persist_content,",
+        "multi_search_mcp/src/search/capabilities.py:151:            \"persist_body\": self.retention.persist_body,",
+        "multi_search_mcp/src/search/capabilities.py:359:        persist_search_result=all(policy.persist_search_result for policy in policies),",
+        "multi_search_mcp/src/search/capabilities.py:360:        persist_content=all(policy.persist_content for policy in policies),",
+        "multi_search_mcp/src/search/capabilities.py:361:        persist_body=all(policy.persist_body for policy in policies),"
+      ]
+    }
+  ],
+  "reasoning": "合并provider策略对权限取all、TTL取min；候选注册受persist_search_result、摘要受persist_content、预取与fetch缓存写入受persist_body；已有缓存遇当前persist_body=False删除binding并重新取得。此条原子判定的是persist_body禁止开关，其他两种开关仅记录邻接调用，未展开第三方条款正确性。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-16.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/search/capabilities.py",
+      "lines": "L349-L365",
+      "quote": "def retention_policy_for_sources(names: list[str] | tuple[str, ...]) -> RetentionPolicy:\n    policies = []\n    for name in names:\n        capability = get_capability_optional(name)\n        policies.append(\n            capability.retention if capability is not None else DEFAULT_RETENTION_POLICY\n        )\n    if not policies:\n        policies = [DEFAULT_RETENTION_POLICY]",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L456-L466",
+      "quote": "    if store is not None:\n        for hit in hits:\n            retention = retention_policy_for_sources(list(hit.get(\"providers\") or []))\n            if not retention.persist_search_result:\n                continue\n            registry_hit = dict(hit)\n            if not retention.persist_content:\n                registry_hit[\"content\"] = \"\"\n            SourceRegistry(",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L484-L499",
+      "quote": "    if store is not None:\n        for hit in hits:\n            retention = retention_policy_for_sources(list(hit.get(\"providers\") or []))\n            if not retention.persist_body:\n                continue\n            body = selected_bodies.get(str(hit[\"canonical_url\"]))\n            if not body:\n                continue\n            try:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L230-L234",
+      "quote": "    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None\n    cached = content_store.get(source_id) if content_store and source_id else None\n    if cached is not None and not retention.persist_body:\n        content_store.delete_source(source_id)\n        cached = None",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L296-L303",
+      "quote": "    stored = (\n        content_store.put(\n            source_id, body,\n            canonical_url=canonicalize_url(url) if cache_scope else \"\",\n            cache_scope=cache_scope,\n        )\n        if content_store and source_id and retention.persist_body\n        else None",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

@@ -6,7 +6,7 @@ import { mountSources } from '../ui/sources.js';
 const ALL = ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter'];
 const KEYED = ALL.slice(0, 8);
 
-const absent = { store: { state: 'absent', saved_at: null, error: null }, effective_source: 'none', env_overrides_store: false, env_var: '', file_key_count: 0 };
+const absent = { source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false };
 const settings = (overrides = {}) => ({ route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null, route_ok: true, ...overrides });
 
 function setup() {
@@ -58,7 +58,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
 
 test('per-source test outcomes map to their own source and never leak into a rebuilt detail', async () => {
   const { window, root } = setup();
-  const stored = { store: { state: 'present', saved_at: 1, error: null }, effective_source: 'credential_store', env_overrides_store: false, env_var: '', file_key_count: 0 };
+  const stored = { ...absent, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite' };
   const outcomes = { tavily: 'success', brave: 'auth_failed', exa: 'quota' };
   const resolvers = {};
   const api = {
@@ -69,7 +69,7 @@ test('per-source test outcomes map to their own source and never leak into a reb
   await mountSources(root, api);
 
   const expected = {
-    tavily: '测试成功：Tavily 本次使用 Windows 凭据库。',
+    tavily: '测试成功：Tavily 本次使用 SQLite / DPAPI。',
     brave: '认证失败：Brave 搜索 拒绝了该 Key。',
     exa: '额度不足：Exa 额度已用尽。',
   };
@@ -161,7 +161,7 @@ test('overview, search, filters and keyboard shortcut use real source state', as
   const { window, root } = setup();
   const mounted = await mountSources(root, {
     settingsView: async () => settings({ disabled_sources: ['exa', 'twitter'] }),
-    credentialStatus: async source => source === 'baidu' ? { ...absent, effective_source: 'credential_store', store: { state: 'present', saved_at: 1 } } : absent,
+    credentialStatus: async source => source === 'baidu' ? { ...absent, effective_source: 'sqlite', store: { state: 'present', saved_at: 1, error: '' } } : absent,
   });
   assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '10');
   assert.equal(root.querySelector('[data-stat="configured"]').textContent, '1');
@@ -220,12 +220,13 @@ test('queued source changes reread current settings and preserve both toggles', 
 test('row testing sends one request and saving invalidates row success', async () => {
   const { window, root } = setup();
   let calls = 0;
-  const stored = { ...absent, effective_source: 'credential_store', store: { state: 'present', saved_at: 1 } };
+  const stored = { ...absent, effective_source: 'sqlite', store: { state: 'present', saved_at: 1, error: '' } };
   await mountSources(root, {
     settingsView: async () => settings(),
     credentialStatus: async () => stored,
     credentialTest: async () => { calls += 1; return { result: 'success', message: 'synthetic response' }; },
-    credentialSave: async () => ({ ...stored, store: { state: 'present', saved_at: 2 } }),
+    credentialRead: async () => ({ value: 'masked-1', snapshot: 'r1' }),
+    credentialAppend: async () => ({ ...stored, store: { state: 'present', saved_at: 2, error: '' } }),
   });
   const row = root.querySelector('[data-source-row="tavily"]');
   row.querySelector('[data-row-test]').click();
@@ -235,7 +236,7 @@ test('row testing sends one request and saving invalidates row success', async (
   assert.match(detailOf(root).querySelector('[data-status="test"]').textContent, /测试成功/);
   detailOf(root).querySelector('[data-field="key"]').value = 'synthetic';
   detailOf(root).querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
-  await flush();
+  await flush(); await flush();
   assert.equal(row.querySelector('[data-row-result]').dataset.kind, 'idle');
   assert.equal(calls, 1);
   window.close();

@@ -108,11 +108,41 @@ const BASE_VARIABLES: &[&str] = &[
     "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
     "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "PROXY", "SSL_CERT_FILE", "SSL_CERT_DIR",
     "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
-    "MULTI_SEARCH_CONFIG", "MULTI_SEARCH_CREDENTIAL_NAMESPACE",
+    "MULTI_SEARCH_CONFIG", "MULTI_SEARCH_CONFIG_DB", "MULTI_SEARCH_CREDENTIAL_NAMESPACE",
+    "MULTI_SEARCH_STATE_DB", "MULTI_SEARCH_STATE",
 ];
-/// Disposable-test plumbing. Only forwarded when the parent itself runs isolated, so a release
-/// launch never hands an injected interpreter path to the CLI.
-const ISOLATION_VARIABLES: &[&str] = &["MULTI_SEARCH_TEST_ISOLATION_REPORT", "PYTHONPATH"];
+
+/// Substrings that mark a variable as secret material. Checked case-insensitively against names
+/// that would otherwise pass the allowlist, except for the desktop-owned `MULTI_SEARCH_*`
+/// namespace, whose names are fixed and non-secret (a selector, not a credential).
+pub(crate) const ENV_SECRET_MARKERS: &[&str] = &[
+    "API_KEY",
+    "APIKEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "PRIVATE_KEY",
+    "ACCESS_KEY",
+    "CREDENTIAL",
+    "JINA_KEY",
+    "SERPAPI_KEY",
+];
+
+fn is_secret_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    if upper.starts_with("MULTI_SEARCH_") {
+        return false;
+    }
+    // Fixture-only names are test drivers (`FIXTURE_SECRET` names a synthetic value the fixture
+    // deliberately echoes to exercise redaction). Debug-only.
+    if cfg!(debug_assertions) && upper.starts_with("FIXTURE_") {
+        return false;
+    }
+    ENV_SECRET_MARKERS
+        .iter()
+        .any(|marker| upper.contains(marker))
+}
 
 fn named(list: &[&str], name: &str) -> bool {
     list.iter().any(|item| item.eq_ignore_ascii_case(name))
@@ -122,22 +152,56 @@ fn named(list: &[&str], name: &str) -> bool {
 /// `credentials` (variable names) this invocation needs. Names are matched case-insensitively,
 /// as Windows does.
 pub(crate) fn child_variables(environment: &RuntimeEnvironment, credentials: &[&str]) -> BTreeMap<String, String> {
+    // `PYTHONPATH` is never forwarded: an injected interpreter path would let any parent
+    // environment run arbitrary code inside the managed CLI. The installed-CLI acceptance
+    // bootstrap arrives under a desktop-owned selector instead (see below).
+    #[cfg(feature = "install-test-boundary")]
     let isolated = environment
         .variables
         .iter()
         .any(|(name, value)| name.eq_ignore_ascii_case("MULTI_SEARCH_TEST_ISOLATION") && value == "1");
-    environment
+    #[allow(unused_mut)]
+    let mut child: BTreeMap<String, String> = environment
         .variables
         .iter()
         .filter(|(name, _)| {
-            named(BASE_VARIABLES, name)
+            (named(BASE_VARIABLES, name) && !is_secret_name(name))
+                || name.to_ascii_uppercase().starts_with("MULTI_SEARCH_")
                 || named(credentials, name)
-                || (isolated && (named(ISOLATION_VARIABLES, name) || name.eq_ignore_ascii_case("MULTI_SEARCH_TEST_ISOLATION")))
                 // Debug-only seam for the fixture CLI used by the native tests; never in a release build.
-                || (cfg!(debug_assertions) && name.starts_with("FIXTURE_"))
+                || (cfg!(debug_assertions)
+                    && (name.starts_with("FIXTURE_") || name.starts_with("CLI_FIXTURE_")))
         })
         .map(|(name, value)| (name.clone(), value.clone()))
-        .collect()
+        .collect();
+    // Acceptance-only boundary (compiled only with `install-test-boundary`): the desktop supplies
+    // the installed-CLI bootstrap under a desktop-owned selector, and exactly that value becomes the
+    // child's PYTHONPATH. A release build never translates it.
+    #[cfg(feature = "install-test-boundary")]
+    if isolated {
+        if let Some(value) = environment.variables.get(TEST_PYTHONPATH_KEY) {
+            child.insert("PYTHONPATH".into(), value.clone());
+        }
+    }
+    child
+}
+
+/// Installed-CLI acceptance bootstrap selector. Deliberately not named `PYTHONPATH`, so production
+/// keeps blocking arbitrary interpreter-path injection.
+#[cfg(feature = "install-test-boundary")]
+const TEST_PYTHONPATH_KEY: &str = "MULTI_SEARCH_TEST_PYTHONPATH";
+
+#[cfg_attr(not(any(test, feature = "test-fixtures")), allow(dead_code))]
+/// The allowlisted child environment for a non-credential invocation. Exposed through
+/// `process_fixture` so the boundary tests assert the real filter, not a copy.
+pub(crate) fn child_environment(variables: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let environment = RuntimeEnvironment {
+        app_path: vec![],
+        user_path: vec![],
+        variables: variables.clone(),
+        cwd: std::env::temp_dir(),
+    };
+    child_variables(&environment, &[])
 }
 
 pub(crate) struct Output {
@@ -145,6 +209,9 @@ pub(crate) struct Output {
     pub stdout: String,
     pub stderr: String,
     pub timed_out: bool,
+    /// True when a stream exceeded `OUTPUT_LIMIT` and was cut. Callers must treat the payload as
+    /// incomplete instead of parsing a truncated JSON document.
+    pub truncated: bool,
 }
 pub(crate) struct OwnedProcess {
     child: Child,
@@ -153,11 +220,13 @@ pub(crate) struct OwnedProcess {
     stdout: Arc<Mutex<Vec<u8>>>,
     stderr: Arc<Mutex<Vec<u8>>>,
     readers: Vec<thread::JoinHandle<()>>,
+    truncated: Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn reader(
     mut pipe: impl Read + Send + 'static,
     buffer: Arc<Mutex<Vec<u8>>>,
+    truncated: Arc<std::sync::atomic::AtomicBool>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut chunk = [0; 8192];
@@ -165,8 +234,12 @@ fn reader(
             if count == 0 {
                 break;
             }
-            let mut bytes = buffer.lock().unwrap();
+            // A panicking sibling must not wedge the reader: recover the poison and keep counting.
+            let mut bytes = buffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let remaining = OUTPUT_LIMIT.saturating_sub(bytes.len());
+            if count > remaining {
+                truncated.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
             bytes.extend_from_slice(&chunk[..count.min(remaining)]);
         }
     })
@@ -210,9 +283,10 @@ impl OwnedProcess {
         };
         let stdout = Arc::new(Mutex::new(Vec::new()));
         let stderr = Arc::new(Mutex::new(Vec::new()));
+        let truncated = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let readers = vec![
-            reader(child.stdout.take().unwrap(), stdout.clone()),
-            reader(child.stderr.take().unwrap(), stderr.clone()),
+            reader(child.stdout.take().unwrap(), stdout.clone(), truncated.clone()),
+            reader(child.stderr.take().unwrap(), stderr.clone(), truncated.clone()),
         ];
         Ok(Self {
             child,
@@ -221,6 +295,7 @@ impl OwnedProcess {
             stdout,
             stderr,
             readers,
+            truncated,
         })
     }
     pub(crate) fn terminate(&mut self) {
@@ -251,8 +326,15 @@ impl OwnedProcess {
         Output {
             code,
             timed_out,
-            stdout: String::from_utf8_lossy(&self.stdout.lock().unwrap()).into_owned(),
-            stderr: String::from_utf8_lossy(&self.stderr.lock().unwrap()).into_owned(),
+            truncated: self.truncated.load(std::sync::atomic::Ordering::Relaxed),
+            stdout: String::from_utf8_lossy(
+                &self.stdout.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
+            .into_owned(),
+            stderr: String::from_utf8_lossy(
+                &self.stderr.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
+            .into_owned(),
         }
     }
 }
@@ -297,6 +379,7 @@ pub(crate) fn bounded_with(
 #[cfg(test)]
 mod tests {
     use super::child_variables;
+    use std::sync::Mutex;
     use crate::RuntimeEnvironment;
     use std::{collections::BTreeMap, path::PathBuf};
 
@@ -330,10 +413,49 @@ mod tests {
     }
 
     #[test]
-    fn isolation_plumbing_is_forwarded_only_when_the_parent_is_isolated() {
+    fn reader_recovers_poison_and_marks_truncation() {
+        use super::{reader, OUTPUT_LIMIT};
+        use std::sync::Arc;
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let poison = buffer.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poison.lock().unwrap();
+            panic!("synthetic poison");
+        })
+        .join();
+        let truncated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        reader(
+            std::io::Cursor::new(vec![b'x'; OUTPUT_LIMIT + 1]),
+            buffer.clone(),
+            truncated.clone(),
+        )
+        .join()
+        .unwrap();
+        assert!(truncated.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(
+            buffer.lock().unwrap_or_else(std::sync::PoisonError::into_inner).len(),
+            OUTPUT_LIMIT
+        );
+    }
+
+    #[test]
+    fn isolation_marker_never_forwards_an_interpreter_path() {
         let env = environment(&[("MULTI_SEARCH_TEST_ISOLATION", "1"), ("PYTHONPATH", "boot")]);
         let vars = child_variables(&env, &[]);
         assert_eq!(vars.get("MULTI_SEARCH_TEST_ISOLATION").map(String::as_str), Some("1"));
-        assert!(vars.contains_key("PYTHONPATH"));
+        assert!(!vars.contains_key("PYTHONPATH"), "only the boundary-build selector may set it");
+    }
+
+    #[test]
+    fn proxy_and_ca_settings_reach_the_child_so_core_can_reach_the_network() {
+        let env = environment(&[
+            ("HTTPS_PROXY", "http://proxy.invalid:8080"),
+            ("NO_PROXY", "localhost"),
+            ("SSL_CERT_FILE", "/etc/ssl/cert.pem"),
+        ]);
+        let vars = child_variables(&env, &[]);
+        for name in ["HTTPS_PROXY", "NO_PROXY", "SSL_CERT_FILE"] {
+            assert!(vars.contains_key(name), "{name}");
+        }
     }
 }

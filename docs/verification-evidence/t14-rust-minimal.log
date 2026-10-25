@@ -1,0 +1,38 @@
+   Compiling multi-search-desktop v0.1.0 (D:\0-code-project\multi-search-skill\desktop\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.22s
+     Running unittests src\lib.rs (target\debug\deps\multi_search_desktop-2f38cb2a69299dd6.exe)
+
+running 16 tests
+test credential::decryption_tests::invalid_dpapi_payload_reports_unreadable_not_unknown_availability ... ok
+test manager::tests::management_mutations_fail_fast_while_busy ... ok
+test install::lock_error_tests::permission_denied_is_a_clear_lock_message_that_never_mentions_termination ... ok
+test credential_commands::tests::application_entry_requires_allowlist_and_https ... ok
+test provider::tests::allowed_source_names_cover_canonical_alias_and_cli ... ok
+test credential_commands::tests::default_read_masks_keys_and_returns_nonsecret_revision ... ok
+test provider::tests::canonical_sources_are_unique ... ok
+test provider::tests::keyed_and_cookie_are_mutually_exclusive ... ok
+test redaction::tests::short_values_never_destroy_normal_output ... ok
+test provider::tests::resolve_matches_canonical_cli_source_and_alias ... ok
+test windows_util::tests::decode_utf16_rejects_odd_bytes_and_embedded_nul ... ok
+test windows_util::tests::expand_is_case_insensitive_and_leaves_unknown_references ... ok
+test credential_commands::tests::storage_capability_rejects_old_cli ... ok
+test windows_util::tests::machine_registry_path_has_no_embedded_nul_before_building_child_environment ... ok
+test manager::tests::execution_slot_recovers_after_poison ... ok
+test process::output_tests::reader_recovers_poison_and_marks_truncation ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\install_release_boundary.rs (target\debug\deps\install_release_boundary-04bf33f844efadfa.exe)
+
+running 2 tests
+test default_build_plan_ignores_isolation_keys ... ok
+test default_build_ignores_isolation_and_anchor_test_keys ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+   Doc-tests multi_search_desktop
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

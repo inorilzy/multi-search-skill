@@ -1,0 +1,131 @@
+{
+  "mcp_tools": [
+    {
+      "name": "search_web",
+      "file": "multi_search_mcp/server.py",
+      "line": 53,
+      "async": true,
+      "seed": false,
+      "classification": "bounded _run_tool dispatch; excluded from synchronous family"
+    },
+    {
+      "name": "fetch_source",
+      "file": "multi_search_mcp/server.py",
+      "line": 87,
+      "async": true,
+      "seed": false,
+      "classification": "bounded _run_tool dispatch; excluded from synchronous family"
+    },
+    {
+      "name": "read_source",
+      "file": "multi_search_mcp/server.py",
+      "line": 109,
+      "async": false,
+      "seed": false,
+      "classification": "same blocking family; conditional on valid stateful path"
+    },
+    {
+      "name": "multi_search",
+      "file": "multi_search_mcp/server.py",
+      "line": 121,
+      "async": true,
+      "seed": false,
+      "classification": "bounded _run_tool dispatch; excluded from synchronous family"
+    },
+    {
+      "name": "scrape_url",
+      "file": "multi_search_mcp/server.py",
+      "line": 153,
+      "async": true,
+      "seed": false,
+      "classification": "bounded _run_tool dispatch; excluded from synchronous family"
+    },
+    {
+      "name": "list_sources",
+      "file": "multi_search_mcp/server.py",
+      "line": 169,
+      "async": false,
+      "seed": false,
+      "classification": "same blocking family; conditional on valid stateful path"
+    },
+    {
+      "name": "doctor",
+      "file": "multi_search_mcp/server.py",
+      "line": 175,
+      "async": true,
+      "seed": false,
+      "classification": "bounded _run_tool dispatch; excluded from synchronous family"
+    },
+    {
+      "name": "get_key_status",
+      "file": "multi_search_mcp/server.py",
+      "line": 181,
+      "async": false,
+      "seed": true,
+      "classification": "same blocking family; conditional on valid stateful path"
+    },
+    {
+      "name": "reset_key_state",
+      "file": "multi_search_mcp/server.py",
+      "line": 187,
+      "async": false,
+      "seed": false,
+      "classification": "same blocking family; conditional on valid stateful path"
+    },
+    {
+      "name": "get_site_scraper_stats",
+      "file": "multi_search_mcp/server.py",
+      "line": 193,
+      "async": false,
+      "seed": false,
+      "classification": "same blocking family; conditional on valid stateful path"
+    },
+    {
+      "name": "set_site_scraper_preference",
+      "file": "multi_search_mcp/server.py",
+      "line": 199,
+      "async": false,
+      "seed": false,
+      "classification": "same blocking family; conditional on valid stateful path"
+    },
+    {
+      "name": "reset_site_scraper_stats",
+      "file": "multi_search_mcp/server.py",
+      "line": 206,
+      "async": false,
+      "seed": false,
+      "classification": "same blocking family; conditional on valid stateful path"
+    }
+  ],
+  "search_adapter_inventory": [
+    "multi_search_mcp/src/search/searchers/baidu.py",
+    "multi_search_mcp/src/search/searchers/brave.py",
+    "multi_search_mcp/src/search/searchers/exa.py",
+    "multi_search_mcp/src/search/searchers/firecrawl.py",
+    "multi_search_mcp/src/search/searchers/github.py",
+    "multi_search_mcp/src/search/searchers/hackernews.py",
+    "multi_search_mcp/src/search/searchers/parallel.py",
+    "multi_search_mcp/src/search/searchers/serpapi.py",
+    "multi_search_mcp/src/search/searchers/stackoverflow.py",
+    "multi_search_mcp/src/search/searchers/tavily.py",
+    "multi_search_mcp/src/search/searchers/twitter.py",
+    "multi_search_mcp/src/search/searchers/v2ex.py"
+  ],
+  "keyed_scrape_adapters": [
+    "jina",
+    "firecrawl",
+    "exa",
+    "tavily"
+  ],
+  "excluded_from_key-health_family": [
+    "Anonymous Hacker News, Stack Overflow, V2EX and Reddit paths have no API key pool in the examined pipeline.",
+    "Twitter uses a distinct cookies/exception path; no API-key sibling verdict."
+  ],
+  "notChecked": [
+    "Only two root-cause families.",
+    "No complete production-provider protocol validation.",
+    "No claim that all root-cause variants or whole-repository defects were found.",
+    "No repeat-run or model-controlled benchmark."
+  ],
+  "stop_reason": "All 12 MCP entrypoints classified; matched keyed adapter candidates triaged. Remaining provider protocol assumptions explicitly unresolved, so no exhaustive variant-closure claim."
+}

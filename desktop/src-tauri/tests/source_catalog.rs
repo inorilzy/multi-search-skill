@@ -33,9 +33,11 @@ fn catalog_shape_and_shared_metadata_are_stable() {
     assert_eq!(names, SOURCE_ORDER, "catalog display order is stable");
     let searchable: Vec<&str> = catalog.search_sources().map(|source| source.name.as_str()).collect();
     assert_eq!(searchable, SEARCH_SOURCE_ORDER);
-    assert_eq!(catalog.credential_sources().count(), 8);
+    // Eight keyed search sources plus Jina (reader/scrape backend keys, not a search source).
+    assert_eq!(catalog.credential_sources().count(), 9);
     assert_eq!(catalog.test_sources().count(), 12);
-    assert_eq!(catalog.credential_store_providers.len(), 8);
+    assert_eq!(catalog.credential_store_providers.len(), 9);
+    assert!(catalog.credential_store_providers.iter().any(|provider| provider == "jina"));
 
     assert_eq!(catalog.source_aliases.len(), 5);
     for (alias, canonical) in &catalog.source_aliases {
@@ -125,33 +127,35 @@ fn settings_use_catalog_names_and_route_order() {
 fn credentials_use_catalog_key_provider_env_and_label() {
     let catalog = fixture::catalog();
     for source in catalog.credential_sources() {
+        // Credential IPC speaks the public (UI/CLI `--source`) spelling, e.g. `github-repos`.
         let (name, provider, env, label) = fixture::credential_source(&source.name).expect("keyed source");
-        assert_eq!(name, source.name);
+        assert_eq!(name, source.public_name);
         assert_eq!(provider, source.key_provider);
         assert_eq!(env, source.env.as_slice());
         assert_eq!(label, source.label);
         for alias in &source.aliases {
             assert_eq!(
                 fixture::credential_source(alias).expect("alias").0,
-                source.name,
+                source.public_name,
                 "alias {alias} resolves to its canonical source",
             );
         }
     }
     let (name, provider, env, label) = fixture::credential_source("github").expect("github alias");
-    assert_eq!((name, provider, label), ("github_repos", "github", "GitHub 仓库"));
+    assert_eq!((name, provider, label), ("github-repos", "github", "GitHub 仓库"));
     assert_eq!(env.to_vec(), vec!["GITHUB_TOKEN".to_string(), "GH_TOKEN".to_string()]);
     assert_eq!(
-        fixture::credential_source("github-repos").expect("hyphen alias").0,
-        "github_repos",
+        fixture::credential_source("github_repos").expect("canonical name").0,
+        "github-repos",
     );
-    assert!(fixture::credential_source("jina").is_err());
+    // Jina is a stored key (reader/scrape backend) but never a search or test source.
+    assert_eq!(fixture::credential_source("jina").expect("jina keys are stored").1, "jina");
     assert!(fixture::credential_source("hackernews").is_err());
 
     for source in catalog.search_sources().filter(|source| !source.keyed) {
         assert_eq!(
             fixture::credential_test_source(&source.name).expect("test source"),
-            source.name.as_str(),
+            source.public_name.as_str(),
         );
         assert!(fixture::credential_source(&source.name).is_err(), "{} has no key CRUD", source.name);
     }

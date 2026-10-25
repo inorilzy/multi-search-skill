@@ -1,5 +1,6 @@
+use crate::user_path::PathStore;
 use serde::Serialize;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 /// Explicit system boundary: production snapshots the environment; tests supply a disposable one.
 #[derive(Clone)]
@@ -11,7 +12,10 @@ pub struct RuntimeEnvironment {
 }
 
 #[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct Discovery {
+    /// One of `ready`, `missing`, `not_executable`, `version_failed`, `unavailable`, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub path: Option<String>,
     pub version: Option<String>,
@@ -19,6 +23,8 @@ pub struct Discovery {
 }
 
 #[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct CliStatus {
     pub app: Discovery,
     pub user: Discovery,
@@ -43,30 +49,34 @@ fn find_cli(paths: &[PathBuf]) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-pub struct DesktopManager {
-    pub(crate) environment: RuntimeEnvironment,
-    pub(crate) user_path_store: Option<std::sync::Arc<dyn crate::user_path::PathStore>>,
-    pub(crate) execution_slot:
-        std::sync::Mutex<Option<std::sync::Arc<std::sync::Mutex<crate::execution::Execution>>>>,
-    pub(crate) next_id: std::sync::atomic::AtomicU64,
-    pub(crate) closed: std::sync::atomic::AtomicBool,
+/// CLI discovery and execution-path selection. Stateless: every method takes
+/// the environment it should inspect, so this domain owns no shared state.
+pub(crate) struct CliDiscovery<'a> {
+    pub(crate) environment: &'a RuntimeEnvironment,
+    pub(crate) user_path_store: Option<&'a Arc<dyn PathStore>>,
+    /// The verified managed install, when this tool installed one. Discovery never accepts a
+    /// caller-supplied executable: the frontend cannot pick a program.
+    pub(crate) managed: Option<PathBuf>,
 }
 
-impl DesktopManager {
-    pub fn new(environment: RuntimeEnvironment) -> Self {
+impl<'a> CliDiscovery<'a> {
+    pub(crate) fn new(
+        environment: &'a RuntimeEnvironment,
+        user_path_store: Option<&'a Arc<dyn PathStore>>,
+        managed: Option<PathBuf>,
+    ) -> Self {
         Self {
             environment,
-            user_path_store: None,
-            execution_slot: std::sync::Mutex::new(None),
-            next_id: std::sync::atomic::AtomicU64::new(1),
-            closed: std::sync::atomic::AtomicBool::new(false),
+            user_path_store,
+            managed,
         }
     }
 
     /// Discovery never takes a caller-supplied executable: the UI can only observe the managed
     /// install and what the app and user PATH resolve to.
-    pub fn detect_cli(&self) -> CliStatus {
-        let app = self.probe(find_cli(&self.environment.app_path));
+    pub(crate) fn detect(&self) -> CliStatus {
+        let secrets = crate::redaction::secrets(self.environment);
+        let app = self.probe(find_cli(&self.environment.app_path), &secrets);
         let paths = self.current_user_paths();
         let mut user_environment = self.environment.clone();
         if let Ok(path) = std::env::join_paths(&paths) {
@@ -74,16 +84,15 @@ impl DesktopManager {
                 .variables
                 .insert("PATH".into(), path.to_string_lossy().into_owned());
         }
-        let user_manager = Self::new(user_environment);
-        let user = user_manager.probe(find_cli(&paths));
+        let user = CliDiscovery::new(&user_environment, None, None).probe(find_cli(&paths), &secrets);
         let restart_required = app.status != "ready" && user.status == "ready";
-        let (execution, managed) = match self.managed_cli() {
+        let (execution, managed) = match &self.managed {
             // A verified managed install always wins, so a same-named file earlier on PATH
             // cannot shadow it.
-            Some(path) => (self.probe(Some(path)), true),
-            None if app.status == "ready" => (app.clone(), false),
-            None if user.status == "ready" => (user.clone(), false),
-            None => (app.clone(), false),
+            Some(path) if path.is_file() => (self.probe(Some(path.clone()), &secrets), true),
+            _ if app.status == "ready" => (app.clone(), false),
+            _ if user.status == "ready" => (user.clone(), false),
+            _ => (app.clone(), false),
         };
         CliStatus {
             app,
@@ -101,10 +110,11 @@ impl DesktopManager {
     /// UI, `doctor`, and `search` cannot disagree. An empty map (CLI missing,
     /// timeout, or CLI without `--format json`) makes callers show `unavailable`
     /// rather than a locally guessed source.
+    #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
     pub(crate) fn key_sources(
         &self,
     ) -> BTreeMap<String, crate::credential_commands::CoreKeySource> {
-        let Ok(cli) = self.execution_cli() else {
+        let Ok(cli) = self.execution_path() else {
             return BTreeMap::new();
         };
         let args = ["doctor", "--format", "json"].map(str::to_string);
@@ -122,7 +132,7 @@ impl DesktopManager {
         let Ok(output) = crate::process::bounded_with(
             &cli,
             &args,
-            &self.environment,
+            self.environment,
             &credentials,
             std::time::Duration::from_secs(10),
         ) else {
@@ -137,19 +147,40 @@ impl DesktopManager {
     }
 
     /// The executable every UI-triggered CLI run uses. Never chosen by the frontend.
-    pub fn execution_cli(&self) -> Result<PathBuf, String> {
-        let selected = self.detect_cli().execution;
-        if selected.status != "ready" { return Err(selected.reason); }
-        selected.path.map(PathBuf::from).ok_or_else(|| "CLI 路径不可用".into())
+    pub(crate) fn execution_path(&self) -> Result<PathBuf, String> {
+        let selected = self.detect().execution;
+        if selected.status != "ready" {
+            return Err(selected.reason);
+        }
+        selected
+            .path
+            .map(PathBuf::from)
+            .ok_or_else(|| "CLI 路径不可用".into())
     }
 
-    fn probe(&self, path: Option<PathBuf>) -> Discovery {
+    pub(crate) fn current_user_paths(&self) -> Vec<PathBuf> {
+        let Some(store) = self.user_path_store else {
+            return self.environment.user_path.clone();
+        };
+        let Ok(value) = store.read() else {
+            return Vec::new();
+        };
+        let mut paths = self.environment.user_path.clone();
+        // The production base is the machine PATH, not a stale snapshot of the user's PATH.
+        paths.extend(std::env::split_paths(&crate::windows_util::expand(
+            &value.text,
+            &self.environment.variables,
+        )));
+        paths
+    }
+
+    fn probe(&self, path: Option<PathBuf>, secrets: &[String]) -> Discovery {
         let Some(path) = path else {
             return Discovery {
                 status: "missing".into(),
                 path: None,
                 version: None,
-                reason: "当前环境的 PATH 中未找到 multi-search.exe".into(),
+                reason: format!("当前环境的 PATH 中未找到 {CLI_FILE_NAME}"),
             };
         };
         let mut result = Discovery {
@@ -171,7 +202,7 @@ impl DesktopManager {
         match crate::process::bounded(
             &path,
             &["--version".into()],
-            &self.environment,
+            self.environment,
             std::time::Duration::from_secs(3),
         ) {
             Err(error) => {
@@ -191,21 +222,13 @@ impl DesktopManager {
                     })
                 {
                     result.status = "ready".into();
-                    result.version = version.map(|value| {
-                        crate::redaction::scrub(
-                            &value,
-                            &crate::redaction::secrets(&self.environment),
-                        )
-                    });
+                    result.version = version.map(|value| crate::redaction::scrub(&value, secrets));
                 } else {
                     result.status = "version_failed".into();
                     result.reason = if output.timed_out {
                         "已找到 CLI，但版本检查超过 3 秒。请检查 CLI 运行时，或更新 CLI 后重新检测。".into()
                     } else {
-                        let detail = crate::redaction::scrub(
-                            output.stderr.trim(),
-                            &crate::redaction::secrets(&self.environment),
-                        );
+                        let detail = crate::redaction::scrub(output.stderr.trim(), secrets);
                         let detail: String = detail.chars().take(400).collect();
                         format!(
                             "已找到 CLI，但 --version 未返回有效版本（退出码 {}）。请更新 CLI 后重新检测。{}",

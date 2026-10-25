@@ -1,31 +1,262 @@
-//! Non-secret CLI defaults written by the desktop: default route, timeout, disabled sources,
-//! and the Twitter cookie file *path* reference.
-//!
-//! The file is the same JSON the CLI reads (`multi_search_mcp/src/support/config.py`). Only the
-//! known keys are changed; every other field is preserved. Input is validated before the file
-//! is touched, and the new content is written to a temp file in the same directory and then
-//! atomically moved over the target, so a failed save leaves the last valid config in place.
-//! Keys and cookie bodies never belong in this file and are never read or returned here.
+//! 桌面搜索设置只保存在 config.sqlite 的 settings JSON 中；旧 JSON/env/dev 文件不参与日常读取。
+//! 保存前完整校验动态路由，并在 Immediate 事务内保留所有未知字段。
 
-use crate::{DesktopManager, RuntimeEnvironment};
+use crate::provider;
+use crate::RuntimeEnvironment;
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
-    fs,
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
-/// CLI config env var; when set, the CLI reads exactly this path.
-pub const CONFIG_ENV: &str = "MULTI_SEARCH_CONFIG";
-pub const TWITTER_ENV: &str = "TWITTER_COOKIES_PATH";
-const USER_CONFIG_RELATIVE: &[&str] = &[".multi-search", "multi-search-config.json"];
-/// Sources the current route would run, in the shared catalog's documented order.
-pub(crate) fn route_sources(route: &str) -> &'static [String] {
-    crate::source_catalog::catalog()
-        .route(route)
-        .map(|entry| entry.sources.as_slice())
-        .unwrap_or(&[])
+pub const CONFIG_ENV: &str = crate::config_db::DB_ENV;
+
+/// Canonical source name lookup; routes and disabled_sources are stored under
+/// the underscore form (`github_repos`, `sov2ex`). Aliases accepted on save
+/// are owned by `provider::PROVIDERS` — adding an alias only requires editing
+/// that table.
+fn source_name(raw: &str) -> Result<&'static str, String> {
+    provider::resolve(raw).map(|entry| entry.source)
 }
+
+const MAX_PATH_BYTES: usize = 1024;
+
+/// Smallest timeout the desktop accepts.
+pub const TIMEOUT_MIN: u32 = 1;
+/// Largest timeout the desktop accepts: the longest route default the CLI itself uses (`all`).
+/// Keep equal to `max(ROUTE_META[*]["timeout"])`; a Python contract test checks the two agree.
+pub const TIMEOUT_MAX: u32 = 90;
+
+/// 通用网页抓取后端的出厂 fallback 链；顺序即默认尝试顺序。
+pub const SCRAPE_BACKENDS: &[&str] = &["jina", "exa", "tavily", "firecrawl"];
+
+pub fn scrape_backend_label(name: &str) -> &'static str {
+    match name {
+        "jina" => "Jina Reader",
+        "exa" => "Exa",
+        "tavily" => "Tavily",
+        "firecrawl" => "Firecrawl",
+        _ => "",
+    }
+}
+
+fn default_scrape_backends() -> Vec<String> {
+    SCRAPE_BACKENDS.iter().map(|name| (*name).into()).collect()
+}
+
+fn scrape_backend_options() -> Vec<ScrapeBackendOption> {
+    SCRAPE_BACKENDS
+        .iter()
+        .map(|name| ScrapeBackendOption {
+            name: (*name).into(),
+            label: scrape_backend_label(name).into(),
+        })
+        .collect()
+}
+
+/// 宽容读取已保存的链：忽略未知/重复项；全部无效或缺失时回落出厂默认。
+/// 第二个返回值标记“已保存值非法”，供 UI 显示警示，而不是假装是有效设置。
+fn scrape_chain(object: &Map<String, Value>) -> (Vec<String>, bool) {
+    let value = match object.get("scrape_backends") {
+        None | Some(Value::Null) => return (default_scrape_backends(), false),
+        Some(value) => value,
+    };
+    let Value::Array(items) = value else {
+        return (default_scrape_backends(), true);
+    };
+    let mut chain = Vec::new();
+    let mut invalid = false;
+    for item in items {
+        let Some(raw) = item.as_str() else {
+            invalid = true;
+            continue;
+        };
+        let name = raw.trim();
+        if !SCRAPE_BACKENDS.contains(&name) {
+            invalid = true;
+            continue;
+        }
+        if !chain.iter().any(|saved| saved == name) {
+            chain.push(name.to_string());
+        }
+    }
+    if items.is_empty() {
+        invalid = true;
+    }
+    if chain.is_empty() {
+        (default_scrape_backends(), invalid)
+    } else {
+        (chain, invalid)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct ScrapeBackendOption {
+    pub name: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct RouteConfig {
+    pub label: String,
+    pub sources: Vec<String>,
+    #[serde(default)]
+    pub timeout: Option<u32>,
+}
+
+pub type RouteMap = BTreeMap<String, RouteConfig>;
+
+fn route(label: &str, sources: &[&str]) -> RouteConfig {
+    RouteConfig {
+        label: label.into(),
+        sources: sources.iter().map(|source| (*source).into()).collect(),
+        timeout: None,
+    }
+}
+
+pub fn builtin_routes() -> RouteMap {
+    BTreeMap::from([
+        (
+            "default".into(),
+            route(
+                "默认（网页综合）",
+                &[
+                    "brave",
+                    "parallel",
+                    "tavily",
+                    "exa",
+                    "serpapi",
+                    "firecrawl",
+                    "baidu",
+                ],
+            ),
+        ),
+        (
+            "fast".into(),
+            route("快速", &["baidu", "tavily", "firecrawl", "exa"]),
+        ),
+        (
+            "all".into(),
+            route(
+                "全部",
+                &[
+                    "brave",
+                    "parallel",
+                    "tavily",
+                    "exa",
+                    "serpapi",
+                    "baidu",
+                    "firecrawl",
+                    "twitter",
+                    "stackoverflow",
+                    "github_repos",
+                    "hackernews",
+                    "sov2ex",
+                ],
+            ),
+        ),
+        ("social".into(), route("社交（Twitter）", &["twitter"])),
+        (
+            "dev".into(),
+            route(
+                "开发者（Stack Overflow / GitHub / Hacker News）",
+                &["stackoverflow", "github_repos", "hackernews"],
+            ),
+        ),
+    ])
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct SettingsInput {
+    pub route: String,
+    /// `None` keeps the stored `timeout` exactly as it is (including absent), so a caller that
+    /// did not edit the timeout can never rewrite it.
+    #[serde(default)]
+    pub timeout: Option<u32>,
+    #[serde(default)]
+    pub disabled_sources: Vec<String>,
+    #[serde(default)]
+    pub routes: Option<RouteMap>,
+    #[serde(default)]
+    pub twitter_cookies_path: Option<String>,
+    /// `None` 表示本次保存不动该键；`Some(vec)` 才写入。
+    #[serde(default)]
+    pub scrape_backends: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Validated {
+    pub route: String,
+    pub timeout: Option<u32>,
+    pub disabled_sources: Vec<String>,
+    pub routes: Option<RouteMap>,
+    pub twitter_cookies_path: Option<String>,
+    pub scrape_backends: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct SettingsView {
+    pub config_path: Option<String>,
+    pub path_source: String,
+    pub file_present: bool,
+    pub read_source: String,
+    pub route: String,
+    pub timeout: u32,
+    pub timeout_configured: bool,
+    /// Editable bounds; a stored value outside them is still shown and preserved unchanged.
+    pub timeout_min: u32,
+    pub timeout_max: u32,
+    /// True when the stored timeout is outside `timeout_min..=timeout_max`. Only an edited value
+    /// must be in range.
+    pub timeout_out_of_range: bool,
+    pub effective_timeout: u32,
+    pub effective_timeouts: BTreeMap<String, u32>,
+    pub routes: RouteMap,
+    pub builtin_routes: RouteMap,
+    pub disabled_sources: Vec<String>,
+    /// Entries in `disabled_sources` the desktop does not recognise. Never dropped on save.
+    pub unknown_disabled_sources: Vec<String>,
+    pub twitter_cookies_path: Option<String>,
+    /// 当前生效的抓取 fallback 链（settings 缺失/非法时回退出厂默认）。
+    pub scrape_backends: Vec<String>,
+    /// 已保存的 `scrape_backends` 非法（空数组、非数组、含非字符串或未知后端）；
+    /// 此时 `scrape_backends` 是回退值，CLI 会报配置错误，UI 必须提示。
+    pub scrape_backends_invalid: bool,
+    pub builtin_scrape_backends: Vec<String>,
+    pub scrape_backend_options: Vec<ScrapeBackendOption>,
+    pub active_sources: Vec<String>,
+    /// ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
+    pub status: String,
+    pub message: String,
+}
+
+pub fn config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
+    crate::config_db::path(&environment.variables)
+}
+
+fn route_id_valid(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id != "web"
+        && id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
+        })
+}
+
+fn canonical_route_id(raw: &str) -> String {
+    if raw == "web" { "default" } else { raw }.to_string()
+}
+
 /// Mirrors the per-route `timeout` defaults in `ROUTE_META` (search_runner.py). The CLI uses
 /// these when the config has no `timeout`; the desktop reports them so it never invents a value.
 pub fn route_default_timeout(route: &str) -> u32 {
@@ -35,195 +266,101 @@ pub fn route_default_timeout(route: &str) -> u32 {
         _ => 60,
     }
 }
-/// Smallest timeout the desktop accepts.
-pub const TIMEOUT_MIN: u32 = 1;
-/// Largest timeout the desktop accepts: the longest route default the CLI itself uses (`all`).
-/// Keep equal to `max(ROUTE_META[*]["timeout"])`; a Python contract test checks the two agree.
-pub const TIMEOUT_MAX: u32 = 90;
-const MAX_PATH_BYTES: usize = 1024;
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct SettingsInput {
-    pub route: String,
-    /// `None` keeps the stored `timeout` exactly as it is (including absent), so a caller that
-    /// did not edit the timeout can never rewrite it.
-    #[serde(default)]
-    pub timeout: Option<u32>,
-    #[serde(default)]
-    pub disabled_sources: Vec<String>,
-    /// Empty or absent clears the reference. Never a cookie body.
-    #[serde(default)]
-    pub twitter_cookies_path: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Validated {
-    pub route: String,
-    pub timeout: Option<u32>,
-    pub disabled_sources: Vec<String>,
-    pub twitter_cookies_path: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct SettingsView {
-    pub config_path: Option<String>,
-    /// "env" when MULTI_SEARCH_CONFIG selects the file, otherwise "user".
-    pub path_source: String,
-    pub file_present: bool,
-    /// Where the displayed values were read from: "env" | "user" | "dev_fallback" | "defaults".
-    pub read_source: String,
-    /// True when the values come from the repo-root dev file and no user file exists yet:
-    /// saving creates the user file, which the CLI then uses instead of the dev file.
-    pub save_creates_override: bool,
-    pub route: String,
-    /// The stored `timeout` when the file sets one, otherwise the CLI's route default.
-    pub timeout: u32,
-    /// True when the file sets `timeout`; false means `timeout` is the route default.
-    pub timeout_configured: bool,
-    /// True when the stored timeout is outside `TIMEOUT_MIN..=TIMEOUT_MAX`. It is still shown
-    /// and preserved unchanged; only an edited value must be in range.
-    pub timeout_out_of_range: bool,
-    pub timeout_min: u32,
-    pub timeout_max: u32,
-    pub disabled_sources: Vec<String>,
-    /// Entries in `disabled_sources` the desktop does not recognise. Never dropped on save.
-    pub unknown_disabled_sources: Vec<String>,
-    pub twitter_cookies_path: Option<String>,
-    /// True when TWITTER_COOKIES_PATH is set: it wins over the saved reference.
-    pub twitter_env_overrides: bool,
-    /// Sources the current route would run after disabling; empty means nothing will run.
-    pub active_sources: Vec<String>,
-    /// "ok" | "no_active_source" | "config_unreadable"
-    pub status: String,
-    pub message: String,
-}
-
-/// Save target: `MULTI_SEARCH_CONFIG` when set (explicit target, never redirected), else the
-/// user config file. The repo-root dev file is never written.
-pub fn config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
-    if let Some(value) = environment.variables.get(CONFIG_ENV).filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(value));
+fn normalize_routes(routes: &RouteMap) -> Result<RouteMap, String> {
+    if routes.is_empty() {
+        return Err("至少需要一个搜索路由分组".into());
     }
-    user_config_path(environment)
-}
-
-fn user_config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
-    let home = environment
-        .variables
-        .get("USERPROFILE")
-        .or_else(|| environment.variables.get("HOME"))
-        .filter(|h| !h.is_empty())?;
-    let mut path = PathBuf::from(home);
-    for part in USER_CONFIG_RELATIVE {
-        path.push(part);
-    }
-    Some(path)
-}
-
-/// Repo-root development fallback, the same file the CLI's source checkout uses.
-/// Read-only for this module: it seeds starting values and is never written.
-/// Only debug builds embed the build machine's path; a release binary has no such fallback
-/// at all, so the path cannot be read even if the gated call sites are missed later.
-#[cfg(debug_assertions)]
-fn dev_config_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("multi-search-config.json")
-}
-
-/// Release builds have no dev fallback; this empty path is only passed to call sites that are
-/// already gated by `dev_fallback_supported()` and therefore never touch it.
-#[cfg(not(debug_assertions))]
-fn dev_config_path() -> PathBuf {
-    PathBuf::new()
-}
-
-/// A release binary must never read the build machine's source tree. The dev fallback is a
-/// source-checkout convenience and stays available only in debug builds; tests use the
-/// explicit `allow_dev` seam below instead of relying on the build profile.
-fn dev_fallback_supported() -> bool {
-    cfg!(debug_assertions)
-}
-
-/// Which file the CLI reads now, in its own order: `MULTI_SEARCH_CONFIG`, then the user file
-/// when it exists, then the dev fallback when it exists, else built-in defaults.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReadSource {
-    Env,
-    User,
-    DevFallback,
-    Defaults,
-}
-
-impl ReadSource {
-    fn as_str(self) -> &'static str {
-        match self {
-            ReadSource::Env => "env",
-            ReadSource::User => "user",
-            ReadSource::DevFallback => "dev_fallback",
-            ReadSource::Defaults => "defaults",
+    let mut normalized = RouteMap::new();
+    for (id, route) in routes {
+        if !route_id_valid(id) {
+            return Err(
+                "路由标识必须是 1 到 64 个 ASCII 小写字母、数字、下划线或连字符，且不能使用 web"
+                    .into(),
+            );
         }
-    }
-
-    /// Accept only the labels the CLI's `doctor` payload may report.
-    fn from_label(value: &str) -> Option<Self> {
-        match value {
-            "env" => Some(ReadSource::Env),
-            "user" => Some(ReadSource::User),
-            "dev_fallback" => Some(ReadSource::DevFallback),
-            "defaults" => Some(ReadSource::Defaults),
-            _ => None,
+        let label = route.label.trim();
+        if !(1..=80).contains(&label.chars().count()) {
+            return Err("路由名称必须是 1 到 80 个字符".into());
         }
+        if route.sources.is_empty() {
+            return Err("每个路由至少需要一个搜索源".into());
+        }
+        let mut sources = Vec::new();
+        for raw in &route.sources {
+            let source = source_name(raw)?.to_string();
+            if !sources.contains(&source) {
+                sources.push(source);
+            }
+        }
+        if route
+            .timeout
+            .is_some_and(|timeout| !(TIMEOUT_MIN..=TIMEOUT_MAX).contains(&timeout))
+        {
+            return Err(format!("路由超时时间必须在 {TIMEOUT_MIN} 到 {TIMEOUT_MAX} 秒之间"));
+        }
+        normalized.insert(
+            id.clone(),
+            RouteConfig {
+                label: label.into(),
+                sources,
+                timeout: route.timeout,
+            },
+        );
     }
+    Ok(normalized)
 }
 
-fn read_source_with(
-    environment: &RuntimeEnvironment,
-    dev: &Path,
-    allow_dev: bool,
-) -> (ReadSource, Option<PathBuf>) {
-    if environment.variables.get(CONFIG_ENV).is_some_and(|v| !v.is_empty()) {
-        return (ReadSource::Env, config_path(environment));
-    }
-    if let Some(user) = user_config_path(environment).filter(|p| p.exists()) {
-        return (ReadSource::User, Some(user));
-    }
-    if allow_dev && dev.exists() {
-        return (ReadSource::DevFallback, Some(dev.to_path_buf()));
-    }
-    (ReadSource::Defaults, None)
+fn routes_from_object(object: &Map<String, Value>) -> Result<RouteMap, String> {
+    let Some(value) = object.get("routes") else {
+        return Ok(builtin_routes());
+    };
+    let routes: RouteMap = serde_json::from_value(value.clone())
+        .map_err(|_| "routes 必须是完整且有效的路由对象".to_string())?;
+    normalize_routes(&routes)
 }
 
-/// Canonical search-source name for a catalog name or CLI alias.
-pub(crate) fn source_name(raw: &str) -> Result<&'static str, String> {
-    crate::source_catalog::catalog()
-        .source(raw)
-        .filter(|source| source.searchable)
-        .map(|source| source.name.as_str())
-        .ok_or_else(|| "不支持的搜索源".to_string())
+fn selected_route(object: &Map<String, Value>, routes: &RouteMap) -> Result<String, String> {
+    let route = match object.get("type") {
+        None | Some(Value::Null) => "default".to_string(),
+        Some(Value::String(route)) => canonical_route_id(route),
+        Some(_) => return Err("type 必须是有效的路由标识".into()),
+    };
+    if !routes.contains_key(&route) {
+        return Err("type 引用的路由不存在".into());
+    }
+    Ok(route)
 }
 
-/// Canonical route name for a catalog route or its CLI alias (`web`).
-pub(crate) fn route_name(raw: &str) -> Option<&'static str> {
-    crate::source_catalog::catalog()
-        .route(raw)
-        .map(|route| route.name.as_str())
+fn config_routes(object: &Map<String, Value>) -> Result<(RouteMap, String), String> {
+    let routes = routes_from_object(object)?;
+    let route = selected_route(object, &routes)?;
+    Ok((routes, route))
 }
 
-/// Validate before any file access. Errors never echo the rejected value.
 pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
-    let route = route_name(&input.route).ok_or_else(|| "不支持的搜索路由".to_string())?;
-    if let Some(timeout) = input.timeout {
-        if !(TIMEOUT_MIN..=TIMEOUT_MAX).contains(&timeout) {
-            return Err(format!("超时时间必须在 {TIMEOUT_MIN} 到 {TIMEOUT_MAX} 秒之间"));
-        }
+    let route = canonical_route_id(&input.route);
+    if !route_id_valid(&route) {
+        return Err("不支持的搜索路由".into());
+    }
+    if input
+        .timeout
+        .is_some_and(|timeout| !(TIMEOUT_MIN..=TIMEOUT_MAX).contains(&timeout))
+    {
+        return Err(format!("超时时间必须在 {TIMEOUT_MIN} 到 {TIMEOUT_MAX} 秒之间"));
+    }
+    let routes = input.routes.as_ref().map(normalize_routes).transpose()?;
+    if routes
+        .as_ref()
+        .is_some_and(|routes| !routes.contains_key(&route))
+    {
+        return Err("当前路由不能被删除，请先切换到其他路由".into());
     }
     let mut disabled = Vec::new();
     for raw in &input.disabled_sources {
-        let name = source_name(raw)?;
-        if !disabled.contains(&name.to_string()) {
-            disabled.push(name.to_string());
+        let name = source_name(raw)?.to_string();
+        if !disabled.contains(&name) {
+            disabled.push(name);
         }
     }
     disabled.sort();
@@ -231,306 +368,319 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
         None | Some("") => None,
         Some(path) => {
             if path.len() > MAX_PATH_BYTES || path.contains('\0') {
-                return Err("Twitter Cookie 文件路径无效".into());
+                return Err("Twitter cookie 文件路径无效".into());
             }
             Some(path.to_string())
         }
     };
+    let scrape_backends = match &input.scrape_backends {
+        None => None,
+        Some(items) => {
+            let mut chain: Vec<String> = Vec::new();
+            for raw in items {
+                let name = raw.trim();
+                if !SCRAPE_BACKENDS.contains(&name) {
+                    return Err(format!("不支持的抓取后端：{name}"));
+                }
+                if !chain.iter().any(|saved| saved == name) {
+                    chain.push(name.to_string());
+                }
+            }
+            if chain.is_empty() {
+                return Err("抓取顺序至少要保留一个后端".into());
+            }
+            Some(chain)
+        }
+    };
     Ok(Validated {
-        route: route.to_string(),
+        route,
         timeout: input.timeout,
         disabled_sources: disabled,
+        routes,
         twitter_cookies_path: twitter,
+        scrape_backends,
     })
 }
 
-/// Read the existing object. Missing file → empty object. Unreadable or non-object → error,
-/// so a save never overwrites content it cannot preserve.
-fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
-    if !path.exists() {
-        return Ok(Map::new());
-    }
-    let text = fs::read_to_string(path).map_err(|_| "无法读取现有配置文件".to_string())?;
-    match serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
-        Ok(Value::Object(map)) => Ok(map),
-        _ => Err("现有配置文件不是有效的 JSON 对象，未保存，请先修复或删除该文件".into()),
+fn read_object(connection: &rusqlite::Connection) -> Result<Map<String, Value>, String> {
+    let text: Option<String> = connection
+        .query_row("SELECT data FROM settings WHERE id=1", [], |row| row.get(0))
+        .optional()
+        .map_err(|_| "无法读取配置数据库设置".to_string())?;
+    match text {
+        None => Ok(Map::new()),
+        Some(text) => match serde_json::from_str(&text) {
+            Ok(Value::Object(map)) => Ok(map),
+            _ => Err("现有设置不是有效 JSON 对象，未保存".into()),
+        },
     }
 }
 
-/// Existing `disabled_sources` entries the desktop cannot map to a known source (a newer CLI's
-/// source, a typo, a non-string). They are kept verbatim so a save never re-enables them.
-fn unknown_disabled(existing: &Map<String, Value>) -> Vec<Value> {
-    existing
+fn merge(mut map: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
+    map.insert("type".into(), Value::String(valid.route.clone()));
+    if let Some(timeout) = valid.timeout {
+        map.insert("timeout".into(), Value::from(timeout));
+    }
+    // Known entries are replaced by the edit; entries the desktop does not recognise (a newer
+    // CLI's source, or a non-string value) are never dropped.
+    let unknown: Vec<Value> = map
         .get("disabled_sources")
         .and_then(Value::as_array)
         .map(|items| {
             items
                 .iter()
-                .filter(|item| item.as_str().map_or(true, |raw| source_name(raw).is_err()))
+                .filter(|item| item.as_str().is_none_or(|raw| source_name(raw).is_err()))
                 .cloned()
                 .collect()
         })
-        .unwrap_or_default()
-}
-
-fn merge(existing: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
-    let unknown = unknown_disabled(&existing);
-    let mut map = existing;
-    map.insert("type".into(), Value::String(valid.route.clone()));
-    if let Some(timeout) = valid.timeout {
-        map.insert("timeout".into(), Value::from(timeout));
-    }
-    let mut disabled: Vec<Value> = valid.disabled_sources.iter().cloned().map(Value::String).collect();
-    for item in unknown {
-        if !disabled.contains(&item) {
-            disabled.push(item);
-        }
-    }
+        .unwrap_or_default();
+    let mut disabled: Vec<Value> = valid
+        .disabled_sources
+        .iter()
+        .cloned()
+        .map(Value::String)
+        .collect();
+    disabled.extend(unknown);
     map.insert("disabled_sources".into(), Value::Array(disabled));
-    match &valid.twitter_cookies_path {
-        Some(path) => {
-            map.insert("twitter_cookies_path".into(), Value::String(path.clone()));
-        }
-        None => {
-            map.remove("twitter_cookies_path");
-        }
+    if let Some(routes) = &valid.routes {
+        map.insert(
+            "routes".into(),
+            serde_json::to_value(routes).expect("validated routes serialize"),
+        );
+    }
+    if let Some(path) = &valid.twitter_cookies_path {
+        map.insert("twitter_cookies_path".into(), Value::String(path.clone()));
+    } else {
+        map.remove("twitter_cookies_path");
+    }
+    if let Some(chain) = &valid.scrape_backends {
+        map.insert("scrape_backends".into(), serde_json::json!(chain));
     }
     map
 }
 
-/// Atomically replace `path` with `object`. The temp file lives in the same directory so the
-/// final rename stays on one volume. On any failure the temp file is removed and the target
-/// is left as it was.
-fn write_atomic(path: &Path, object: &Map<String, Value>) -> Result<(), String> {
-    let dir = path.parent().ok_or("配置路径无效")?;
-    fs::create_dir_all(dir).map_err(|_| "无法创建配置目录".to_string())?;
-    let mut body = serde_json::to_string_pretty(&Value::Object(object.clone()))
-        .map_err(|_| "无法序列化配置".to_string())?;
-    body.push('\n');
-    // Randomly named, exclusively created sibling, renamed over the target; removed on failure.
-    crate::secure_temp::replace_file(path, body.as_bytes()).map_err(|_| "保存失败，原配置未改变".to_string())
+pub fn save(
+    environment: &RuntimeEnvironment,
+    input: &SettingsInput,
+) -> Result<SettingsView, String> {
+    let valid = validate(input)?;
+    let path = config_path(environment).ok_or("无法定位配置数据库")?;
+    let mut connection = crate::config_db::open(&path)?;
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|_| "配置数据库事务失败".to_string())?;
+    let existing = read_object(&transaction)?;
+    let (existing_routes, _) = config_routes(&existing)?;
+    let selected_routes = valid.routes.as_ref().unwrap_or(&existing_routes);
+    if !selected_routes.contains_key(&valid.route) {
+        return Err("当前路由不能被删除，请先切换到其他路由".into());
+    }
+    let object = merge(existing, &valid);
+    let body = serde_json::to_string(&object).map_err(|_| "无法序列化设置".to_string())?;
+    transaction
+        .execute(
+            "INSERT INTO settings(id,data) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+            [body],
+        )
+        .map_err(|_| "保存失败，原设置未改变".to_string())?;
+    transaction
+        .commit()
+        .map_err(|_| "保存失败，原设置未改变".to_string())?;
+    Ok(view(environment))
 }
 
-/// Validate, merge into the existing file, and atomically replace it. Returns the new view.
-///
-/// When no user file exists yet, the starting object is what the CLI reads today (the dev
-/// fallback when enabled and present), so fields the CLI already honours are kept. The result
-/// is written to the save target only; a dev fallback is never modified.
-pub fn save(environment: &RuntimeEnvironment, input: &SettingsInput) -> Result<SettingsView, String> {
-    save_with_dev(environment, input, &dev_config_path())
+/// Patch only scrape_backends while holding the database write lock.
+pub fn save_scrape_backends(environment: &RuntimeEnvironment, backends: &[String]) -> Result<SettingsView, String> {
+    let mut chain: Vec<String> = Vec::new();
+    for raw in backends {
+        let name = raw.trim();
+        if !SCRAPE_BACKENDS.contains(&name) { return Err(format!("不支持的抓取后端：{name}")); }
+        if !chain.iter().any(|saved| saved == name) { chain.push(name.to_string()); }
+    }
+    if chain.is_empty() { return Err("抓取顺序至少要保留一个后端".into()); }
+    let path = config_path(environment).ok_or("无法定位配置数据库")?;
+    let mut connection = crate::config_db::open(&path)?;
+    let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|_| "配置数据库事务失败".to_string())?;
+    let mut existing = read_object(&transaction)?;
+    config_routes(&existing)?;
+    existing.insert("scrape_backends".into(), serde_json::json!(chain));
+    let body = serde_json::to_string(&existing).map_err(|_| "无法序列化设置".to_string())?;
+    transaction.execute("INSERT INTO settings(id,data) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data", [body])
+        .map_err(|_| "保存失败，原设置未改变".to_string())?;
+    transaction.commit().map_err(|_| "保存失败，原设置未改变".to_string())?;
+    Ok(view(environment))
 }
 
-/// `save` with the dev fallback location injected (tests point it at a temp file).
+// 保留测试注入缝；旧开发 JSON 路径不参与正常解析。
 pub fn save_with_dev(
     environment: &RuntimeEnvironment,
     input: &SettingsInput,
-    dev: &Path,
+    _: &Path,
 ) -> Result<SettingsView, String> {
-    save_with_dev_mode(environment, input, dev, dev_fallback_supported())
+    save(environment, input)
 }
 
-/// `save_with_dev` with the build-profile dev decision injected for tests. `allow_dev == false`
-/// is the release behaviour: a dev file is neither read nor merged into the user config.
-pub fn save_with_dev_mode(
-    environment: &RuntimeEnvironment,
-    input: &SettingsInput,
-    dev: &Path,
-    allow_dev: bool,
-) -> Result<SettingsView, String> {
-    let valid = validate(input)?;
-    let path = config_path(environment).ok_or("无法确定配置文件位置")?;
-    let existing = match read_source_with(environment, dev, allow_dev) {
-        (ReadSource::Env, _) => read_object(&path)?,
-        (ReadSource::User, Some(user)) => read_object(&user)?,
-        (ReadSource::DevFallback, Some(dev)) => read_object(&dev)?,
-        _ => Map::new(),
-    };
-    let merged = merge(existing, &valid);
-    write_atomic(&path, &merged)?;
-    Ok(view_with_dev_mode(environment, dev, allow_dev, None))
+pub fn view_with_dev(environment: &RuntimeEnvironment, _: &Path) -> SettingsView {
+    view(environment)
 }
 
-/// Current saved settings and the source that will actually run for the current route.
+fn unreadable_view(path: Option<PathBuf>, environment: &RuntimeEnvironment) -> SettingsView {
+    let present = path.as_ref().is_some_and(|path| path.exists());
+    SettingsView {
+        config_path: path.map(|path| path.to_string_lossy().into_owned()),
+        path_source: if environment
+            .variables
+            .get(CONFIG_ENV)
+            .is_some_and(|value| !value.is_empty())
+        {
+            "env"
+        } else {
+            "user"
+        }
+        .into(),
+        file_present: present,
+        read_source: if present { "sqlite" } else { "defaults" }.into(),
+        route: String::new(),
+        timeout: 60,
+        timeout_configured: false,
+        timeout_min: TIMEOUT_MIN,
+        timeout_max: TIMEOUT_MAX,
+        timeout_out_of_range: false,
+        effective_timeout: 60,
+        effective_timeouts: BTreeMap::new(),
+        routes: RouteMap::new(),
+        builtin_routes: builtin_routes(),
+        disabled_sources: vec![],
+        unknown_disabled_sources: vec![],
+        twitter_cookies_path: None,
+        scrape_backends: default_scrape_backends(),
+        scrape_backends_invalid: false,
+        builtin_scrape_backends: default_scrape_backends(),
+        scrape_backend_options: scrape_backend_options(),
+        active_sources: vec![],
+        status: "config_unreadable".into(),
+        message: "配置数据库无法读取，或 routes/type 不是有效配置；保存已被阻止。".into(),
+    }
+}
+
 pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
-    view_with_dev(environment, &dev_config_path())
-}
-
-/// `view` with the dev fallback location injected (tests point it at a temp file).
-pub fn view_with_dev(environment: &RuntimeEnvironment, dev: &Path) -> SettingsView {
-    view_with_dev_mode(environment, dev, dev_fallback_supported(), None)
-}
-
-/// `view` fed the CLI's own `doctor --format json` payload. The desktop displays the path and
-/// source the CLI reports instead of re-deriving them; without a payload it falls back to the
-/// local rules, which in a release build never include the compiled-in dev path.
-pub fn view_with_doctor(environment: &RuntimeEnvironment, doctor: Option<&Value>) -> SettingsView {
-    view_with_dev_mode(environment, &dev_config_path(), dev_fallback_supported(), doctor)
-}
-
-struct DoctorConfig {
-    path: Option<PathBuf>,
-    source: Option<ReadSource>,
-}
-
-/// Read only the two fields the settings page displays, rejecting anything unrecognised.
-fn parse_doctor_config(payload: &Value) -> Option<DoctorConfig> {
-    if !payload.is_object() {
-        return None;
-    }
-    let path = payload
-        .get("config_path")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
-    let source = payload
-        .get("config_path_source")
-        .and_then(Value::as_str)
-        .and_then(ReadSource::from_label);
-    if path.is_none() && source.is_none() {
-        return None;
-    }
-    Some(DoctorConfig { path, source })
-}
-
-/// `view` with the build-profile dev decision and the CLI doctor payload injected for tests.
-pub fn view_with_dev_mode(
-    environment: &RuntimeEnvironment,
-    dev: &Path,
-    allow_dev: bool,
-    doctor: Option<&Value>,
-) -> SettingsView {
-    let save_target = config_path(environment);
-    let save_target_is_env = environment.variables.get(CONFIG_ENV).is_some_and(|v| !v.is_empty());
-    let (local_read, local_read_path) = read_source_with(environment, dev, allow_dev);
-    let reported = doctor.and_then(parse_doctor_config);
-    let read = reported.as_ref().and_then(|row| row.source).unwrap_or(local_read);
-    // The CLI is the single source of truth: display and read exactly the path it reports.
-    let actual_path = reported.as_ref().and_then(|row| row.path.clone()).or(local_read_path);
-    let display_path = actual_path.clone().or_else(|| save_target.clone());
-    let file_present = display_path.as_ref().is_some_and(|path| path.exists());
-    let save_target_present = save_target.as_ref().is_some_and(|path| path.exists());
-    let config_path_text = display_path.as_ref().map(|path| path.to_string_lossy().into_owned());
-    let path_source = read.as_str().to_string();
-    let twitter_env_overrides = environment.variables.get(TWITTER_ENV).is_some_and(|v| !v.is_empty());
-    // Saving writes the user file; that overrides a dev fallback the CLI reads today.
-    let save_creates_override = read == ReadSource::DevFallback && !save_target_is_env && !save_target_present;
-    let object = match actual_path.as_deref().map(read_object) {
-        Some(Ok(map)) => Some(map),
-        Some(Err(_)) => None,
-        None => Some(Map::new()),
+    let path = config_path(environment);
+    let present = path.as_ref().is_some_and(|path| path.exists());
+    let object = if present {
+        path.as_ref()
+            .ok_or_else(|| "无法定位配置数据库".to_string())
+            .and_then(|path| crate::config_db::open(path))
+            .and_then(|connection| read_object(&connection))
+    } else {
+        Ok(Map::new())
     };
-    let Some(object) = object else {
-        return SettingsView {
-            config_path: config_path_text,
-            path_source,
-            file_present,
-            read_source: read.as_str().into(),
-            save_creates_override,
-            route: "default".into(),
-            timeout: route_default_timeout("default"),
-            timeout_configured: false,
-            timeout_out_of_range: false,
-            timeout_min: TIMEOUT_MIN,
-            timeout_max: TIMEOUT_MAX,
-            disabled_sources: vec![],
-            unknown_disabled_sources: vec![],
-            twitter_cookies_path: None,
-            twitter_env_overrides,
-            active_sources: vec![],
-            status: "config_unreadable".into(),
-            message: "现有配置文件无法读取或不是有效 JSON，保存已被阻止。".into(),
-        };
+    let object = match object {
+        Ok(object) => object,
+        Err(_) => return unreadable_view(path, environment),
     };
-    let route = object
-        .get("type")
-        .and_then(Value::as_str)
-        .and_then(route_name)
-        .unwrap_or("default")
-        .to_string();
-    let stored_timeout = object
+    let (routes, route) = match config_routes(&object) {
+        Ok(state) => state,
+        Err(_) => return unreadable_view(path, environment),
+    };
+    let configured_timeout = object
         .get("timeout")
         .and_then(Value::as_u64)
-        .map(|t| u32::try_from(t).unwrap_or(u32::MAX));
-    let timeout = stored_timeout.unwrap_or_else(|| route_default_timeout(&route));
-    let timeout_out_of_range = stored_timeout.is_some_and(|t| !(TIMEOUT_MIN..=TIMEOUT_MAX).contains(&t));
-    let unknown_disabled_sources: Vec<String> = unknown_disabled(&object)
-        .iter()
-        .map(|item| item.as_str().map(str::to_string).unwrap_or_else(|| item.to_string()))
-        .collect();
-    let disabled_sources: Vec<String> = object
+        .filter(|timeout| *timeout >= 1 && *timeout <= u32::MAX as u64)
+        .map(|timeout| timeout as u32);
+    let timeout_configured = configured_timeout.is_some();
+    let timeout = configured_timeout.unwrap_or_else(|| route_default_timeout(&route));
+    // Non-string entries are reported in their JSON spelling so the UI can show them.
+    let raw_disabled: Vec<String> = object
         .get("disabled_sources")
         .and_then(Value::as_array)
         .map(|items| {
-            let mut names: Vec<String> = items
+            items
                 .iter()
-                .filter_map(Value::as_str)
-                .filter_map(|raw| source_name(raw).ok().map(str::to_string))
-                .collect();
-            names.sort();
-            names.dedup();
-            names
+                .map(|item| match item {
+                    Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                })
+                .collect()
         })
         .unwrap_or_default();
-    let twitter_cookies_path = object
-        .get("twitter_cookies_path")
-        .and_then(Value::as_str)
-        .filter(|p| !p.trim().is_empty())
-        .map(str::to_string);
-    let active_sources: Vec<String> = route_sources(&route)
+    let unknown_disabled_sources: Vec<String> = raw_disabled
         .iter()
-        .filter(|name| !disabled_sources.iter().any(|d| d == *name))
-        .map(|name| name.to_string())
+        .filter(|raw| source_name(raw).is_err())
+        .cloned()
+        .collect();
+    let mut disabled_sources: Vec<String> = raw_disabled
+        .iter()
+        .filter_map(|raw| source_name(raw).ok().map(str::to_string))
+        .collect();
+    disabled_sources.sort();
+    disabled_sources.dedup();
+    let effective_timeouts: BTreeMap<String, u32> = routes
+        .iter()
+        .map(|(id, config)| {
+            (
+                id.clone(),
+                config
+                    .timeout
+                    .or(configured_timeout)
+                    .unwrap_or_else(|| route_default_timeout(id)),
+            )
+        })
+        .collect();
+    let selected = routes.get(&route).expect("selected route was validated");
+    let effective_timeout = effective_timeouts[&route];
+    let active_sources: Vec<String> = selected
+        .sources
+        .iter()
+        .filter(|source| !disabled_sources.contains(source))
+        .cloned()
         .collect();
     let (status, message) = if active_sources.is_empty() {
         (
             "no_active_source",
-            format!("当前路由 {route} 的全部搜索源已被禁用，搜索不会运行。请启用至少一个搜索源。"),
+            format!("当前路由 {route} 的全部搜索源已被禁用，搜索不会运行。"),
         )
     } else {
         ("ok", String::new())
     };
+    let (scrape_backends, scrape_backends_invalid) = scrape_chain(&object);
     SettingsView {
-        config_path: config_path_text,
-        path_source,
-        file_present,
-        read_source: read.as_str().into(),
-        save_creates_override,
-        route,
-        timeout,
-        timeout_configured: stored_timeout.is_some(),
-        timeout_out_of_range,
+        config_path: path.map(|path| path.to_string_lossy().into_owned()),
+        path_source: if environment
+            .variables
+            .get(CONFIG_ENV)
+            .is_some_and(|value| !value.is_empty())
+        {
+            "env"
+        } else {
+            "user"
+        }
+        .into(),
+        file_present: present,
+        read_source: if present { "sqlite" } else { "defaults" }.into(),
         timeout_min: TIMEOUT_MIN,
         timeout_max: TIMEOUT_MAX,
+        timeout_out_of_range: !(TIMEOUT_MIN..=TIMEOUT_MAX).contains(&timeout),
+        route,
+        timeout,
+        timeout_configured,
+        effective_timeout,
+        effective_timeouts,
+        routes,
+        builtin_routes: builtin_routes(),
         disabled_sources,
         unknown_disabled_sources,
-        twitter_cookies_path,
-        twitter_env_overrides,
+        twitter_cookies_path: object
+            .get("twitter_cookies_path")
+            .and_then(Value::as_str)
+            .filter(|path| !path.trim().is_empty())
+            .map(str::to_string),
+        scrape_backends,
+        scrape_backends_invalid,
+        builtin_scrape_backends: default_scrape_backends(),
+        scrape_backend_options: scrape_backend_options(),
         active_sources,
         status: status.into(),
         message,
-    }
-}
-
-/// Ask the CLI which config file it actually reads. The settings page displays the CLI's own
-/// answer instead of re-deriving path precedence; `None` keeps the local fallback when the CLI
-/// is not installed, times out, or returns something that is not a JSON object.
-impl DesktopManager {
-    pub(crate) fn doctor_config(&self) -> Option<Value> {
-        let cli = self.execution_cli().ok()?;
-        let args = ["doctor", "--no-keys", "--format", "json"].map(str::to_string);
-        let output = crate::process::bounded(
-            &cli,
-            &args,
-            &self.environment,
-            std::time::Duration::from_secs(5),
-        )
-        .ok()?;
-        if output.timed_out {
-            return None;
-        }
-        // Doctor exits non-zero for a broken config but still emits the JSON we display.
-        let payload: Value = serde_json::from_str(&output.stdout).ok()?;
-        payload.is_object().then_some(payload)
     }
 }

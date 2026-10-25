@@ -1,0 +1,549 @@
+{
+  "started_utc": "2026-09-13T03:42:59.568904+00:00",
+  "safety": "Temporary SQLite, synthetic key and payloads; patched opener, DNS, socket connect, subprocess plus audit hook; no load_keys/config/cookies",
+  "errors": [
+    {
+      "name": "github_seed",
+      "seed": true,
+      "payload": null,
+      "http_status": 403,
+      "body": {
+        "message": "API rate limit exceeded"
+      },
+      "adapter_output": [
+        {
+          "source": "github-repos",
+          "error": "HTTP Error 403: Forbidden"
+        }
+      ],
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "firecrawl_target_warning",
+      "seed": false,
+      "payload": {
+        "success": true,
+        "data": {
+          "warning": "Target page returned 403 Forbidden",
+          "markdown": "",
+          "content": ""
+        }
+      },
+      "http_status": null,
+      "body": null,
+      "adapter_output": {
+        "url": "https://example.com/test",
+        "error": "Firecrawl: Target page returned 403 Forbidden"
+      },
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "jina_target_warning",
+      "seed": false,
+      "payload": {
+        "success": true,
+        "data": {
+          "warning": "Target page returned 403 Forbidden",
+          "markdown": "",
+          "content": ""
+        }
+      },
+      "http_status": null,
+      "body": null,
+      "adapter_output": {
+        "url": "https://example.com/test",
+        "error": "Jina: Target page returned 403 Forbidden"
+      },
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "exa_target_control",
+      "seed": false,
+      "payload": {
+        "statuses": [
+          {
+            "status": "error",
+            "error": {
+              "httpStatusCode": 403,
+              "message": "Forbidden"
+            }
+          }
+        ]
+      },
+      "http_status": null,
+      "body": null,
+      "adapter_output": {
+        "url": "https://example.com/test",
+        "error": "Exa status: error: Forbidden (403)",
+        "error_origin": "target",
+        "error_type": "target"
+      },
+      "states": [
+        {
+          "status": "active",
+          "invalid_strikes": 0,
+          "last_error_type": null
+        },
+        {
+          "status": "active",
+          "invalid_strikes": 0,
+          "last_error_type": null
+        },
+        {
+          "status": "active",
+          "invalid_strikes": 0,
+          "last_error_type": null
+        }
+      ]
+    },
+    {
+      "name": "tavily_target_control",
+      "seed": false,
+      "payload": {
+        "failed_results": [
+          {
+            "error": "Target page returned 403 Forbidden"
+          }
+        ],
+        "results": []
+      },
+      "http_status": null,
+      "body": null,
+      "adapter_output": {
+        "url": "https://example.com/test",
+        "error": "Tavily advanced: Target page returned 403 Forbidden; fallback Tavily basic: Target page returned 403 Forbidden",
+        "error_origin": "target",
+        "error_type": "target"
+      },
+      "states": [
+        {
+          "status": "active",
+          "invalid_strikes": 0,
+          "last_error_type": null
+        },
+        {
+          "status": "active",
+          "invalid_strikes": 0,
+          "last_error_type": null
+        },
+        {
+          "status": "active",
+          "invalid_strikes": 0,
+          "last_error_type": null
+        }
+      ]
+    },
+    {
+      "name": "jina_rate_control",
+      "seed": false,
+      "payload": null,
+      "http_status": 429,
+      "body": {
+        "message": "Rate limit exceeded"
+      },
+      "adapter_output": {
+        "url": "https://example.com/test",
+        "error": "Jina: HTTP 429: Rate limit exceeded",
+        "rate_limited": true
+      },
+      "states": [
+        {
+          "status": "cooldown",
+          "invalid_strikes": 0,
+          "last_error_type": "rate_limit"
+        },
+        {
+          "status": "cooldown",
+          "invalid_strikes": 0,
+          "last_error_type": "rate_limit"
+        },
+        {
+          "status": "cooldown",
+          "invalid_strikes": 0,
+          "last_error_type": "rate_limit"
+        }
+      ]
+    },
+    {
+      "name": "brave_http403_hypothesis",
+      "seed": false,
+      "payload": null,
+      "http_status": 403,
+      "body": {
+        "message": "Rate limit exceeded"
+      },
+      "adapter_output": [
+        {
+          "source": "brave",
+          "error": "HTTP Error 403: Forbidden"
+        }
+      ],
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "parallel_http403_hypothesis",
+      "seed": false,
+      "payload": null,
+      "http_status": 403,
+      "body": {
+        "message": "Rate limit exceeded"
+      },
+      "adapter_output": [
+        {
+          "source": "parallel",
+          "error": "HTTP Error 403: Forbidden"
+        }
+      ],
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "baidu_http403_hypothesis",
+      "seed": false,
+      "payload": null,
+      "http_status": 403,
+      "body": {
+        "message": "Rate limit exceeded"
+      },
+      "adapter_output": [
+        {
+          "source": "baidu",
+          "error": "HTTP Error 403: Forbidden"
+        }
+      ],
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "exa_http403_hypothesis",
+      "seed": false,
+      "payload": null,
+      "http_status": 403,
+      "body": {
+        "message": "Rate limit exceeded"
+      },
+      "adapter_output": [
+        {
+          "source": "exa",
+          "error": "HTTP Error 403: Forbidden"
+        }
+      ],
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "firecrawl_http403_hypothesis",
+      "seed": false,
+      "payload": null,
+      "http_status": 403,
+      "body": {
+        "message": "Rate limit exceeded"
+      },
+      "adapter_output": [
+        {
+          "source": "firecrawl",
+          "error": "HTTP Error 403: Forbidden"
+        }
+      ],
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "serpapi_http403_hypothesis",
+      "seed": false,
+      "payload": null,
+      "http_status": 403,
+      "body": {
+        "message": "Rate limit exceeded"
+      },
+      "adapter_output": [
+        {
+          "source": "serpapi",
+          "error": "HTTP Error 403: Forbidden"
+        }
+      ],
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    },
+    {
+      "name": "tavily_http403_hypothesis",
+      "seed": false,
+      "payload": null,
+      "http_status": 403,
+      "body": {
+        "message": "Rate limit exceeded"
+      },
+      "adapter_output": [
+        {
+          "source": "tavily",
+          "error": "HTTP Error 403: Rate limit exceeded",
+          "error_origin": "provider",
+          "error_type": "invalid"
+        }
+      ],
+      "states": [
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 1,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "transient_invalid",
+          "invalid_strikes": 2,
+          "last_error_type": "invalid"
+        },
+        {
+          "status": "invalid",
+          "invalid_strikes": 3,
+          "last_error_type": "invalid"
+        }
+      ]
+    }
+  ],
+  "mcp": [
+    {
+      "tool": "get_key_status",
+      "args": {},
+      "seed": true,
+      "call_seconds": 0.3353,
+      "heartbeat_delay_seconds": 0.3354,
+      "dispatch_error": null
+    },
+    {
+      "tool": "read_source",
+      "args": {
+        "source_id": "synthetic-missing-source"
+      },
+      "seed": false,
+      "call_seconds": 0.3438,
+      "heartbeat_delay_seconds": 0.3438,
+      "dispatch_error": null
+    },
+    {
+      "tool": "list_sources",
+      "args": {
+        "include_key_status": true
+      },
+      "seed": false,
+      "call_seconds": 0.3443,
+      "heartbeat_delay_seconds": 0.3443,
+      "dispatch_error": null
+    },
+    {
+      "tool": "list_sources",
+      "args": {
+        "include_scraper_stats": true
+      },
+      "seed": false,
+      "call_seconds": 0.3212,
+      "heartbeat_delay_seconds": 0.3213,
+      "dispatch_error": null
+    },
+    {
+      "tool": "reset_key_state",
+      "args": {},
+      "seed": false,
+      "call_seconds": 0.3406,
+      "heartbeat_delay_seconds": 0.3407,
+      "dispatch_error": null
+    },
+    {
+      "tool": "get_site_scraper_stats",
+      "args": {},
+      "seed": false,
+      "call_seconds": 0.3295,
+      "heartbeat_delay_seconds": 0.3296,
+      "dispatch_error": null
+    },
+    {
+      "tool": "set_site_scraper_preference",
+      "args": {
+        "site": "example.com",
+        "scraper": "jina"
+      },
+      "seed": false,
+      "call_seconds": 0.3508,
+      "heartbeat_delay_seconds": 0.3509,
+      "dispatch_error": null
+    },
+    {
+      "tool": "reset_site_scraper_stats",
+      "args": {},
+      "seed": false,
+      "call_seconds": 0.3211,
+      "heartbeat_delay_seconds": 0.3212,
+      "dispatch_error": null
+    },
+    {
+      "tool": "list_sources",
+      "args": {},
+      "seed": false,
+      "call_seconds": 0.0001,
+      "heartbeat_delay_seconds": 0.0258,
+      "dispatch_error": null
+    },
+    {
+      "tool": "read_source",
+      "args": {
+        "source_id": "synthetic",
+        "use_state": false
+      },
+      "seed": false,
+      "call_seconds": 0.0001,
+      "heartbeat_delay_seconds": 0.0256,
+      "dispatch_error": null
+    },
+    {
+      "tool": "set_site_scraper_preference",
+      "args": {
+        "site": "example.com",
+        "scraper": "invalid"
+      },
+      "seed": false,
+      "call_seconds": 0.0001,
+      "heartbeat_delay_seconds": 0.0252,
+      "dispatch_error": null
+    }
+  ],
+  "sdk_dispatch": "    async def call_fn_with_arg_validation(\n        self,\n        fn: Callable[..., Any | Awaitable[Any]],\n        fn_is_async: bool,\n        arguments_to_validate: dict[str, Any],\n        arguments_to_pass_directly: dict[str, Any] | None,\n    ) -> Any:\n        \"\"\"Call the given function with arguments validated and injected.\n\n        Arguments are first attempted to be parsed from JSON, then validated against\n        the argument model, before being passed to the function.\n        \"\"\"\n        arguments_pre_parsed = self.pre_parse_json(arguments_to_validate)\n        arguments_parsed_model = self.arg_model.model_validate(arguments_pre_parsed)\n        arguments_parsed_dict = arguments_parsed_model.model_dump_one_level()\n\n        arguments_parsed_dict |= arguments_to_pass_directly or {}\n\n        if fn_is_async:\n            return await fn(**arguments_parsed_dict)\n        else:\n            return fn(**arguments_parsed_dict)\n",
+  "ended_utc": "2026-09-13T03:43:04.209882+00:00"
+}

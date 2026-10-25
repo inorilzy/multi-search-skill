@@ -121,7 +121,7 @@ export const createApp = createNavigation;
 export async function start(root = document.querySelector('#page'), nav = document.querySelector('[data-navigation]')) {
   // withGlobalTauri is off: no global Tauri API object is injected. Only the IPC bridge Tauri always
   // injects is used, and the capability file limits it to this app's own typed commands.
-  const bridge = window.__TAURI_INTERNALS__;
+  const bridge = /** @type {any} */ (window).__TAURI_INTERNALS__;
   const invoke = typeof bridge?.invoke === 'function' ? (cmd, args) => bridge.invoke(cmd, args) : null;
   const navigation = createNavigation(root, nav, invoke);
   await navigation.select(pages[0], { moveFocus: false });

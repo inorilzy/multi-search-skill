@@ -1,0 +1,49 @@
+{
+  "requirementId": "REQ-10",
+  "title": "旧 scrape_top 不再裁剪最终抓取列表",
+  "document": "skills/multi-search/references/search.md",
+  "location": "skills/multi-search/references/search.md:L67",
+  "quote": "`scrape_top` no longer selects how many URLs to fetch.",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'scrape_top|legacy_scrape_limits|run_ranked_fetch_stage' multi_search_mcp/src/service.py",
+      "result": "8 hits in explicit evidence files",
+      "matches": [
+        "19:from .scrape.stage import run_ranked_fetch_stage",
+        "62:    scrape_top: int | None = None",
+        "359:        scrape_top=0,",
+        "649:    fetched = run_ranked_fetch_stage(",
+        "728:        route_meta={**plan.route_defaults, \"scrape_top\": SEARCH_RESULT_LIMIT,",
+        "734:    if request.scrape_top is not None or request.scrape_per_source is not None:",
+        "735:        response[\"diagnostics\"][\"legacy_scrape_limits\"] = (",
+        "736:            \"scrape_top and scrape_per_source no longer limit fetching; \""
+      ]
+    }
+  ],
+  "reasoning": "run_multi_search 包装 run_search_web；传正文预览/超时/并发，但不以scrape_top裁剪response.results。最终list整体交fetch stage。显式旧参数只产生diagnostic；markdown/both输出仅移除scrapes中的重复正文副本。负旧参数仍被输入验证，未声称任意旧参数值都接受。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-10.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L697-L714",
+      "quote": "def run_multi_search(request: MultiSearchRequest | dict) -> dict:\n    \"\"\"Compatibility presentation of the shared RRF search-and-fetch flow.\"\"\"\n    if isinstance(request, dict):\n        request = MultiSearchRequest(**request)\n    config = _load_config_safe(request.config_path)\n    plan = resolve_search_plan(request, config)\n    query_runs = []\n    response = run_search_web(\n        SearchWebRequest(",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L734-L757",
+      "quote": "    if request.scrape_top is not None or request.scrape_per_source is not None:\n        response[\"diagnostics\"][\"legacy_scrape_limits\"] = (\n            \"scrape_top and scrape_per_source no longer limit fetching; \"\n            \"all final RRF results (at most 15) are fetched\"\n        )\n    if plan.output_mode in {\"markdown\", \"both\"}:\n        raw_counts = {}\n        for row in rows:\n            if row.get(\"url\") and not row.get(\"error\") and not is_empty_result(row):",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L649-L651",
+      "quote": "    fetched = run_ranked_fetch_stage(\n        response[\"results\"], fetch=fetch, timeout=body_timeout, concurrency=concurrency,\n    )",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

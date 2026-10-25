@@ -21,7 +21,7 @@ function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 }
 
-export async function mountMigration(root, api, { number = '06' } = {}) {
+export async function mountMigration(root, api, { number = '08' } = {}) {
   root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / LEGACY MIGRATION</p><h1 tabindex="-1">迁移旧 Key 文件。</h1>
     <p>只迁移单个 Key 的搜索源。多 Key 列表、Jina 及无法识别的条目会保留在旧文件中，不做任何改动。旧文件不会被删除。</p></section>
     <section class="panel"><div class="section-title"><h2>预览</h2><button type="button" data-action="preview">预览旧文件</button></div>

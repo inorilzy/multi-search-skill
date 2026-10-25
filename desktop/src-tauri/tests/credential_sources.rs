@@ -7,7 +7,16 @@ const SYNTHETIC_KEY: &str = "synthetic-source-key-0101";
 const FILE_KEY_A: &str = "file-github-key-0102";
 const FILE_KEY_B: &str = "file-github-key-0103";
 
-const ALLOWED: &[&str] = &["baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github_repos"];
+const ALLOWED: &[&str] = &[
+    "baidu",
+    "brave",
+    "parallel",
+    "tavily",
+    "exa",
+    "firecrawl",
+    "serpapi",
+    "github-repos",
+];
 
 #[derive(Default)]
 struct Memory(Mutex<BTreeMap<String, Vec<u8>>>);
@@ -58,13 +67,134 @@ fn store_blob(key: &str) -> Vec<u8> {
 
 #[test]
 fn github_repos_maps_to_github_provider_and_unknown_names_are_rejected() {
-    assert_eq!(fixture::resolve("github-repos").unwrap(), ("github_repos", "github"));
-    assert_eq!(fixture::resolve("github_repos").unwrap(), ("github_repos", "github"));
+    assert_eq!(
+        fixture::resolve("github-repos").unwrap(),
+        ("github-repos", "github")
+    );
+    assert_eq!(
+        fixture::resolve("github_repos").unwrap(),
+        ("github-repos", "github")
+    );
+    // `github` is a documented CLI alias; the desktop resolver accepts it and
+    // routes it to the `github` credential provider like the CLI does.
+    assert_eq!(
+        fixture::resolve("github").unwrap(),
+        ("github-repos", "github")
+    );
     assert_eq!(fixture::resolve("tavily").unwrap(), ("tavily", "tavily"));
-    for bad in ["", "  ", "../tavily", "tavily/../brave", "jina", "v2ex", "ns-src/tavily", "TAVILY"] {
+    for bad in [
+        "",
+        "  ",
+        "../tavily",
+        "tavily/../brave",
+        "ns-src/tavily",
+        "TAVILY",
+    ] {
         let error = fixture::resolve(bad).unwrap_err();
         assert_eq!(error, "不支持的搜索源", "input {bad:?}");
     }
+}
+
+#[test]
+fn jina_credentials_round_trip_without_becoming_a_search_source() {
+    let backend = Memory::default();
+    let vars = BTreeMap::new();
+    assert_eq!(fixture::resolve("jina").unwrap(), ("jina", "jina"));
+    let row = fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a\nsynthetic-jina-b", 42.0).unwrap();
+    assert_eq!(row.source, "jina");
+    assert_eq!(row.store.state, "present");
+    assert_eq!(row.effective_source, "sqlite");
+    assert_eq!(fixture::read_for(&backend, &vars, "jina").unwrap(), "synthetic-jina-a\nsynthetic-jina-b");
+    assert_eq!(backend.0.lock().unwrap().keys().cloned().collect::<Vec<_>>(), vec!["jina"]);
+    assert!(fixture::source_test("jina", &serde_json::json!({})).is_err());
+    assert!(multi_search_desktop::provider::resolve_canonical("jina").is_none());
+    let info = multi_search_desktop::provider::list().into_iter().find(|row| row.source == "jina").unwrap();
+    assert!(info.keyed);
+    assert!(!info.search);
+}
+
+#[test]
+fn jina_structured_keys_are_visible_in_editor_without_silent_omission() {
+    let backend = Memory::default();
+    for value in [
+        serde_json::json!({"key":"synthetic-jina-a", "exhausted":true}),
+        serde_json::json!([{"key":"synthetic-jina-a", "exhausted":true}, "synthetic-jina-b"]),
+    ] {
+        let expected = if value.is_array() { "synthetic-jina-a\nsynthetic-jina-b" } else { "synthetic-jina-a" };
+        backend.0.lock().unwrap().insert("jina".into(), serde_json::to_vec(&serde_json::json!({"v":1,"key":value,"saved_at":1.0})).unwrap());
+        assert_eq!(fixture::read_for(&backend, &BTreeMap::new(), "jina").unwrap(), expected);
+    }
+}
+
+#[test]
+fn jina_editor_save_preserves_metadata_of_unchanged_lines() {
+    let backend = Memory::default();
+    let vars = BTreeMap::new();
+    let stored = serde_json::json!([
+        {"key":"synthetic-jina-a","exhausted":true,"note":"legacy"},
+        "synthetic-jina-b",
+        {"key":"synthetic-jina-c","exhausted":false}
+    ]);
+    let seed = |value: &serde_json::Value| {
+        backend.0.lock().unwrap().insert("jina".into(), serde_json::to_vec(&serde_json::json!({"v":1,"key":value,"saved_at":1.0})).unwrap());
+    };
+    let saved = || -> serde_json::Value {
+        let blob: serde_json::Value = serde_json::from_slice(&backend.0.lock().unwrap()["jina"]).unwrap();
+        blob["key"].clone()
+    };
+    seed(&stored);
+    // Round-trip of unchanged editor text keeps every entry verbatim.
+    let text = fixture::read_for(&backend, &vars, "jina").unwrap();
+    assert_eq!(text, "synthetic-jina-a\nsynthetic-jina-b\nsynthetic-jina-c");
+    fixture::save_for(&backend, &vars, "jina", &text, 2.0).unwrap();
+    assert_eq!(saved(), stored);
+    // Reorder + remove c + add d: a keeps metadata, d is a plain new key, c is dropped.
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-d\nsynthetic-jina-a", 3.0).unwrap();
+    assert_eq!(saved(), serde_json::json!(["synthetic-jina-d", {"key":"synthetic-jina-a","exhausted":true,"note":"legacy"}]));
+    // Editing a key's text is a new key: old metadata does not carry over.
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a2", 4.0).unwrap();
+    assert_eq!(saved(), serde_json::json!("synthetic-jina-a2"));
+    // A single structured entry stays an object.
+    seed(&serde_json::json!({"key":"synthetic-jina-a","exhausted":true}));
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a", 5.0).unwrap();
+    assert_eq!(saved(), serde_json::json!({"key":"synthetic-jina-a","exhausted":true}));
+    // Duplicate lines do not clone one entry's metadata.
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a\nsynthetic-jina-a", 6.0).unwrap();
+    assert_eq!(saved(), serde_json::json!([{"key":"synthetic-jina-a","exhausted":true}, "synthetic-jina-a"]));
+    let duplicate = serde_json::json!(["synthetic-jina-a", {"key":"synthetic-jina-a","exhausted":true}]);
+    seed(&duplicate);
+    fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a\nsynthetic-jina-a", 7.0).unwrap();
+    assert_eq!(saved(), duplicate);
+    // Unreadable existing state must not silently erase metadata.
+    backend.0.lock().unwrap().insert("jina".into(), b"broken blob".to_vec());
+    assert!(fixture::save_for(&backend, &vars, "jina", "synthetic-jina-a", 8.0).is_err());
+    assert_eq!(backend.0.lock().unwrap()["jina"], b"broken blob");
+}
+
+#[test]
+fn jina_editor_roundtrip_preserves_metadata_for_padded_stored_keys() {
+    let backend = Memory::default();
+    let vars = BTreeMap::new();
+    let stored = serde_json::json!([
+        {"key":" synthetic-jina-a ","exhausted":true,"note":{"legacy":true}},
+        {"key":"synthetic-jina-b","exhausted":false}
+    ]);
+    backend.0.lock().unwrap().insert("jina".into(), serde_json::to_vec(
+        &serde_json::json!({"v":1,"key":stored,"saved_at":1.0})
+    ).unwrap());
+    let text = fixture::read_for(&backend, &vars, "jina").unwrap();
+    fixture::save_for(&backend, &vars, "jina", &text, 2.0).unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&backend.0.lock().unwrap()["jina"]).unwrap();
+    assert_eq!(saved["key"], stored);
+}
+
+#[test]
+fn non_jina_save_ignores_structured_merge() {
+    let backend = Memory::default();
+    let vars = BTreeMap::new();
+    fixture::save_for(&backend, &vars, "tavily", "synthetic-t-a\nsynthetic-t-b", 1.0).unwrap();
+    let blob: serde_json::Value = serde_json::from_slice(&backend.0.lock().unwrap()["tavily"]).unwrap();
+    assert_eq!(blob["key"], serde_json::json!(["synthetic-t-a", "synthetic-t-b"]));
 }
 
 #[test]
@@ -86,17 +216,22 @@ fn every_allowlisted_source_reads_only_its_own_provider_target() {
             .0
             .lock()
             .unwrap()
-            .insert(format!("ns-src/{provider}"), store_blob(SYNTHETIC_KEY));
+            .insert(provider.to_string(), store_blob(SYNTHETIC_KEY));
     }
     for source in ALLOWED {
         let row = fixture::overview_for(&backend, &home.vars(), source).unwrap();
         assert_eq!(row.source, *source);
-        assert_eq!(row.store.state, "present", "{source} must read its own provider entry");
+        assert_eq!(
+            row.store.state, "present",
+            "{source} must read its own provider entry"
+        );
     }
-    // github_repos and github share one provider entry, so 8 sources map to 8 distinct targets
+    // github-repos and github share one provider entry, so 8 sources map to 8 distinct targets
     // (tavily, baidu, brave, parallel, exa, firecrawl, serpapi, github).
-    let providers: std::collections::BTreeSet<&str> =
-        ALLOWED.iter().map(|s| fixture::resolve(s).unwrap().1).collect();
+    let providers: std::collections::BTreeSet<&str> = ALLOWED
+        .iter()
+        .map(|s| fixture::resolve(s).unwrap().1)
+        .collect();
     assert_eq!(providers.len(), ALLOWED.len());
     assert_eq!(backend.0.lock().unwrap().len(), ALLOWED.len());
 }
@@ -105,15 +240,26 @@ fn every_allowlisted_source_reads_only_its_own_provider_target() {
 fn github_repos_uses_github_entry_and_tavily_entry_does_not_satisfy_it() {
     let backend = Memory::default();
     let home = Home::new("github");
-    backend.0.lock().unwrap().insert("ns-src/tavily".into(), store_blob(SYNTHETIC_KEY));
-    let row = fixture::overview_for(&backend, &home.vars(), "github_repos").unwrap();
-    assert_eq!(row.store.state, "absent", "tavily entry must not satisfy github-repos");
+    backend
+        .0
+        .lock()
+        .unwrap()
+        .insert("tavily".into(), store_blob(SYNTHETIC_KEY));
+    let row = fixture::overview_for(&backend, &home.vars(), "github-repos").unwrap();
+    assert_eq!(
+        row.store.state, "absent",
+        "tavily entry must not satisfy github-repos"
+    );
     assert_eq!(row.effective_source, "none");
 
-    backend.0.lock().unwrap().insert("ns-src/github".into(), store_blob(SYNTHETIC_KEY));
-    let row = fixture::overview_for(&backend, &home.vars(), "github_repos").unwrap();
+    backend
+        .0
+        .lock()
+        .unwrap()
+        .insert("github".into(), store_blob(SYNTHETIC_KEY));
+    let row = fixture::overview_for(&backend, &home.vars(), "github-repos").unwrap();
     assert_eq!(row.store.state, "present");
-    assert_eq!(row.effective_source, "credential_store");
+    assert_eq!(row.effective_source, "sqlite");
 }
 
 #[test]
@@ -121,9 +267,9 @@ fn file_list_is_reported_by_count_and_never_by_value() {
     let backend = Memory::default();
     let home = Home::new("filecount");
     home.write_keys(&format!(r#"{{"github":["{FILE_KEY_A}","{FILE_KEY_B}"]}}"#));
-    let row = fixture::overview_for(&backend, &home.vars(), "github_repos").unwrap();
-    assert_eq!(row.effective_source, "file");
-    assert_eq!(row.file_key_count, 2);
+    let row = fixture::overview_for(&backend, &home.vars(), "github-repos").unwrap();
+    assert_eq!(row.effective_source, "none");
+    assert!(!serde_json::to_value(&row).unwrap().as_object().unwrap().contains_key("file_key_count"));
     let text = format!("{row:?}");
     assert!(!text.contains(FILE_KEY_A));
     assert!(!text.contains(FILE_KEY_B));
@@ -135,10 +281,14 @@ fn store_overrides_file_list_and_file_is_untouched() {
     let home = Home::new("override");
     let original = format!(r#"{{"github":["{FILE_KEY_A}","{FILE_KEY_B}"]}}"#);
     home.write_keys(&original);
-    backend.0.lock().unwrap().insert("ns-src/github".into(), store_blob(SYNTHETIC_KEY));
-    let row = fixture::overview_for(&backend, &home.vars(), "github_repos").unwrap();
-    assert_eq!(row.effective_source, "credential_store");
-    assert_eq!(row.file_key_count, 2, "file list stays listed and counted");
+    backend
+        .0
+        .lock()
+        .unwrap()
+        .insert("github".into(), store_blob(SYNTHETIC_KEY));
+    let row = fixture::overview_for(&backend, &home.vars(), "github-repos").unwrap();
+    assert_eq!(row.effective_source, "sqlite");
+    assert!(!serde_json::to_value(&row).unwrap().as_object().unwrap().contains_key("file_key_count"));
     assert!(!format!("{row:?}").contains(SYNTHETIC_KEY));
     assert_eq!(home.keys_text(), original);
 }
@@ -147,26 +297,45 @@ fn store_overrides_file_list_and_file_is_untouched() {
 fn env_override_is_named_by_variable_and_never_valued() {
     let backend = Memory::default();
     let home = Home::new("env");
-    backend.0.lock().unwrap().insert("ns-src/exa".into(), store_blob(SYNTHETIC_KEY));
+    backend
+        .0
+        .lock()
+        .unwrap()
+        .insert("exa".into(), store_blob(SYNTHETIC_KEY));
     let mut vars = home.vars();
     vars.insert("EXA_API_KEY".into(), "synthetic-env-exa-0104".into());
     let row = fixture::overview_for(&backend, &vars, "exa").unwrap();
-    assert_eq!(row.effective_source, "env");
-    assert!(row.env_overrides_store);
-    assert_eq!(row.env_var, "EXA_API_KEY");
+    assert_eq!(row.effective_source, "sqlite");
+    assert!(!serde_json::to_value(&row).unwrap().as_object().unwrap().contains_key("env_var"));
     assert!(!format!("{row:?}").contains("synthetic-env-exa-0104"));
 }
 
 #[test]
 fn all_twelve_source_tests_use_typed_cli_arguments_and_independent_status() {
-    for source in ALLOWED.iter().copied().chain(["hackernews", "stackoverflow", "sov2ex", "twitter"]) {
+    for source in
+        ALLOWED
+            .iter()
+            .copied()
+            .chain(["hackernews", "stackoverflow", "sov2ex", "twitter"])
+    {
         let payload = serde_json::json!({"provider_status": [{"source": source.replace('-', "_"), "status": "ok"}]});
         let (args, outcome) = fixture::source_test(source, &payload).unwrap();
-        assert_eq!(args[args.iter().position(|arg| arg == "--source").unwrap() + 1], source);
+        assert_eq!(
+            args[args.iter().position(|arg| arg == "--source").unwrap() + 1],
+            source
+        );
         assert_eq!(outcome.result, "success");
         let failed = serde_json::json!({"provider_status": [{"source": source, "status": "failed", "errors": [{"error_type": "network"}]}]});
-        assert_eq!(fixture::source_test(source, &failed).unwrap().1.result, "network");
-        if !ALLOWED.contains(&source) { assert!(fixture::resolve(source).is_err(), "non-key source cannot access key CRUD"); }
+        assert_eq!(
+            fixture::source_test(source, &failed).unwrap().1.result,
+            "network"
+        );
+        if !ALLOWED.contains(&source) {
+            assert!(
+                fixture::resolve(source).is_err(),
+                "non-key source cannot access key CRUD"
+            );
+        }
     }
     assert!(fixture::source_test("jina", &serde_json::json!({})).is_err());
 }
@@ -174,38 +343,29 @@ fn all_twelve_source_tests_use_typed_cli_arguments_and_independent_status() {
 #[test]
 fn environment_alias_precedence_matches_real_python_load_keys_contract() {
     let home = Home::new("cross-language-alias");
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let script = r#"
-import json, sys
-from pathlib import Path
-from multi_search_mcp.src.state.keys import KEY_ENV_PAIRS, CREDENTIAL_STORE_PROVIDERS, load_keys
-cases = []
-for provider in CREDENTIAL_STORE_PROVIDERS:
-    aliases = [name for name, key in KEY_ENV_PAIRS if key == provider]
-    for length in range(1, len(aliases) + 1):
-        present = aliases[:length]
-        env = {name: 'synthetic-alias-' + str(i) for i, name in enumerate(present)}
-        env.update({name: '' for name in aliases[length:]})
-        loaded = load_keys(keys_file=Path(sys.argv[1]) / 'absent.json', environ=env)
-        expected = next(name for name in present if env[name] == loaded[provider])
-        cases.append({'provider': provider, 'present': present, 'empty': aliases[length:], 'expected': expected})
-print(json.dumps(cases))
-"#;
-    let output = std::process::Command::new("python").args(["-B", "-c", script])
-        .arg(&home.0).env("PYTHONPATH", &root).env("HOME", &home.0).env("USERPROFILE", &home.0)
-        .env("MULTI_SEARCH_TEST_ISOLATION", "1").output().unwrap();
-    assert!(output.status.success(), "Python contract process failed");
-    let cases: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let backend = Memory::default();
-    for case in cases.as_array().unwrap() {
-        let provider = case["provider"].as_str().unwrap();
-        let source = if provider == "github" { "github_repos" } else { provider };
-        let mut vars = home.vars();
-        for name in case["present"].as_array().unwrap() { vars.insert(name.as_str().unwrap().into(), "synthetic-alias".into()); }
-        for name in case["empty"].as_array().unwrap() { vars.insert(name.as_str().unwrap().into(), String::new()); }
+    let mut vars = home.vars();
+    for name in [
+        "BAIDU_QIANFAN_API_KEY",
+        "QIANFAN_API_KEY",
+        "APPBUILDER_API_KEY",
+        "BRAVE_SEARCH_API_KEY",
+        "BRAVE_API_KEY",
+        "PARALLEL_API_KEY",
+        "TAVILY_API_KEY",
+        "EXA_API_KEY",
+        "FIRECRAWL_API_KEY",
+        "SERPAPI_API_KEY",
+        "SERPAPI_KEY",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+    ] {
+        vars.insert(name.into(), "synthetic-alias".into());
+    }
+    for source in ALLOWED {
         let row = fixture::overview_for(&backend, &vars, source).unwrap();
-        assert_eq!(row.env_var, case["expected"].as_str().unwrap(), "{source}");
-        assert_eq!(row.effective_source, "env");
+        assert_eq!(row.effective_source, "none");
+        assert!(!serde_json::to_value(&row).unwrap().as_object().unwrap().contains_key("env_var"));
     }
 }
 
@@ -215,16 +375,16 @@ fn corrupt_keys_file_counts_as_zero_and_is_not_echoed() {
     let home = Home::new("corrupt");
     home.write_keys(&format!("{{not json {FILE_KEY_A}"));
     let row = fixture::overview_for(&backend, &home.vars(), "brave").unwrap();
-    assert_eq!(row.file_key_count, 0);
+    assert!(!serde_json::to_value(&row).unwrap().as_object().unwrap().contains_key("file_key_count"));
     assert_eq!(row.effective_source, "none");
     assert!(!format!("{row:?}").contains(FILE_KEY_A));
 }
 
 #[test]
 fn core_source_result_overrides_local_derivation() {
-    // Local state alone would say "file", but Core reports the store entry as
-    // unreadable and fails that provider closed. The desktop must display Core's
-    // answer (never fall back to the plaintext file).
+    // Locally the store is absent, but Core reports the provider as unavailable (an unreadable
+    // store entry fails that provider closed). The desktop must display Core's answer and never
+    // fall back to the plaintext legacy file.
     let backend = Memory::default();
     let home = Home::new("core-source");
     home.write_keys(&format!(r#"{{"github":"{FILE_KEY_A}"}}"#));
@@ -241,9 +401,9 @@ fn core_source_result_overrides_local_derivation() {
             }
         }
     });
-    let row = fixture::overview_with_core(&backend, &home.vars(), "github_repos", &doctor).unwrap();
+    let row = fixture::overview_with_core(&backend, &home.vars(), "github-repos", &doctor).unwrap();
     assert_eq!(row.effective_source, "unavailable");
-    assert_eq!(row.file_key_count, 1, "Core's count is displayed");
+    assert_eq!(row.file_key_count, Some(1), "Core's count is displayed");
     assert!(!format!("{row:?}").contains(FILE_KEY_A));
 
     // Core decides env precedence and which alias is effective.
@@ -260,22 +420,23 @@ fn core_source_result_overrides_local_derivation() {
     });
     let row = fixture::overview_with_core(&backend, &home.vars(), "exa", &doctor).unwrap();
     assert_eq!(row.effective_source, "env");
-    assert_eq!(row.env_var, "EXA_API_KEY");
-    assert!(row.env_overrides_store);
-    assert_eq!(row.file_key_count, 0);
+    assert_eq!(row.env_var.as_deref(), Some("EXA_API_KEY"));
+    assert_eq!(row.env_overrides_store, Some(true));
+    assert_eq!(row.file_key_count, Some(0));
 }
 
 #[test]
-fn payload_without_per_provider_rows_keeps_fixture_fallback() {
-    // `doctor --no-keys` has no per-provider section. The production rule is
-    // absent (it always comes from Core), while the test fixture keeps a local
-    // derivation so desktop unit tests need no CLI.
+fn payload_without_per_provider_rows_keeps_the_local_store_answer() {
+    // `doctor --no-keys` (or an older CLI) has no per-provider section: nothing is applied, so the
+    // overview shows only what the local store knows and omits the Core-owned fields.
     let backend = Memory::default();
     let home = Home::new("no-core");
     home.write_keys(&format!(r#"{{"github":"{FILE_KEY_A}"}}"#));
     let doctor = serde_json::json!({"key_sources": {"env": [], "file": "~/.search-keys.json"}});
-    let row = fixture::overview_with_core(&backend, &home.vars(), "github_repos", &doctor).unwrap();
-    // Without a per-provider row nothing is applied; the test fixture keeps the
-    // local derivation so this seam stays usable without a CLI.
-    assert_eq!(row.effective_source, "file");
+    let row = fixture::overview_with_core(&backend, &home.vars(), "github-repos", &doctor).unwrap();
+    assert_eq!(row.effective_source, "none");
+    let object = serde_json::to_value(&row).unwrap();
+    for absent in ["env_var", "env_overrides_store", "file_key_count"] {
+        assert!(!object.as_object().unwrap().contains_key(absent), "{absent}");
+    }
 }

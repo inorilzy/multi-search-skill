@@ -12,6 +12,41 @@ use std::{
 static NEXT: AtomicU64 = AtomicU64::new(0);
 static FIXTURE: OnceLock<PathBuf> = OnceLock::new();
 
+/// Build the fixture CLI once per test binary.
+///
+/// Every test binary gets its own output path (the file stem comes from the
+/// running test executable), because `cargo test --tests` runs those binaries
+/// in parallel. A shared `target/fixture-cli.exe` let one process truncate the
+/// file while another was copying it, which surfaced as random `version_failed`
+/// assertions. The compile goes to a temporary name first and is renamed into
+/// place so a reader never observes a half-written executable.
+pub fn fixture_cli() -> PathBuf {
+    FIXTURE
+        .get_or_init(|| {
+            let stem = std::env::current_exe()
+                .ok()
+                .and_then(|path| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "default".to_string());
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("target/fixture-cli-{stem}.exe"));
+            let temp = path.with_extension(format!("tmp-{}", std::process::id()));
+            let output = Command::new("rustc")
+                .args(["--edition=2021", "tests/fixture_cli.rs", "-o"])
+                .arg(&temp)
+                .current_dir(env!("CARGO_MANIFEST_DIR"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            std::fs::rename(&temp, &path).unwrap();
+            path
+        })
+        .clone()
+}
+
 pub struct Profile {
     pub root: PathBuf,
     pub environment: RuntimeEnvironment,
@@ -24,21 +59,7 @@ impl Profile {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&root).unwrap();
-        let fixture = FIXTURE.get_or_init(|| {
-            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/fixture-cli.exe");
-            let output = Command::new("rustc")
-                .args(["--edition=2021", "tests/fixture_cli.rs", "-o"])
-                .arg(&path)
-                .current_dir(env!("CARGO_MANIFEST_DIR"))
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            path
-        });
+        let fixture = fixture_cli();
         std::fs::copy(fixture, root.join(multi_search_desktop::CLI_FILE_NAME)).unwrap();
         let variables = BTreeMap::from([
             ("USERPROFILE".into(), root.to_string_lossy().into_owned()),

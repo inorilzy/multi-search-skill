@@ -30,6 +30,7 @@ impl From<CommandError> for String {
 
 /// Worker-join and backend-internal failures, grouped by domain. Pages never see the raw
 /// English worker names.
+#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
 pub fn backend(code: &str) -> CommandError {
     let message = match code {
         "cli_detect_failed" => "CLI 检测工作器失败",
@@ -56,6 +57,17 @@ pub fn backend(code: &str) -> CommandError {
         "skill_update_failed" => "Skill 更新工作器失败",
         "skill_remove_plan_failed" => "Skill 移除预览工作器失败",
         "skill_remove_failed" => "Skill 移除工作器失败",
+        "cookie_status_failed" => "Cookie 状态读取失败",
+        "cookie_import_failed" => "Cookie 导入工作器失败",
+        "cookie_delete_failed" => "Cookie 删除工作器失败",
+        "credential_read_failed" => "凭据读取工作器失败",
+        "credential_append_failed" => "凭据追加工作器失败",
+        "credential_remove_failed" => "凭据移除工作器失败",
+        "credential_application_failed" => "申请链接打开失败",
+        "scrape_settings_save_failed" => "抓取设置保存工作器失败",
+        "scrape_memory_view_failed" => "站点抓取记忆读取失败",
+        "scrape_memory_pin_failed" => "站点抓取记忆固定失败",
+        "scrape_memory_reset_failed" => "站点抓取记忆重置失败",
         _ => "桌面后端操作失败",
     };
     CommandError::new(code, message)
@@ -64,6 +76,7 @@ pub fn backend(code: &str) -> CommandError {
 
 /// Keep an operation's own localized message but replace the bare `String` rejection with the
 /// `{ code, message }` JSON contract. The frontend shows `message` because the code is generic.
+#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
 pub fn finish<T>(result: Result<T, String>) -> Result<T, String> {
     result.map_err(|message| CommandError::new("operation_failed", message).into())
 }
@@ -96,7 +109,11 @@ mod tests {
             "credential_save_failed", "credential_delete_failed", "credential_test_failed",
             "migration_plan_failed", "migration_apply_failed", "settings_view_failed",
             "settings_save_failed", "skill_status_failed", "skill_update_failed",
-            "skill_remove_plan_failed", "skill_remove_failed",
+            "skill_remove_plan_failed", "skill_remove_failed", "cookie_status_failed",
+            "cookie_import_failed", "cookie_delete_failed", "credential_read_failed",
+            "credential_append_failed", "credential_remove_failed", "credential_application_failed",
+            "scrape_settings_save_failed", "scrape_memory_view_failed", "scrape_memory_pin_failed",
+            "scrape_memory_reset_failed",
         ] {
             let error = backend(code);
             assert_eq!(error.code, code);

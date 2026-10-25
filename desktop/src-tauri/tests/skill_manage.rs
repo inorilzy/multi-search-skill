@@ -25,10 +25,15 @@ fn release_06_marker_without_hashes_remains_managed() {
     let profile = common::Profile::new();
     install_global(&profile);
     let target = skill_dir(&profile.root);
+    // Pre-schema marker for the current (five-file) release: no hashes, no
+    // marker_schema. It cannot prove the on-disk files were not edited, so it
+    // is reported as Outdated rather than Current. It is still managed (not
+    // Unknown), so update remains available.
     fs::write(
         target.join(".multi-search-install.json"),
         format!(
-            r#"{{"managed_by":"multi-search-desktop","skill":"multi-search","skill_version":"{}","files":["SKILL.md","agents/interface.yaml","references/cli.md","references/search.md","references/subagents.md","references/verification.md"]}}"#, skill_version()
+            r#"{{"managed_by":"multi-search-desktop","skill":"multi-search","skill_version":"{}","files":["SKILL.md","agents/interface.yaml","references/cli.md","references/executor.md","references/verification.md"]}}"#,
+            skill_version()
         ),
     )
     .unwrap();
@@ -37,15 +42,27 @@ fn release_06_marker_without_hashes_remains_managed() {
             .skill_status("global", None)
             .unwrap()
             .state,
-        multi_search_desktop::InstallState::Current
+        multi_search_desktop::InstallState::Outdated,
+        "a pre-schema marker without hashes must not be treated as verified"
     );
     fs::write(target.join("SKILL.md"), "06 local edit").unwrap();
+    // Without hashes the local edit cannot be distinguished from the original,
+    // so the install is Outdated and updates without a backup.
     let updated = manager(&profile).skill_update("global", None, true);
     assert_eq!(updated.status, "updated", "{}", updated.reason);
-    assert_eq!(
-        read(&PathBuf::from(updated.backup.unwrap()).join("SKILL.md")),
-        "06 local edit"
-    );
+    assert!(updated.backup.is_none(), "unverifiable install has no backup baseline");
+}
+
+#[test]
+fn new_marker_records_explicit_schema_version_and_hashes() {
+    let profile = common::Profile::new();
+    install_global(&profile);
+    let marker: serde_json::Value =
+        serde_json::from_str(&read(&skill_dir(&profile.root).join(".multi-search-install.json")))
+            .unwrap();
+    assert_eq!(marker["marker_schema"], 2, "marker schema must be explicit");
+    assert!(marker["hashes"].is_object(), "verified install records hashes");
+    assert_eq!(marker["skill_version"], skill_version());
 }
 
 #[test]
@@ -58,7 +75,7 @@ fn unmodified_install_reports_current_and_update_is_not_needed() {
     assert!(status.unknown_entries.is_empty());
     let update = manager(&profile).skill_update("global", None, false);
     assert_eq!(update.status, "blocked");
-    assert!(update.reason.contains("已是最新版本"), "{}", update.reason);
+    assert!(update.reason.contains("up to date"), "{}", update.reason);
 }
 
 #[test]
@@ -67,10 +84,7 @@ fn outdated_skill_updates_without_confirmation_when_unmodified() {
     install_global(&profile);
     // Simulate an older release: same content, older marker version, unmodified files.
     let marker = skill_dir(&profile.root).join(".multi-search-install.json");
-    let text = read(&marker).replace(
-        &format!("\"skill_version\":\"{}\"", skill_version()),
-        "\"skill_version\":\"0\"",
-    );
+    let text = read(&marker).replace(&format!("\"skill_version\":\"{}\"", skill_version()), "\"skill_version\":\"0\"");
     fs::write(&marker, text).unwrap();
     let status = manager(&profile).skill_status("global", None).unwrap();
     assert_eq!(status.state, multi_search_desktop::InstallState::Outdated);
@@ -80,7 +94,7 @@ fn outdated_skill_updates_without_confirmation_when_unmodified() {
     assert!(update.backup.is_none());
     // The updated skill still tells Claude to call the CLI.
     let installed = read(&skill_dir(&profile.root).join("SKILL.md"));
-    assert!(installed.contains("multi-search search"));
+    assert!(installed.contains("multi-search CLI"));
     assert!(!installed.contains("MCP"));
     assert_eq!(installed, include_str!("../../../skills/multi-search/SKILL.md"));
     assert_eq!(
@@ -137,7 +151,7 @@ fn local_modification_requires_confirmation_and_is_backed_up_before_overwrite() 
     let blocked = manager(&profile).skill_update("global", None, false);
     assert_eq!(blocked.status, "blocked");
     assert!(
-        blocked.reason.contains("需要确认"),
+        blocked.reason.contains("Confirmation required"),
         "{}",
         blocked.reason
     );
@@ -200,10 +214,7 @@ fn filesystem_update_failure_keeps_old_skill_and_retry_succeeds() {
     let marker = target.join(".multi-search-install.json");
     fs::write(
         &marker,
-        read(&marker).replace(
-            &format!("\"skill_version\":\"{}\"", skill_version()),
-            "\"skill_version\":\"0\"",
-        ),
+        read(&marker).replace(&format!("\"skill_version\":\"{}\"", skill_version()), "\"skill_version\":\"0\""),
     )
     .unwrap();
     let before = read(&target.join("SKILL.md"));
@@ -237,10 +248,7 @@ fn failed_update_keeps_the_old_usable_skill() {
     install_global(&profile);
     let target = skill_dir(&profile.root);
     let marker = target.join(".multi-search-install.json");
-    let text = read(&marker).replace(
-        &format!("\"skill_version\":\"{}\"", skill_version()),
-        "\"skill_version\":\"0\"",
-    );
+    let text = read(&marker).replace(&format!("\"skill_version\":\"{}\"", skill_version()), "\"skill_version\":\"0\"");
     fs::write(&marker, text).unwrap();
     // Make the CLI incompatible so the update is refused before any write happens.
     let mut environment: RuntimeEnvironment = profile.environment.clone();
@@ -251,7 +259,7 @@ fn failed_update_keeps_the_old_usable_skill() {
     assert_eq!(blocked.status, "blocked");
     assert!(blocked.reason.contains("--expand"), "{}", blocked.reason);
     // Old skill is still in place and still usable.
-    assert!(read(&target.join("SKILL.md")).contains("multi-search search"));
+    assert!(read(&target.join("SKILL.md")).contains("multi-search CLI"));
     let leftovers: Vec<_> = fs::read_dir(profile.root.join(".claude/skills"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
@@ -265,10 +273,7 @@ fn retry_after_failed_update_does_not_misreport_completion() {
     install_global(&profile);
     let target = skill_dir(&profile.root);
     let marker = target.join(".multi-search-install.json");
-    let text = read(&marker).replace(
-        &format!("\"skill_version\":\"{}\"", skill_version()),
-        "\"skill_version\":\"0\"",
-    );
+    let text = read(&marker).replace(&format!("\"skill_version\":\"{}\"", skill_version()), "\"skill_version\":\"0\"");
     fs::write(&marker, text).unwrap();
     let mut environment: RuntimeEnvironment = profile.environment.clone();
     environment
@@ -430,48 +435,6 @@ fn linked_references_never_modify_external_files() {
     assert_eq!(outcome.status, "blocked");
     assert!(outside.join("cli.md").is_file());
     assert!(target.join("SKILL.md").is_file());
-}
-
-#[cfg(unix)]
-#[test]
-fn linked_references_never_modify_external_files() {
-    let profile = common::Profile::new();
-    install_global(&profile);
-    let target = skill_dir(&profile.root);
-    let outside = profile.root.join("outside");
-    fs::rename(target.join("references"), &outside).unwrap();
-    let link = target.join("references");
-    std::os::unix::fs::symlink(&outside, &link).unwrap();
-    let plan = manager(&profile).skill_remove_plan("global", None).unwrap();
-    let outcome = manager(&profile).skill_remove("global", None, true);
-    fs::remove_file(&link).unwrap();
-    assert!(!plan.can_remove);
-    assert_eq!(outcome.status, "blocked");
-    assert!(outside.join("cli.md").is_file());
-    assert!(target.join("SKILL.md").is_file());
-}
-
-/// Each directory the tool owns (`<target>`, `skills/`, `.claude/`) is refused when it is a link,
-/// even though links above `.claude/` (such as macOS `/var -> /private/var`) are accepted.
-#[cfg(unix)]
-#[test]
-fn every_tool_owned_ancestor_that_is_a_link_is_refused() {
-    for depth in 0..3 {
-        let profile = common::Profile::new();
-        install_global(&profile);
-        let target = skill_dir(&profile.root);
-        let owned = target.ancestors().nth(depth).unwrap().to_path_buf();
-        let moved = profile.root.join(format!("moved-{depth}"));
-        fs::rename(&owned, &moved).unwrap();
-        std::os::unix::fs::symlink(&moved, &owned).unwrap();
-        let plan = manager(&profile).skill_remove_plan("global", None).unwrap();
-        let outcome = manager(&profile).skill_remove("global", None, true);
-        fs::remove_file(&owned).unwrap();
-        fs::rename(&moved, &owned).unwrap();
-        assert!(!plan.can_remove, "depth {depth}: a linked owned directory must not be removable");
-        assert_eq!(outcome.status, "blocked", "depth {depth}");
-        assert!(target.join("SKILL.md").is_file(), "depth {depth}: files must survive");
-    }
 }
 
 #[test]

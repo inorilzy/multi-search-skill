@@ -33,9 +33,33 @@ jobs:
       - name: Run scripts tests (bundle build, manifest, locked inputs, signing)
         # Discovery picks up every scripts/test_*.py, so new release-tooling tests run too.
         run: python -m unittest discover -s scripts -t scripts -p "test_*.py" -v
+      - name: Check documentation source paths and local links
+        run: python scripts/check_glossary_paths.py
+
+  locked-regression:
+    name: Locked regression, Python ${{ matrix.python }} on ${{ matrix.os }}
+    # Same suite against the committed uv.lock instead of a fresh resolve, so a lock that
+    # drifts from pyproject.toml (or a locked dependency that breaks the suite) fails CI.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Sync the committed dependency lock
+        run: uv sync --locked
+      - name: Run locked regression tests with disposable state
+        run: uv run --locked python scripts/run_tests.py
+      - name: Check documentation source paths and local links
+        run: uv run --locked python scripts/check_glossary_paths.py
 
   desktop-js:
-    name: Desktop JS tests
+    name: Desktop JS tests and types
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -48,31 +72,65 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: desktop/package-lock.json
-      - name: Install locked dev dependencies (happy-dom, Tauri CLI)
+      - name: Install locked dev dependencies (happy-dom, TypeScript, Tauri CLI)
         run: npm ci
       - name: Run DOM and UI logic tests
         run: npm test
+      - name: Check UI types against the generated Rust contract
+        run: npm run typecheck
 
   desktop-rust:
     name: Desktop Rust tests
-    # The desktop app targets Windows: credential store, Job Objects, user PATH and the
+    # The desktop app targets Windows: credential store, DPAPI, Job Objects, user PATH and the
     # pinned x86_64-pc-windows-msvc toolchain (rust-toolchain.toml) only exist there.
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       MANIFEST: desktop/src-tauri/Cargo.toml
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install the pinned Rust toolchain from rust-toolchain.toml
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.12"
+      - name: Install locked Python dependencies for the Rust interop tests
+        # Interop tests run `python` against the shared Core; put the locked venv on PATH.
+        run: |
+          uv sync --locked --python 3.12
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$env:GITHUB_WORKSPACE\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install the pinned Rust toolchain and fetch locked crates before isolation
+        # rust_ci_matrix.py swaps HOME/USERPROFILE for a disposable profile and builds --offline,
+        # so pin rustup/cargo homes to the real profile and prefetch every locked crate first.
         run: |
           rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustup show active-toolchain
-      - name: Native tests with the test-only fixture seams
+          "RUSTUP_HOME=$env:USERPROFILE\.rustup" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CARGO_HOME=$env:USERPROFILE\.cargo" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          cargo fetch --locked --manifest-path ${{ env.MANIFEST }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check native Windows prerequisites
+        run: |
+          # windows-latest supplies MSVC and WebView2; fail rather than pretend native coverage.
+          $edge = Get-ChildItem -Path "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application\*\msedgewebview2.exe" -ErrorAction SilentlyContinue
+          if (-not $edge) { throw 'Windows Rust native tests require the WebView2 runtime' }
+          rustc --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native tests with the test-only fixture seams and generated UI types
         # --no-default-features skips the Tauri window; test-fixtures enables the credential and
-        # settings seams required by the credentials, credential_sources and settings tests.
-        run: cargo test --locked --manifest-path ${{ env.MANIFEST }} --no-default-features --features test-fixtures
+        # settings seams, ts enables the ts-rs UI contract (ui_contract requires both).
+        run: cargo test --locked --manifest-path ${{ env.MANIFEST }} --no-default-features --features test-fixtures,ts
       - name: Install acceptance-boundary tests
         # install and install_lifecycle need install-test-boundary; install_release_boundary
         # (run above) asserts the opposite, so the two feature sets are built separately.
         run: >
           cargo test --locked --manifest-path ${{ env.MANIFEST }} --no-default-features
           --features test-fixtures,install-test-boundary --test install --test install_lifecycle
+      - name: Rust interop matrix with disposable profile and explicit native overlay
+        # No --ignored: real installed CLI/bundle and type generation are separate acceptance.
+        # The tauri.check.conf.json overlay disables bundle inputs only; it is not a release or
+        # bundle certification. The script derives the repo root itself (no cwd/PYTHONPATH).
+        run: python -B scripts/rust_ci_matrix.py

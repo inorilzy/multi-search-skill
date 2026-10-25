@@ -1,0 +1,84 @@
+{
+  "requirementId": "REQ-12",
+  "title": "有效 source_id 的缓存失效后仍以原ID重抓",
+  "document": "skills/multi-search/references/verification.md",
+  "location": "skills/multi-search/references/verification.md:L11",
+  "quote": "With a valid `source_id`, missing or expired cached content is fetched again",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'cached is None|source_id|ContentStore' multi_search_mcp/src/service.py",
+      "result": "43 hits in explicit evidence files",
+      "matches": [
+        "27:from .search.candidate import SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_results, make_source_id",
+        "41:from .state.content_store import ContentStore, ContentStoreError, DEFAULT_MAX_OBJECT_BYTES",
+        "101:    source_id: str | None = None",
+        "113:    source_id: str",
+        "124:    content_store: ContentStore | None = None,",
+        "126:    \"\"\"Read a bounded slice from ContentStore without accessing the network.\"\"\"",
+        "129:    if not request.source_id:",
+        "130:        raise ValueError(\"source_id is required\")",
+        "134:    cache = content_store or ContentStore(store)",
+        "135:    cached = cache.get(request.source_id)",
+        "136:    if cached is None:",
+        "161:        \"source_id\": request.source_id,",
+        "190:    if bool(request.source_id) == bool(request.url):",
+        "191:        raise ValueError(\"provide exactly one of source_id or url\")",
+        "192:    if not request.use_state and request.source_id and source_record is None:",
+        "193:        raise ValueError(\"source_id fetch requires state; provide an explicit URL\")",
+        "196:    if source_record is not None and source_record.get(\"source_id\") != request.source_id:",
+        "197:        raise ValueError(\"source record does not match source_id\")",
+        "199:    if source is None and store and request.source_id:",
+        "200:        source = SourceRegistry(store).get(request.source_id)",
+        "201:    if request.source_id and source is None:",
+        "203:            \"source_id is unknown or expired; call search_web again before fetch_source\"",
+        "209:    source_id = str(request.source_id or \"\")",
+        "210:    if not source_id:",
+        "213:        source_id = make_source_id(response_id, canonical_url)",
+        "218:                \"source_id\": source_id,",
+        "230:    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None",
+        "231:    cached = content_store.get(source_id) if content_store and source_id else None",
+        "233:        content_store.delete_source(source_id)",
+        "238:    if cached is None:",
+        "253:                    source_id, canonical_url=canonicalize_url(url), cache_scope=cache_scope,",
+        "257:            \"source_id\": source_id,",
+        "298:            source_id, body,",
+        "302:        if content_store and source_id and retention.persist_body",
+        "306:        \"source_id\": source_id or None,",
+        "493:                ContentStore(",
+        "495:                ).put(str(hit[\"source_id\"]), body)",
+        "496:            except ContentStoreError as exc:",
+        "498:                    \"source_id\": hit[\"source_id\"],",
+        "637:                    source_id=hit[\"source_id\"], full_content=True,",
+        "646:            return {\"source_id\": hit[\"source_id\"], \"url\": hit[\"url\"],",
+        "660:        page[\"source_id\"] = hit[\"source_id\"]",
+        "684:        {key: row[key] for key in (\"source_id\", \"url\", \"error\")}"
+      ]
+    }
+  ],
+  "reasoning": "fetch先校验来源引用，再查正文；缓存未命中可按同scope URL复用，否则调用scraper，存回原ID；来源本身不存在才报未知/过期。探针删除所有可复用正文、保留registry后同ID重新取得body。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-12.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L195-L205",
+      "quote": "    store = (state_store or StateStore()) if request.use_state else None\n    if source_record is not None and source_record.get(\"source_id\") != request.source_id:\n        raise ValueError(\"source record does not match source_id\")\n    source = source_record\n    if source is None and store and request.source_id:\n        source = SourceRegistry(store).get(request.source_id)\n    if request.source_id and source is None:\n        raise ValueError(\n            \"source_id is unknown or expired; call search_web again before fetch_source\"",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L230-L254",
+      "quote": "    content_store = ContentStore(store, ttl_seconds=retention.max_ttl_seconds) if store is not None else None\n    cached = content_store.get(source_id) if content_store and source_id else None\n    if cached is not None and not retention.persist_body:\n        content_store.delete_source(source_id)\n        cached = None\n    cache_scope = \"\"\n    resolved_config = None\n    runtime_keys = keys\n    if cached is None:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L270-L316",
+      "quote": "    updates = []\n    if prefetched_body:\n        result = {\"markdown\": prefetched_body, \"via\": \"provider:prefetch\"}\n    else:\n        result, updates, _scrape_chars = _run_scrape_raw(\n            ScrapeRequest(\n                url=url,\n                backends=request.backends,\n                # Preview size must not truncate the cached acquisition.",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

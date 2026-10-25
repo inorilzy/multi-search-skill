@@ -1,0 +1,62 @@
+Traceback (most recent call last):
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\urllib\request.py", line 1319, in do_open
+    h.request(req.get_method(), req.selector, req.data, headers,
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+              encode_chunked=req.has_header('Transfer-encoding'))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\http\client.py", line 1358, in request
+    self._send_request(method, url, body, headers, encode_chunked)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\http\client.py", line 1404, in _send_request
+    self.endheaders(body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\http\client.py", line 1353, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\http\client.py", line 1113, in _send_output
+    self.send(msg)
+    ~~~~~~~~~^^^^^
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\http\client.py", line 1057, in send
+    self.connect()
+    ~~~~~~~~~~~~^^
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\http\client.py", line 1023, in connect
+    self.sock = self._create_connection(
+                ~~~~~~~~~~~~~~~~~~~~~~~^
+        (self.host,self.port), self.timeout, self.source_address)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\0-code-project\multi-search-skill\multi_search_mcp\src\support\http.py", line 244, in connect_socket
+    sock = create_connection(
+        address, timeout=remaining,
+        source_address=source_address, **socket_options,
+    )
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\socket.py", line 864, in create_connection
+    raise exceptions[0]
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\socket.py", line 849, in create_connection
+    sock.connect(sa)
+    ~~~~~~~~~~~~^^^^
+PermissionError: [WinError 10013] ��һ�ַ���Ȩ�޲������ķ�ʽ����һ�������׽��ֵĳ��ԡ�
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\0-code-project\multi-search-skill\docs\verification-evidence\t18-local-proxy.py", line 25, in <module>
+    with urlopen_retry('http://synthetic.invalid/page',2,extra_handlers=(urllib.request.ProxyHandler({'http':endpoint}),)) as r: assert r.read()==b'ok'
+         ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\0-code-project\multi-search-skill\multi_search_mcp\src\support\http.py", line 444, in urlopen_retry
+    return opener.open(request, timeout=_remaining(deadline))
+           ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\urllib\request.py", line 489, in open
+    response = self._open(req, data)
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\urllib\request.py", line 506, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+                              '_open', req)
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\urllib\request.py", line 466, in _call_chain
+    result = func(*args)
+  File "D:\0-code-project\multi-search-skill\multi_search_mcp\src\support\http.py", line 308, in http_open
+    return _open_with_deadline(self, http.client.HTTPConnection, req)
+  File "D:\0-code-project\multi-search-skill\multi_search_mcp\src\support\http.py", line 303, in _open_with_deadline
+    return handler.do_open(connection, req, **connection_options)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\zhiyu_liu\AppData\Roaming\uv\python\cpython-3.13-windows-x86_64-none\Lib\urllib\request.py", line 1322, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [WinError 10013] ��һ�ַ���Ȩ�޲������ķ�ʽ����һ�������׽��ֵĳ��ԡ�>

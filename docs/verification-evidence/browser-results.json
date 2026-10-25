@@ -1,0 +1,47 @@
+{
+  "url": "http://127.0.0.1:49852/",
+  "mockOnly": true,
+  "layouts": [
+    {
+      "page": "sources",
+      "width": 760,
+      "scroll": 745,
+      "active": "H1",
+      "overflow": [],
+      "screenshot": "sources-760.png"
+    },
+    {
+      "page": "settings",
+      "width": 760,
+      "scroll": 745,
+      "active": "H1",
+      "overflow": [],
+      "screenshot": "settings-760.png"
+    },
+    {
+      "page": "sources",
+      "width": 1080,
+      "scroll": 1065,
+      "active": "H1",
+      "overflow": [],
+      "screenshot": "sources-1080.png"
+    },
+    {
+      "page": "settings",
+      "width": 1080,
+      "scroll": 1065,
+      "active": "H1",
+      "overflow": [],
+      "screenshot": "settings-1080.png"
+    }
+  ],
+  "confirmFocus": {
+    "yes": true,
+    "count": 2
+  },
+  "escape": {
+    "remaining": 0,
+    "focusImport": true,
+    "calls": []
+  }
+}

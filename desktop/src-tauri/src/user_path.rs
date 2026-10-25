@@ -1,5 +1,5 @@
 //! Explicit, current-user-only PATH registration. No mutation occurs during installation.
-use crate::DesktopManager;
+use crate::install::InstallManager;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -8,6 +8,8 @@ use std::{
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct PathValue {
     pub text: String,
     pub kind: u32,
@@ -23,6 +25,8 @@ impl PathValue {
     }
 }
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct PathReceipt {
     before: PathValue,
     after: PathValue,
@@ -32,6 +36,7 @@ pub struct PathReceipt {
 /// re-read immediately before writing, and reject a changed value instead of clobbering it.
 pub trait PathStore: Send + Sync {
     fn read(&self) -> Result<PathValue, String>;
+    fn notify_change(&self) -> Result<(), String> { Ok(()) }
     fn receipt(&self) -> Result<Option<PathReceipt>, String>;
     fn compare_write(
         &self,
@@ -75,10 +80,16 @@ impl PathStore for MemoryPathStore {
     }
 }
 #[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct PathPlan {
+    /// owned | existing | absent | added | removed | unchanged | blocked | failed, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub directory: String,
     pub reason: String,
+    /// Non-fatal follow-up (for example, Explorer was not notified); the PATH
+    /// write already succeeded when this is non-empty.
+    pub warning: String,
     pub can_add: bool,
     pub can_remove: bool,
 }
@@ -88,24 +99,22 @@ fn normalized(value: &str, variables: &BTreeMap<String, String>) -> String {
         .trim_end_matches('\\')
         .to_lowercase()
 }
-impl DesktopManager {
-    /// Explicit dependency injection for isolated acceptance. Production uses the native registry.
-    pub fn with_user_path_store(
-        environment: crate::RuntimeEnvironment,
-        store: Arc<dyn PathStore>,
-    ) -> Self {
-        let mut manager = Self::new(environment);
-        manager.user_path_store = Some(store);
-        manager
-    }
-    pub fn user_path_plan(&self) -> Result<PathPlan, String> {
+/// PATH registration domain. `install` supplies the managed bin directory;
+/// `store` is the injected OS boundary.
+pub(crate) struct UserPathManager<'a> {
+    pub(crate) environment: &'a crate::RuntimeEnvironment,
+    pub(crate) store: Option<&'a Arc<dyn PathStore>>,
+    pub(crate) install: InstallManager<'a>,
+}
+
+impl UserPathManager<'_> {
+    pub fn plan(&self) -> Result<PathPlan, String> {
         let store = self
-            .user_path_store
-            .as_ref()
+            .store
             .ok_or("当前环境未连接用户 PATH 存储")?;
         let current = store.read()?;
         let receipt = store.receipt()?;
-        let install = self.install_plan();
+        let install = self.install.install_plan();
         let directory = PathBuf::from(&install.bin)
             .parent()
             .ok_or("安装目录不可用")?
@@ -121,18 +130,19 @@ impl DesktopManager {
         Ok(PathPlan {
             status: if owned { "owned" } else if found { "existing" } else { "absent" }.into(),
             directory,
+            warning: String::new(),
             reason: "仅修改当前用户 PATH；系统 PATH 不变。完成后重新检查，并重启终端或 Agent 宿主。原有或已修改的项目不会被认领或移除。".into(),
             can_add: !found && matches!(install.status.as_str(), "installed" | "update_available"),
             can_remove: owned,
         })
     }
-    pub fn user_path_change(&self, remove: bool, confirmed: bool) -> Result<PathPlan, String> {
-        let mut plan = self.user_path_plan()?;
+    pub fn change(&self, remove: bool, confirmed: bool) -> Result<PathPlan, String> {
+        let mut plan = self.plan()?;
         if !confirmed {
             plan.status = "confirmation_required".into();
             return Ok(plan);
         }
-        let store = self.user_path_store.as_ref().ok_or("用户 PATH 不可用")?;
+        let store = self.store.ok_or("用户 PATH 不可用")?;
         let current = store.read()?;
         if remove {
             let receipt = store
@@ -155,7 +165,7 @@ impl DesktopManager {
                 return Err("请先安装并验证受管 CLI".into());
             }
             // Prepend: the managed directory must come first in the user PATH so a same-named
-            // `multi-search.exe` in a later user entry cannot shadow the verified install.
+            // CLI in a later user entry cannot shadow the verified install.
             let mut desired = current.clone();
             desired.text = if current.text.is_empty() {
                 plan.directory.clone()
@@ -171,22 +181,8 @@ impl DesktopManager {
             store.compare_write(&current, &desired, Some(&receipt))?;
             plan.status = "added".into();
         }
+        if let Err(warning) = store.notify_change() { plan.warning = warning; }
         Ok(plan)
-    }
-    pub(crate) fn current_user_paths(&self) -> Vec<PathBuf> {
-        let Some(store) = self.user_path_store.as_ref() else {
-            return self.environment.user_path.clone();
-        };
-        let Ok(value) = store.read() else {
-            return Vec::new();
-        };
-        let mut paths = self.environment.user_path.clone();
-        // The production base is the machine PATH, not a stale snapshot of the user's PATH.
-        paths.extend(std::env::split_paths(&crate::environment::expand(
-            &value.text,
-            &self.environment.variables,
-        )));
-        paths
     }
 }
 
@@ -207,7 +203,7 @@ impl NativePathStore {
     #[cfg(feature = "install-test-boundary")]
     pub fn isolated_key(subkey: &str) -> Result<Self, String> {
         if !subkey.starts_with("Software\\MultiSearchAcceptance\\") || subkey.contains("..") {
-            return Err("隔离注册表键无效".into());
+            return Err("Invalid isolated registry key".into());
         }
         Ok(Self {
             subkey: subkey.into(),
@@ -215,104 +211,30 @@ impl NativePathStore {
         })
     }
     fn get(&self, name: &str) -> Result<Option<(u32, Vec<u8>)>, String> {
-        use windows_sys::Win32::System::Registry::*;
-        let key: Vec<u16> = self.subkey.encode_utf16().chain(Some(0)).collect();
-        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-        let (mut kind, mut length) = (0, 0);
-        unsafe {
-            let result = RegGetValueW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                name.as_ptr(),
-                RRF_RT_ANY | RRF_NOEXPAND,
-                &mut kind,
-                std::ptr::null_mut(),
-                &mut length,
-            );
-            if result == 2 {
-                return Ok(None);
-            }
-            if result != 0 {
-                return Err(format!("读取用户 PATH 失败（{result}）"));
-            }
-            let mut bytes = vec![0u8; length as usize];
-            let result = RegGetValueW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                name.as_ptr(),
-                RRF_RT_ANY | RRF_NOEXPAND,
-                &mut kind,
-                bytes.as_mut_ptr().cast(),
-                &mut length,
-            );
-            if result != 0 {
-                return Err(format!("读取用户 PATH 失败（{result}）"));
-            }
-            bytes.truncate(length as usize);
-            Ok(Some((kind, bytes)))
-        }
+        crate::windows_util::user_registry_value(&self.subkey, name)
     }
     fn set(&self, name: &str, value: Option<(u32, &str)>) -> Result<(), String> {
-        use windows_sys::Win32::System::Registry::*;
-        let key: Vec<u16> = self.subkey.encode_utf16().chain(Some(0)).collect();
-        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-        unsafe {
-            let mut handle = std::ptr::null_mut();
-            let result = RegCreateKeyExW(
-                HKEY_CURRENT_USER,
-                key.as_ptr(),
-                0,
-                std::ptr::null(),
-                0,
-                KEY_SET_VALUE,
-                std::ptr::null(),
-                &mut handle,
-                std::ptr::null_mut(),
-            );
-            if result != 0 {
-                return Err(format!("打开用户 PATH 失败（{result}）"));
-            }
-            let result = if let Some((kind, text)) = value {
-                let data: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
-                RegSetValueExW(
-                    handle,
-                    name.as_ptr(),
-                    0,
-                    kind,
-                    data.as_ptr().cast(),
-                    (data.len() * 2) as u32,
-                )
-            } else {
-                RegDeleteValueW(handle, name.as_ptr())
-            };
-            RegCloseKey(handle);
-            if result != 0 && !(value.is_none() && result == 2) {
-                return Err(format!("保存用户 PATH 失败（{result}）；请重新检查"));
-            }
-            Ok(())
-        }
+        crate::windows_util::set_user_registry_value(&self.subkey, name, value)
     }
 }
 #[cfg(windows)]
 fn decode(bytes: &[u8]) -> Result<String, String> {
-    if !bytes.len().is_multiple_of(2) {
-        return Err("注册表 PATH 格式不支持".into());
-    }
-    let mut words: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|b| u16::from_le_bytes([b[0], b[1]]))
-        .collect();
-    if words.last() == Some(&0) {
-        words.pop();
-    }
-    let text = String::from_utf16(&words).map_err(|_| "注册表 PATH 不是有效文本")?;
-    if text.contains('\0') {
-        return Err("注册表 PATH 包含无效字符".into());
-    }
-    Ok(text)
+    crate::windows_util::decode_utf16(bytes)
 }
 #[cfg(windows)]
 impl PathStore for NativePathStore {
+    fn notify_change(&self) -> Result<(), String> {
+        if self.subkey != "Environment" { return Ok(()); }
+        // Broadcast off the caller thread. SMTO_ABORTIFHUNG skips unresponsive
+        // windows instead of waiting indefinitely; a failed notification does
+        // not roll back the already committed registry write.
+        std::thread::spawn(|| {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG};
+            let name: Vec<u16> = "Environment".encode_utf16().chain(Some(0)).collect();
+            let sent = unsafe { SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, name.as_ptr() as isize, SMTO_ABORTIFHUNG, 1000, std::ptr::null_mut()) };
+            if sent == 0 { Err("用户 PATH 已保存，但通知新进程失败；请重新登录或重启宿主后检查".into()) } else { Ok(()) }
+        }).join().unwrap_or_else(|_| Err("用户 PATH 已保存，但通知线程失败".into()))
+    }
     fn read(&self) -> Result<PathValue, String> {
         match self.get("Path")? {
             None => Ok(PathValue {
@@ -372,13 +294,6 @@ impl PathStore for NativePathStore {
                 .as_ref()
                 .and_then(|r| serde_json::to_string(r).ok());
             let _ = self.set("MultiSearchPathOwnership", old.as_deref().map(|s| (1, s)));
-        } else if self.subkey == "Environment" {
-            // Notify Explorer so subsequently launched terminals inherit the updated user PATH.
-            // Isolated acceptance keys never broadcast a global environment change.
-            use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG};
-            let name: Vec<u16> = "Environment".encode_utf16().chain(Some(0)).collect();
-            let sent = unsafe { SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, name.as_ptr() as isize, SMTO_ABORTIFHUNG, 1000, std::ptr::null_mut()) };
-            if sent == 0 { return Err("用户 PATH 已保存，但通知新进程失败；请重新登录或重启宿主后检查".into()); }
         }
         result
     }

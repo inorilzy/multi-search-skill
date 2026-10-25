@@ -34,30 +34,33 @@ uv run --locked multi-search read src_... --keyword 'TaskGroup' --limit 2000
 
 仓库关键文件：
 
-- `skills/multi-search/`：唯一权威 Skill（`SKILL.md`、`agents/interface.yaml` 和 `references/`），桌面端在编译时原样打包同一棵树。
+- `skills/multi-search/`：唯一权威 Skill，共 5 个文件（`SKILL.md`、`agents/interface.yaml`、`references/cli.md`、`references/executor.md`、`references/verification.md`），桌面端在编译时原样打包同一棵树。
 - `multi_search_mcp/cli.py`：唯一产品入口 `multi-search` CLI，直接调用共享 Core。
 - `multi_search_mcp/tools.py`：仅保留的兼容 Python 适配器，无 MCP 依赖或服务；所有产品能力已由 CLI 提供；本模块只保留旧 Python 调用形状并转发 Core，不再承载独立实现。
 - `multi_search_mcp/src/`：按职责拆分的搜索、抓取、状态、诊断和格式化模块；`service.py` 只是兼容 facade，不再承载实现。
+- `multi_search_mcp/src/providers/`：第三方调用适配（XKit / Tavily），含托管 Twitter Cookie 的运行时装配；搜索器和抓取器通过这里取得客户端。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
 
 CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys status|reset`、`site stats|set-preference|reset` 和 `migrate-legacy plan|apply`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留，但只作为 CLI/Core 之上的薄包装。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
 
-边界约定：凭据按 **环境变量（`env`）> Windows 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）** 解析；非敏感行为配置从 `MULTI_SEARCH_CONFIG`、`~/.multi-search/multi-search-config.json` 或仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置。
+边界约定：凭据按 **环境变量（`env`）> Windows 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）** 解析，其中 Windows 凭据库是 `~/.multi-search/config.sqlite` 内以当前用户 DPAPI 加密的条目；非敏感行为配置按 `MULTI_SEARCH_CONFIG` → `config.sqlite` 的 settings 记录（桌面端写入，存在即权威）→ `~/.multi-search/multi-search-config.json` → 仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。CLI 不需要任何 MCP 客户端启动配置。
 
 当前默认行为：`search_web` 使用 `default`（`web` 的兼容别名），全部有效候选参与 RRF，最终取前 15 条并获取正文。`results[].content` 保留摘要，正文预览只在 `scrapes[].markdown` 返回，按 `source_id` 关联，默认每篇最多 1200 字符。需要截断时，预览从与结果标题完全匹配的页面一级标题开始，没有匹配标题时可定位逐字匹配完整搜索摘要的段落（至少 32 个非空白字符，仅允许空白差异），仍无匹配则从正文开头开始；`preview_start/end` 标注原文字符区间（左闭右开），省略前文也标记 `truncated`。完整正文与缓存保持原样。支持委派时，由宿主配置的轻量子代理执行搜索，只排除明确无关项，保留全部相关或不确定候选及原始预览，不限定保留数量。主 Agent 看预览做最终筛选，按需调用 `fetch_source(source_id=..., full_content=True)` 读取全文；宿主没有子代理能力或用户要求直接执行时，由主 Agent 执行同一流程。Core 继续抓取最终 15 条并按策略缓存，选读不改变排序或抓取数量，也不引入服务端 AI 选择器、摘要或智能摘录。旧 `scrape_top` / `scrape_per_source` 请求参数已移除；配置文件中的同名键（以及 `no_scrape`、`brief`、`verbose`、`title_url_only`、`want_content`）会被忽略并给出弃用警告（`FutureWarning`）。
 
 ## Windows 桌面管理（本地开发候选）
 
-`desktop/` 是 Tauri 2 管理台，共 6 个页面，负责本机 CLI、Skill、凭据和配置；它不提供搜索 UI，也不修改系统级设置。
+`desktop/` 是 Tauri 2 管理台，共 8 个页面，负责本机 CLI、Skill、凭据、搜索与抓取配置；它不提供搜索 UI，也不修改系统级设置。设置和凭据保存在与 CLI 共用的 `~/.multi-search/config.sqlite`。
 
 | 页面 | 能力 |
 |---|---|
 | 01 概览与测试 | 检测应用继承的 PATH 与 Windows 用户/机器持久化 PATH 中的 `multi-search.exe`，显示版本、实际路径和来源；运行或取消一次测试搜索，结果以结构化列表展示，来源错误单列，原始 JSON 折叠保留。新终端可发现不意味着已打开的终端或 Agent 已刷新环境。 |
 | 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI 到 `%LOCALAPPDATA%\MultiSearch\cli`；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本；可把受管目录加入当前用户 PATH（系统 PATH 不变）。 |
 | 03 Claude Code Skill | 以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
-| 04 搜索源与凭据 | 列出 12 个搜索源及启用状态；Key 保存在 Windows 凭据库（通用凭据 `multi-search/<provider>`），可保存、删除并向对应服务商发送一次测试请求；不显示已保存的 Key，测试可能消耗额度。 |
-| 05 搜索设置 | 读写 CLI 配置文件：默认路由、超时（1–90 秒）和 Twitter Cookie 文件路径（只保存路径，不读取 Cookie）；显示实际配置文件路径与路径来源，配置无法读取时禁止保存。 |
-| 06 旧配置迁移 | 预览并迁移 `~/.search-keys.json` 中的单 Key 条目到 Windows 凭据库；多 Key 列表、Jina、Cookie 对象和无法识别的条目保留在旧文件。预览只显示掩码指纹，迁移前逐项确认，旧文件永不删除，并在结果中提示残留明文和文件权限。 |
+| 04 搜索源与凭据 | 列出 12 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 保存在 Windows 凭据库（`config.sqlite` 中按 provider 一行、当前用户 DPAPI 加密），可保存、删除并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。不显示已保存的 Key，测试可能消耗额度。 |
+| 05 搜索设置 | 读写默认路由、全局超时（1–60 秒）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；全局禁用的搜索源保留为组员但执行时跳过。另可填写 Twitter Cookie 文件兼容路径（仅 file 模式读取），并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
+| 06 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Reddit / Twitter 按域名固定使用专用抓取器，不受抓取链影响。 |
+| 07 Cookie 托管 | 显示 Twitter/X Cookie 当前模式；用户显式确认后把 Cookie 文件导入为当前用户 DPAPI 加密的托管条目（切换到 `managed`），或删除托管 Cookie。导入和删除都不修改或删除原文件，本页不读取或显示 Cookie 内容；删除后仍保持 `managed` 且不可用，不回退旧文件。 |
+| 08 旧配置迁移 | 预览并迁移 `~/.search-keys.json` 中的单 Key 条目到 Windows 凭据库；多 Key 列表、Jina、Cookie 对象和无法识别的条目保留在旧文件。预览只显示掩码指纹，迁移前逐项确认，旧文件永不删除，并在结果中提示残留明文和文件权限。 |
 
 受管 CLI 与 Skill 都以“先校验、再写入”为前提：bundle 的信任锚是 `scripts/build_cli_bundle.py` 生成、由 `desktop/src-tauri/build.rs` 编译进二进制的 manifest SHA-256；Skill 以 `skills/multi-search/` 为唯一权威源，受管版本由打包内容哈希派生。桌面端只运行受管目录（验证通过时优先于 PATH 中的同名文件）或 PATH 中发现的 CLI，前端不能指定可执行路径；子进程只拿到非敏感的基础环境变量和本次所需的 key。取消/关闭只结束本次 Windows Job Object 归属的执行和子进程，独立终端 CLI 不受影响。
 
@@ -67,11 +70,16 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys stat
 npm --prefix desktop ci
 npm --prefix desktop run dev
 # 原生测试与 DOM 测试分开，均不能代替真实窗口验收
-cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --no-default-features --features test-fixtures
+cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --no-default-features --features test-fixtures,ts
 npm --prefix desktop test
+npm --prefix desktop run typecheck
 ```
 
 桌面端输出当纯文本展示并脱敏。测试使用一次性 profile 与受控 HTTP，不能证明真实付费源可用。原生窗口验收使用 `scripts/desktop_acceptance.py`，需要先在隔离 `.wheel-venv` 安装本地 wheel；`scripts/desktop_native_acceptance.py` 只验 native API 链路，不是窗口替代。
+
+**子进程环境边界。** 桌面进程不会把自身环境变量原样传给 CLI。`desktop/src-tauri/src/process.rs` 只放行系统基础变量（`PATH`、`SYSTEMROOT`、`USERPROFILE`/`HOME`、`TEMP`/`TMP` 等）、编码相关变量以及桌面自有的 `MULTI_SEARCH_*` 选择器，再加上本次调用所需的那一个 key；其余命中 `API_KEY`/`TOKEN`/`SECRET`/`PASSWORD` 等敏感标记的变量都不会下传。
+
+**query 的命令行暴露面（已知取舍）。** 测试搜索通过 `multi-search search [options] -- <query>` 调用，query 因此出现在 CLI 进程的命令行参数中，本机同一用户或其他具备进程列表读取权限的程序可以看到它。当前保留 argv 传递而不是改为 stdin：CLI 的公开入口和现有脚本/测试都以位置参数定义 query，改为 stdin 需要新增协议。桌面端不记录日志，输出展示仍会脱敏，但这不改变 argv 对同机进程可见这一事实。
 
 ## 适用场景
 
@@ -137,7 +145,7 @@ skill 入口在 [skills/multi-search/SKILL.md](skills/multi-search/SKILL.md)，�
 
 CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；业务能力只落在 `multi_search_mcp/src/`。命令按需执行，无后台服务。历史架构审查文档仅记录过去的 MCP 形态，不是当前安装步骤；现行/历史文档分类见 [docs/README.md](docs/README.md)。
 
-同步个人 Skill 时，将整个 `skills/multi-search/`（含 `references/` 与 `agents/`）复制到自己的 Skill 目录；先备份现有文件并保留个人定制，核对文件内容或 hash 后替换。只复制 `SKILL.md` 会缺少 CLI 指南与子代理约定。已加载的旧 Skill 需要在新任务中重新读取。
+同步个人 Skill 时，将整个 `skills/multi-search/`（含 `references/` 与 `agents/`）复制到自己的 Skill 目录；先备份现有文件并保留个人定制，核对文件内容或 hash 后替换。只复制 `SKILL.md` 会缺少 CLI 指南与搜索执行器（委派、Claude Code / Codex / Pi 分派与交接）约定。已加载的旧 Skill 需要在新任务中重新读取。
 
 `skills/multi-search/` 是仓库里唯一的 Skill 权威来源；桌面端在编译时把同一棵树原样打包进 `desktop/src-tauri/src/skill.rs`（`include_str!`），安装到受管目录的内容与这里一致，不再有第二份手写副本。Skill 内容一旦变化，受管版本的 `skill_version` 会随打包内容自动变化，桌面端据此提示更新。
 
@@ -206,7 +214,7 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 Key 有三个来源，CLI、`doctor` 和桌面端使用同一套判定：
 
 - 环境变量（`env`）：适合 CI 和临时覆盖，优先级最高。
-- Windows 凭据库（`credential_store`）：桌面端“搜索源与凭据”页写入的通用凭据 `multi-search/<provider>`（UTF-8 JSON，单条 secret）；只在 Windows 且未启用测试隔离时读取。
+- Windows 凭据库（`credential_store`）：桌面端“搜索源与凭据”页写入 `~/.multi-search/config.sqlite`，每个 provider 一行，值以当前 Windows 用户的 DPAPI 加密（`MULTI_SEARCH_CONFIG_DB` 只用于显式隔离运行）；只在 Windows 且未启用测试隔离时读取，非 Windows 没有明文回退。旧版本写入 Windows 凭据管理器的通用凭据 `multi-search/<provider>` 不再写入，只作为 `migrate-legacy` 的显式迁移源。
 - `~/.search-keys.json`（`keys_file`）：明文回退文件，适合批量维护和没有凭据库的环境；文件权限对其他用户开放时，`doctor` 会给出 `chmod 600` 提示。
 
 把 key 放到 `~/.search-keys.json`，不要提交到仓库：
@@ -233,7 +241,9 @@ Key 有三个来源，CLI、`doctor` 和桌面端使用同一套判定：
 - 同一 provider 有多个环境变量时，按下面列表从左到右依次读取，**最后一个非空值生效**。例如同时设置 `BRAVE_SEARCH_API_KEY` 和 `BRAVE_API_KEY` 时使用 `BRAVE_API_KEY`；同时设置 `GITHUB_TOKEN` 和 `GH_TOKEN` 时使用 `GH_TOKEN`。
 - 生效顺序：环境变量（`env`）> Windows 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）。同一 provider 不跨来源合并：高优先级来源存在时不再读取低优先级来源，多 Key 轮换列表也不会拼接。
 - 凭据库条目读不出来时，只有该 provider 失败（`error_type: "credential_store"`），不会回退到明文文件，也不影响其他源和无 key 的源；`doctor`、桌面端凭据页和实际搜索都使用 `key_sources` 的同一判定。
-- `TWITTER_COOKIES_PATH` > 配置中的 `twitter_cookies_path` > keys 文件中的 `twitter` 条目。
+- Twitter/X Cookie 有两种模式（设置项 `twitter_cookies_mode`）：
+  - `file`（缺省）：`TWITTER_COOKIES_PATH` > 配置中的 `twitter_cookies_path` > keys 文件中的 `twitter` 条目，读取明文 Cookie 文件；旧用户不会被自动迁移。
+  - `managed`：在 Windows 桌面端“Cookie 托管”页显式确认导入后切换。Cookie 作为独立的 `twitter_cookies` 条目以当前用户 DPAPI 加密存入凭据库，实际调用 X 时才解密并直接交给 XKit，不写临时明文文件，也不进入 API-key 轮换池；此模式下忽略 `TWITTER_COOKIES_PATH`。托管条目缺失、损坏、解密失败或在非 Windows 上一律 fail-closed，不回退旧文件。删除托管 Cookie 后仍保持 `managed` 且不可用；导入/删除都不修改或删除原文件，旧明文副本由用户自行处理。DPAPI 不防同用户进程或内存读取。协议与限制见 [Cookie 协议](desktop/src-tauri/COOKIE-PROTOCOL.md)。
 
 ```text
 BRAVE_SEARCH_API_KEY / BRAVE_API_KEY
@@ -261,7 +271,7 @@ multi-search migrate-legacy apply --keys-file "$HOME\.search-keys.json" --reques
 
 `plan` 返回 `plan_token`，它绑定旧文件与凭据库的当前内容；两者在预览后任一变化，`apply` 都会拒绝执行并要求重新预览。`apply` 返回 `legacy_file`、`legacy_file_has_plaintext` 和权限告警，提示继续清理旧文件。
 
-多数 key 字段支持 string 或 string array。Jina 支持 `{ "key": "...", "exhausted": true|false }`。这里的 `exhausted` 是 `~/.search-keys.json` 中由操作员维护的配置级静态排除标记：设为 `true` 后该 key 不再进入 Jina 轮换；它不是 SQLite 运行态的 `quota_exhausted`，也没有 24 小时自动恢复语义。带 key 的 Jina Reader 请求遇到 HTTP 402 或明确配额/余额错误时，会直接分类为运行态 `quota_exhausted`，无需先调用 wallet/余额接口；该状态在 `exhausted_until` 未到期时跳过该 key，期满后重新允许尝试，不会自动把配置文件的 `exhausted` 写成 `true`。需要手动软删除 Jina key：
+多数 key 字段支持 string 或 string array。Jina 支持 `{ "key": "...", "exhausted": true|false }`，可存入 keys 文件，也可在桌面端写入凭据库。这里的 `exhausted` 是由操作员维护的配置级静态排除标记：设为 `true` 后该 key 不再进入 Jina 轮换；它不是 SQLite 运行态的 `quota_exhausted`，也没有 24 小时自动恢复语义。带 key 的 Jina Reader 请求遇到 HTTP 402 或明确配额/余额错误时，会直接分类为运行态 `quota_exhausted`，无需先调用 wallet/余额接口；该状态在 `exhausted_until` 未到期时跳过该 key，期满后重新允许尝试，不会自动把配置文件的 `exhausted` 写成 `true`。需要手动软删除 Jina key：
 
 ```powershell
 # 在仓库根目录或已安装环境中运行
@@ -294,7 +304,7 @@ flowchart LR
 
 术语固定如下：
 
-- **Service 服务层**：`multi_search_mcp/src/service.py` 是对外 facade；实现按职责拆在 `search/candidates.py`（候选搜索）、`search_web.py`（搜索+抓取编排）、`scrape/fetch.py`（抓取）、`read.py`（缓存读取）、`multi_search.py`（兼容展示）、`diagnostics.py`（诊断）等模块，CLI 只做参数适配。
+- **Service 服务层**：`multi_search_mcp/src/service.py` 是对外 facade；实现按职责拆在 `search/candidates.py`（候选搜索）、`search_web.py`（搜索+抓取编排）、`scrape/fetch.py`（抓取）、`read.py`（缓存读取）、`multi_search.py`（兼容展示）、`diagnostics.py`（诊断）、`state/runtime.py`（配置、凭据与 Cookie 模式的运行时装配）等模块，CLI 只做参数适配。
 - **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口，最后取前 15 条；分数相同按 canonical URL 排序。
 - **SourceRegistry / ContentStore**：短期 SQLite 状态。前者把本次响应的 `source_id` 映射到 URL；后者按 TTL、单条/总容量限制保存正文并以内容哈希去重。provider 的 retention policy 可禁止保存结果、摘要或正文。
 
@@ -302,7 +312,7 @@ flowchart LR
 - **Searcher 搜索器**：`multi_search_mcp/src/search/searchers/*`，只负责 query -> `SearchResult`/dict，输出 title、url、description、source、score、raw metadata。
 - **SearchRunner 搜索调度器**：`multi_search_mcp/src/search/search_runner.py`，负责 route、并发、timeout、SQLite key state 和 source status。
 - **统一排序与抓取**：两个公共搜索入口共用 RRF 结果；`run_ranked_fetch_stage` 获取最终列表正文，按输入顺序回填。正文长度、抓取成功与否和 stars 不再改变排名；`support/dedup.py` 中的旧排序辅助函数不参与公共搜索排序。
-- **抓取后端选择**：`scrape/service.run_scrape_raw` 从共享 key manager 获取可用 key，`scrape/scrape.py` 维护 backend 顺序和逐次尝试；搜索最终列表不再按每源 quota 二次截取。旧 `run_scrape_stage`、planner 和正文回写链已删除，`multi_search` 仅包装共享流程的展示结果；`support/dedup.py` 只保留展示用的 `consensus_weight`；RRF 顺序是唯一排序来源，格式化不再重排。清理依据及公共契约验证见 [旧抓取链清理记录](docs/legacy-scrape-cleanup-2026-09-12.md)。
+- **抓取后端选择**：`scrape/service.run_scrape_raw` 按设置中的抓取链（`scrape_backends`）确定通用后端顺序、从共享 key manager 获取可用 key，`scrape/scrape.py` 结合站点抓取记忆逐次尝试；搜索最终列表不再按每源 quota 二次截取。旧 `run_scrape_stage`、planner 和正文回写链已删除，`multi_search` 仅包装共享流程的展示结果；`support/dedup.py` 只保留展示用的 `consensus_weight`；RRF 顺序是唯一排序来源，格式化不再重排。清理依据及公共契约验证见 [旧抓取链清理记录](docs/legacy-scrape-cleanup-2026-09-12.md)。
 - **Scraper 抓取器 backend**：`multi_search_mcp/src/scrape/scrapers/*`，负责 url -> 正文。Jina、Exa、Tavily、Firecrawl 都是 backend。
 - **Scrape orchestration 抓取调度执行器**：`multi_search_mcp/src/scrape/scrape.py`，负责单 URL fallback 链、站点策略和 key 使用结果记录。
 - **Renderer 渲染器**：`multi_search_mcp/src/support/format.py`，负责诊断信息、搜索结果、抓取正文和 untrusted 安全围栏。
@@ -313,8 +323,10 @@ flowchart LR
 
 - 搜索阶段统一获取 RRF 最终前 15 条的正文；有效候选不足 15 条时全部获取。已有可用正文缓存时直接复用。
 - `scrape_top` / `scrape_per_source` 等已失效键已从请求 DTO 移除；示例配置只保留生效键。旧配置文件中的这些键会被忽略，并通过弃用警告（`FutureWarning`）提示。
-- 默认抓取后端从可用能力构建：Jina 匿名优先；Exa / Tavily 只有配置对应 key 后才进入 fallback 链；Firecrawl `/v2/scrape` 无 key 也会作为最后 fallback，但匿名额度是 IP 级免费日额度，不参与批量抓取 primary 轮换。抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
-- Jina、Parallel、Exa、Tavily、Firecrawl 等带 key 的 provider/backend 走 SQLite key state：`invalid` 只累计连续的 provider 认证失败，前两次为 `transient_invalid`，第三次才升级为永久 `invalid`；success、`rate_limit`、`quota_exhausted` 或其它非 invalid provider 结果都会清零 `invalid_strikes`，而 target 错误是中立事件，不改变既有 key 健康、冷却或计数。`invalid` / `disabled` 无自动恢复，需明确重置或人工清除后才会重新使用；`cooldown` 和 `transient_invalid` 在 `cooldown_until` 未到期时跳过，当前冷却为 15 分钟；`quota_exhausted` 在 `exhausted_until` 未到期时跳过，当前恢复期为 24 小时，期满后重新允许尝试。从未使用过的 key 优先；同等情况下按 `last_used_at` 最早优先；每次选中会更新 `last_used_at` 和 `use_count`。
+- 通用网页抓取按**有序抓取链**依次尝试：设置顶层 `scrape_backends` 数组（`jina`、`exa`、`tavily`、`firecrawl` 的有序子集，重复项只保留首次）决定 fallback 顺序，省略或 `null` 时使用默认 `["jina", "exa", "tavily", "firecrawl"]`，空数组或未知名称是配置错误。前一个失败才尝试下一个，最后一个也失败时返回错误。`fetch --backend` 只覆盖单次调用，不写回设置。Reddit / Twitter 按域名固定使用专用抓取器，不进入抓取链。
+- **站点抓取记忆**在抓取链之上调整单个站点的顺序：手动固定（`site set-preference`）的后端排到该站点最前，`blocked` / `timeout` 失败的后端进入 1 小时冷却并靠后；成功/失败计数只作统计，不按历史成功率自动重排。`site reset [site]` 按站点或全部清除。
+- 默认链中：Jina 匿名优先；Exa / Tavily 需要 key，缺 key 时运行时跳过；Firecrawl `/v2/scrape` 无 key 也会作为最后 fallback，但匿名额度是 IP 级免费日额度，不参与批量抓取 primary 轮换。抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
+- Jina、Parallel、Exa、Tavily、Firecrawl 等带 key 的 provider/backend 走 SQLite key state：invalid 失败累加 strikes，无既存强状态时前两次进入 `transient_invalid`（15 分钟冷却），第三次升级为 `invalid`。invalid / rate_limit 失败保留已有 invalid、quota_exhausted、disabled；quota_exhausted 失败保留已有 invalid、disabled。rate_limit / quota_exhausted 清零 strikes；timeout/network/未分类失败只记录失败，不改状态、期限或 strikes；target 不写健康结果。success 受 `started_at` 因果门控：迟到成功不清除请求开始后新写入的状态与 strikes。`keys reset` 重置运行态但不解除 `manually_disabled`；当前没有专用的解除手动禁用命令。冷却默认 15 分钟，quota 恢复期默认 24 小时，期限到期只允许重试，不自动改写 status。从未使用过的 key 优先，其次按最久未用（LRU）；`reserve()` 在写事务内复核健康、选取候选并更新使用计数，不是独占租约。精确状态转换见 [术语表](docs/glossary.md#5-key-与状态)。
 - 每个候选 URL 只走一次完整 fallback 链；失败或 `scrape_timeout` 后记录 Errors，不自动补位。
 - GitHub repo 根 URL 保持原地址，由抓取后端解析仓库页面；不猜测 README 的文件名或位置。
 
@@ -369,18 +381,20 @@ search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
 search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，以及站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`。
+CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，以及站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`，和旧 Key 文件迁移的 `migrate-legacy plan|apply`。`search --no-fetch` 只返回融合排序的候选，不抓正文、不写正文缓存；`--no-state` 跳过 SQLite key 轮换、正文缓存与站点记忆。
 
 ## 配置和参数
 
-非敏感默认值放在 [multi-search-config.json](multi-search-config.json)，CLI 显式参数优先级更高。
+非敏感默认值按 `MULTI_SEARCH_CONFIG`（JSON）→ `config.sqlite` 的 settings 记录（桌面端写入，存在即权威）→ `~/.multi-search/multi-search-config.json` → 仓库开发态的 [multi-search-config.json](multi-search-config.json) 解析，CLI 显式参数优先级更高。
+
+路由组：settings 中的完整 `routes` 映射存在时以它为准（每组 `label`、`sources`、可选 `timeout` 1–60 秒；标识为 1–64 位小写字母、数字、`_` 或 `-`，`web` 保留为 `default` 的别名），缺省时提供内置五组。`type` 指定默认组，必须是已存在的组。超时优先级为命令 `--timeout` > 组超时 > 全局 `timeout` > 内置 route 行为。字段细节见 [CLI 指南](skills/multi-search/references/cli.md)。
 
 `search_web` 常用参数：
 
 | 参数 | 默认 | 说明 |
 |---|---:|---|
 | `query` | — | 搜索查询（必填） |
-| `route` | `default` | 选源/场景：`web` / `fast` / `social` / `dev` / `all` |
+| `route` | `default` | 选源/场景：内置 `web` / `fast` / `social` / `dev` / `all`，或设置中自定义的路由组标识 |
 | `sources` | — | 直接指定一个或多个源，绕过 route |
 | `count` | per-source | 每源召回数量，按各源上限 clamp；最终仍最多 15 条 |
 | `timeout` | 60 | 搜索阶段整批 deadline |
@@ -399,7 +413,7 @@ JSON 配置支持 `disabled_sources`（默认为 `[]`）用来全局关闭某些
 
 `scrape_url` tool 用于单独抓取一个 URL，支持 `backends`、`scrape_chars`、`scrape_timeout`、`use_state` 等参数；默认正文输出上限同为 1200 字符，可通过 `scrape_chars` 覆盖。
 
-五个抓取后端（Jina、Exa、Tavily、Firecrawl、Reddit）在共享入口统一输出：
+四个通用抓取后端（Jina、Exa、Tavily、Firecrawl）及 Reddit、Twitter/X 专用适配器在共享入口统一输出：
 
 | 字段 | 含义 |
 |---|---|
@@ -440,7 +454,7 @@ Provider 参考文档和现行/历史文档分类见 [docs/README.md](docs/READM
 
 ## 安全
 
-- 不要提交 `~/.search-keys.json`、`.env` 或真实 provider key。
+- 不要提交 `~/.search-keys.json`、`~/.multi-search/config.sqlite`、`.env`、Cookie 文件或真实 provider key。
 - provider error 输出前会尽量 scrub 可能出现的 key 值。
 - 第三方抓取正文始终按 untrusted data 处理。
 
@@ -456,11 +470,22 @@ Provider 参考文档和现行/历史文档分类见 [docs/README.md](docs/READM
 
 `uv run --locked python scripts/run_tests.py` 在测试发现前切换到临时 home、配置、密钥文件和 SQLite，并默认拒绝非 loopback 的 DNS、socket、urllib 代理与 `curl_cffi` 外联；受控 loopback HTTP 和内存 handler 仍可运行。Python 子进程会继承隔离 bootstrap，违规即使被测试捕获也会使 runner 失败。
 
-干净环境先非 editable 安装 `python -m pip install .`，再运行 `python scripts/smoke_install.py`；该 smoke 会把同一组临时环境显式传给 CLI 子进程，并检查仓库外 console/module 入口、安装元数据、无 MCP 依赖以及 doctor。上述检查不等于真实 provider、远程主机或所有平台/运行时矩阵验收；GitHub Actions 对 Windows/Linux、Python 3.10/3.14 执行这两类检查。
+文档出处检查运行 `uv run --locked python scripts/check_glossary_paths.py`：校验 [术语表](docs/glossary.md)「代码出处」列的每个文件存在，以及 README、文档索引和术语表的本地链接可解析。
+
+干净环境先非 editable 安装 `python -m pip install .`，再运行 `python scripts/smoke_install.py`；该 smoke 会把同一组临时环境显式传给 CLI 子进程，并检查仓库外 console/module 入口、安装元数据、无 MCP 依赖以及 doctor。上述检查不等于真实 provider、远程主机或所有平台/运行时矩阵验收。
+
+GitHub Actions（`.github/workflows/test.yml`）在每次 push / PR 上运行：
+
+- `python`：Linux/Windows/macOS × Python 3.10/3.14，非 editable 安装后跑 smoke、隔离回归、`scripts/` 测试和文档出处检查。
+- `locked-regression`：同一矩阵按提交的 `uv.lock` 执行 `uv sync --locked` 后跑回归与文档出处检查，锁文件与依赖漂移会直接失败。
+- `desktop-js`：`npm ci` 后跑 DOM/UI 测试和 `npm run typecheck`。
+- `desktop-rust`（Windows）：按 `rust-toolchain.toml` 安装工具链，`--features test-fixtures,ts` 与 install boundary 两组 cargo test 覆盖全部测试目标，再由 `scripts/rust_ci_matrix.py` 在一次性 profile 与网络防护下跑 Rust ↔ Python interop 矩阵和 `tauri.check.conf.json` overlay 检查。overlay 不构造 bundle，不替代真实安装器、原生窗口动态 ACL 或发布验收。
+
+已签名的 Windows 安装包由手动触发的 `.github/workflows/release.yml` 构建。2026-10-22 修复轮次的验证边界与延期项见 [最终独立复验](docs/independent-review-final-2026-10-22.md)。
 
 ### 为什么结果里没有 Twitter/X？
 
-Twitter/X 需要 cookies。确认依赖已安装，并配置 `TWITTER_COOKIES_PATH` 或 `~/.search-keys.json` 中的 `twitter` 字段；源码直接运行时先执行 `python -m pip install -e .`。
+Twitter/X 需要 XKit-py（当前在 `pyproject.toml` 中注释停用，见上文“快速开始”）和含 `auth_token` 与 `ct0` 的 Cookie。`file` 模式下检查 `TWITTER_COOKIES_PATH`、设置中的 `twitter_cookies_path` 或 `~/.search-keys.json` 中的 `twitter` 字段；Windows `managed` 模式下在桌面端“Cookie 托管”页检查托管状态，缺失时显式重新导入，不会自动改读旧文件。源码直接运行时先执行 `python -m pip install -e .`。
 
 ### 抓取正文太慢怎么办？
 

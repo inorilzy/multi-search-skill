@@ -1,0 +1,42 @@
+{
+  "startedUTC": "2026-09-13T03:36:09+00:00",
+  "finishedUTC": "2026-09-13T03:48:47.729149+00:00",
+  "normativeInventoryCount": 45,
+  "checkedRequirements": 25,
+  "notCheckedRequirements": 20,
+  "productionFilesReadForEvidenceCount": 21,
+  "verdictCounts": {
+    "implemented": 24,
+    "undecidable": 1,
+    "partial": 0,
+    "contradicted": 0,
+    "stronger-than-spec": 0,
+    "absent": 0
+  },
+  "offlineProbeGroups": 11,
+  "offlineProbePassed": 11,
+  "confirmedBehavioralBugs": 0,
+  "unverifiedDocumentationCandidates": [
+    "REQ-24",
+    "UD-01"
+  ],
+  "verificationCommand": ".venv\\Scripts\\python.exe -B .scratch\\skill-comparison-20260912\\spec\\offline_probe.py",
+  "workflowMode": "Codex adaptation; Workflow unavailable; no per-requirement agents and no original structured-return enforcement",
+  "independentRefutationByAuthor": false,
+  "benefits": [
+    "文档先行固定判定对象；避免凭代码反推需求",
+    "每条源文引用/证据范围/命中搜索记录，便于复核",
+    "配置exhausted与运行态quota_exhausted区分避免假阳性"
+  ],
+  "costs": [
+    "25条同context适配弱于原版隔离上下文",
+    "每条MD+JSON维护和规范去重有显著产出成本",
+    "当前文档分散且一个table row包含多条要求，需要明确子范围"
+  ],
+  "limitations": [
+    "样本内implemented为静态和少量离线证据，不是生产验收",
+    "不运行真实HTTP/DNS/MCP transport、不读取用户默认密钥/SQLite/cookies",
+    "未读取历史审查及其他agent报告",
+    "25条范围内源码路径审阅并非所有provider/全部并发交错穷尽"
+  ]
+}

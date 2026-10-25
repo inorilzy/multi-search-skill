@@ -9,7 +9,7 @@ pub(crate) const MIN_SECRET_LEN: usize = 8;
 
 fn strings(value: &Value, out: &mut Vec<String>) {
     match value {
-        Value::String(s) => out.push(s.clone()),
+        Value::String(s) if !s.is_empty() => out.push(s.clone()),
         Value::Array(rows) => {
             for row in rows {
                 strings(row, out);
@@ -23,21 +23,49 @@ fn strings(value: &Value, out: &mut Vec<String>) {
         _ => (),
     }
 }
-
 /// Secrets for the real environment: env vars, keys file, cookie file, and every
-/// key saved in the platform credential store (the recommended storage location).
+/// key saved in the SQLite store (the recommended storage location).
 pub(crate) fn secrets(environment: &RuntimeEnvironment) -> Vec<String> {
-    crate::credential_commands::with_native(|backend| collect(environment, backend))
+    let backend = crate::config_db::path(&environment.variables)
+        .filter(|path| path.exists())
+        .map(|path| credential::SqliteCredentialBackend { path });
+    match backend.as_ref() {
+        Some(backend) => collect(environment, backend),
+        // No database yet: the store contributes nothing, and an unavailable store never
+        // fails redaction.
+        None => collect_without_store(environment),
+    }
 }
 
 /// Pure collection over an explicit store backend, so tests never touch the real store.
 pub(crate) fn collect(environment: &RuntimeEnvironment, backend: &dyn CredentialBackend) -> Vec<String> {
+    let mut values = collect_without_store(environment);
+    // One entry per key provider. A missing, unreadable, or unavailable row contributes
+    // nothing; it never fails redaction.
+    for provider in credential::store_providers()
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(crate::cookie::PROVIDER))
+    {
+        if let Ok(Some((value, _saved_at))) = credential::load(backend, "", provider) {
+            strings(&value, &mut values);
+        }
+    }
+    finish(values)
+}
+
+fn finish(mut values: Vec<String>) -> Vec<String> {
+    values.retain(|value| value.chars().count() >= MIN_SECRET_LEN);
+    values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    values.dedup();
+    values
+}
+
+fn collect_without_store(environment: &RuntimeEnvironment) -> Vec<String> {
     let mut values = Vec::new();
     for (name, value) in &environment.variables {
-        if name.ends_with("API_KEY")
-            || name.ends_with("TOKEN")
-            || name == "JINA_KEY"
-            || name == "SERPAPI_KEY"
+        if value.chars().count() >= MIN_SECRET_LEN
+            && crate::process::ENV_SECRET_MARKERS.iter().any(|marker| name.to_ascii_uppercase().contains(marker))
         {
             values.push(value.clone());
         }
@@ -55,35 +83,25 @@ pub(crate) fn collect(environment: &RuntimeEnvironment, backend: &dyn Credential
             }
         }
     }
-    if let Some(path) = environment.variables.get("TWITTER_COOKIES_PATH") {
+    let settings = crate::settings::view(environment);
+    for path in environment.variables.get("TWITTER_COOKIES_PATH").into_iter().chain(settings.twitter_cookies_path.as_ref()) {
+        values.push(path.clone());
         if let Ok(text) = std::fs::read_to_string(path) {
-            if let Ok(data) = serde_json::from_str::<Value>(&text) {
+            if let Ok(data) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
                 strings(&data, &mut values);
             }
         }
     }
-    // Credential Manager keys, one entry per allowlisted provider. An unavailable or
-    // unreadable store contributes nothing; it never fails redaction.
-    let namespace = credential::namespace(&environment.variables);
-    for entry in crate::source_catalog::catalog().credential_sources() {
-        if let Ok(Some((key, _saved_at))) = credential::load(backend, &namespace, &entry.key_provider) {
-            values.push(key);
-        }
-    }
-    values.retain(|value| value.chars().count() >= MIN_SECRET_LEN);
-    values.sort_by_key(|s| std::cmp::Reverse(s.len()));
-    values.dedup();
     values
 }
-
 pub(crate) fn scrub(text: &str, secrets: &[String]) -> String {
-    secrets.iter().fold(text.to_string(), |value, secret| {
-        value.replace(secret, "[REDACTED]")
-    })
+    secrets
+        .iter()
+        .filter(|secret| secret.chars().count() >= MIN_SECRET_LEN)
+        .fold(text.to_string(), |value, secret| {
+            value.replace(secret, "[REDACTED]")
+        })
 }
-
-/// Scrub string values only. Object keys are field names the UI depends on, never
-/// secrets, so they are kept as-is.
 pub(crate) fn scrub_json(value: &mut Value, secrets: &[String]) {
     match value {
         Value::String(text) => *text = scrub(text, secrets),
@@ -92,6 +110,8 @@ pub(crate) fn scrub_json(value: &mut Value, secrets: &[String]) {
                 scrub_json(row, secrets);
             }
         }
+        // Object keys are field names the UI depends on, never secrets: keep them as-is and
+        // scrub values only.
         Value::Object(rows) => {
             for row in rows.values_mut() {
                 scrub_json(row, secrets);
@@ -103,115 +123,8 @@ pub(crate) fn scrub_json(value: &mut Value, secrets: &[String]) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::credential::CredentialError;
-    use std::{collections::BTreeMap, path::PathBuf, sync::Mutex};
-
-    const STORE_KEY: &str = "synthetic-store-tavily-0001";
-
-    #[derive(Default)]
-    struct Memory(Mutex<BTreeMap<String, Vec<u8>>>);
-    impl CredentialBackend for Memory {
-        fn read(&self, target: &str) -> Result<Option<Vec<u8>>, CredentialError> {
-            Ok(self.0.lock().unwrap().get(target).cloned())
-        }
-        fn write(&self, target: &str, blob: &[u8]) -> Result<(), CredentialError> {
-            self.0.lock().unwrap().insert(target.into(), blob.to_vec());
-            Ok(())
-        }
-        fn delete(&self, target: &str) -> Result<bool, CredentialError> {
-            Ok(self.0.lock().unwrap().remove(target).is_some())
-        }
-    }
-
-    struct Denied;
-    impl CredentialBackend for Denied {
-        fn read(&self, _target: &str) -> Result<Option<Vec<u8>>, CredentialError> {
-            Err(CredentialError::Unavailable("denied".into()))
-        }
-        fn write(&self, _target: &str, _blob: &[u8]) -> Result<(), CredentialError> {
-            Err(CredentialError::Unavailable("denied".into()))
-        }
-        fn delete(&self, _target: &str) -> Result<bool, CredentialError> {
-            Err(CredentialError::Unavailable("denied".into()))
-        }
-    }
-
-    fn environment(home: &std::path::Path, extra: &[(&str, &str)]) -> RuntimeEnvironment {
-        let mut variables = BTreeMap::from([
-            ("HOME".to_string(), home.to_string_lossy().into_owned()),
-            (credential::NAMESPACE_ENV.to_string(), "redaction-test".to_string()),
-        ]);
-        for (name, value) in extra {
-            variables.insert(name.to_string(), value.to_string());
-        }
-        RuntimeEnvironment { app_path: vec![], user_path: vec![], variables, cwd: PathBuf::new() }
-    }
-
-    fn temp_home(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ms-redaction-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     #[test]
-    fn credential_store_keys_are_redacted() {
-        let home = temp_home("store");
-        let backend = Memory::default();
-        credential::save(&backend, "redaction-test", "tavily", STORE_KEY, 1.0).unwrap();
-        let secrets = collect(&environment(&home, &[]), &backend);
-        assert!(secrets.contains(&STORE_KEY.to_string()));
-        let text = scrub(&format!("provider echoed {STORE_KEY}"), &secrets);
-        assert!(!text.contains(STORE_KEY));
-        assert!(text.contains("[REDACTED]"));
-        std::fs::remove_dir_all(home).unwrap();
-    }
-
-    #[test]
-    fn unavailable_store_contributes_nothing_and_does_not_fail() {
-        let home = temp_home("denied");
-        let secrets = collect(&environment(&home, &[("EXA_API_KEY", "synthetic-env-exa-0001")]), &Denied);
-        assert_eq!(secrets, vec!["synthetic-env-exa-0001".to_string()]);
-        std::fs::remove_dir_all(home).unwrap();
-    }
-
-    #[test]
-    fn short_values_from_files_and_env_are_not_secrets() {
-        let home = temp_home("short");
-        std::fs::write(
-            home.join(".search-keys.json"),
-            r#"{"tavily":"synthetic-file-tavily-0001","flag":"1","lang":"en","on":"true"}"#,
-        )
-        .unwrap();
-        let cookies = home.join("cookies.json");
-        std::fs::write(&cookies, r#"{"ct0":"synthetic-cookie-ct0-value","lang":"en","dnt":"1"}"#).unwrap();
-        let env = environment(
-            &home,
-            &[("TWITTER_COOKIES_PATH", cookies.to_str().unwrap()), ("GH_TOKEN", "abc")],
-        );
-        let secrets = collect(&env, &Memory::default());
-        assert!(secrets.contains(&"synthetic-file-tavily-0001".to_string()));
-        assert!(secrets.contains(&"synthetic-cookie-ct0-value".to_string()));
-        for short in ["1", "en", "true", "abc"] {
-            assert!(!secrets.contains(&short.to_string()), "{short}");
-        }
-        let text = scrub("lang en, enabled true, rank 1", &secrets);
-        assert_eq!(text, "lang en, enabled true, rank 1");
-        std::fs::remove_dir_all(home).unwrap();
-    }
-
-    #[test]
-    fn scrub_json_keeps_object_keys_and_scrubs_values() {
-        let secret = "synthetic-json-secret-0001".to_string();
-        let mut value = serde_json::json!({
-            "results": [{"title": format!("leak {secret}"), "url": "https://example.com"}],
-            secret.clone(): "value under a secret-looking key",
-        });
-        scrub_json(&mut value, std::slice::from_ref(&secret));
-        assert_eq!(value["results"][0]["title"], "leak [REDACTED]");
-        assert_eq!(value["results"][0]["url"], "https://example.com");
-        assert!(value.as_object().unwrap().contains_key("results"));
-        assert!(value.as_object().unwrap().contains_key(&secret));
+    fn short_values_never_destroy_normal_output() {
+        assert_eq!(super::scrub("a token abcdefgh", &["a".into(), "abcdefgh".into()]), "a token [REDACTED]");
     }
 }

@@ -1,0 +1,75 @@
+{
+  "requirementId": "REQ-11",
+  "title": "source_id 是一次响应内canonical URL的短期身份",
+  "document": "CONTEXT.md",
+  "location": "CONTEXT.md:L15",
+  "quote": "一次搜索响应中某个来源的短期身份",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'make_source_id|response_id|expires_at' multi_search_mcp/src/search/candidate.py multi_search_mcp/src/state/source_registry.py multi_search_mcp/src/service.py",
+      "result": "28 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/service.py:27:from .search.candidate import SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_results, make_source_id",
+        "multi_search_mcp/src/service.py:170:        \"expires_at\": cached[\"expires_at\"],",
+        "multi_search_mcp/src/service.py:211:        response_id = f\"resp_{uuid.uuid4().hex}\"",
+        "multi_search_mcp/src/service.py:213:        source_id = make_source_id(response_id, canonical_url)",
+        "multi_search_mcp/src/service.py:217:            ).register(response_id, [{",
+        "multi_search_mcp/src/service.py:262:            \"expires_at\": cached[\"expires_at\"],",
+        "multi_search_mcp/src/service.py:311:        \"expires_at\": stored.get(\"expires_at\") if stored else None,",
+        "multi_search_mcp/src/service.py:440:    response_id = f\"resp_{uuid.uuid4().hex}\"",
+        "multi_search_mcp/src/service.py:443:        query_runs, response_id=response_id, limit=limit,",
+        "multi_search_mcp/src/service.py:448:        [(query_plan.primary_query, primary_rows)], response_id=response_id, limit=1,",
+        "multi_search_mcp/src/service.py:466:            ).register(response_id, [registry_hit])",
+        "multi_search_mcp/src/service.py:504:        \"response_id\": response_id,",
+        "multi_search_mcp/src/state/source_registry.py:30:    def register(self, response_id: str, hits: list[dict]) -> None:",
+        "multi_search_mcp/src/state/source_registry.py:32:        expires_at = now + timedelta(seconds=self.ttl_seconds)",
+        "multi_search_mcp/src/state/source_registry.py:39:                      source_id, response_id, title, url, canonical_url,",
+        "multi_search_mcp/src/state/source_registry.py:41:                      created_at, expires_at",
+        "multi_search_mcp/src/state/source_registry.py:46:                        response_id,",
+        "multi_search_mcp/src/state/source_registry.py:55:                        expires_at.isoformat(),",
+        "multi_search_mcp/src/state/source_registry.py:66:        expires_at = datetime.fromisoformat(str(row[\"expires_at\"]))",
+        "multi_search_mcp/src/state/source_registry.py:67:        if expires_at <= self.clock():",
+        "multi_search_mcp/src/state/source_registry.py:87:            \"DELETE FROM search_sources WHERE expires_at <= ?\", (now,)",
+        "multi_search_mcp/src/search/candidate.py:73:def make_source_id(response_id: str, canonical_url: str) -> str:",
+        "multi_search_mcp/src/search/candidate.py:75:        f\"{response_id}\\0{canonical_url}\".encode(\"utf-8\")",
+        "multi_search_mcp/src/search/candidate.py:128:    response_id: str,",
+        "multi_search_mcp/src/search/candidate.py:191:    source_id = make_source_id(response_id, canonical_url)",
+        "multi_search_mcp/src/search/candidate.py:235:    response_id: str,",
+        "multi_search_mcp/src/search/candidate.py:256:                response_id=response_id,",
+        "multi_search_mcp/src/search/candidate.py:281:            response_id=response_id,"
+      ]
+    }
+  ],
+  "reasoning": "ID由response_id与canonical URL拼接SHA256前20hex构成；新搜索/直接URLfetch创建随机response_id。registry过期查询删引用；未知source fetch抛错。离线跨响应同URL产生不同ID，但cache_scope允许正文复用。未主张此短ID是授权令牌或永久身份。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-11.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/search/candidate.py",
+      "lines": "L73-L77",
+      "quote": "def make_source_id(response_id: str, canonical_url: str) -> str:\n    digest = hashlib.sha256(\n        f\"{response_id}\\0{canonical_url}\".encode(\"utf-8\")\n    ).hexdigest()\n    return f\"src_{digest[:20]}\"",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/search/candidate.py",
+      "lines": "L191-L206",
+      "quote": "    source_id = make_source_id(response_id, canonical_url)\n    hit = {\n        \"source_id\": source_id,\n        \"title\": str(representative.get(\"title\") or representative.get(\"url\") or \"\"),\n        \"url\": str(representative.get(\"url\") or canonical_url),\n        \"canonical_url\": canonical_url,\n        \"content\": _compact(content_text),\n        \"content_kind\": content_kind,\n        \"published_at\": published_at,",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/source_registry.py",
+      "lines": "L30-L69",
+      "quote": "    def register(self, response_id: str, hits: list[dict]) -> None:\n        now = self.clock()\n        expires_at = now + timedelta(seconds=self.ttl_seconds)\n        with self.store.connect() as conn:\n            self._purge_expired_conn(conn, now.isoformat())\n            for hit in hits:\n                conn.execute(\n                    \"\"\"\n                    INSERT OR REPLACE INTO search_sources (",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L209-L226",
+      "quote": "    source_id = str(request.source_id or \"\")\n    if not source_id:\n        response_id = f\"resp_{uuid.uuid4().hex}\"\n        canonical_url = canonicalize_url(url)\n        source_id = make_source_id(response_id, canonical_url)\n        if store is not None:\n            SourceRegistry(\n                store, ttl_seconds=retention.max_ttl_seconds\n            ).register(response_id, [{",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

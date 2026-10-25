@@ -1,0 +1,65 @@
+{
+  "requirementId": "REQ-23",
+  "title": "目标页面错误不改key健康状态、不轮换key",
+  "document": "docs/glossary.md",
+  "location": "docs/glossary.md:L62",
+  "quote": "明确的目标错误保留使用记录，但不轮换 key、不写密钥健康状态",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'error_origin|target|retryable' multi_search_mcp/src/scrape/scrape.py multi_search_mcp/src/state/key_state.py multi_search_mcp/src/support/auth.py",
+      "result": "24 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/state/key_state.py:9:from ..support.auth import is_key_retryable_error",
+        "multi_search_mcp/src/state/key_state.py:68:    retryable: bool",
+        "multi_search_mcp/src/state/key_state.py:86:            return KeyOutcome(success=True, retryable=False)",
+        "multi_search_mcp/src/state/key_state.py:89:        error_rows = [row for row in error_rows if row.get(\"error_origin\") != \"target\"]",
+        "multi_search_mcp/src/state/key_state.py:91:            return KeyOutcome(False, False, \"target\", message)",
+        "multi_search_mcp/src/state/key_state.py:104:        return KeyOutcome(False, is_key_retryable_error(error_rows), error_type, message)",
+        "multi_search_mcp/src/support/auth.py:16:def is_key_retryable_error(results: list | dict | None) -> bool:",
+        "multi_search_mcp/src/support/auth.py:25:        if row.get(\"error_origin\") == \"target\":",
+        "multi_search_mcp/src/scrape/scrape.py:4:from ..support.auth import is_key_retryable_error",
+        "multi_search_mcp/src/scrape/scrape.py:92:def _is_key_retryable_error(result: dict) -> bool:",
+        "multi_search_mcp/src/scrape/scrape.py:93:    return is_key_retryable_error(result)",
+        "multi_search_mcp/src/scrape/scrape.py:101:    # A target-page failure is neutral to credential health, including any",
+        "multi_search_mcp/src/scrape/scrape.py:103:    if key_manager is None or result.get(\"error_origin\") == \"target\":",
+        "multi_search_mcp/src/scrape/scrape.py:121:        if not _is_key_retryable_error(result):",
+        "multi_search_mcp/src/scrape/scrape.py:134:def _prepare_scrape_target(url: str, *, resolver=None) -> tuple[str, str]:",
+        "multi_search_mcp/src/scrape/scrape.py:204:        safe_url, scrape_target = _prepare_scrape_target(url, resolver=url_resolver)",
+        "multi_search_mcp/src/scrape/scrape.py:213:            return {\"url\": scrape_target, \"error\": \"scrape deadline exceeded\"}",
+        "multi_search_mcp/src/scrape/scrape.py:220:                        \"url\": scrape_target,",
+        "multi_search_mcp/src/scrape/scrape.py:224:                result = scrape_url_jina(scrape_target, \"\", timeout=_remaining_timeout(), **policy[\"jina\"])",
+        "multi_search_mcp/src/scrape/scrape.py:231:                    scrape_target,",
+        "multi_search_mcp/src/scrape/scrape.py:268:                        scrape_target,",
+        "multi_search_mcp/src/scrape/scrape.py:274:                return scrape_url_tavily(scrape_target, key, timeout=_remaining_timeout(), deadline=deadline)",
+        "multi_search_mcp/src/scrape/scrape.py:287:                lambda key: scrape_url_exa(scrape_target, key, timeout=_remaining_timeout(), max_chars=scrape_chars),",
+        "multi_search_mcp/src/scrape/scrape.py:296:                lambda key: scrape_url_firecrawl(scrape_target, key, timeout=_remaining_timeout()),"
+      ]
+    }
+  ],
+  "reasoning": "scrape循环先record_use；_record_key_result遇target立刻返回；is_key_retryable_error对明确target返回False，因此不改健康也不试下一key。探针对已有key row注入target401后整行健康记录不变。本条只判ScrapeResult明确标注target路径；所有adapter是否正确标target另未全查。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-23.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/scrape/scrape.py",
+      "lines": "L100-L123",
+      "quote": "def _record_key_result(provider: str, key: str, result: dict, key_manager) -> None:\n    # A target-page failure is neutral to credential health, including any\n    # auth failure another in-flight request may already have recorded.\n    if key_manager is None or result.get(\"error_origin\") == \"target\":\n        return\n    candidate = _candidate_for(provider, key)\n    key_manager.record_result(provider, candidate, key_manager.classify_result(provider, result))\n\n",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/key_state.py",
+      "lines": "L82-L104",
+      "quote": "    def classify_result(self, provider: str, results: list | dict | None) -> KeyOutcome:\n        rows = [results] if isinstance(results, dict) else list(results or [])\n        error_rows = [row for row in rows if isinstance(row, dict) and row.get(\"error\")]\n        if not error_rows:\n            return KeyOutcome(success=True, retryable=False)\n        message = \"; \".join(str(row.get(\"error\", \"\")) for row in error_rows)\n        # Target failures carry no evidence that a provider credential failed.\n        error_rows = [row for row in error_rows if row.get(\"error_origin\") != \"target\"]\n        if not error_rows:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/support/auth.py",
+      "lines": "L1-L34",
+      "quote": "\"\"\"Shared auth and retry helpers for provider adapters.\"\"\"\nfrom __future__ import annotations\n\n\nKEY_RETRY_PATTERNS = (\n    \"401\", \"403\", \"429\", \"unauthorized\", \"forbidden\", \"invalid api\",\n    \"invalid key\", \"api key expired\", \"api key disabled\", \"api key revoked\",\n    \"expired api key\", \"quota\", \"rate limit\", \"rate_limit\",\n    \"too many requests\", \"limit exceeded\", \"exceeded your\", \"credits\",",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

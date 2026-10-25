@@ -82,9 +82,12 @@ fn legacy_cli_reports_version_failure_with_exit_code_and_update_guidance() {
 fn failed_version_output_is_redacted_before_returning_to_callers() {
     let mut profile = common::Profile::new();
     profile.environment.variables.insert("FIXTURE_VERSION".into(), "secret".into());
+    // The fixture emits FIXTURE_SECRET, but redaction learns the value from
+    // EXA_API_KEY. The allowlist must keep EXA_API_KEY out of the child while
+    // still letting the fixture emit the same string for scrubbing.
     profile.environment.variables.insert("EXA_API_KEY".into(), "synthetic-detection-secret".into());
     // The child echoes this value back; the parent knows it as EXA_API_KEY and must scrub it.
-    profile.environment.variables.insert("FIXTURE_SECRET_ECHO".into(), "synthetic-detection-secret".into());
+    profile.environment.variables.insert("FIXTURE_SECRET".into(), "synthetic-detection-secret".into());
     let status = DesktopManager::new(profile.environment.clone()).detect_cli();
     assert!(!status.app.reason.contains("synthetic-detection-secret"));
     assert!(status.app.reason.contains("REDACTED"), "{}", status.app.reason);
@@ -104,4 +107,25 @@ fn version_timeout_is_bounded() {
     let status = DesktopManager::new(profile.environment.clone()).detect_cli();
     assert_eq!(status.app.status, "version_failed");
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn unmanaged_executable_outside_path_is_never_selected() {
+    // Discovery takes no caller-supplied path (the UI cannot pick a program): a same-named CLI
+    // that is neither on PATH nor the managed install is never probed or executed.
+    let mut profile = common::Profile::new();
+    let outside = profile.root.join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    let name = multi_search_desktop::CLI_FILE_NAME;
+    std::fs::copy(profile.root.join(name), outside.join(name)).unwrap();
+    std::fs::remove_file(profile.root.join(name)).unwrap();
+    profile.environment.app_path = vec![profile.root.clone()];
+    profile.environment.user_path = vec![profile.root.clone()];
+    let status = DesktopManager::new(profile.environment.clone()).detect_cli();
+    assert_eq!(status.execution.status, "missing");
+    assert!(!status.managed);
+    let outside_text = outside.to_string_lossy().into_owned();
+    for row in [&status.app, &status.user, &status.execution] {
+        assert!(row.path.as_deref().is_none_or(|path| !path.starts_with(&outside_text)));
+    }
 }

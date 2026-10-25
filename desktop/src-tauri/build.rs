@@ -39,6 +39,9 @@ fn main() {
 /// the handler list and the capability file in step.
 #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
 const APP_COMMANDS: &[&str] = &[
+    "cookie_status",
+    "cookie_import",
+    "cookie_delete",
     "detect_cli",
     "start_test_search",
     "poll_execution",
@@ -56,11 +59,21 @@ const APP_COMMANDS: &[&str] = &[
     "user_path_plan",
     "user_path_change",
     "credential_status",
+    "credential_read",
+    "credential_reveal",
+    "credential_application_open",
     "credential_save",
     "credential_delete",
     "credential_test",
+    "credential_append",
+    "credential_remove",
     "migration_plan",
     "migration_apply",
     "settings_view",
     "settings_save",
+    "scrape_settings_save",
+    "provider_list",
+    "scrape_memory_view",
+    "scrape_memory_pin",
+    "scrape_memory_reset",
 ];

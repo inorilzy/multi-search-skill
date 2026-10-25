@@ -1,0 +1,30 @@
+   Compiling multi-search-desktop v0.1.0 (D:\0-code-project\multi-search-skill\desktop\src-tauri)
+error: failed to run custom build command for `multi-search-desktop v0.1.0 (D:\0-code-project\multi-search-skill\desktop\src-tauri)`
+
+Caused by:
+  process didn't exit successfully: `D:\0-code-project\multi-search-skill\desktop\src-tauri\target\debug\build\multi-search-desktop-7b9bbe456380651c\build-script-build` (exit code: 101)
+  --- stdout
+  cargo:rerun-if-env-changed=MULTI_SEARCH_CLI_BUNDLE_ANCHOR
+  cargo:rerun-if-changed=resources/cli-bundle.anchor
+  cargo:rustc-env=MULTI_SEARCH_CLI_BUNDLE_ANCHOR=
+  cargo:rerun-if-env-changed=TAURI_CONFIG
+  cargo:rustc-check-cfg=cfg(desktop)
+  cargo:rustc-cfg=desktop
+  cargo:rustc-check-cfg=cfg(mobile)
+  cargo:rerun-if-changed=D:\0-code-project\multi-search-skill\desktop\src-tauri\tauri.conf.json
+  cargo:rustc-env=TAURI_ANDROID_PACKAGE_NAME_APP_NAME=desktop
+  cargo:rustc-env=TAURI_ANDROID_PACKAGE_NAME_PREFIX=local_multi_1search
+  cargo:rustc-check-cfg=cfg(dev)
+  cargo:rustc-cfg=dev
+  cargo:PERMISSION_FILES_PATH=D:\0-code-project\multi-search-skill\desktop\src-tauri\target\debug\build\multi-search-desktop-ec843e4a6af46723\out\app-manifest\__app__-permission-files
+  cargo:rerun-if-changed=permissions
+  cargo:PERMISSION_FILES_PATH=D:\0-code-project\multi-search-skill\desktop\src-tauri\target\debug\build\multi-search-desktop-ec843e4a6af46723\out\app-manifest\__app__-permission-files
+  cargo:rerun-if-changed=capabilities
+  cargo:rerun-if-env-changed=REMOVE_UNUSED_COMMANDS
+  cargo:rustc-env=TAURI_ENV_TARGET_TRIPLE=x86_64-pc-windows-msvc
+
+  --- stderr
+
+  thread 'main' (90064) panicked at build.rs:28:8:
+  Tauri build failed: resource path `resources\cli-bundle` doesn't exist
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

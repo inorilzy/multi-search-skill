@@ -1,0 +1,50 @@
+{
+  "requirementId": "REQ-20",
+  "title": "四个耗时MCP入口共享4槽且满载立即拒绝",
+  "document": "docs/mcp-dispatch.md",
+  "location": "docs/mcp-dispatch.md:L5",
+  "quote": "每个服务进程最多接受 **4 个尚未完成的耗时工具调用**，四个入口共享容量",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n '_TOOL_POOL|_run_tool|submit_nowait' multi_search_mcp/server.py multi_search_mcp/src/support/concurrency.py",
+      "result": "9 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/server.py:30:_TOOL_POOL = BoundedDaemonExecutor(max_workers=4, thread_name_prefix=\"mcp-tool\")",
+        "multi_search_mcp/server.py:33:async def _run_tool(fn: Callable[..., dict], *args) -> dict:",
+        "multi_search_mcp/server.py:34:    future = _TOOL_POOL.submit_nowait(contextvars.copy_context().run, fn, *args)",
+        "multi_search_mcp/server.py:80:    return await _run_tool(",
+        "multi_search_mcp/server.py:102:    return await _run_tool(",
+        "multi_search_mcp/server.py:148:    return await _run_tool(multi_search_tool, query, route, count, sources, scrape_top, scrape_chars,",
+        "multi_search_mcp/server.py:165:    return await _run_tool(scrape_url_tool, url, backends, scrape_chars, scrape_timeout, use_state, output)",
+        "multi_search_mcp/server.py:177:    return await _run_tool(doctor_tool, include_keys, include_network)",
+        "multi_search_mcp/src/support/concurrency.py:50:    def submit_nowait(self, fn: Callable[..., Any], /, *args, **kwargs) -> Future | None:"
+      ]
+    }
+  ],
+  "reasoning": "search_web/fetch_source/multi_search/scrape_url均走同一个_run_tool；专属pool max_workers=4；semaphore nonblocking admission失败立即返回原格式JSON error。队列对象无size但进入前已占全局slot，因此并非无界可接收队列。未运行真实FastMCP传输，此条静态确认工具注册及pool约束。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-20.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/server.py",
+      "lines": "L28-L40",
+      "quote": "# Separate from the provider/fetch pools: cancelled waiters must not free slots\n# while their synchronous Core calls are still running.\n_TOOL_POOL = BoundedDaemonExecutor(max_workers=4, thread_name_prefix=\"mcp-tool\")\n\n\nasync def _run_tool(fn: Callable[..., dict], *args) -> dict:\n    future = _TOOL_POOL.submit_nowait(contextvars.copy_context().run, fn, *args)\n    if future is None:\n        return {\"error\": \"MCP tool capacity exhausted; retry after active calls finish\",",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/server.py",
+      "lines": "L148-L166",
+      "quote": "    return await _run_tool(multi_search_tool, query, route, count, sources, scrape_top, scrape_chars,\n                           timeout, scrape_timeout, expand, use_state, output)\n\n\n@mcp.tool(name=\"scrape_url\")\nasync def scrape_url(url: str, backends: list[str] | None = None, scrape_chars: int | None = None,\n               scrape_timeout: int | None = None, use_state: bool = True,\n               output: str = \"both\") -> dict:\n    \"\"\"Fetch readable page content using state-aware scraper backend ordering.",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/support/concurrency.py",
+      "lines": "L23-L64",
+      "quote": "    def __init__(self, *, max_workers: int, thread_name_prefix: str):\n        if max_workers < 1:\n            raise ValueError(\"max_workers must be at least 1\")\n        self._max_workers = max_workers\n        self._thread_name_prefix = thread_name_prefix\n        self._tasks: queue.Queue = queue.Queue()\n        self._slots = threading.BoundedSemaphore(max_workers)\n        self._lock = threading.Lock()\n        self._threads: list[threading.Thread] = []",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

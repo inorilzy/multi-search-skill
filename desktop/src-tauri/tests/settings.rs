@@ -1,23 +1,26 @@
-//! Desktop settings writer against real temp files. The user config and home are never touched:
-//! each test gets a unique temp directory and an explicit environment map.
-use multi_search_desktop::settings_fixture as fixture;
-use multi_search_desktop::{RuntimeEnvironment, settings_fixture::SettingsInput};
+//! SQLite settings against disposable paths only. Legacy JSON/env are not configuration sources.
+use multi_search_desktop::{
+    settings_fixture::{self as fixture, RouteConfig, RouteMap, SettingsInput},
+    RuntimeEnvironment,
+};
 use std::{collections::BTreeMap, path::PathBuf};
-
 struct Sandbox(PathBuf);
 impl Sandbox {
     fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("ms-settings-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).unwrap();
-        Self(path)
+        let p =
+            std::env::temp_dir().join(format!("ms-sqlite-settings-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        Self(p)
+    }
+    fn db(&self) -> PathBuf {
+        self.0.join(".multi-search/config.sqlite")
     }
     fn env(&self, extra: &[(&str, String)]) -> RuntimeEnvironment {
-        let mut variables = BTreeMap::from([
-            ("USERPROFILE".to_string(), self.0.to_string_lossy().into_owned()),
-        ]);
+        let mut variables =
+            BTreeMap::from([("USERPROFILE".into(), self.0.to_string_lossy().into_owned())]);
         for (k, v) in extra {
-            variables.insert((*k).to_string(), v.clone());
+            variables.insert((*k).into(), v.clone());
         }
         RuntimeEnvironment {
             app_path: vec![],
@@ -26,374 +29,818 @@ impl Sandbox {
             cwd: self.0.clone(),
         }
     }
-    fn user_config(&self) -> PathBuf {
-        self.0.join(".multi-search").join("multi-search-config.json")
+    fn object(&self) -> serde_json::Value {
+        let c = rusqlite::Connection::open(self.db()).unwrap();
+        let s: String = c
+            .query_row("SELECT data FROM settings WHERE id=1", [], |r| r.get(0))
+            .unwrap();
+        serde_json::from_str(&s).unwrap()
     }
-    fn leftovers(&self) -> Vec<String> {
-        let dir = self.user_config().parent().unwrap().to_path_buf();
-        std::fs::read_dir(dir)
-            .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
-            .unwrap_or_default()
+    fn replace(&self, body: &str) {
+        let c = rusqlite::Connection::open(self.db()).unwrap();
+        c.execute("UPDATE settings SET data=?1 WHERE id=1", [body])
+            .unwrap();
     }
-}
-impl Sandbox {
-    /// A dev-fallback path inside the sandbox that does not exist, so tests never read the repo file.
-    fn absent_dev(&self) -> PathBuf {
-        self.0.join("no-dev").join("multi-search-config.json")
-    }
-}
-/// Save through the seam with the sandbox's absent dev path (hermetic: never reads the repo file).
-fn save_h(sandbox: &Sandbox, env: &RuntimeEnvironment, request: &SettingsInput) -> Result<fixture::SettingsView, String> {
-    fixture::save_with_dev(env, request, &sandbox.absent_dev())
 }
 impl Drop for Sandbox {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
-
 fn input(route: &str, timeout: u32, disabled: &[&str]) -> SettingsInput {
     SettingsInput {
         route: route.into(),
         timeout: Some(timeout),
         disabled_sources: disabled.iter().map(|s| s.to_string()).collect(),
+        routes: None,
         twitter_cookies_path: None,
+        scrape_backends: None,
     }
 }
-
 #[test]
-fn save_writes_known_keys_with_sorted_canonical_sources_and_a_trailing_newline() {
-    let sandbox = Sandbox::new("canonical");
-    let env = sandbox.env(&[]);
-    let view = save_h(&sandbox, &env, &input("fast", 30, &["v2ex", "brave", "github", "brave"])).unwrap();
-    let text = std::fs::read_to_string(sandbox.user_config()).unwrap();
-    assert!(text.ends_with('\n'));
-    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(json["type"], "fast");
-    assert_eq!(json["timeout"], 30);
-    assert_eq!(json["disabled_sources"], serde_json::json!(["brave", "github_repos", "sov2ex"]));
-    assert_eq!(view.disabled_sources, vec!["brave", "github_repos", "sov2ex"]);
-    assert_eq!(view.route, "fast");
-    assert_eq!(view.path_source, "user");
-    assert_eq!(sandbox.leftovers(), vec!["multi-search-config.json"], "no temp file may remain");
-}
-
-#[test]
-fn save_preserves_unknown_fields_and_other_keys() {
-    let sandbox = Sandbox::new("unknown");
-    let env = sandbox.env(&[]);
-    std::fs::create_dir_all(sandbox.user_config().parent().unwrap()).unwrap();
-    std::fs::write(
-        sandbox.user_config(),
-        r#"{"count": 7, "no_scrape": true, "counts": {"brave": 3}, "future_field": {"nested": [1, 2]}}"#,
+fn save_canonical_sources_into_versioned_sqlite() {
+    let s = Sandbox::new("canonical");
+    let v = fixture::save(
+        &s.env(&[]),
+        &input("fast", 30, &["v2ex", "brave", "github", "brave"]),
     )
     .unwrap();
-    save_h(&sandbox, &env, &input("default", 45, &["tavily"])).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert_eq!(json["count"], 7);
-    assert_eq!(json["no_scrape"], true);
-    assert_eq!(json["counts"]["brave"], 3);
-    assert_eq!(json["future_field"]["nested"], serde_json::json!([1, 2]));
-    assert_eq!(json["timeout"], 45);
-    assert_eq!(json["disabled_sources"], serde_json::json!(["tavily"]));
+    assert_eq!(
+        s.object()["disabled_sources"],
+        serde_json::json!(["brave", "github_repos", "sov2ex"])
+    );
+    assert_eq!(v.route, "fast");
+    assert_eq!(v.read_source, "sqlite");
+    let c = rusqlite::Connection::open(s.db()).unwrap();
+    assert_eq!(
+        c.pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        c.query_row::<i64, _, _>("SELECT count(*) FROM settings", [], |r| r.get(0))
+            .unwrap(),
+        1
+    );
 }
-
 #[test]
-fn invalid_input_is_rejected_before_any_write_and_keeps_the_old_file_byte_for_byte() {
-    let sandbox = Sandbox::new("invalid");
-    let env = sandbox.env(&[]);
-    save_h(&sandbox, &env, &input("dev", 20, &["hackernews"])).unwrap();
-    let before = std::fs::read(sandbox.user_config()).unwrap();
-    let bad_inputs = [
+fn unknown_fields_preserved() {
+    let s = Sandbox::new("unknown");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(
+        r#"{"count":7,"no_scrape":true,"counts":{"brave":3},"future_field":{"nested":[1,2]}}"#,
+    );
+    fixture::save(&e, &input("dev", 45, &["tavily"])).unwrap();
+    let o = s.object();
+    assert_eq!(o["count"], 7);
+    assert_eq!(o["counts"]["brave"], 3);
+    assert_eq!(o["future_field"]["nested"], serde_json::json!([1, 2]));
+    assert_eq!(o["no_scrape"], true);
+}
+#[test]
+fn invalid_input_does_not_change_database() {
+    let s = Sandbox::new("invalid");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("dev", 20, &[])).unwrap();
+    let before = std::fs::read(s.db()).unwrap();
+    for bad in [
         input("nope", 20, &[]),
         input("dev", 0, &[]),
         input("dev", 91, &[]),
         input("all", 1000, &[]),
         input("dev", 20, &["jina"]),
         input("dev", 20, &["../../etc"]),
-        input("dev", 20, &["tavily/../brave"]),
-        SettingsInput { twitter_cookies_path: Some("bad\0path".into()), ..input("dev", 20, &[]) },
-        SettingsInput { twitter_cookies_path: Some("x".repeat(2000)), ..input("dev", 20, &[]) },
-    ];
-    for bad in bad_inputs {
-        assert!(save_h(&sandbox, &env, &bad).is_err(), "{:?} must be rejected", bad.route);
-        assert_eq!(std::fs::read(sandbox.user_config()).unwrap(), before, "old config must survive");
+        SettingsInput {
+            twitter_cookies_path: Some("bad\0path".into()),
+            ..input("dev", 20, &[])
+        },
+        SettingsInput {
+            twitter_cookies_path: Some("x".repeat(2000)),
+            ..input("dev", 20, &[])
+        },
+    ] {
+        assert!(fixture::save(&e, &bad).is_err());
+        assert_eq!(std::fs::read(s.db()).unwrap(), before);
     }
-    assert_eq!(sandbox.leftovers(), vec!["multi-search-config.json"]);
 }
-
 #[test]
-fn unparsable_existing_file_blocks_save_and_is_not_overwritten() {
-    let sandbox = Sandbox::new("corrupt");
-    let env = sandbox.env(&[]);
-    std::fs::create_dir_all(sandbox.user_config().parent().unwrap()).unwrap();
-    std::fs::write(sandbox.user_config(), "{ not json").unwrap();
-    let error = save_h(&sandbox, &env, &input("default", 60, &[])).unwrap_err();
-    assert!(error.contains("未保存"));
-    assert_eq!(std::fs::read_to_string(sandbox.user_config()).unwrap(), "{ not json");
+fn malformed_settings_block_save_and_roll_back() {
+    let s = Sandbox::new("bad-json");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("dev", 20, &[])).unwrap();
+    s.replace("{ not json");
+    let before = std::fs::read(s.db()).unwrap();
+    assert!(fixture::save(&e, &input("default", 60, &[]))
+        .unwrap_err()
+        .contains("未保存"));
+    assert_eq!(std::fs::read(s.db()).unwrap(), before);
+    assert_eq!(fixture::view(&e).status, "config_unreadable");
 }
-
 #[test]
-fn env_config_path_is_the_only_target_when_set() {
-    let sandbox = Sandbox::new("env");
-    let custom = sandbox.0.join("custom").join("cfg.json");
-    let env = sandbox.env(&[("MULTI_SEARCH_CONFIG", custom.to_string_lossy().into_owned())]);
-    assert_eq!(fixture::config_path(&env).unwrap(), custom);
-    let view = save_h(&sandbox, &env, &input("social", 10, &["twitter"])).unwrap();
+fn explicit_db_is_only_target() {
+    let s = Sandbox::new("isolate");
+    let custom = s.0.join("custom/config.sqlite");
+    let e = s.env(&[(
+        "MULTI_SEARCH_CONFIG_DB",
+        custom.to_string_lossy().into_owned(),
+    )]);
+    assert_eq!(fixture::config_path(&e).unwrap(), custom);
+    let v = fixture::save(&e, &input("social", 10, &["twitter"])).unwrap();
     assert!(custom.exists());
-    assert!(!sandbox.user_config().exists(), "the user config must not be written when env selects another path");
-    assert_eq!(view.path_source, "env");
-    assert_eq!(view.status, "no_active_source");
-    assert!(view.message.contains("social") && view.message.contains("不会运行"));
+    assert!(!s.db().exists());
+    assert_eq!(v.path_source, "env");
+    assert_eq!(v.status, "no_active_source");
 }
-
 #[test]
-fn twitter_reference_is_saved_as_a_path_and_env_is_reported_as_overriding() {
-    let sandbox = Sandbox::new("twitter");
-    let env = sandbox.env(&[("TWITTER_COOKIES_PATH", "C:/secret/env-cookies.json".into())]);
-    let mut request = input("social", 60, &[]);
-    request.twitter_cookies_path = Some("  C:/cookies/twitter.json  ".into());
-    let view = save_h(&sandbox, &env, &request).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert_eq!(json["twitter_cookies_path"], "C:/cookies/twitter.json");
-    assert_eq!(view.twitter_cookies_path.as_deref(), Some("C:/cookies/twitter.json"));
-    assert!(view.twitter_env_overrides);
-    assert_eq!(view.active_sources, vec!["twitter"]);
-    assert_eq!(view.status, "ok");
-
-    let mut cleared = input("social", 60, &[]);
-    cleared.twitter_cookies_path = Some("".into());
-    save_h(&sandbox, &env, &cleared).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert!(json.get("twitter_cookies_path").is_none());
+fn twitter_is_path_only_and_env_never_overrides() {
+    let s = Sandbox::new("twitter");
+    let e = s.env(&[("TWITTER_COOKIES_PATH", "C:/secret/env.json".into())]);
+    let mut i = input("social", 60, &[]);
+    i.twitter_cookies_path = Some(" C:/cookies/saved.json ".into());
+    let v = fixture::save(&e, &i).unwrap();
+    assert_eq!(s.object()["twitter_cookies_path"], "C:/cookies/saved.json");
+    assert!(!serde_json::to_value(&v)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("twitter_env_overrides"));
+    assert_eq!(v.active_sources, vec!["twitter"]);
+    fixture::save(&e, &input("social", 60, &[])).unwrap();
+    assert!(s.object().get("twitter_cookies_path").is_none());
 }
-
 #[test]
-fn all_sources_disabled_for_the_route_reports_no_active_source_without_reenabling() {
-    let sandbox = Sandbox::new("alldisabled");
-    let env = sandbox.env(&[]);
-    let view = save_h(&sandbox, &env, &input("default", 60, &["baidu", "brave", "exa", "firecrawl", "parallel", "serpapi", "tavily"])).unwrap();
-    assert!(view.active_sources.is_empty());
-    assert_eq!(view.status, "no_active_source");
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert_eq!(json["disabled_sources"].as_array().unwrap().len(), 7, "disabled list must not be silently reset");
-}
-
-#[test]
-fn toggling_a_source_back_on_removes_it_from_disabled_sources() {
-    let sandbox = Sandbox::new("toggle");
-    let env = sandbox.env(&[]);
-    save_h(&sandbox, &env, &input("fast", 60, &["baidu", "exa"])).unwrap();
-    let view = save_h(&sandbox, &env, &input("fast", 60, &["exa"])).unwrap();
-    assert_eq!(view.disabled_sources, vec!["exa"]);
-    // Route "fast" runs baidu, tavily, firecrawl, exa; only exa stays disabled.
-    assert_eq!(view.active_sources, vec!["baidu", "tavily", "firecrawl"]);
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert_eq!(json["disabled_sources"], serde_json::json!(["exa"]));
-}
-
-/// Handoff to the independent CLI check: when MS_SETTINGS_HANDOFF names a path, the exact file
-/// the desktop save path produced is copied there so the Python CLI test reads it unchanged.
-#[test]
-fn handoff_file_for_the_independent_cli_check() {
-    let Some(target) = std::env::var_os("MS_SETTINGS_HANDOFF") else { return };
-    let sandbox = Sandbox::new("handoff");
-    let env = sandbox.env(&[]);
-    let mut request = input("default", 25, &["brave"]);
-    // Synthetic path reference only; the CLI test checks it is passed through, never read.
-    request.twitter_cookies_path = Some("C:/synthetic/handoff-twitter-cookies.json".into());
-    save_h(&sandbox, &env, &request).unwrap();
-    std::fs::copy(sandbox.user_config(), PathBuf::from(target)).unwrap();
-}
-
-#[test]
-fn view_without_a_file_reports_defaults_and_path_source() {
-    let sandbox = Sandbox::new("view");
-    let view = fixture::view_with_dev(&sandbox.env(&[]), &sandbox.absent_dev());
-    assert!(!view.file_present);
-    assert_eq!(view.route, "default");
-    assert_eq!(view.timeout, 60);
-    assert!(view.disabled_sources.is_empty());
-    assert_eq!(view.status, "ok");
-}
-
-/// Dev fallback fixture: a file shaped like the repo-root config the CLI reads when no user file exists.
-fn write_dev_fallback(sandbox: &Sandbox) -> PathBuf {
-    let dev = sandbox.0.join("dev").join("multi-search-config.json");
-    std::fs::create_dir_all(dev.parent().unwrap()).unwrap();
-    std::fs::write(
-        &dev,
-        r#"{"type": "dev", "timeout": 40, "count": 9, "no_scrape": true, "counts": {"brave": 3}, "disabled_sources": ["exa"]}"#,
+fn all_route_sources_disabled_is_truthful() {
+    let s = Sandbox::new("all-disabled");
+    let v = fixture::save(
+        &s.env(&[]),
+        &input(
+            "default",
+            60,
+            &[
+                "baidu",
+                "brave",
+                "exa",
+                "firecrawl",
+                "parallel",
+                "serpapi",
+                "tavily",
+            ],
+        ),
     )
     .unwrap();
-    dev
+    assert!(v.active_sources.is_empty());
+    assert_eq!(v.status, "no_active_source");
+    assert_eq!(s.object()["disabled_sources"].as_array().unwrap().len(), 7);
 }
-
 #[test]
-fn save_with_no_user_file_seeds_from_the_dev_fallback_the_cli_reads_and_writes_only_the_user_file() {
-    let sandbox = Sandbox::new("fallback-seed");
-    let dev = write_dev_fallback(&sandbox);
-    let dev_before = std::fs::read(&dev).unwrap();
-    let env = sandbox.env(&[]);
-    let before = fixture::view_with_dev(&env, &dev);
-    assert_eq!(before.read_source, "dev_fallback");
-    assert!(before.save_creates_override, "saving will create a user file that overrides the fallback");
-    assert_eq!(before.route, "dev", "displayed values are the ones the CLI reads today");
-    assert_eq!(before.timeout, 40);
-
-    let view = fixture::save_with_dev(&env, &input("fast", 30, &[]), &dev).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert_eq!(json["count"], 9, "fields the CLI already honours are kept");
-    assert_eq!(json["no_scrape"], true);
-    assert_eq!(json["counts"]["brave"], 3);
-    assert_eq!(json["type"], "fast");
-    assert_eq!(json["timeout"], 30);
-    assert_eq!(std::fs::read(&dev).unwrap(), dev_before, "the repo-root dev file must never be written");
-    assert_eq!(view.read_source, "user");
-    assert!(!view.save_creates_override, "after the save the user file is the one read");
+fn toggle_source_preserves_other_settings() {
+    let s = Sandbox::new("toggle");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("fast", 25, &["baidu", "exa"])).unwrap();
+    let v = fixture::save(&e, &input("fast", 25, &["exa"])).unwrap();
+    assert_eq!(v.active_sources, vec!["baidu", "tavily", "firecrawl"]);
+    assert_eq!(v.disabled_sources, vec!["exa"]);
+    assert_eq!(s.object()["timeout"], 25);
 }
-
 #[test]
-fn an_existing_user_file_is_read_and_written_and_is_not_overridden_by_the_dev_fallback() {
-    let sandbox = Sandbox::new("user-wins");
-    let dev = write_dev_fallback(&sandbox);
-    let env = sandbox.env(&[]);
-    fixture::save_with_dev(&env, &input("default", 45, &["tavily"]), &dev).unwrap();
-    let view = fixture::view_with_dev(&env, &dev);
-    assert_eq!(view.read_source, "user");
-    assert!(!view.save_creates_override);
-    assert_eq!(view.route, "default");
-    assert_eq!(view.timeout, 45);
+fn missing_database_shows_defaults_without_creating_it() {
+    let s = Sandbox::new("missing");
+    let v = fixture::view(&s.env(&[]));
+    assert!(!v.file_present);
+    assert_eq!(v.read_source, "defaults");
+    assert_eq!(v.route, "default");
+    assert_eq!(v.timeout, 60);
+    assert!(!s.db().exists());
 }
-
 #[test]
-fn env_target_is_saved_explicitly_and_never_redirected_to_user_or_dev_files() {
-    let sandbox = Sandbox::new("env-explicit");
-    let dev = write_dev_fallback(&sandbox);
-    let custom = sandbox.0.join("custom").join("cfg.json");
-    let env = sandbox.env(&[("MULTI_SEARCH_CONFIG", custom.to_string_lossy().into_owned())]);
-    let view = fixture::save_with_dev(&env, &input("social", 10, &["twitter"]), &dev).unwrap();
-    assert!(custom.exists());
-    assert!(!sandbox.user_config().exists(), "no user file is created when env selects another target");
-    assert_eq!(view.read_source, "env");
-    assert!(!view.save_creates_override);
+fn old_user_dev_and_config_env_are_ignored_and_untouched() {
+    let s = Sandbox::new("legacy");
+    let dev = s.0.join("dev.json");
+    std::fs::write(&dev, r#"{"type":"dev","timeout":7}"#).unwrap();
+    let old = s.0.join(".multi-search/multi-search-config.json");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::write(&old, r#"{"type":"social","timeout":5}"#).unwrap();
+    let e = s.env(&[("MULTI_SEARCH_CONFIG", old.to_string_lossy().into_owned())]);
+    let before = std::fs::read(&old).unwrap();
+    let v = fixture::view_with_dev(&e, &dev);
+    assert_eq!(v.route, "default");
+    assert!(!serde_json::to_value(&v)
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .contains_key("save_creates_override"));
+    fixture::save_with_dev(&e, &input("fast", 30, &[]), &dev).unwrap();
+    assert_eq!(std::fs::read(&old).unwrap(), before);
+    assert_eq!(
+        std::fs::read_to_string(&dev).unwrap(),
+        r#"{"type":"dev","timeout":7}"#
+    );
 }
-
 #[test]
-fn defaults_without_any_file_report_defaults_and_no_override() {
-    let sandbox = Sandbox::new("defaults-only");
-    let missing_dev = sandbox.0.join("none").join("multi-search-config.json");
-    let env = sandbox.env(&[]);
-    let view = fixture::view_with_dev(&env, &missing_dev);
-    assert_eq!(view.read_source, "defaults");
-    assert!(!view.save_creates_override);
+fn restart_reads_sqlite_not_dev() {
+    let s = Sandbox::new("restart");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("dev", 33, &["exa"])).unwrap();
+    let fresh = s.env(&[]);
+    let v = fixture::view(&fresh);
+    assert_eq!(v.route, "dev");
+    assert_eq!(v.timeout, 33);
+    assert_eq!(v.disabled_sources, vec!["exa"]);
 }
-
 #[test]
-fn source_names_the_settings_page_sends_are_accepted_by_the_execution_allowlist() {
-    use multi_search_desktop::settings_fixture::is_allowed_source;
-    // Every canonical name the settings page sends, plus the CLI aliases it may read back.
-    for name in ["baidu", "brave", "exa", "firecrawl", "github_repos", "hackernews", "parallel",
-                 "serpapi", "sov2ex", "stackoverflow", "tavily", "twitter", "v2ex", "github-repos"] {
-        assert!(is_allowed_source(name), "{name} must be accepted");
+fn corrupt_db_blocks_save_without_overwriting() {
+    let s = Sandbox::new("corrupt-db");
+    std::fs::create_dir_all(s.db().parent().unwrap()).unwrap();
+    std::fs::write(s.db(), b"not a sqlite database").unwrap();
+    let before = std::fs::read(s.db()).unwrap();
+    assert!(fixture::save(&s.env(&[]), &input("dev", 20, &[])).is_err());
+    assert_eq!(std::fs::read(s.db()).unwrap(), before);
+    assert_eq!(fixture::view(&s.env(&[])).status, "config_unreadable");
+}
+#[test]
+fn unsupported_version_fails_closed() {
+    let s = Sandbox::new("version");
+    std::fs::create_dir_all(s.db().parent().unwrap()).unwrap();
+    let c = rusqlite::Connection::open(s.db()).unwrap();
+    c.pragma_update(None, "user_version", 2).unwrap();
+    drop(c);
+    assert!(fixture::save(&s.env(&[]), &input("dev", 20, &[])).is_err());
+}
+#[test]
+fn trigger_failure_rolls_back_previous_settings() {
+    let s = Sandbox::new("rollback");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("dev", 20, &[])).unwrap();
+    let before = s.object();
+    let c = rusqlite::Connection::open(s.db()).unwrap();
+    c.execute_batch("CREATE TRIGGER deny_settings BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT,'denied'); END;").unwrap();
+    assert!(fixture::save(&e, &input("fast", 30, &[])).is_err());
+    assert_eq!(s.object(), before);
+}
+#[test]
+fn source_names_accepted_by_execution_allowlist() {
+    for name in [
+        "baidu",
+        "brave",
+        "exa",
+        "firecrawl",
+        "github_repos",
+        "hackernews",
+        "parallel",
+        "serpapi",
+        "sov2ex",
+        "stackoverflow",
+        "tavily",
+        "twitter",
+        "v2ex",
+        "github-repos",
+    ] {
+        assert!(fixture::is_allowed_source(name));
     }
-    assert!(!is_allowed_source("jina"));
-    assert!(!is_allowed_source("../etc"));
+    assert!(!fixture::is_allowed_source("jina"));
+    assert!(!fixture::is_allowed_source("../etc"));
+}
+#[test]
+fn version_zero_nonempty_and_incomplete_version_one_are_rejected() {
+    for (tag, sql) in [
+        ("nonempty", "CREATE TABLE unrelated(value TEXT);"),
+        (
+            "incomplete",
+            "CREATE TABLE credentials(provider TEXT PRIMARY KEY); PRAGMA user_version=1;",
+        ),
+    ] {
+        let s = Sandbox::new(tag);
+        std::fs::create_dir_all(s.db().parent().unwrap()).unwrap();
+        let c = rusqlite::Connection::open(s.db()).unwrap();
+        c.execute_batch(sql).unwrap();
+        drop(c);
+        let before = std::fs::read(s.db()).unwrap();
+        assert!(fixture::save(&s.env(&[]), &input("default", 60, &[])).is_err());
+        assert_eq!(std::fs::read(s.db()).unwrap(), before);
+    }
+}
+#[test]
+fn empty_userprofile_falls_back_to_home() {
+    let s = Sandbox::new("home-fallback");
+    let e = s.env(&[
+        ("USERPROFILE", "".into()),
+        ("HOME", s.0.to_string_lossy().into_owned()),
+    ]);
+    assert_eq!(fixture::config_path(&e).unwrap(), s.db());
 }
 
 #[test]
-fn unreadable_target_blocks_save_and_leaves_the_old_file_and_no_temp_file() {
-    let sandbox = Sandbox::new("blocked");
-    let env = sandbox.env(&[]);
-    save_h(&sandbox, &env, &input("dev", 20, &["hackernews"])).unwrap();
-    let before = std::fs::read(sandbox.user_config()).unwrap();
-    // A directory at the target path cannot be read as a config, so save stops before any write.
-    let blocker = sandbox.0.join("blocked.json");
-    std::fs::create_dir_all(&blocker).unwrap();
-    let env_blocked = sandbox.env(&[("MULTI_SEARCH_CONFIG", blocker.to_string_lossy().into_owned())]);
-    assert!(save_h(&sandbox, &env_blocked, &input("dev", 20, &[])).is_err());
-    assert_eq!(std::fs::read(sandbox.user_config()).unwrap(), before);
-    assert!(sandbox.leftovers().iter().all(|n| !n.contains(".tmp-")));
-}
-
-#[test]
-fn release_build_never_reads_or_displays_the_dev_fallback() {
-    let sandbox = Sandbox::new("release-no-dev");
-    let dev = write_dev_fallback(&sandbox);
-    let env = sandbox.env(&[]);
-    let view = fixture::view_with_dev_mode(&env, &dev, false, None);
-    assert_eq!(view.read_source, "defaults", "release must not fall back to the build machine's source tree");
-    assert_eq!(view.path_source, "defaults");
-    assert_eq!(view.route, "default", "release must not display dev values");
-    assert_eq!(view.timeout, 60);
-    assert!(!view.save_creates_override);
-    let user = sandbox.user_config().to_string_lossy().into_owned();
-    assert_eq!(view.config_path.as_deref(), Some(user.as_str()), "the user path is shown, not the dev file");
-
-    let saved = fixture::save_with_dev_mode(&env, &input("fast", 30, &[]), &dev, false).unwrap();
-    let json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert_eq!(json["type"], "fast");
-    assert!(json.get("count").is_none(), "release save must not merge dev-only fields");
-    assert!(json.get("no_scrape").is_none(), "release save must not merge dev-only fields");
-    assert_eq!(saved.read_source, "user");
-}
-
-#[test]
-fn doctor_payload_supplies_the_displayed_config_path_and_source() {
-    let sandbox = Sandbox::new("doctor-path");
-    let env = sandbox.env(&[]);
-    let cli_config = sandbox.0.join("cli-home").join("multi-search-config.json");
-    let cli_text = cli_config.to_string_lossy().into_owned();
-    let doctor = serde_json::json!({
-        "config_path": cli_text.clone(),
-        "config_path_source": "user",
-    });
-    let view = fixture::view_with_dev_mode(&env, &sandbox.absent_dev(), false, Some(&doctor));
+fn scrape_backends_save_trims_dedupes_and_keeps_order() {
+    let s = Sandbox::new("scrape-save");
+    let e = s.env(&[]);
+    let mut request = input("default", 60, &[]);
+    request.scrape_backends = Some(vec![
+        " firecrawl ".into(),
+        "jina".into(),
+        "firecrawl".into(),
+        " exa ".into(),
+    ]);
+    let view = fixture::save(&e, &request).unwrap();
     assert_eq!(
-        view.config_path.as_deref(),
-        Some(cli_text.as_str()),
-        "the desktop must display the path reported by doctor --format json"
+        s.object()["scrape_backends"],
+        serde_json::json!(["firecrawl", "jina", "exa"])
     );
-    assert_eq!(view.path_source, "user");
-    assert_eq!(view.read_source, "user");
-    assert!(!view.file_present);
+    assert_eq!(view.scrape_backends, ["firecrawl", "jina", "exa"]);
 }
 
 #[test]
-fn a_doctor_reported_dev_fallback_is_displayed_with_its_values_even_in_a_release_build() {
-    let sandbox = Sandbox::new("doctor-dev");
-    let dev = write_dev_fallback(&sandbox);
-    let dev_text = dev.to_string_lossy().into_owned();
-    let env = sandbox.env(&[]);
-    let doctor = serde_json::json!({
-        "config_path": dev_text.clone(),
-        "config_path_source": "dev_fallback",
-    });
-    let view = fixture::view_with_dev_mode(&env, &sandbox.absent_dev(), false, Some(&doctor));
-    assert_eq!(view.path_source, "dev_fallback");
-    assert_eq!(view.read_source, "dev_fallback");
-    assert_eq!(view.config_path.as_deref(), Some(dev_text.as_str()));
-    assert_eq!(view.route, "dev", "values come from the exact path the CLI reported");
-    assert!(view.save_creates_override, "saving creates the user file that overrides the CLI's fallback");
+fn scrape_backends_reject_unknown_and_empty_lists_without_writing() {
+    let s = Sandbox::new("scrape-invalid");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    let before = std::fs::read(s.db()).unwrap();
+    for bad in [
+        vec!["jina".to_string(), "bing".to_string()],
+        vec!["".to_string()],
+        vec![],
+    ] {
+        let mut request = input("default", 60, &[]);
+        request.scrape_backends = Some(bad);
+        assert!(fixture::save(&e, &request).is_err());
+        assert_eq!(std::fs::read(s.db()).unwrap(), before);
+    }
+    let mut unknown = input("default", 60, &[]);
+    unknown.scrape_backends = Some(vec!["bing".into()]);
+    assert!(fixture::save(&e, &unknown)
+        .unwrap_err()
+        .contains("不支持的抓取后端：bing"));
+    let mut empty = input("default", 60, &[]);
+    empty.scrape_backends = Some(vec![]);
+    assert!(fixture::save(&e, &empty)
+        .unwrap_err()
+        .contains("至少要保留一个后端"));
 }
 
 #[test]
-fn an_unusable_doctor_payload_leaves_the_local_path_rules_in_place() {
-    let sandbox = Sandbox::new("doctor-invalid");
-    let env = sandbox.env(&[]);
-    let doctor = serde_json::json!({"config_path": 7, "config_path_source": "elsewhere"});
-    let view = fixture::view_with_dev_mode(&env, &sandbox.absent_dev(), false, Some(&doctor));
-    assert_eq!(view.read_source, "defaults");
-    assert_eq!(view.path_source, "defaults");
-    let user_text = sandbox.user_config().to_string_lossy().into_owned();
+fn omitted_scrape_backends_preserve_existing_key() {
+    let s = Sandbox::new("scrape-preserve");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(
+        r#"{"type":"default","scrape_backends":["tavily","jina"],"future_field":1}"#,
+    );
+    // None（旧调用方）不改动，也不删除该键。
+    fixture::save(&e, &input("default", 30, &[])).unwrap();
     assert_eq!(
-        view.config_path.as_deref(),
-        Some(user_text.as_str()),
-        "an unrecognised doctor payload must not override the save target"
+        s.object()["scrape_backends"],
+        serde_json::json!(["tavily", "jina"])
+    );
+    assert_eq!(s.object()["future_field"], 1);
+}
+
+#[test]
+fn missing_scrape_backends_view_uses_factory_chain_and_options() {
+    let s = Sandbox::new("scrape-defaults");
+    let view = fixture::view(&s.env(&[]));
+    assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+    assert_eq!(view.builtin_scrape_backends, view.scrape_backends);
+    assert_eq!(
+        view.scrape_backend_options
+            .iter()
+            .map(|option| (option.name.as_str(), option.label.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("jina", "Jina Reader"),
+            ("exa", "Exa"),
+            ("tavily", "Tavily"),
+            ("firecrawl", "Firecrawl"),
+        ]
     );
 }
 
+#[test]
+fn dirty_scrape_backends_read_tolerantly_and_fall_back_when_useless() {
+    let s = Sandbox::new("scrape-tolerant");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(r#"{"type":"default","scrape_backends":["bing"," tavily ","tavily",7,"exa"]}"#);
+    let view = fixture::view(&e);
+    assert_eq!(view.status, "ok");
+    assert_eq!(view.scrape_backends, ["tavily", "exa"]);
+    assert!(view.scrape_backends_invalid, "unknown/non-string entries are invalid saved data");
+
+    for (index, body) in [
+        r#"{"type":"default","scrape_backends":["bing"]}"#,
+        r#"{"type":"default","scrape_backends":[]}"#,
+        r#"{"type":"default","scrape_backends":"jina"}"#,
+        r#"{"type":"default","scrape_backends":null}"#,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let s = Sandbox::new(&format!("scrape-fallback-{index}"));
+        let e = s.env(&[]);
+        fixture::save(&e, &input("default", 60, &[])).unwrap();
+        s.replace(body);
+        let view = fixture::view(&e);
+        assert_eq!(view.status, "ok");
+        assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+        // null 与缺失等价（历史默认）；其余三种是用户明确写入的非法值。
+        assert_eq!(
+            view.scrape_backends_invalid,
+            !body.contains(":null"),
+            "{body} must be reported as invalid saved data"
+        );
+    }
+}
+
+#[test]
+fn missing_or_absent_scrape_backends_is_not_reported_invalid() {
+    let s = Sandbox::new("scrape-absent");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(r#"{"type":"default"}"#);
+    let view = fixture::view(&e);
+    assert!(!view.scrape_backends_invalid);
+    assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+}
+
+#[test]
+fn invalid_saved_scrape_backends_can_be_overwritten_by_save() {
+    let s = Sandbox::new("scrape-overwrite");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(r#"{"type":"default","scrape_backends":[]}"#);
+    let before = fixture::view(&e);
+    assert!(before.scrape_backends_invalid);
+    assert_eq!(before.status, "ok");
+
+    let mut request = input("default", 60, &[]);
+    request.scrape_backends = Some(vec!["jina".into(), "tavily".into()]);
+    let saved = fixture::save(&e, &request).unwrap();
+    assert!(!saved.scrape_backends_invalid);
+    assert_eq!(saved.scrape_backends, ["jina", "tavily"]);
+    assert_eq!(
+        s.object()["scrape_backends"],
+        serde_json::json!(["jina", "tavily"])
+    );
+}
+
+#[test]
+fn unreadable_view_still_exposes_default_scrape_chain() {
+    let s = Sandbox::new("scrape-unreadable");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace("{ not json");
+    let view = fixture::view(&e);
+    assert_eq!(view.status, "config_unreadable");
+    assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+    assert!(!view.scrape_backends_invalid);
+    assert_eq!(view.scrape_backend_options.len(), 4);
+}
+
+#[test]
+fn independent_cli_handoff_database() {
+    let Some(target) = std::env::var_os("MS_SETTINGS_HANDOFF") else {
+        return;
+    };
+    let s = Sandbox::new("handoff");
+    let mut routes = fixture::builtin_routes();
+    routes.insert(
+        "handoff_custom".into(),
+        RouteConfig {
+            label: "联调".into(),
+            sources: vec!["hackernews".into(), "stackoverflow".into()],
+            timeout: Some(11),
+        },
+    );
+    let mut request = input("handoff_custom", 25, &["brave"]);
+    request.routes = Some(routes);
+    request.twitter_cookies_path = Some("C:/synthetic/handoff-twitter-cookies.json".into());
+    fixture::save(&s.env(&[]), &request).unwrap();
+    std::fs::copy(s.db(), PathBuf::from(target)).unwrap();
+}
+
+/// Ticket 05: a database written by the desktop (Rust) must be readable by the
+/// Python CLI without re-creating or migrating schema. Also asserts the CLI
+/// refuses a database whose `user_version` is newer than it understands.
+#[test]
+fn python_cli_reads_desktop_written_settings_and_rejects_future_versions() {
+    let s = Sandbox::new("python-interop");
+    let e = s.env(&[]);
+    let mut request = input("fast", 30, &["exa"]);
+    request.scrape_backends = Some(vec!["firecrawl".into(), "jina".into()]);
+    let view = fixture::save(&e, &request).unwrap();
+    assert_eq!(view.route, "fast");
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read_script = r#"
+import json, sys
+from multi_search_mcp.src.support.credential_store import ConfigDatabase
+from multi_search_mcp.src.search.resolve import resolve_scrape_backends
+data = ConfigDatabase(sys.argv[1]).read_settings()
+assert resolve_scrape_backends(data) == ['firecrawl', 'jina']
+print(json.dumps({"type": data.get("type"), "timeout": data.get("timeout"), "disabled_sources": data.get("disabled_sources")}))
+"#;
+    let output = std::process::Command::new("python")
+        .args(["-B", "-c", read_script])
+        .arg(s.db())
+        .env("PYTHONPATH", &root)
+        .env("HOME", &s.0)
+        .env("USERPROFILE", &s.0)
+        .env("MULTI_SEARCH_CONFIG_DB", s.db())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "python read failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["type"], "fast");
+    assert_eq!(payload["timeout"], 30);
+    assert_eq!(payload["disabled_sources"], serde_json::json!(["exa"]));
+
+    // A future schema version is rejected by the CLI rather than silently
+    // treated as the current layout.
+    let c = rusqlite::Connection::open(s.db()).unwrap();
+    c.pragma_update(None, "user_version", 99).unwrap();
+    drop(c);
+    let future = std::process::Command::new("python")
+        .args(["-B", "-c", read_script])
+        .arg(s.db())
+        .env("PYTHONPATH", &root)
+        .env("HOME", &s.0)
+        .env("USERPROFILE", &s.0)
+        .env("MULTI_SEARCH_CONFIG_DB", s.db())
+        .output()
+        .unwrap();
+    assert!(!future.status.success());
+    let stderr = String::from_utf8_lossy(&future.stderr);
+    assert!(
+        stderr.contains("schema version") && stderr.contains("desktop"),
+        "future version must point at the desktop owner: {stderr}"
+    );
+    // The desktop itself also refuses the future version instead of downgrading.
+    assert!(fixture::save(&s.env(&[]), &input("fast", 30, &[])).is_err());
+}
+
+fn custom_routes() -> RouteMap {
+    let mut routes = fixture::builtin_routes();
+    routes.insert(
+        "research_1".into(),
+        RouteConfig {
+            label: "  研究组合  ".into(),
+            sources: vec!["github".into(), "github_repos".into(), "v2ex".into()],
+            timeout: Some(7),
+        },
+    );
+    routes
+}
+
+#[test]
+fn builtin_factory_is_used_only_when_routes_is_missing() {
+    let builtins = fixture::builtin_routes();
+    assert_eq!(builtins.len(), 5);
+    assert_eq!(builtins["default"].label, "默认（网页综合）");
+    assert_eq!(
+        builtins["fast"].sources,
+        ["baidu", "tavily", "firecrawl", "exa"]
+    );
+    assert_eq!(builtins["all"].sources.len(), 12);
+    assert!(builtins.values().all(|route| route.timeout.is_none()));
+
+    let s = Sandbox::new("explicit-no-backfill");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(r#"{"type":"only","routes":{"only":{"label":"仅保留自定义","sources":["tavily"],"timeout":null}}}"#);
+    let view = fixture::view(&e);
+    assert_eq!(view.routes.len(), 1);
+    assert!(view.routes.contains_key("only"));
+    assert!(!view.routes.contains_key("default"));
+    assert_eq!(view.builtin_routes, builtins);
+}
+
+#[test]
+fn complete_route_map_supports_create_edit_delete_and_global_disable() {
+    let s = Sandbox::new("route-crud");
+    let e = s.env(&[]);
+    let mut create = input("research_1", 41, &[]);
+    create.routes = Some(custom_routes());
+    let created = fixture::save(&e, &create).unwrap();
+    assert_eq!(created.routes["research_1"].label, "研究组合");
+    assert_eq!(
+        created.routes["research_1"].sources,
+        ["github_repos", "sov2ex"]
+    );
+    assert_eq!(created.effective_timeout, 7);
+
+    let mut edited_routes = created.routes.clone();
+    edited_routes.remove("all");
+    edited_routes.get_mut("research_1").unwrap().label = "研究与社区".into();
+    edited_routes.get_mut("research_1").unwrap().timeout = None;
+    let mut edit = input("research_1", 33, &["sov2ex"]);
+    edit.routes = Some(edited_routes);
+    let edited = fixture::save(&e, &edit).unwrap();
+    assert!(!edited.routes.contains_key("all"));
+    assert_eq!(edited.effective_timeout, 33);
+    assert_eq!(edited.active_sources, ["github_repos"]);
+    assert_eq!(
+        edited.routes["research_1"].sources,
+        ["github_repos", "sov2ex"]
+    );
+
+    let mut deleted_routes = edited.routes.clone();
+    deleted_routes.remove("research_1");
+    let mut delete = input("default", 33, &["sov2ex"]);
+    delete.routes = Some(deleted_routes);
+    let deleted = fixture::save(&e, &delete).unwrap();
+    assert!(!deleted.routes.contains_key("research_1"));
+    assert!(!deleted.routes.contains_key("all"));
+}
+
+#[test]
+fn current_last_and_invalid_routes_are_rejected_before_sqlite_changes() {
+    let s = Sandbox::new("route-invalid");
+    let e = s.env(&[]);
+    let mut initial = input("research_1", 30, &[]);
+    initial.routes = Some(custom_routes());
+    fixture::save(&e, &initial).unwrap();
+    let before = std::fs::read(s.db()).unwrap();
+
+    let mut without_current = custom_routes();
+    without_current.remove("research_1");
+    let mut deleting_current = input("research_1", 30, &[]);
+    deleting_current.routes = Some(without_current);
+    assert!(fixture::save(&e, &deleting_current)
+        .unwrap_err()
+        .contains("先切换"));
+
+    for (id, route) in [
+        (
+            "web",
+            RouteConfig {
+                label: "Web".into(),
+                sources: vec!["tavily".into()],
+                timeout: None,
+            },
+        ),
+        (
+            "UPPER",
+            RouteConfig {
+                label: "Upper".into(),
+                sources: vec!["tavily".into()],
+                timeout: None,
+            },
+        ),
+        (
+            "bad id",
+            RouteConfig {
+                label: "Space".into(),
+                sources: vec!["tavily".into()],
+                timeout: None,
+            },
+        ),
+        (
+            "empty-source",
+            RouteConfig {
+                label: "Empty".into(),
+                sources: vec![],
+                timeout: None,
+            },
+        ),
+        (
+            "bad-timeout",
+            RouteConfig {
+                label: "Timeout".into(),
+                sources: vec!["tavily".into()],
+                timeout: Some(91),
+            },
+        ),
+        (
+            "bad-source",
+            RouteConfig {
+                label: "Source".into(),
+                sources: vec!["unknown".into()],
+                timeout: None,
+            },
+        ),
+    ] {
+        let mut routes = RouteMap::new();
+        routes.insert(id.into(), route);
+        let mut request = input(id, 30, &[]);
+        request.routes = Some(routes);
+        assert!(
+            fixture::save(&e, &request).is_err(),
+            "{id} must be rejected"
+        );
+    }
+    let mut empty = input("one", 30, &[]);
+    empty.routes = Some(RouteMap::new());
+    assert!(fixture::save(&e, &empty).is_err());
+    assert_eq!(std::fs::read(s.db()).unwrap(), before);
+}
+
+#[test]
+fn omitted_routes_preserve_existing_map_and_unknown_fields() {
+    let s = Sandbox::new("preserve-routes");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    let routes = serde_json::json!({
+        "custom": {"label":"Custom","sources":["hackernews","brave"],"timeout":9}
+    });
+    s.replace(
+        &serde_json::json!({
+            "type":"custom","timeout":60,"routes":routes,"future":{"keep":true}
+        })
+        .to_string(),
+    );
+    let saved = fixture::save(&e, &input("custom", 44, &["brave"])).unwrap();
+    assert_eq!(saved.routes["custom"].timeout, Some(9));
+    assert_eq!(saved.effective_timeout, 9);
+    let object = s.object();
+    assert_eq!(object["routes"], routes);
+    assert_eq!(object["future"]["keep"], true);
+}
+
+#[test]
+fn malformed_routes_or_type_are_unreadable_and_block_transactional_save() {
+    let cases = [
+        r#"{"type":"default","routes":{}}"#,
+        r#"{"type":"missing","routes":{"only":{"label":"Only","sources":["tavily"],"timeout":null}}}"#,
+        r#"{"type":7}"#,
+        r#"{"type":"default","routes":{"default":{"label":"Default","sources":["unknown"],"timeout":null}}}"#,
+        r#"{"type":"default","routes":{"default":{"label":"Default","sources":["tavily"],"timeout":null,"extra":true}}}"#,
+        r#"{"type":"default","routes":[]}"#,
+    ];
+    for (index, body) in cases.into_iter().enumerate() {
+        let s = Sandbox::new(&format!("bad-routes-{index}"));
+        let e = s.env(&[]);
+        fixture::save(&e, &input("default", 60, &[])).unwrap();
+        s.replace(body);
+        let view = fixture::view(&e);
+        assert_eq!(view.status, "config_unreadable");
+        assert!(view.route.is_empty());
+        assert!(view.routes.is_empty());
+        let before = std::fs::read(s.db()).unwrap();
+        assert!(fixture::save(&e, &input("default", 30, &[])).is_err());
+        assert_eq!(std::fs::read(s.db()).unwrap(), before);
+    }
+}
+
+#[test]
+fn aliases_null_type_and_legacy_timeout_previews_remain_compatible() {
+    let s = Sandbox::new("compat-routes");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    s.replace(r#"{"type":null}"#);
+    assert_eq!(fixture::view(&e).route, "default");
+    s.replace(r#"{"type":"web","timeout":12}"#);
+    assert_eq!(fixture::view(&e).effective_timeout, 12);
+    s.replace(r#"{"type":"fast"}"#);
+    let fast = fixture::view(&e);
+    assert!(!fast.timeout_configured);
+    assert_eq!(fast.effective_timeouts["fast"], 45);
+    assert_eq!(fast.effective_timeouts["all"], 90);
+
+    s.replace(r#"{"type":"custom","routes":{"custom":{"label":"Custom","sources":[" github ","github-repos"," v2ex "],"timeout":null}}}"#);
+    assert_eq!(
+        fixture::view(&e).routes["custom"].sources,
+        ["github_repos", "sov2ex"]
+    );
+}
+
+#[test]
+fn scrape_patch_and_other_settings_writes_preserve_each_other() {
+    let sandbox = Sandbox::new("scrape-patch-race");
+    let env = sandbox.env(&[]);
+    fixture::save(&env, &input("default", 20, &[])).unwrap();
+    sandbox.replace(r#"{"type":"default","timeout":20,"future":{"keep":true}}"#);
+    for _ in 0..20 {
+        let a = env.clone();
+        let b = env.clone();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let peer = barrier.clone();
+        let scrape = std::thread::spawn(move || {
+            peer.wait();
+            multi_search_desktop::settings::save_scrape_backends(&a, &["firecrawl".into(), "exa".into()]).unwrap();
+        });
+        barrier.wait();
+        // Other pages omit scrape_backends rather than replaying its snapshot.
+        fixture::save(&b, &input("dev", 37, &["brave"])).unwrap();
+        scrape.join().unwrap();
+        let object = sandbox.object();
+        assert_eq!(object["type"], "dev");
+        assert_eq!(object["timeout"], 37);
+        assert_eq!(object["disabled_sources"], serde_json::json!(["brave"]));
+        assert_eq!(object["scrape_backends"], serde_json::json!(["firecrawl", "exa"]));
+        assert_eq!(object["future"], serde_json::json!({"keep":true}));
+    }
+    for invalid in [vec![], vec!["unknown".into()]] {
+        let before = sandbox.object();
+        assert!(multi_search_desktop::settings::save_scrape_backends(&env, &invalid).is_err());
+        assert_eq!(sandbox.object(), before);
+    }
+}
+
+
+#[test]
 fn timeout_range_covers_every_cli_route_default() {
     // ROUTE_META in search_runner.py: default/social/dev 60, fast 45, all 90.
     for (route, expected) in [("default", 60), ("fast", 45), ("all", 90), ("social", 60), ("dev", 60)] {
@@ -402,57 +849,60 @@ fn timeout_range_covers_every_cli_route_default() {
     }
     assert_eq!(fixture::TIMEOUT_MIN, 1);
     assert_eq!(fixture::TIMEOUT_MAX, 90);
-    let sandbox = Sandbox::new("timeout-90");
-    let env = sandbox.env(&[]);
-    let view = save_h(&sandbox, &env, &input("all", 90, &[])).unwrap();
+    let s = Sandbox::new("timeout-90");
+    let e = s.env(&[]);
+    let view = fixture::save(&e, &input("all", 90, &[])).unwrap();
     assert_eq!(view.timeout, 90);
     assert!(view.timeout_configured);
     assert!(!view.timeout_out_of_range);
-    assert!(save_h(&sandbox, &env, &input("all", 91, &[])).is_err());
+    assert_eq!((view.timeout_min, view.timeout_max), (1, 90));
+    assert!(fixture::save(&e, &input("all", 91, &[])).is_err());
 }
 
 #[test]
 fn an_absent_timeout_reports_the_route_default_and_is_never_written_when_not_edited() {
-    let sandbox = Sandbox::new("timeout-absent");
-    let env = sandbox.env(&[]);
-    std::fs::create_dir_all(sandbox.user_config().parent().unwrap()).unwrap();
-    std::fs::write(sandbox.user_config(), r#"{"type": "all"}"#).unwrap();
-    let view = fixture::view_with_dev(&env, &sandbox.absent_dev());
+    let s = Sandbox::new("timeout-absent");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("all", 30, &[])).unwrap();
+    s.replace(r#"{"type": "all"}"#);
+    let view = fixture::view(&e);
     assert_eq!(view.timeout, 90, "the all route default, not a desktop invention");
     assert!(!view.timeout_configured);
     let request = SettingsInput { timeout: None, ..input("all", 1, &["brave"]) };
-    save_h(&sandbox, &env, &request).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert!(json.get("timeout").is_none(), "an unedited timeout must not be materialised");
+    fixture::save(&e, &request).unwrap();
+    assert!(s.object().get("timeout").is_none(), "an unedited timeout must not be materialised");
 }
 
 #[test]
 fn an_out_of_range_stored_timeout_is_shown_as_is_and_preserved_when_not_edited() {
-    let sandbox = Sandbox::new("timeout-wide");
-    let env = sandbox.env(&[]);
-    std::fs::create_dir_all(sandbox.user_config().parent().unwrap()).unwrap();
-    std::fs::write(sandbox.user_config(), r#"{"type": "default", "timeout": 120}"#).unwrap();
-    let view = fixture::view_with_dev(&env, &sandbox.absent_dev());
+    let s = Sandbox::new("timeout-wide");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 30, &[])).unwrap();
+    s.replace(r#"{"type": "default", "timeout": 120}"#);
+    let view = fixture::view(&e);
     assert_eq!(view.timeout, 120, "no silent rewrite to 60");
     assert!(view.timeout_configured);
     assert!(view.timeout_out_of_range);
     let request = SettingsInput { timeout: None, ..input("dev", 1, &[]) };
-    save_h(&sandbox, &env, &request).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert_eq!(json["timeout"], 120);
-    assert_eq!(json["type"], "dev");
+    fixture::save(&e, &request).unwrap();
+    let object = s.object();
+    assert_eq!(object["timeout"], 120);
+    assert_eq!(object["type"], "dev");
 }
 
 #[test]
 fn unknown_disabled_entries_are_reported_and_kept_through_a_save() {
-    let sandbox = Sandbox::new("unknown-disabled");
-    let env = sandbox.env(&[]);
-    std::fs::create_dir_all(sandbox.user_config().parent().unwrap()).unwrap();
-    std::fs::write(sandbox.user_config(), r#"{"disabled_sources": ["future_source", "exa", 7]}"#).unwrap();
-    let view = fixture::view_with_dev(&env, &sandbox.absent_dev());
+    let s = Sandbox::new("unknown-disabled");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 30, &[])).unwrap();
+    s.replace(r#"{"disabled_sources": ["future_source", "exa", 7]}"#);
+    let view = fixture::view(&e);
     assert_eq!(view.disabled_sources, vec!["exa"]);
     assert_eq!(view.unknown_disabled_sources, vec!["future_source", "7"]);
-    save_h(&sandbox, &env, &input("default", 30, &["brave"])).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(sandbox.user_config()).unwrap()).unwrap();
-    assert_eq!(json["disabled_sources"], serde_json::json!(["brave", "future_source", 7]), "known edits apply; unknown entries survive");
+    fixture::save(&e, &input("default", 30, &["brave"])).unwrap();
+    assert_eq!(
+        s.object()["disabled_sources"],
+        serde_json::json!(["brave", "future_source", 7]),
+        "known edits apply; unknown entries survive"
+    );
 }

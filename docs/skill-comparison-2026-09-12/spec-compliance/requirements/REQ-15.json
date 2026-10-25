@@ -1,0 +1,56 @@
+{
+  "requirementId": "REQ-15",
+  "title": "跨响应URL缓存复用不延长原TTL",
+  "document": "README.md",
+  "location": "README.md:L254",
+  "quote": "关联新 ID 不延长原正文 TTL",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "high",
+  "searched": [
+    {
+      "where": "rg -n 'cache_scope|expires_at = min|reuse_for_url' multi_search_mcp/src/service.py multi_search_mcp/src/state/content_store.py",
+      "result": "21 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/service.py:235:    cache_scope = \"\"",
+        "multi_search_mcp/src/service.py:247:                cache_scope = hashlib.sha256(json.dumps({",
+        "multi_search_mcp/src/service.py:252:                cached = content_store.reuse_for_url(",
+        "multi_search_mcp/src/service.py:253:                    source_id, canonical_url=canonicalize_url(url), cache_scope=cache_scope,",
+        "multi_search_mcp/src/service.py:299:            canonical_url=canonicalize_url(url) if cache_scope else \"\",",
+        "multi_search_mcp/src/service.py:300:            cache_scope=cache_scope,",
+        "multi_search_mcp/src/state/content_store.py:46:        cache_scope: str = \"\",",
+        "multi_search_mcp/src/state/content_store.py:52:        if bool(canonical_url) != bool(cache_scope):",
+        "multi_search_mcp/src/state/content_store.py:53:            raise ContentStoreError(\"canonical_url and cache_scope must be provided together\")",
+        "multi_search_mcp/src/state/content_store.py:86:                canonical_url, cache_scope,",
+        "multi_search_mcp/src/state/content_store.py:94:    def reuse_for_url(self, source_id: str, *, canonical_url: str, cache_scope: str) -> dict | None:",
+        "multi_search_mcp/src/state/content_store.py:102:        if not source_id or not canonical_url or not cache_scope:",
+        "multi_search_mcp/src/state/content_store.py:103:            raise ContentStoreError(\"source_id, canonical_url and cache_scope are required\")",
+        "multi_search_mcp/src/state/content_store.py:113:                WHERE s.canonical_url = ? AND s.cache_scope = ? AND s.expires_at > ?",
+        "multi_search_mcp/src/state/content_store.py:117:                (canonical_url, cache_scope, now.isoformat()),",
+        "multi_search_mcp/src/state/content_store.py:123:            expires_at = min(",
+        "multi_search_mcp/src/state/content_store.py:129:                str(cached[\"created_at\"]), expires_at, canonical_url, cache_scope,",
+        "multi_search_mcp/src/state/content_store.py:173:        expires_at: str, canonical_url: str, cache_scope: str,",
+        "multi_search_mcp/src/state/content_store.py:182:              source_id, content_hash, created_at, expires_at, canonical_url, cache_scope",
+        "multi_search_mcp/src/state/content_store.py:189:              cache_scope = excluded.cache_scope",
+        "multi_search_mcp/src/state/content_store.py:191:            (source_id, content_hash, created_at, expires_at, canonical_url, cache_scope),"
+      ]
+    }
+  ],
+  "reasoning": "使用来源集合/显式后端顺序/keys序列化SHA256形成scope，仅同URL同scope命中；新binding expires=min(原expires,now+当前TTL)，created_at沿用原值，禁止legacy空scope。探针验证新ID与旧ID expires_at完全相同。当前同ID策略变更的完整迁移语义没有纳入这条。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-15.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L242-L254",
+      "quote": "        if not prefetched_body:\n            runtime_keys = load_keys() if keys is None else dict(keys)\n            if content_store and retention.persist_body:\n                # Hash the permission context; never persist credentials. Provider\n                # prefetches and older unscoped entries remain source-ID-only.\n                cache_scope = hashlib.sha256(json.dumps({\n                    \"providers\": sorted(source_providers),\n                    \"backends\": list(request.backends or []),\n                    \"keys\": runtime_keys,",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/state/content_store.py",
+      "lines": "L94-L136",
+      "quote": "    def reuse_for_url(self, source_id: str, *, canonical_url: str, cache_scope: str) -> dict | None:\n        \"\"\"Bind an eligible URL body to another response's source id.\n\n        The caller supplies an already canonical URL and an opaque scope covering\n        source, backend and authorization restrictions. It must also check current\n        retention permission before calling; empty legacy scopes never participate.\n        Reuse never renews the acquired body's expiration.\n        \"\"\"\n        if not source_id or not canonical_url or not cache_scope:",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}

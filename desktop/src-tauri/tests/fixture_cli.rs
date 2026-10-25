@@ -7,6 +7,22 @@ use std::{
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+    // Test boundary: print the child's environment as JSON (names and values),
+    // so tests can prove provider credentials never cross the process boundary.
+    if args.first().map(String::as_str) == Some("env-dump") {
+        let mut rows: Vec<String> = env::vars()
+            .map(|(name, value)| {
+                format!(
+                    "\"{}\":\"{}\"",
+                    name.replace('\\', "\\\\").replace('"', "\\\""),
+                    value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+                )
+            })
+            .collect();
+        rows.sort();
+        println!("{{{}}}", rows.join(","));
+        return;
+    }
     if args.first().map(String::as_str) == Some("--version") {
         if let Ok(root) = env::var("FIXTURE_FAIL_ACTIVE_ROOT") {
             if env::current_exe().unwrap().starts_with(std::path::Path::new(&root).join("bin")) {
@@ -34,7 +50,7 @@ fn main() {
                 // redaction of child output is still exercised.
                 let leaked = env::var("EXA_API_KEY").is_ok();
                 eprintln!("exa_key_present={leaked}");
-                eprintln!("{}", env::var("FIXTURE_SECRET_ECHO").unwrap_or_default());
+                eprintln!("{}", env::var("FIXTURE_SECRET").unwrap_or_default());
                 std::process::exit(2);
             }
             Ok("hang") => thread::sleep(Duration::from_secs(30)),
@@ -56,6 +72,12 @@ fn main() {
         }
         return;
     }
+    if args.first().map(String::as_str) == Some("doctor") {
+        if env::var("FIXTURE_STORAGE").as_deref() == Ok("legacy") { println!("{{\"outcome\":\"success\"}}"); }
+        else if env::var("FIXTURE_STORAGE").as_deref() == Ok("corrupt") { println!("{{\"config_storage\":{{\"backend\":\"sqlite-dpapi\",\"schema_version\":1}},\"config_error\":\"unreadable\"}}"); std::process::exit(1); }
+        else { println!("{{\"config_storage\":{{\"backend\":\"sqlite-dpapi\",\"schema_version\":1}}}}"); }
+        return;
+    }
     if args.first().map(String::as_str) == Some("descendant") {
         if let Ok(path) = env::var("FIXTURE_CHILD_PID") {
             std::fs::write(path, std::process::id().to_string()).unwrap();
@@ -63,11 +85,17 @@ fn main() {
         thread::sleep(Duration::from_secs(60));
         return;
     }
-    // The desktop passes `search [options] -- <query>`; older callers put the query second.
-    let query = match args.iter().position(|arg| arg == "--") {
-        Some(index) => args.get(index + 1).map(String::as_str).unwrap_or(""),
-        None => args.get(1).map(String::as_str).unwrap_or(""),
-    };
+    if let Ok(path) = env::var("FIXTURE_ARGS_PATH") {
+        let body = format!(
+            "[{}]",
+            args.iter()
+                .map(|arg| format!("\"{}\"", arg.replace('\\', "\\\\").replace('\"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        std::fs::write(path, body).unwrap();
+    }
+    let query = args.iter().position(|arg| arg == "--").and_then(|i| args.get(i+1)).or_else(|| args.get(1)).map(String::as_str).unwrap_or("");
     if query == "hang" {
         let _child = Command::new(env::current_exe().unwrap())
             .arg("descendant")
@@ -87,7 +115,7 @@ fn main() {
     if query == "empty" { println!("{{\"outcome\":\"empty\",\"results\":[],\"errors\":[]}}"); return; }
     if query == "failure" { eprintln!("provider unavailable"); println!("{{\"outcome\":\"failed\",\"results\":[],\"errors\":[{{\"source\":\"brave\",\"error\":\"provider unavailable\"}}]}}"); std::process::exit(1); }
     if query == "partial" {
-        println!("{{\"outcome\":\"partial\",\"results\":[{{\"title\":\"Fixture article\"}}],\"errors\":[{{\"source\":\"brave\",\"error\":\"unavailable {}\"}}]}}", env::var("EXA_API_KEY").unwrap_or_default());
+        println!("{{\"outcome\":\"partial\",\"results\":[{{\"title\":\"Fixture article\"}}],\"errors\":[{{\"source\":\"brave\",\"error\":\"unavailable {}\"}}]}}", env::var("FIXTURE_SECRET").unwrap_or_default());
     } else {
         println!(
             "{{\"outcome\":\"success\",\"results\":[{{\"title\":\"{}\"}}],\"errors\":[]}}",

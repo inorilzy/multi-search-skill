@@ -1,0 +1,342 @@
+   Compiling multi-search-desktop v0.1.0 (D:\0-code-project\multi-search-skill\desktop\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.67s
+     Running unittests src\lib.rs (target\debug\deps\multi_search_desktop-0edd05f6e65737b6.exe)
+
+running 16 tests
+test credential::decryption_tests::invalid_dpapi_payload_reports_unreadable_not_unknown_availability ... ok
+test credential_commands::tests::application_entry_requires_allowlist_and_https ... ok
+test install::lock_error_tests::permission_denied_is_a_clear_lock_message_that_never_mentions_termination ... ok
+test credential_commands::tests::storage_capability_rejects_old_cli ... ok
+test manager::tests::management_mutations_fail_fast_while_busy ... ok
+test provider::tests::canonical_sources_are_unique ... ok
+test provider::tests::keyed_and_cookie_are_mutually_exclusive ... ok
+test credential_commands::tests::default_read_masks_keys_and_returns_nonsecret_revision ... ok
+test provider::tests::resolve_matches_canonical_cli_source_and_alias ... ok
+test redaction::tests::short_values_never_destroy_normal_output ... ok
+test windows_util::tests::expand_is_case_insensitive_and_leaves_unknown_references ... ok
+test windows_util::tests::machine_registry_path_has_no_embedded_nul_before_building_child_environment ... ok
+test provider::tests::allowed_source_names_cover_canonical_alias_and_cli ... ok
+test windows_util::tests::decode_utf16_rejects_odd_bytes_and_embedded_nul ... ok
+test manager::tests::execution_slot_recovers_after_poison ... ok
+test process::output_tests::reader_recovers_poison_and_marks_truncation ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src\main.rs (target\debug\deps\multi_search_desktop-959fd8346269a2e6.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\cookies.rs (target\debug\deps\cookies-08910d4a1435da1e.exe)
+
+running 5 tests
+test confirmation_precedes_io_and_legacy_status_is_read_only ... ok
+test invalid_and_oversized_maps_never_echo_or_persist ... ok
+test import_encrypts_without_touching_source_and_delete_never_falls_back ... ok
+test failed_import_rolls_back_row_and_mode_and_preserves_other_fields ... ok
+test rust_python_cookie_ciphertext_protocol_roundtrip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests\credential_rows.rs (target\debug\deps\credential_rows-d611ff0847f84c88.exe)
+
+running 10 tests
+test append_creates_store_when_absent_and_single_key_stays_scalar ... ok
+test hidden_entry_shape_rejects_row_ops_without_losing_data ... ok
+test unreadable_store_rejects_row_mutation_and_is_untouched ... ok
+test append_to_existing_rows_preserves_every_entry_verbatim ... ok
+test remove_last_row_deletes_credentials_row ... ok
+test remove_rejects_stale_snapshot_and_out_of_range_without_writing ... ok
+test concurrent_appends_each_keep_their_key ... ok
+test append_rejects_invalid_and_over_limit_without_writing ... ok
+test failed_write_rolls_back_and_keeps_original_blob ... ok
+test remove_exact_duplicate_jina_row_drops_its_metadata ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\credential_sources.rs (target\debug\deps\credential_sources-5cb1cba3c3838507.exe)
+
+running 15 tests
+test all_twelve_source_tests_use_typed_cli_arguments_and_independent_status ... ok
+test github_repos_maps_to_github_provider_and_unknown_names_are_rejected ... ok
+test jina_credentials_round_trip_without_becoming_a_search_source ... ok
+test jina_editor_roundtrip_preserves_metadata_for_padded_stored_keys ... ok
+test jina_structured_keys_are_visible_in_editor_without_silent_omission ... ok
+test jina_editor_save_preserves_metadata_of_unchanged_lines ... ok
+test non_jina_save_ignores_structured_merge ... ok
+test github_repos_uses_github_entry_and_tavily_entry_does_not_satisfy_it ... ok
+test environment_alias_precedence_matches_real_python_load_keys_contract ... ok
+test every_allowlisted_source_reads_only_its_own_provider_target ... ok
+test env_override_is_named_by_variable_and_never_valued ... ok
+test unknown_source_never_reaches_the_backend ... ok
+test store_overrides_file_list_and_file_is_untouched ... ok
+test file_list_is_reported_by_count_and_never_by_value ... ok
+test corrupt_keys_file_counts_as_zero_and_is_not_echoed ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\credentials.rs (target\debug\deps\credentials-1d999bd0b67068d5.exe)
+
+running 10 tests
+test invalid_keys_rejected_without_echoing_value ... ok
+test rust_written_blob_has_contract_bytes ... ok
+test overview_reports_source_without_value_and_env_overrides_store ... ok
+test delete_then_absent_and_unreadable_entry_is_reported_not_echoed ... ok
+test rust_reads_blob_written_by_python_store ... ok
+test multi_key_readback_is_one_per_line_and_overview_stays_non_secret ... ok
+test save_writes_namespaced_versioned_blob_and_trims_key ... ok
+test store_failure_is_explicit_and_never_falls_back ... ok
+test test_args_never_contain_key_material ... ok
+test test_outcome_classifies_provider_errors_and_success ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diagnostics.rs (target\debug\deps\diagnostics-a05749410d9b8000.exe)
+
+running 8 tests
+test absent_cli_reports_both_discovery_boundaries_without_touching_user_profile ... ok
+test detected_cli_has_actual_path_and_version_but_does_not_imply_user_discovery ... ok
+test user_discovery_without_app_discovery_requires_a_host_restart ... ok
+test explicit_unmanaged_executable_is_not_probed ... ok
+test failed_version_output_is_redacted_before_returning_to_callers ... ok
+test legacy_cli_reports_version_failure_with_exit_code_and_update_guidance ... ok
+test invalid_executable_and_failed_version_have_distinct_reasons ... ok
+test version_timeout_is_bounded ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.30s
+
+     Running tests\execution.rs (target\debug\deps\execution-a80e6c28ddb54c55.exe)
+
+running 13 tests
+test unreadable_route_config_blocks_execution_instead_of_falling_back_to_builtins ... ok
+test database_error_is_not_reported_as_old_cli_capability ... ok
+test legacy_cli_cannot_search_using_old_credentials ... ok
+test shutdown_terminates_its_execution_without_disabling_the_standalone_cli ... ok
+test search_preserves_literal_arguments_and_reports_real_success ... ok
+test partial_failure_is_visible_and_known_credentials_are_redacted ... ok
+test cancellation_stops_owned_descendants_but_not_unrelated_processes ... ok
+test non_default_legacy_route_timeout_can_be_tested_but_arbitrary_values_above_sixty_are_rejected ... ok
+test custom_route_is_validated_from_current_config_and_explicit_timeout_still_wins ... ok
+test zero_and_failed_searches_have_distinct_outcomes_and_failure_exit_code ... ok
+test option_like_queries_remain_literal_after_terminator ... ok
+test completion_cancellation_races_do_not_relabel_completed_runs_or_cancel_unknown_ids ... ok
+test concurrent_completion_and_cancel_publish_one_terminal_state ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.95s
+
+     Running tests\install.rs (target\debug\deps\install-d9cf8d58f8b36cd0.exe)
+
+running 19 tests
+test real_bundle_installs_against_the_compiled_anchor ... ignored
+test native_registry_path_roundtrip_uses_only_a_dedicated_acceptance_key ... ok
+test production_without_controlled_source_changes_nothing ... ok
+test missing_manifest_is_a_prerequisite_failure ... ok
+test manifest_whose_raw_bytes_do_not_match_the_anchor_is_refused_before_parsing ... ok
+test manifest_bytes_altered_after_binding_fail_the_anchor_before_parsing ... ok
+test checksum_mismatch_refuses_before_touching_the_install_root ... ok
+test listed_file_missing_from_a_bound_bundle_is_a_prerequisite_failure ... ok
+test tampered_artifact_bound_to_a_correct_manifest_is_refused ... ok
+test unknown_existing_installation_is_never_overwritten ... ok
+test duplicate_and_case_conflicting_paths_in_a_bound_manifest_are_refused ... ok
+test unsafe_or_out_of_bounds_paths_in_a_bound_manifest_are_refused ... ok
+test manifest_version_must_match_the_probed_cli ... ok
+test unrecorded_residue_is_preserved_and_requires_explicit_recovery ... ok
+test installed_cli_tampered_after_install_is_not_reported_as_installed ... ok
+test path_registration_preserves_existing_spelling_type_and_user_changes ... ok
+test version_probe_failure_keeps_no_active_install_and_retry_succeeds ... ok
+test isolated_first_install_verifies_activates_and_is_idempotent ... ok
+test explicit_user_path_consent_enables_discovery_and_skill_without_restarting_app ... ok
+
+test result: ok. 18 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 4.76s
+
+     Running tests\install_lifecycle.rs (target\debug\deps\install_lifecycle-f4ff5905d791eb7c.exe)
+
+running 21 tests
+test update_refuses_an_unknown_install_and_never_touches_it ... ok
+test uninstall_refuses_a_foreign_installation ... ok
+test uninstall_reports_a_kept_skill_whose_cli_dependency_is_now_missing ... ok
+test uninstall_removes_only_owned_cli_entries_and_keeps_user_data ... ok
+test corrupt_managed_record_is_unverified_and_blocks_update_install_and_uninstall ... ok
+test unverified_record_shows_no_compatibility_claim ... ok
+test uninstall_of_an_in_use_file_reports_a_clear_lock_error_and_keeps_the_install_unchanged ... ok
+test failed_update_probe_restores_the_previous_working_cli ... ok
+test fresh_install_plan_previews_compatibility_and_an_unrunnable_candidate_is_unknown ... ok
+test update_refuses_linked_destination_without_touching_external_content ... ok
+test update_plan_shows_current_and_target_versions_and_the_source ... ok
+test update_refuses_new_owned_path_that_collides_with_unknown_file ... ok
+test update_to_a_cli_that_lacks_the_skill_flags_is_refused_and_keeps_the_previous_cli ... ok
+test failed_restore_keeps_recovery_record_and_reports_its_location ... ok
+test update_and_uninstall_preserve_unknown_nested_files_and_remove_only_old_owned_files ... ok
+test corrupt_or_unknown_managed_skill_blocks_update_and_preview ... ok
+test update_plan_previews_skill_compatibility_before_any_change ... ok
+test update_to_a_newer_verified_cli_replaces_the_active_install ... ok
+test activated_probe_failure_restores_exact_old_lifecycle ... ok
+test update_backup_locks_restore_every_old_file_and_active_record ... ok
+test registered_project_skill_and_legacy_v1_requirements_are_checked_before_cli_update ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.21s
+
+     Running tests\install_release_boundary.rs (target\debug\deps\install_release_boundary-7f1bf84be1cd28a5.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\installed_cli.rs (target\debug\deps\installed_cli-e70ddb08b3baf71b.exe)
+
+running 2 tests
+test actual_installed_cli_detection_search_partial_failure_and_cancellation ... ignored, run via scripts/desktop_native_acceptance.py with a disposable installed CLI and controlled HTTP
+test rust_child_bootstrap_active_proof ... ignored, run via scripts/desktop_native_acceptance.py with a disposable installed CLI and controlled HTTP
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\process_env.rs (target\debug\deps\process_env-a9bf2c0a6bc7e542.exe)
+
+running 10 tests
+test acceptance_pythonpath_requires_the_isolation_marker ... ok
+test acceptance_pythonpath_selector_is_the_only_pythonpath_boundary ... ok
+test allowlisted_runtime_and_desktop_configuration_variables_are_forwarded ... ok
+test secret_marker_filter_is_case_insensitive_and_desktop_namespace_is_exempt ... ok
+test secret_variables_never_reach_the_child_environment ... ok
+test unrelated_environment_entries_are_not_forwarded ... ok
+test empty_environment_produces_empty_child_environment ... ok
+test real_child_process_does_not_inherit_provider_credentials ... ok
+test real_child_process_boundary_requires_isolation_marker ... ok
+test real_child_process_maps_acceptance_pythonpath_selector_only ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+     Running tests\provider_parity.rs (target\debug\deps\provider_parity-b5c1717b567a81e4.exe)
+
+running 2 tests
+test rust_alias_set_is_a_subset_of_python_aliases ... ok
+test rust_provider_manifest_matches_python_registries ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests\scrape_memory.rs (target\debug\deps\scrape_memory-a94c4291d5059cb3.exe)
+
+running 12 tests
+test state_path_prefers_env_then_userprofile_then_home ... ok
+test missing_state_database_reports_unavailable_and_writes_nothing ... ok
+test missing_table_reports_unavailable_with_reason ... ok
+test pin_rejects_unknown_scraper ... ok
+test future_schema_and_invalid_site_never_mutate_memory ... ok
+test pin_is_atomic_and_rolls_back_the_insert_when_update_fails ... ok
+test reads_rows_sorted_by_site_pin_success_and_scraper ... ok
+test cooldown_is_derived_from_iso_time_and_bad_time_is_not_cooldown ... ok
+test pin_inserts_row_and_puts_backend_first ... ok
+test concurrent_pins_get_distinct_priorities_without_lost_writes ... ok
+test reset_requires_one_site_and_preserves_other_rows ... ok
+test python_v2_creation_and_v1_migration_support_category_view_pin_reset ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+
+     Running tests\settings.rs (target\debug\deps\settings-40a27b6f527e1bcb.exe)
+
+running 34 tests
+test independent_cli_handoff_database ... ok
+test empty_userprofile_falls_back_to_home ... ok
+test missing_database_shows_defaults_without_creating_it ... ok
+test missing_scrape_backends_view_uses_factory_chain_and_options ... ok
+test source_names_accepted_by_execution_allowlist ... ok
+test corrupt_db_blocks_save_without_overwriting ... ok
+test scrape_backends_save_trims_dedupes_and_keeps_order ... ok
+test current_last_and_invalid_routes_are_rejected_before_sqlite_changes ... ok
+test save_canonical_sources_into_versioned_sqlite ... ok
+test all_route_sources_disabled_is_truthful ... ok
+test explicit_db_is_only_target ... ok
+test scrape_backends_reject_unknown_and_empty_lists_without_writing ... ok
+test invalid_input_does_not_change_database ... ok
+test restart_reads_sqlite_not_dev ... ok
+test old_user_dev_and_config_env_are_ignored_and_untouched ... ok
+test missing_or_absent_scrape_backends_is_not_reported_invalid ... ok
+test malformed_settings_block_save_and_roll_back ... ok
+test unsupported_version_fails_closed ... ok
+test builtin_factory_is_used_only_when_routes_is_missing ... ok
+test toggle_source_preserves_other_settings ... ok
+test trigger_failure_rolls_back_previous_settings ... ok
+test complete_route_map_supports_create_edit_delete_and_global_disable ... ok
+test twitter_is_path_only_and_env_never_overrides ... ok
+test omitted_routes_preserve_existing_map_and_unknown_fields ... ok
+test invalid_saved_scrape_backends_can_be_overwritten_by_save ... ok
+test omitted_scrape_backends_preserve_existing_key ... ok
+test unreadable_view_still_exposes_default_scrape_chain ... ok
+test aliases_null_type_and_legacy_timeout_previews_remain_compatible ... ok
+test version_zero_nonempty_and_incomplete_version_one_are_rejected ... ok
+test unknown_fields_preserved ... ok
+test dirty_scrape_backends_read_tolerantly_and_fall_back_when_useless ... ok
+test malformed_routes_or_type_are_unreadable_and_block_transactional_save ... ok
+test scrape_patch_and_other_settings_writes_preserve_each_other ... ok
+test python_cli_reads_desktop_written_settings_and_rejects_future_versions ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
+
+     Running tests\skill.rs (target\debug\deps\skill-87f1475ff2bb6808.exe)
+
+running 6 tests
+test existing_target_is_never_overwritten_and_local_content_survives ... ok
+test missing_cli_blocks_install_and_writes_nothing ... ok
+test project_scope_requires_an_existing_absolute_project_and_writes_only_there ... ok
+test unrelated_skills_in_the_same_folder_are_kept ... ok
+test incompatible_cli_blocks_install_and_names_the_missing_flag ... ok
+test fresh_global_install_writes_only_the_isolated_profile_and_verifies ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.15s
+
+     Running tests\skill_manage.rs (target\debug\deps\skill_manage-c72384e311ef051b.exe)
+
+running 19 tests
+test removal_reports_absent_state_without_deleting_anything ... ok
+test outcomes_serialize_the_field_names_the_ui_reads ... ok
+test linked_references_never_modify_external_files ... ok
+test managed_path_replaced_with_user_folder_is_preserved ... ok
+test new_marker_records_explicit_schema_version_and_hashes ... ok
+test incomplete_ownership_marker_never_authorizes_delete_or_update ... ok
+test unknown_folder_is_never_updated_or_removed ... ok
+test removal_requires_confirmation_and_deletes_only_tool_owned_files ... ok
+test failed_update_keeps_the_old_usable_skill ... ok
+test unmodified_install_reports_current_and_update_is_not_needed ... ok
+test status_exposes_target_release_requirements_and_blocks_incompatible_update ... ok
+test missing_managed_file_can_be_repaired_after_confirmation ... ok
+test partial_removal_keeps_ownership_for_retry ... ok
+test outdated_skill_updates_without_confirmation_when_unmodified ... ok
+test update_preserves_unknown_files_and_nested_user_content ... ok
+test release_06_marker_without_hashes_remains_managed ... ok
+test local_modification_requires_confirmation_and_is_backed_up_before_overwrite ... ok
+test retry_after_failed_update_does_not_misreport_completion ... ok
+test filesystem_update_failure_keeps_old_skill_and_retry_succeeds ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.32s
+
+     Running tests\sqlite_credentials.rs (target\debug\deps\sqlite_credentials-c29d9346b1cea7e1.exe)
+
+running 8 tests
+test invalid_jina_and_non_jina_objects_fail_before_persistence ... ok
+test jina_json_structure_is_preserved ... ok
+test failed_write_rolls_back_original_value ... ok
+test malformed_dpapi_is_error_not_legacy_fallback ... ok
+test synthetic_native_roundtrip_preserves_multi_keys_and_never_stores_plaintext ... ok
+test rust_python_native_encryption_protocol_in_both_directions ... ok
+test rust_editor_roundtrip_keeps_jina_exhausted_keys_out_of_python_rotation ... ok
+test rust_python_product_credential_store_roundtrip ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running tests\ui_contract.rs (target\debug\deps\ui_contract-ab309ae3af738b70.exe)
+
+running 4 tests
+test emit_types_d_ts ... ignored, explicit code generation only
+test ipc_commands_arguments_and_capability_match ... ok
+test payloads_js_matches_rust_field_types ... ok
+test types_d_ts_is_up_to_date ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests multi_search_desktop
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

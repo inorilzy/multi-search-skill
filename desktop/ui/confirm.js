@@ -6,6 +6,10 @@
 //   moved focus somewhere else on purpose.
 let sequence = 0;
 
+/**
+ * @param {HTMLElement} panel
+ * @param {{ trigger?: HTMLElement & { disabled?: boolean }, cancel?: HTMLElement, onCancel?: () => void, message?: HTMLElement }} [options]
+ */
 export function openConfirm(panel, { trigger, cancel, onCancel, message } = {}) {
   const doc = panel.ownerDocument;
   const messageNode = message || panel.querySelector('p');

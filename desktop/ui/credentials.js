@@ -1,14 +1,11 @@
-import { openConfirm } from './confirm.js';
+import { pageRoot, confirmInline, disposePage } from './dom.js';
 import { showError } from './api.js';
-
-// Copy: 'API Key' for the credential, 'Cookie' for Twitter, and a space between Chinese and Latin text.
-// Search sources come from the catalog generated from Python core metadata
-// (see ui/catalog.js and scripts/export_source_catalog.py). Keyed sources store
-// a key in the Windows credential store; keyless sources need no key. `twitter`
-// reads a cookie file path from settings and never a cookie body. settings.js
-// derives its own view from this list, so the allowlist lives in one place.
 import { SEARCH_SOURCES } from './catalog.js';
+import { SOURCE_CATALOG } from './source-catalog.js';
 
+// Search sources come from the catalog generated from Python core metadata (one source of truth for
+// the CLI and this UI). Scraper-only providers also live there: they have credentials but no search
+// endpoint, so they get a credential panel without a connectivity test.
 export const SOURCES = SEARCH_SOURCES.map(({ name, label, keyed, cookie, description, mark }) => ({
   source: name,
   label,
@@ -18,18 +15,35 @@ export const SOURCES = SEARCH_SOURCES.map(({ name, label, keyed, cookie, descrip
   mark,
 }));
 
-const DEFAULT_SOURCE = 'tavily';
+const SCRAPE_PROVIDERS = SOURCE_CATALOG.sources
+  .filter(entry => entry.searchable === false && entry.keyed === true)
+  .map(entry => ({ source: entry.name, label: entry.label, keyed: true, cookie: entry.cookie, search: false }));
 
-const storeLabels = { present: '已保存', absent: '未保存', unavailable: '凭据库不可用', unreadable: '已保存条目无法读取' };
-
-function sourceText(overview) {
-  if (overview.effective_source === 'env') return `环境变量 ${overview.env_var}`;
-  if (overview.effective_source === 'credential_store') return 'Windows 凭据库';
-  if (overview.effective_source === 'file') return `文件中的 ${overview.file_key_count} 个 Key`;
-  if (overview.effective_source === 'unavailable') return '不可用';
-  return '未配置';
+/// Scraper-only providers that own credentials (no search test). Today the catalog has none, so the
+/// section is simply absent instead of hardcoding a provider list.
+export function scrapeCredentialProviders() {
+  return SCRAPE_PROVIDERS;
 }
 
+const DEFAULT_SOURCE = 'tavily';
+const storeLabels = { present: '已保存', absent: '未保存', unavailable: '数据库不可用', unreadable: '已保存条目无法读取' };
+
+// The effective source after the SQLite/DPAPI merge. Unknown future values stay labelled.
+function sourceText(overview) {
+  // Core's doctor report may name the provenance it actually resolved (types.d.ts:
+  // env | credential_store | file | none | unavailable, or sqlite when only the store is known).
+  if (overview.effective_source === 'env') return overview.env_var ? `环境变量 ${overview.env_var}` : '环境变量';
+  if (overview.effective_source === 'credential_store') return '本机凭据库';
+  if (overview.effective_source === 'file') {
+    return overview.file_key_count ? `旧 Key 文件中的 ${overview.file_key_count} 个 Key` : '旧 Key 文件';
+  }
+  if (overview.effective_source === 'sqlite') return 'SQLite / DPAPI';
+  if (overview.effective_source === 'none') return '未配置';
+  if (overview.effective_source === 'unavailable') return '不可用';
+  return `未知来源（${overview.effective_source ?? '无'}）`;
+}
+
+// Localized test outcomes; a raw backend enum is never the visible title.
 function testText(result, label, provenance) {
   const labels = {
     success: `测试成功：${label} 本次使用 ${provenance}。`,
@@ -45,215 +59,282 @@ function testText(result, label, provenance) {
   };
   return labels[result] || '测试失败';
 }
-
-/// Full page: heading plus the credential panels. Used when a source owns its own page.
+/** @typedef {{ source: string, label: string, keyed: boolean, cookie?: boolean, search?: boolean }} CredentialEntry */
+/** @param {string} source @returns {CredentialEntry} */
+const sourceEntry = source => SOURCES.find(item => item.source === source)
+  || SCRAPE_PROVIDERS.find(item => item.source === source)
+  || SOURCES.find(item => item.source === DEFAULT_SOURCE)
+  || { source, label: source, keyed: true, search: true };
+const provenance = value => JSON.stringify([value.effective_source, value.store?.state, value.store?.saved_at]);
+/** @param {HTMLElement} root @param {any} api @param {{ number?: string, source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void }} [options] */
 export async function mountCredentials(root, api, options = {}) {
-  const entry = sourceEntry(options.source);
-  const doc = root.ownerDocument;
-  const heading = doc.createElement('section');
-  heading.className = 'heading';
-  const eyebrow = doc.createElement('p');
-  eyebrow.className = 'eyebrow';
-  eyebrow.textContent = `CREDENTIALS / ${entry.source}`;
-  const title = doc.createElement('h1');
-  title.tabIndex = -1;
-  title.textContent = `${entry.label} 凭据。`;
-  const note = doc.createElement('p');
-  note.textContent = 'Key 只保存在 Windows 凭据库中，不写入配置文件，也不会再次显示。';
-  heading.append(eyebrow, title, note);
-  const holder = doc.createElement('div');
-  root.replaceChildren(heading, holder);
-  return mountCredentialBody(holder, api, options);
+  root = pageRoot(root);
+  const { number = '04', ...pageOptions } = options;
+  const entry = sourceEntry(pageOptions.source);
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / CREDENTIALS</p><h1 tabindex="-1">凭据</h1><p>Key 默认掩码显示，以当前系统用户的 DPAPI 加密保存在本机 SQLite。旧来源不会自动生效。</p></section>`;
+  root.querySelector('h1').textContent = `${entry.label} 凭据`;
+  const holder = root.ownerDocument.createElement('div'); root.append(holder);
+  return mountCredentialBody(holder, api, pageOptions);
 }
-
-function sourceEntry(source) {
-  return SOURCES.find(item => item.source === source)
-    || SOURCES.find(item => item.source === DEFAULT_SOURCE);
-}
-
-/// Panels only, no heading: the detail pane of the sources page mounts this so a selected
-/// source does not add a second h1 to the document.
+/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void}} [options] */
 export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest } = {}) {
-  const entry = sourceEntry(source);
-  const label = entry.label;
-  root.innerHTML = `<div class="credential-editor">
-      <div class="credential-fields"><form data-save-form>
-        <label>${label} API Key<span class="key-input"><input data-field="key" type="password" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="输入新 Key（已保存的 Key 不回显）"><button type="button" data-action="reveal" aria-label="显示本次输入" aria-pressed="false">显示</button></span></label>
-        <button type="submit" class="primary" data-action="save">保存 Key</button><button type="button" data-action="test">测试连接</button>
-      </form>
-      <p class="credential-note">Key 保存在本机 Windows 凭据库。保存不会发起搜索请求。</p>
-      <dl class="cred-status"><dt>已保存</dt><dd data-status="store"></dd><dt>生效来源</dt><dd data-status="source"></dd></dl>
-      <p data-info="override" class="note" role="status"></p><p data-info="save" role="status"></p><p data-info="error" role="alert"></p>
-      <div class="credential-tools"><button type="button" data-action="refresh">刷新状态</button><div data-delete-slot><button type="button" data-action="delete">删除已保存的 Key</button></div></div></div>
-      <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
-      <p class="credential-note" data-info="warning">测试会向 ${label} 发送一次外部搜索请求，并向对应服务商提供认证凭据，可能消耗额度并计入费用。请只在需要时测试。</p></div>
-    </div>`;
-
-  const field = root.querySelector('[data-field="key"]');
-  const text = (selector, value) => { root.querySelector(selector).textContent = value; };
-  const buttons = () => root.querySelectorAll('button');
-  let current = { store: { state: 'absent', error: null }, effective_source: 'none', env_overrides_store: false, env_var: '', file_key_count: 0 };
-
-  let generation = 0;
-  let disposed = false;
+  root = pageRoot(root);
+  const { label, search } = sourceEntry(source);
+  const searchTest = search !== false;
+  root.innerHTML = `<div class="credential-editor"><div class="credential-fields">
+    <p class="credential-note">API Key：已保存的每行一条；下方逐行输入新增 Key，一次粘贴一行。删除为单行操作。</p>
+    <div data-saved-list class="key-saved-list"></div>
+    <p data-saved-empty class="credential-note key-saved-empty" hidden>当前没有已保存的 Key。</p>
+    <form data-save-form>
+      <div data-draft-list class="key-draft-list"></div>
+      <div class="run-controls draft-controls"><button type="button" data-action="add" aria-label="新增一行 Key 输入">＋</button>
+      <button type="submit" class="primary" data-action="save">提交新增 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
+      <span class="credential-note" data-info="application">申请链接待配置</span></div>
+    </form>
+    <details class="config-details"><summary>说明</summary><p class="credential-note">Key 仅保存在本机 SQLite，DPAPI 保护范围为当前 Windows 用户/设备。保存不会发起搜索；环境变量与旧文件不会自动生效，也不作为配置来源。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
+    <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
+    <p data-info="error" class="error-message"></p>
+    <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div></div>
+    <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong class="status-text" data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
+    <details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? `测试会向对应服务发送外部搜索请求，可能消耗额度。测试使用已保存的值；新增后请先提交。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details></div></div>`;
+  root.querySelector('.credential-note').prepend(root.ownerDocument.createTextNode(`${label} `));
+  const q = selector => /** @type {any} */ (root.querySelector(selector));
+  const text = (selector, value) => { q(selector).textContent = value; };
+  let current = { store: { state: 'absent', error: '' }, effective_source: 'none' };
+  let generation = 0, disposed = false, busy = false;
+  /** @type {string[]} rows last confirmed by credentialRead */
+  let savedRows = [];
+  const revealed = new Map();
+  /** @type {string|null} snapshot used as remove guard */
+  let readSnapshot = null;
+  let readHealthy = false;
+  /** @type {string[]} draft input values; index aligned with draft rows */
+  let drafts = [''];
   function reportTest(kind, title, message = '') {
     if (disposed) return;
-    text('[data-status="test"]', title);
-    text('[data-info="test"]', message);
-    root.querySelector('[data-test-result]').dataset.kind = kind;
-    onTest?.({ kind, title, message });
+    text('[data-status="test"]', title); text('[data-info="test"]', message);
+    q('[data-test-result]').dataset.kind = kind; onTest?.({ kind, title, message });
   }
-  root.querySelector('[data-action="reveal"]').addEventListener('click', event => {
-    const visible = field.type === 'password';
-    field.type = visible ? 'text' : 'password';
-    event.currentTarget.textContent = visible ? '隐藏' : '显示';
-    event.currentTarget.setAttribute('aria-pressed', String(visible));
-    event.currentTarget.setAttribute('aria-label', `${visible ? '隐藏' : '显示'}本次输入`);
-  });
-  const provenance = value => JSON.stringify([value.effective_source, value.env_var, value.file_key_count, value.store?.state, value.store?.saved_at]);
-  function invalidateTest() {
-    generation += 1;
-    reportTest('idle', '尚未测试');
+  function invalidateTest() { generation += 1; reportTest('idle', '尚未测试'); }
+  function setBusy(value) {
+    busy = value;
+    root.setAttribute('aria-busy', String(value)); root.classList.toggle('is-busy', value);
+    for (const button of root.querySelectorAll('button')) button.disabled = value;
+    for (const input of root.querySelectorAll('[data-draft-list] input')) input.disabled = value || !readHealthy;
+    for (const input of root.querySelectorAll('[data-saved-list] input')) input.disabled = value;
+    for (const button of root.querySelectorAll('[data-action="copy"]')) button.disabled = value || !revealed.has(Number(button.dataset.rowIndex));
+    q('[data-action="application"]').disabled = value || !current.key_application_available;
+    q('[data-action="test"]').disabled = value || !searchTest;
+    q('[data-action="test"]').hidden = !searchTest;
+    // Saved-row delete and draft add/submit are mutations; keep them disabled
+    // until a successful read anchors the remove guard.
+    for (const button of root.querySelectorAll('[data-action="remove"], [data-action="remove-draft"], [data-action="add"], [data-action="save"]')) button.disabled = value || !readHealthy;
   }
-  function render(overview) {
+  function renderSaved() {
+    const list = q('[data-saved-list]');
+    list.innerHTML = '';
+    q('[data-saved-empty]').hidden = savedRows.length > 0;
+    savedRows.forEach((value, index) => {
+      const row = root.ownerDocument.createElement('div');
+      row.className = 'key-saved-row'; row.dataset.savedIndex = String(index);
+      row.innerHTML = `<label>Key ${index + 1}<input type="password" readonly data-saved-input aria-label="已保存 Key 第 ${index + 1} 行"></label>
+        <button type="button" data-action="reveal" data-row-index="${index}">显示</button><button type="button" data-action="copy" data-row-index="${index}" disabled>复制</button>
+        <button type="button" data-action="remove" data-remove-index="${index}" aria-label="删除第 ${index + 1} 行 Key">删除</button>
+        <div data-confirm-slot></div>`;
+      // Saved value is assigned via .value, never innerHTML, so raw key text
+      // cannot break the markup.
+      row.querySelector('input').value = value;
+      list.append(row);
+    });
+  }
+  function renderDrafts() {
+    const list = q('[data-draft-list]');
+    // Mirror the live inputs back before rebuilding: programmatic value
+    // assignment does not fire input events, so capture it here.
+    const existing = list.querySelectorAll('input');
+    existing.forEach((input, index) => { if (index < drafts.length) drafts[index] = input.value; });
+    list.innerHTML = '';
+    drafts.forEach((value, index) => {
+      const row = root.ownerDocument.createElement('div');
+      row.className = 'key-draft-row'; row.dataset.draftIndex = String(index);
+      row.innerHTML = `<label>新增 Key ${index + 1}<input type="text" data-field="key" data-draft-input autocomplete="off" spellcheck="false" aria-label="新增 Key 第 ${index + 1} 行" placeholder="输入一条 Key"></label>
+        <button type="button" data-action="remove-draft" aria-label="移除该输入行">×</button>`;
+      const input = row.querySelector('input');
+      input.value = value;
+      list.append(row);
+    });
+    setBusy(busy);
+  }
+  function render(view) {
     if (disposed) return;
-    if (provenance(current) !== provenance({ ...current, ...overview })) invalidateTest();
-    current = { ...current, ...overview };
-    onStatus?.(current);
-    const files = overview.file_key_count ?? 0;
-    text('[data-status="store"]', storeLabels[overview.store.state] || overview.store.state);
-    text('[data-status="source"]', sourceText(current));
-    let note = '';
-    if (overview.env_overrides_store) {
-      note = `检测到环境变量 ${overview.env_var}，它会覆盖已保存的 Key。删除或替换已保存的 Key 不会改变当前生效的来源。`;
-    } else if (files > 0 && overview.store.state === 'present') {
-      note = `文件中的 ${files} 个 Key 已保留，但被凭据库 Key 覆盖，不参与本来源轮换。`;
-    }
-    text('[data-info="override"]', note);
-    // store.error is a localized backend reason, never a raw enum or key value.
-    text('[data-info="error"]', overview.store.error || '');
+    if (provenance(current) !== provenance(view)) invalidateTest();
+    current = view; onStatus?.(view);
+    text('[data-status="store"]', storeLabels[view.store.state] || view.store.state);
+    text('[data-status="source"]', sourceText(view));
+    text('[data-info="application"]', view.key_application_available ? '使用系统浏览器打开固定申请链接' : '申请链接待配置');
+    q('[data-action="application"]').disabled = busy || !view.key_application_available;
   }
-  function setBusy(busy) { for (const button of buttons()) button.disabled = busy; }
-
+  async function readBack() {
+    const saved = await api.credentialRead(source);
+    if (disposed) return;
+    readSnapshot = saved.snapshot;
+    revealed.clear();
+    savedRows = saved.value.split('\n').filter(line => line.trim() !== '');
+    readHealthy = true;
+    renderSaved();
+  }
   async function refresh() {
     setBusy(true);
-    try { render(await api.credentialStatus(source)); }
-    catch (error) { showError(root.querySelector('[data-info="error"]'), error, '无法读取凭据状态，请重试。'); }
-    finally { setBusy(false); }
+    try {
+      render(await api.credentialStatus(source));
+      await readBack();
+      if (readHealthy && !disposed) text('[data-info="error"]', current.store.error || '');
+    } catch (error) {
+      if (!disposed) {
+        readHealthy = false;
+        // Keep the last saved rows visible so the user can still see state; all
+        // writes stay disabled until a refresh succeeds again.
+        renderSaved();
+        showError(q('[data-info="error"]'), error, '无法读取已保存凭据，请重试。');
+      }
+    }
+    finally { if (!disposed) setBusy(false); }
   }
-
-  // Save is confirmed in-page when a file list exists: the file keys stay listed but stop
-  // rotating for this source. Cancel removes the panel and writes nothing.
-  let pendingKey = null;
-  let releaseSave = null;
-  // Backend values are set with textContent; only constant markup goes through innerHTML.
-  function confirmPanel(kind, message, confirmClass, confirmLabel) {
-    const panel = root.ownerDocument.createElement('div');
-    panel.setAttribute('data-confirm', kind);
-    panel.innerHTML = `<p class="note"></p><div class="run-controls"><button type="button" class="${confirmClass}" data-action="confirm-${kind}">${confirmLabel}</button>`
-      + `<button type="button" data-action="cancel-${kind}">取消</button></div>`;
-    panel.querySelector('p').textContent = message;
-    return panel;
-  }
-  function closeSaveConfirm(options) {
-    releaseSave?.(options);
-    releaseSave = null;
-    root.querySelector('[data-confirm="save"]')?.remove();
-    pendingKey = null;
-  }
-  function openSaveConfirm(key) {
-    closeSaveConfirm({ restoreFocus: false });
-    pendingKey = key;
-    const panel = confirmPanel('save', `保存后使用凭据库 Key，文件中的 ${current.file_key_count} 个 Key 保留但不参与本来源轮换。`, 'primary', '确认保存');
-    root.querySelector('[data-save-form]').append(panel);
-    panel.querySelector('[data-action="confirm-save"]').addEventListener('click', confirmSave);
-    panel.querySelector('[data-action="cancel-save"]').addEventListener('click', () => closeSaveConfirm());
-    releaseSave = openConfirm(panel, { trigger: root.querySelector('[data-action="save"]'), cancel: panel.querySelector('[data-action="cancel-save"]'), onCancel: () => closeSaveConfirm() });
-  }
-  async function doSave(key) {
-    invalidateTest();
-    setBusy(true);
-    try { render(await api.credentialSave(source, key)); text('[data-info="save"]', '已保存。尚未测试。'); }
-    catch (error) { text('[data-info="save"]', ''); showError(root.querySelector('[data-info="error"]'), error, '保存失败，请检查凭据库访问后重试。'); }
-    finally { setBusy(false); }
-  }
-  async function confirmSave() {
-    const key = pendingKey;
-    closeSaveConfirm({ restoreFocus: false });
-    if (key) await doSave(key);
-  }
-
-  root.querySelector('[data-save-form]').addEventListener('submit', async event => {
-    event.preventDefault();
-    const key = field.value;
-    field.value = '';
-    if ((current.file_key_count ?? 0) > 0) { openSaveConfirm(key); return; }
-    await doSave(key);
+  q('[data-draft-list]').addEventListener('input', event => {
+    const input = event.target.closest('input'); if (!input) return;
+    drafts[Number(input.closest('[data-draft-index]').dataset.draftIndex)] = input.value; invalidateTest();
   });
-
-  // Delete is two-step: the first click only opens an in-page confirmation whose wording
-  // says what happens next. It never claims the source has no credentials while a file list
-  // or an env var still provides one.
-  function deleteWarning() {
-    const files = current.file_key_count ?? 0;
-    const parts = ['确定删除已保存的 Key 吗？'];
-    if (current.env_var) parts.push(`环境变量 ${current.env_var} 仍会覆盖，删除不会改变当前生效的来源。`);
-    if (files > 0) parts.push(`删除后将恢复使用文件中的 ${files} 个 Key。`);
-    if (!files && !current.env_var) parts.push('删除后需要重新粘贴 Key 才能使用。');
-    return parts.join('');
-  }
-  let releaseDelete = null;
-  function closeDeleteConfirm(options) {
-    releaseDelete?.(options);
-    releaseDelete = null;
-    root.querySelector('[data-confirm="delete"]')?.remove();
-  }
-  function openDeleteConfirm() {
-    if (root.querySelector('[data-confirm="delete"]')) return;
-    const panel = confirmPanel('delete', deleteWarning(), 'danger', '确认删除');
-    root.querySelector('[data-delete-slot]').append(panel);
-    panel.querySelector('[data-action="confirm-delete"]').addEventListener('click', confirmDelete);
-    panel.querySelector('[data-action="cancel-delete"]').addEventListener('click', () => closeDeleteConfirm());
-    releaseDelete = openConfirm(panel, { trigger: root.querySelector('[data-action="delete"]'), cancel: panel.querySelector('[data-action="cancel-delete"]'), onCancel: () => closeDeleteConfirm() });
-  }
-
-  async function confirmDelete() {
-    invalidateTest();
+  q('[data-draft-list]').addEventListener('paste', event => {
+    if (/[\r\n]/.test(event.clipboardData?.getData('text') || '')) { event.preventDefault(); text('[data-info="error"]', '每行一条 Key：多行内容请拆分后逐行粘贴。'); }
+  });
+  q('[data-draft-list]').addEventListener('click', event => {
+    const button = event.target.closest('[data-action="remove-draft"]');
+    if (!button || busy || !readHealthy || disposed) return;
+    const index = Number(button.closest('[data-draft-index]').dataset.draftIndex);
+    if (drafts.length === 1) drafts[0] = ''; else drafts.splice(index, 1);
+    renderDrafts();
+  });
+  q('[data-saved-list]').addEventListener('click', async event => {
+    const button = event.target.closest('[data-action="reveal"], [data-action="copy"]');
+    if (!button || busy || disposed) return;
+    const index = Number(button.dataset.rowIndex);
+    const row = button.closest('[data-saved-index]');
+    const input = row.querySelector('input');
+    if (button.dataset.action === 'copy') {
+      try { if (revealed.has(index)) await root.ownerDocument.defaultView.navigator.clipboard.writeText(revealed.get(index)); }
+      catch (error) { showError(q('[data-info="error"]'), error, '复制失败，请手动复制。'); }
+      return;
+    }
+    if (revealed.has(index)) {
+      revealed.delete(index); input.value = savedRows[index]; input.type = 'password'; button.textContent = '显示'; setBusy(false); return;
+    }
     setBusy(true);
     try {
-      render(await api.credentialDelete(source));
-      const files = current.file_key_count ?? 0;
-      let message = '已删除。';
-      if (current.env_var) message += `仍由环境变量 ${current.env_var} 生效。`;
-      else if (files > 0) message += `已恢复使用文件中的 ${files} 个 Key。`;
-      else message += '当前没有可用的 Key。';
-      text('[data-info="save"]', message);
-    }
-    catch (error) {
-      showError(root.querySelector('[data-info="error"]'), error, '删除失败，请重试。');
-    }
-    // Re-enable first so focus can return to the delete button.
-    finally { setBusy(false); closeDeleteConfirm(); }
-  }
-
-  root.querySelector('[data-action="delete"]').addEventListener('click', openDeleteConfirm);
-
-  root.querySelector('[data-action="test"]').addEventListener('click', async () => {
-    setBusy(true);
-    const testedGeneration = ++generation;
-    const testedSource = sourceText(current);
-    reportTest('running', '正在测试');
+      const value = await api.credentialReveal(source);
+      if (disposed) return;
+      if (value.snapshot !== readSnapshot) { await readBack(); throw new Error('凭据已变化，请重新显示。'); }
+      const key = value.value.split('\n').filter(line => line.trim() !== '')[index];
+      if (key === undefined) throw new Error('凭据已变化，请刷新。');
+      revealed.set(index, key); input.value = key; input.type = 'text'; button.textContent = '隐藏';
+    } catch (error) { if (!disposed) showError(q('[data-info="error"]'), error, '无法显示这一行 Key，请重试。'); }
+    finally { if (!disposed) setBusy(false); }
+  });
+  q('[data-save-form]').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy || !readHealthy || disposed) return;
+    // Collect from the live inputs, not the drafts mirror: programmatic value
+    // assignment (and any path that skipped the input event) still submits.
+    const keys = [...q('[data-draft-list]').querySelectorAll('input')].map(input => input.value.trim()).filter(value => value !== '');
+    if (keys.length === 0) { text('[data-info="error"]', '请先输入至少一条 Key。'); return; }
+    invalidateTest(); setBusy(true);
+    try {
+      render(await api.credentialAppend(source, keys));
+      if (disposed) return;
+      // Clear submitted drafts before reading back: a failed read must not turn
+      // a successful append into a duplicate retry.
+      drafts = [''];
+      q('[data-draft-list]').innerHTML = '';
+      renderDrafts();
+      try {
+        await readBack();
+        if (!disposed) text('[data-info="test"]', '已保存。尚未测试。');
+      } catch (error) {
+        if (!disposed) {
+          readHealthy = false;
+          renderSaved();
+          text('[data-info="error"]', '已保存，但刷新读取失败；请刷新后再继续编辑。');
+        }
+      }
+    } catch (error) { if (!disposed) showError(q('[data-info="error"]'), error, '保存失败，编辑值已保留。'); }
+    finally { if (!disposed) setBusy(false); }
+  });
+  q('[data-action="add"]').addEventListener('click', () => {
+    if (busy || !readHealthy || disposed) return;
+    drafts.push(''); renderDrafts();
+    const inputs = q('[data-draft-list]').querySelectorAll('input');
+    inputs[inputs.length - 1]?.focus();
+  });
+  q('[data-saved-list]').addEventListener('click', event => {
+    const button = event.target.closest('[data-action="remove"]');
+    if (!button) return;
+    if (busy || !readHealthy || disposed) return;
+    const index = Number(button.dataset.removeIndex);
+    const row = button.closest('[data-saved-index]');
+    const slot = row.querySelector('[data-confirm-slot]');
+    if (slot.firstElementChild) return;
+    const panel = root.ownerDocument.createElement('div');
+    panel.className = 'inline-confirm'; panel.dataset.confirm = 'remove';
+    panel.innerHTML = `<p class="note">确定删除第 ${index + 1} 行已保存的 Key 吗？删除后旧文件、凭据库及环境变量不会自动恢复生效。</p><div class="run-controls"><button type="button" class="danger" data-action="confirm-remove">确认删除</button><button type="button" data-action="cancel-remove">取消</button></div>`;
+    slot.append(panel);
+    // Shared contract: cancel has focus, Escape cancels, focus returns to this row's delete button.
+    const release = confirmInline(panel, () => { panel.remove(); release(); }, button);
+    panel.querySelector('[data-action="cancel-remove"]').addEventListener('click', () => { panel.remove(); release(); });
+    panel.querySelector('[data-action="confirm-remove"]').addEventListener('click', async () => {
+      if (busy || !readHealthy || disposed) return;
+      invalidateTest(); setBusy(true);
+      try {
+        render(await api.credentialRemove(source, index, readSnapshot));
+        if (!disposed) {
+          // Reread rather than assuming the splice: a concurrent append or a
+          // stale snapshot is resolved by the backend's exact-occurrence guard,
+          // and the UI reflects whatever the store now holds.
+          try {
+            await readBack();
+            if (!disposed) text('[data-info="test"]', '已删除。');
+          } catch {
+            if (!disposed) {
+              readHealthy = false;
+              renderSaved();
+              text('[data-info="error"]', '已删除，但刷新读取失败；请刷新后再继续编辑。');
+            }
+          }
+        }
+      } catch (error) {
+        if (!disposed) { panel.remove(); showError(q('[data-info="error"]'), error, '删除失败，已保存值未变。'); }
+      } finally { if (!disposed) setBusy(false); }
+    });
+  });
+  q('[data-action="application"]').addEventListener('click', async () => {
+    try { await api.credentialApplicationOpen(source); }
+    catch (error) { if (!disposed) showError(q('[data-info="error"]'), error, '无法打开系统浏览器。'); }
+  });
+  q('[data-action="test"]').addEventListener('click', async () => {
+    if (!searchTest) return;
+    setBusy(true); const testedGeneration = ++generation; const testedSource = sourceText(current); reportTest('running', '正在测试');
     try {
       const outcome = await api.credentialTest(source);
-      if (testedGeneration !== generation) return;
-      reportTest(outcome.result === 'success' ? 'success' : 'error', testText(outcome.result, label, testedSource), outcome.message || '');
+      if (testedGeneration === generation && !disposed) reportTest(outcome.result === 'success' ? 'success' : 'error', testText(outcome.result, label, testedSource), outcome.message || '');
     } catch (error) {
-      if (testedGeneration !== generation) return;
-      showError(root.querySelector('[data-info="error"]'), error, '测试启动失败，请检查 CLI 后重试。');
-    } finally { if (testedGeneration === generation) setBusy(false); }
+      // Launch failures go to the error slot; the test area only says the test did not run.
+      if (testedGeneration === generation && !disposed) {
+        reportTest('error', '测试失败', '');
+        showError(q('[data-info="error"]'), error, '测试启动失败，请检查 CLI 后重试。');
+      }
+    }
+    finally { if (!disposed) setBusy(false); }
   });
-
-  root.querySelector('[data-action="refresh"]').addEventListener('click', refresh);
+  q('[data-action="refresh"]').addEventListener('click', refresh);
+  renderDrafts();
   await refresh();
-  return { dispose() { disposed = true; generation += 1; } };
+  return { dispose() { disposePage(root); disposed = true; generation += 1; revealed.clear(); for (const input of root.querySelectorAll("input")) input.value = ""; root.replaceChildren(); } };
 }

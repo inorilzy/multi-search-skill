@@ -1,0 +1,13 @@
+test_direct_loopback_is_not_a_proxy_hop (tests.test_proxy_trust_boundary.ProxyTrustTests.test_direct_loopback_is_not_a_proxy_hop) ... ok
+test_direct_loopback_target_still_rejected (tests.test_proxy_trust_boundary.ProxyTrustTests.test_direct_loopback_target_still_rejected) ... ok
+test_direct_private_target_still_rejected (tests.test_proxy_trust_boundary.ProxyTrustTests.test_direct_private_target_still_rejected) ... ok
+test_explicit_proxy_handler_without_env_is_trusted (tests.test_proxy_trust_boundary.ProxyTrustTests.test_explicit_proxy_handler_without_env_is_trusted) ... ok
+test_hostname_proxy_connect_succeeds_through_loopback (tests.test_proxy_trust_boundary.ProxyTrustTests.test_hostname_proxy_connect_succeeds_through_loopback) ... ok
+test_ipv4_and_ipv6_local_proxies_are_trusted (tests.test_proxy_trust_boundary.ProxyTrustTests.test_ipv4_and_ipv6_local_proxies_are_trusted) ... ok
+test_localhost_proxy_is_a_trusted_exact_hop (tests.test_proxy_trust_boundary.ProxyTrustTests.test_localhost_proxy_is_a_trusted_exact_hop) ... ok
+test_redirect_to_loopback_is_rejected_even_with_trusted_proxy (tests.test_proxy_trust_boundary.ProxyTrustTests.test_redirect_to_loopback_is_rejected_even_with_trusted_proxy) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.005s
+
+OK

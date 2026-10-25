@@ -112,36 +112,38 @@ test('skill page reports check/update IPC failures instead of swallowing them', 
   window.close();
 });
 
-test('credentials page reports status/save/delete IPC failures and keeps outcomes out of the test area', async () => {
+test('credentials page reports read/append/remove IPC failures and keeps outcomes out of the test area', async () => {
   const { window, root } = setup();
   let statusCalls = 0;
-  const overview = { store: { state: 'absent', saved_at: null, error: null }, effective_source: 'none', env_overrides_store: false, env_var: '', file_key_count: 0 };
-  let saveFails = true;
+  const overview = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false };
+  let appendFails = true;
   await mountCredentials(root, {
     credentialStatus: async () => { statusCalls += 1; return overview; },
-    credentialSave: async () => { if (saveFails) throw coded('credential_save_failed', 'Credential save worker failed'); return { ...overview, store: { state: 'present', saved_at: 2 }, effective_source: 'credential_store' }; },
-    credentialDelete: async () => { throw coded('credential_delete_failed', 'Credential delete worker failed'); },
+    credentialRead: async () => ({ value: 'masked-0001', snapshot: 'r1' }),
+    credentialAppend: async () => { if (appendFails) throw coded('credential_append_failed', 'Credential append worker failed'); return overview; },
+    credentialRemove: async () => { throw coded('credential_remove_failed', 'Credential remove worker failed'); },
   });
   assert.equal(statusCalls, 1);
   const field = root.querySelector('[data-field="key"]');
   field.value = 'synthetic-error-key';
   root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
-  await flush();
-  assert.match(root.querySelector('[data-info="error"]').textContent, /凭据保存失败/);
-  assert.equal(root.querySelector('[data-info="save"]').textContent, '', 'a failed save is not written into the outcome area');
+  await flush(); await flush();
+  const error = root.querySelector('[data-info="error"]');
+  assert.match(error.textContent, /凭据保存失败/);
+  assert.doesNotMatch(error.textContent, /worker/);
   assert.equal(root.querySelector('[data-status="test"]').textContent, '尚未测试', 'the test result area is untouched');
+  assert.equal(root.querySelector('[data-info="test"]').textContent, '', 'a failed save is not written into the outcome area');
 
-  saveFails = false;
-  field.value = 'synthetic-error-key-2';
+  appendFails = false;
+  root.querySelector('[data-field="key"]').value = 'synthetic-error-key-2';
   root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
-  await flush();
-  assert.match(root.querySelector('[data-info="save"]').textContent, /已保存。尚未测试。/);
-  assert.equal(root.querySelector('[data-info="test"]').textContent, '', 'save outcome does not masquerade as a test result');
+  await flush(); await flush();
+  assert.match(root.querySelector('[data-info="test"]').textContent, /已保存。尚未测试。/);
+  assert.equal(root.querySelector('[data-status="test"]').textContent, '尚未测试', 'save outcome does not masquerade as a test result');
 
-  root.querySelector('[data-action="delete"]').click();
-  await flush();
-  root.querySelector('[data-action="confirm-delete"]').click();
-  await flush();
+  root.querySelector('[data-action="remove"]').click();
+  root.querySelector('[data-action="confirm-remove"]').click();
+  await flush(); await flush();
   assert.match(root.querySelector('[data-info="error"]').textContent, /凭据删除失败/);
   window.close();
 });
@@ -149,7 +151,8 @@ test('credentials page reports status/save/delete IPC failures and keeps outcome
 test('settings view failure disables saving, shows the reason and offers a retry that recovers', async () => {
   const { window, root } = setup();
   let fail = true;
-  const view = { config_path: 'C:/cfg.json', path_source: 'user', file_present: true, route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null, twitter_env_overrides: false, active_sources: ['brave'], status: 'ok', message: '' };
+  const routes = { default: { label: '默认', sources: ['brave'], timeout: null } };
+  const view = { config_path: 'C:/cfg.sqlite', path_source: 'user', file_present: true, read_source: 'sqlite', route: 'default', timeout: 60, timeout_configured: true, effective_timeout: 60, timeout_min: 1, timeout_max: 90, timeout_out_of_range: false, effective_timeouts: { default: 60 }, routes, builtin_routes: routes, disabled_sources: [], unknown_disabled_sources: [], twitter_cookies_path: null, scrape_backends: ['jina'], scrape_backends_invalid: false, builtin_scrape_backends: ['jina'], scrape_backend_options: [{ name: 'jina', label: 'Jina Reader' }], active_sources: ['brave'], status: 'ok', message: '' };
   await mountSettings(root, { settingsView: async () => { if (fail) throw coded('settings_view_failed', 'Settings view worker failed'); return view; } });
   assert.equal(root.querySelector('[data-action="save"]').disabled, true);
   assert.match(root.querySelector('[data-info="error"]').textContent, /设置读取失败/);
@@ -157,7 +160,7 @@ test('settings view failure disables saving, shows the reason and offers a retry
   assert.equal(retry.hidden, false);
   fail = false;
   retry.click();
-  await flush();
+  await flush(); await flush();
   assert.equal(root.querySelector('[data-action="save"]').disabled, false);
   assert.equal(retry.hidden, true);
   assert.equal(root.querySelector('[data-info="error"]').textContent, '');
@@ -170,7 +173,7 @@ test('sources settings failure shows a retry button that reloads the overview', 
   const view = { route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null };
   const mounted = await mountSources(root, {
     settingsView: async () => { if (fail) throw coded('settings_view_failed', 'Settings view worker failed'); return view; },
-    credentialStatus: async () => ({ store: { state: 'absent' }, effective_source: 'none', env_var: '', file_key_count: 0 }),
+    credentialStatus: async () => ({ source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false }),
   });
   const error = root.querySelector('[data-list-error]');
   const retry = root.querySelector('[data-action="retry-settings"]');

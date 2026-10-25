@@ -1,0 +1,4 @@
+
+> multi-search-desktop@0.1.0 typecheck
+> tsc -p ui/jsconfig.json --noEmit
+

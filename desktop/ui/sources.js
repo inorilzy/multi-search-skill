@@ -23,6 +23,7 @@ const icon = name => {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 };
 /// "⌘ K" on Apple platforms, "Ctrl K" elsewhere. The handler already accepts both modifiers.
+/** @param {any} [nav] Navigator-like; `userAgentData` is not in every DOM lib yet. */
 export function shortcutLabel(nav = globalThis.navigator) {
   const platform = `${nav?.userAgentData?.platform || nav?.platform || nav?.userAgent || ''}`;
   return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘ K' : 'Ctrl K';
@@ -31,6 +32,7 @@ function statCard(key, label, symbol) {
   return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${TOTAL}</small></strong></div></div>`;
 }
 
+/** @param {any} root page container (untyped DOM queries, as in the other pages) @param {any} api @param {{ signal?: AbortSignal, number?: string }} [options] */
 export async function mountSources(root, api, { signal, number = '04' } = {}) {
   const doc = root.ownerDocument;
   const shortcut = shortcutLabel(doc.defaultView?.navigator);
@@ -46,6 +48,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
   const search = root.querySelector('[data-search]');
   const rows = new Map();
   let settingsState = null;
+  let settingsRevision = 0;
   let expanded = null;
   let detailMount = null;
   let activeTicket = 0;
@@ -96,6 +99,12 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     rec.row.querySelector('[data-toggle-label]').textContent = settingsState ? rec.box.checked ? '已启用' : '未启用' : '状态未知';
   }
   function applySettings(view) {
+    const stamp = value => JSON.stringify([value?.route, value?.timeout, value?.disabled_sources, value?.twitter_cookies_path]);
+    if (settingsState && stamp(settingsState) !== stamp(view)) {
+      // The credentials a row would test may have changed; never keep a stale verdict.
+      settingsRevision += 1;
+      for (const rec of rows.values()) updateTest(rec, IDLE);
+    }
     settingsState = view;
     const disabled = new Set(view.disabled_sources || []);
     for (const rec of rows.values()) {
@@ -137,12 +146,13 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     refreshStats();
   }
   function updateRow(rec, view) {
-    const provenance = JSON.stringify([view.effective_source, view.env_var, view.file_key_count, view.store?.state, view.store?.saved_at]);
+    const provenance = JSON.stringify([view.effective_source, view.store?.state, view.store?.saved_at]);
     if (rec.provenance && rec.provenance !== provenance) updateTest(rec, IDLE);
     rec.provenance = provenance;
     if (view.effective_source === 'unavailable' || ['unavailable', 'unreadable'].includes(view.store?.state)) return setRow(rec, 'error', '凭据库异常');
     if (view.effective_source === 'none') return setRow(rec, 'absent', '未配置');
-    const labels = { env: '环境变量生效', credential_store: '已配置', file: '文件 Key 生效' };
+    // Effective sources after the SQLite/DPAPI merge; unknown values stay readable.
+    const labels = { sqlite: '已配置', env: '环境变量生效', credential_store: '已配置', file: '文件 Key 生效' };
     setRow(rec, 'configured', labels[view.effective_source] || '状态未知');
   }
   function updateTest(rec, result) {

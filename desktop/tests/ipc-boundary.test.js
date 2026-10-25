@@ -8,9 +8,16 @@ import { managementApi } from '../ui/api.js';
 const here = new URL('.', import.meta.url);
 const read = path => readFileSync(new URL(path, here), 'utf8');
 
+// Each command returns a payload that satisfies its declared contract, so the boundary validator
+// lets the call complete and the test can inspect exactly what was sent.
+const RESPONSES = {
+  detect_cli: { app: { status: 'ready', path: null, version: null, reason: '' }, user: { status: 'ready', path: null, version: null, reason: '' }, restart_required: false, execution: { status: 'ready', path: null, version: null, reason: '' }, managed: true },
+  start_test_search: 1,
+  credential_test: { result: 'success', message: '' },
+};
 function recorder() {
   const calls = [];
-  return { calls, api: managementApi(async (cmd, args) => { calls.push([cmd, args]); return null; }) };
+  return { calls, api: managementApi(async (cmd, args) => { calls.push([cmd, args]); return RESPONSES[cmd] ?? null; }) };
 }
 
 test('no CLI-running command sends a path, even when a caller passes one', async () => {

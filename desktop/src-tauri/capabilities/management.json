@@ -6,6 +6,9 @@
     "main"
   ],
   "permissions": [
+    "allow-cookie-status",
+    "allow-cookie-import",
+    "allow-cookie-delete",
     "allow-detect-cli",
     "allow-start-test-search",
     "allow-poll-execution",
@@ -23,12 +26,22 @@
     "allow-user-path-plan",
     "allow-user-path-change",
     "allow-credential-status",
+    "allow-credential-read",
+    "allow-credential-reveal",
+    "allow-credential-application-open",
     "allow-credential-save",
     "allow-credential-delete",
     "allow-credential-test",
+    "allow-credential-append",
+    "allow-credential-remove",
     "allow-migration-plan",
     "allow-migration-apply",
     "allow-settings-view",
-    "allow-settings-save"
+    "allow-settings-save",
+    "allow-scrape-settings-save",
+    "allow-provider-list",
+    "allow-scrape-memory-view",
+    "allow-scrape-memory-pin",
+    "allow-scrape-memory-reset"
   ]
 }

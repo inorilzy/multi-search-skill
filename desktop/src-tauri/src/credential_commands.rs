@@ -1,66 +1,96 @@
-//! Search-source credential management: UI-facing status, save, delete, and an explicit test.
-//!
-//! The UI names a source; only allowlisted names are accepted, and the backend maps each one
-//! to its key provider before any credential target is built. The UI never supplies a target.
-//! The key is accepted once from the UI for `save`, written only to the Windows credential
-//! store, and never returned, logged, put in argv, or placed in the child environment.
-//! The CLI reads the store itself during `test`.
-
+//! Allowlisted desktop credential operations. Overview is non-secret; read returns one source
+//! only when its editor is expanded. All native persistence is SQLite/DPAPI, never legacy fallback.
+#![cfg_attr(not(feature = "native-window"), allow(dead_code))]
 use crate::credential::{self, CredentialBackend, CredentialStatus};
-#[cfg(not(windows))]
-use crate::credential::CredentialError;
-#[cfg(feature = "native-window")]
-use crate::{DesktopManager, RuntimeEnvironment};
+use crate::provider::{self, ProviderEntry};
+
+const KEYS_FILE_NAME: &str = ".search-keys.json";
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
-use std::{collections::BTreeMap, path::{Path, PathBuf}};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
-#[cfg(feature = "native-window")]
-const CONFIG_ENV: &str = "MULTI_SEARCH_CONFIG";
-const KEYS_FILE_NAME: &str = ".search-keys.json";
-
-/// One catalog entry the desktop may manage. Names, key providers, env aliases,
-/// and labels all come from the shared generated catalog; this module only maps
-/// the UI name to them.
-pub(crate) use crate::source_catalog::Source as SourceEntry;
-
-/// Map a keyed UI source name or CLI alias to its catalog entry. Unknown or
-/// keyless names are rejected before any store access; the error never echoes
-/// the input. A missing name is an error, not a default.
-pub(crate) fn resolve_source(name: &str) -> Result<&'static SourceEntry, String> {
-    crate::source_catalog::catalog()
-        .source(name)
-        .filter(|entry| entry.keyed)
-        .ok_or_else(|| "不支持的搜索源".to_string())
+/// Source-side view of a provider manifest row, used by credential commands and
+/// tests that address sources by `cli_source` (the `--source` / UI spelling).
+/// Aliases are resolved by `provider::resolve` before reaching this type, so
+/// `source` here is always the canonical `cli_source` form.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SourceEntry {
+    /// `cli_source` spelling used in IPC and CLI arguments.
+    pub source: &'static str,
+    /// Credential store target. `None` for non-keyed sources; `resolve_source`
+    /// filters those out so `provider` is always `Some` for keyed entries.
+    pub provider: &'static str,
+    /// Settings-side canonical name (underscore form). Used where callers care
+    /// about route/disabled_sources semantics rather than CLI spelling.
+    pub canonical: &'static str,
+    pub label: &'static str,
 }
 
-/// Keyed sources plus keyless search sources, which have an explicit test path.
-pub(crate) fn resolve_test_source(name: &str) -> Result<&'static SourceEntry, String> {
-    crate::source_catalog::catalog()
-        .source(name)
-        .filter(|entry| entry.searchable)
-        .ok_or_else(|| "不支持的搜索源".to_string())
+fn as_source_entry(entry: &'static ProviderEntry) -> SourceEntry {
+    SourceEntry {
+        source: entry.cli_source,
+        provider: entry.provider.unwrap_or(""),
+        canonical: entry.source,
+        label: entry.label,
+    }
 }
 
+/// Resolve a UI/CLI source name or alias to its SourceEntry. Only keyed
+/// providers resolve through `resolve_source`; non-keyed sources must go
+/// through `resolve_test_source`. The returned entry borrows the static
+/// PROVIDERS row, so there is no per-call allocation.
+fn find_source(name: &str, keyed_only: bool) -> Result<SourceEntry, String> {
+    let trimmed = name.trim();
+    let entry = provider::entries()
+        .iter()
+        .find(|entry| {
+            entry.cli_source == trimmed
+                || entry.source == trimmed
+                || entry.aliases.contains(&trimmed)
+        })
+        .ok_or_else(|| "不支持的搜索源".to_string())?;
+    if (keyed_only && !entry.keyed) || (!keyed_only && !entry.search) {
+        return Err("不支持的搜索源".into());
+    }
+    Ok(as_source_entry(entry))
+}
+
+pub(crate) fn resolve_source(name: &str) -> Result<SourceEntry, String> {
+    find_source(name, true)
+}
+pub(crate) fn resolve_test_source(name: &str) -> Result<SourceEntry, String> {
+    find_source(name, false)
+}
 #[derive(Clone, Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct CredentialOverview {
-    /// Public source name this overview describes.
     pub source: String,
     pub store: CredentialStatus,
-    /// Effective source: "env" | "credential_store" | "file" | "none" | "unavailable".
+    /// Effective source Core reports: env | credential_store | file | none | unavailable, or
+    /// sqlite when only the local store is known. New values may appear; UI falls back to a raw string.
     pub effective_source: String,
-    /// True when an environment variable overrides the saved key.
-    pub env_overrides_store: bool,
-    /// Name (never value) of the environment variable that is set, or "".
-    pub env_var: String,
-    /// Count of keys in the existing keys file for this provider. Values are never returned.
-    pub file_key_count: usize,
+    /// True when Core reports that an environment variable overrides the saved key.
+    /// Absent unless Core's `doctor` report supplied a row for this provider.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub env_overrides_store: Option<bool>,
+    /// Name (never value) of the environment variable Core found set. Absent without a Core row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub env_var: Option<String>,
+    /// Count of keys Core found in the legacy keys file. Values are never returned. Absent
+    /// without a Core row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub file_key_count: Option<usize>,
+    pub key_application_available: bool,
 }
 
-/// One row of Core's `doctor --format json` → `key_sources` report.
+/// One row of Core's `doctor --format json` -> `key_sources` report.
 ///
-/// The desktop never derives the effective source itself: `window::credential_status`
+/// The desktop never derives the effective source itself: the command boundary
 /// asks the CLI, which is the same code that loads keys for a real search. This
 /// keeps the credential page, `doctor`, and `search` from disagreeing.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -89,41 +119,19 @@ pub(crate) fn core_key_sources(payload: &Value) -> BTreeMap<String, CoreKeySourc
 }
 
 /// Overwrite the fields Core owns with Core's answer. Only called at the command
-/// boundary; unit tests may omit it and use the test-fixtures fallback below.
+/// boundary; unit tests may omit it and use the local-store answer below.
 pub(crate) fn apply_core_source(overview: &mut CredentialOverview, core: Option<&CoreKeySource>) {
     let Some(core) = core else { return };
-    overview.effective_source = core.effective_source.clone();
-    overview.env_overrides_store = core.env_overrides_store;
-    overview.env_var = core.env_vars_set.last().cloned().unwrap_or_default();
-    overview.file_key_count = core.file_key_count;
-}
-
-/// Test-only mirror of Core's rule, so the fixture tests can exercise the
-/// desktop without spawning the CLI. Product builds never evaluate this: the
-/// source always comes from `CoreKeySource`.
-#[cfg(feature = "test-fixtures")]
-fn fallback_effective_source(env_set: bool, store: &CredentialStatus, file_keys: usize) -> String {
-    if env_set {
-        "env".into()
-    } else if store.state == "present" {
-        "credential_store".into()
-    } else if store.state == "unavailable" || store.state == "unreadable" {
-        "unavailable".into()
-    } else if file_keys > 0 {
-        "file".into()
-    } else {
-        "none".into()
+    overview.env_overrides_store = Some(core.env_overrides_store);
+    overview.env_var = Some(core.env_vars_set.last().cloned().unwrap_or_default());
+    overview.file_key_count = Some(core.file_key_count);
+    if !core.effective_source.is_empty() {
+        overview.effective_source = core.effective_source.clone();
     }
 }
 
-/// Without Core data and without the test fixture, report "unavailable" rather
-/// than guessing from local state: fail visible, never contradict Core.
-#[cfg(not(feature = "test-fixtures"))]
-fn fallback_effective_source(_env_set: bool, _store: &CredentialStatus, _file_keys: usize) -> String {
-    "unavailable".into()
-}
-
-/// Keys file location derived from the given variables only (never the process environment).
+/// Legacy keys file location derived from the given variables only (never the
+/// process environment). Only the migration command needs it.
 pub(crate) fn keys_file_path(variables: &BTreeMap<String, String>) -> Option<PathBuf> {
     variables
         .get("USERPROFILE")
@@ -132,21 +140,12 @@ pub(crate) fn keys_file_path(variables: &BTreeMap<String, String>) -> Option<Pat
         .map(|home| PathBuf::from(home).join(KEYS_FILE_NAME))
 }
 
-/// Read-only count of the file keys for one provider. Mirrors keys.py `_file_key_count`.
-/// Returns 0 for a missing or unparsable file; never returns or logs a value.
-pub(crate) fn file_key_count(path: Option<&Path>, provider: &str) -> usize {
-    let Some(path) = path else { return 0 };
-    let Ok(text) = std::fs::read_to_string(path) else { return 0 };
-    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) else {
-        return 0;
-    };
-    match map.get(provider) {
-        Some(Value::String(value)) => usize::from(!value.is_empty()),
-        Some(Value::Array(items)) => items
-            .iter()
-            .filter(|item| item.as_str().is_some_and(|value| !value.is_empty()))
-            .count(),
-        _ => 0,
+/// Local-store answer, used until (or unless) Core's `doctor` report arrives.
+fn local_effective_source(store_state: &str) -> &'static str {
+    match store_state {
+        "present" => "sqlite",
+        "absent" => "none",
+        _ => "unavailable",
     }
 }
 
@@ -155,29 +154,67 @@ pub(crate) fn overview(
     variables: &BTreeMap<String, String>,
     entry: &SourceEntry,
 ) -> CredentialOverview {
-    let namespace = credential::namespace(variables);
-    let store = credential::status_of(credential::load(backend, &namespace, &entry.key_provider));
-    // The catalog lists env aliases in load_keys application order, so the last
-    // non-empty value wins (mirrors Python and scripts/export_source_catalog.py).
-    let env_var = entry
-        .env
-        .iter()
-        .rev()
-        .find(|name| variables.get(name.as_str()).is_some_and(|value| !value.is_empty()))
-        .cloned()
-        .unwrap_or_default();
-    let file_keys = file_key_count(keys_file_path(variables).as_deref(), &entry.key_provider);
+    let store = credential::status_of(credential::load(
+        backend,
+        &credential::namespace(variables),
+        entry.provider,
+    ));
+    // Locally only the store is known. Env precedence and the legacy file count are Core's
+    // answer (`apply_core_source`); the desktop never re-derives them, so they start empty.
+    let effective_source = local_effective_source(&store.state).to_string();
     CredentialOverview {
-        source: entry.name.clone(),
-        effective_source: fallback_effective_source(!env_var.is_empty(), &store, file_keys),
-        env_overrides_store: !env_var.is_empty() && store.state == "present",
-        env_var,
+        source: entry.source.into(),
+        env_overrides_store: None,
+        env_var: None,
+        file_key_count: None,
         store,
-        file_key_count: file_keys,
+        effective_source,
+        key_application_available: application_url(entry.source).is_some(),
     }
 }
-
-/// Save a key to the store. Returns the new overview. The key is never echoed.
+#[derive(Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct CredentialValue {
+    /// `credential_read` masks every row (first 4 + last 4, fully masked at <= 8);
+    /// `credential_reveal` returns the editable plaintext on explicit request only.
+    pub value: String,
+    /// SHA-256 of the plaintext editor snapshot; pass it back to `credential_remove`.
+    pub snapshot: String,
+}
+pub(crate) fn reveal(
+    backend: &dyn CredentialBackend,
+    variables: &BTreeMap<String, String>,
+    entry: &SourceEntry,
+) -> Result<CredentialValue, String> {
+    let value = credential::load(backend, &credential::namespace(variables), entry.provider)
+        .map_err(|e| e.to_string())?;
+    let value = match value {
+        None => String::new(),
+        Some((Value::String(s), _)) => s,
+        Some((Value::Array(a), _)) => a
+            .iter()
+            .filter_map(|item| item.as_str().or_else(|| {
+                (entry.provider == "jina").then(|| item.get("key").and_then(Value::as_str)).flatten()
+            }))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some((Value::Object(map), _)) if entry.provider == "jina" => map
+            .get("key").and_then(Value::as_str).unwrap_or_default().to_string(),
+        Some(_) => return Err("此凭据结构不能作为 API Key 编辑".into()),
+    };
+    let snapshot = credential::snapshot(&value);
+    Ok(CredentialValue { value, snapshot })
+}
+pub(crate) fn read(backend: &dyn CredentialBackend, variables: &BTreeMap<String, String>, entry: &SourceEntry) -> Result<CredentialValue, String> {
+    let mut result = reveal(backend, variables, entry)?;
+    result.value = result.value.lines().map(|line| {
+        let chars: Vec<char> = line.chars().collect();
+        if chars.len() <= 8 { "********".to_string() }
+        else { format!("{}********{}", chars[..4].iter().collect::<String>(), chars[chars.len()-4..].iter().collect::<String>()) }
+    }).collect::<Vec<_>>().join("\n");
+    Ok(result)
+}
 pub(crate) fn save(
     backend: &dyn CredentialBackend,
     variables: &BTreeMap<String, String>,
@@ -185,38 +222,189 @@ pub(crate) fn save(
     key: &str,
     now: f64,
 ) -> Result<CredentialOverview, String> {
-    let namespace = credential::namespace(variables);
-    credential::save(backend, &namespace, &entry.key_provider, key, now).map_err(|e| e.to_string())?;
+    credential::save(
+        backend,
+        &credential::namespace(variables),
+        entry.provider,
+        key,
+        now,
+    )
+    .map_err(|e| e.to_string())?;
     Ok(overview(backend, variables, entry))
 }
-
 pub(crate) fn delete(
     backend: &dyn CredentialBackend,
     variables: &BTreeMap<String, String>,
     entry: &SourceEntry,
 ) -> Result<CredentialOverview, String> {
-    let namespace = credential::namespace(variables);
-    credential::remove(backend, &namespace, &entry.key_provider).map_err(|e| e.to_string())?;
+    credential::remove(backend, &credential::namespace(variables), entry.provider)
+        .map_err(|e| e.to_string())?;
     Ok(overview(backend, variables, entry))
 }
+/// Per-row append for `credential_append`: merges `keys` into the CURRENT
+/// stored rows (never a whole-list replacement), then returns the same
+/// non-secret overview as `credential_save`.
+pub(crate) fn append(
+    backend: &dyn CredentialBackend,
+    variables: &BTreeMap<String, String>,
+    entry: &SourceEntry,
+    keys: &[String],
+    now: f64,
+) -> Result<CredentialOverview, String> {
+    credential::append_keys(
+        backend,
+        &credential::namespace(variables),
+        entry.provider,
+        keys,
+        now,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(overview(backend, variables, entry))
+}
+/// Per-row remove for `credential_remove`: `expected` is the exact
+/// `credential_read.value` snapshot the caller saw, `index` is the 0-based
+/// editor row to delete (duplicate keys remove the exact occurrence, raw Jina
+/// metadata included). Removing the last row deletes the credentials row.
+pub(crate) fn remove_row(
+    backend: &dyn CredentialBackend,
+    variables: &BTreeMap<String, String>,
+    entry: &SourceEntry,
+    index: usize,
+    expected: &str,
+    now: f64,
+) -> Result<CredentialOverview, String> {
+    credential::remove_at(
+        backend,
+        &credential::namespace(variables),
+        entry.provider,
+        index,
+        expected,
+        now,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(overview(backend, variables, entry))
+}
+#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
+pub(crate) fn with_native<T>(
+    variables: &BTreeMap<String, String>,
+    operation: impl FnOnce(&dyn CredentialBackend) -> T,
+) -> T {
+    struct MissingDatabase;
+    impl CredentialBackend for MissingDatabase {
+        fn read(&self, _: &str) -> Result<Option<Vec<u8>>, credential::CredentialError> {
+            Err(credential::CredentialError::Unavailable(
+                "无法定位配置数据库".into(),
+            ))
+        }
+        fn write(&self, _: &str, _: &[u8]) -> Result<(), credential::CredentialError> {
+            Err(credential::CredentialError::Unavailable(
+                "无法定位配置数据库".into(),
+            ))
+        }
+        fn delete(&self, _: &str) -> Result<bool, credential::CredentialError> {
+            Err(credential::CredentialError::Unavailable(
+                "无法定位配置数据库".into(),
+            ))
+        }
+    }
+    match crate::config_db::path(variables) {
+        Some(path) => operation(&credential::SqliteCredentialBackend { path }),
+        None => operation(&MissingDatabase),
+    }
+}
 
-/// Classification of a source test run, derived from the CLI's `provider_status`.
+// Fixed provider consoles only; never accept a URL from the WebView.
+// Baidu's Qianfan AI Search key is created on the official Baidu Cloud IAM
+// API Key page: https://cloud.baidu.com/doc/qianfan-docs/s/Fm9l6ocai
+const APPLICATION_URLS: &[(&str, Option<&str>)] = &[
+    (
+        "baidu",
+        Some("https://console.bce.baidu.com/iam/#/iam/apikey/list"),
+    ),
+    ("jina", Some("https://jina.ai/")),
+    ("brave", Some("https://api.search.brave.com/app/keys")),
+    ("parallel", Some("https://platform.parallel.ai/")),
+    ("tavily", Some("https://app.tavily.com/")),
+    ("exa", Some("https://dashboard.exa.ai/api-keys")),
+    ("firecrawl", Some("https://www.firecrawl.dev/app/api-keys")),
+    ("serpapi", Some("https://serpapi.com/manage-api-key")),
+    ("github-repos", Some("https://github.com/settings/tokens")),
+];
+fn application_url(source: &str) -> Option<&'static str> {
+    APPLICATION_URLS
+        .iter()
+        .find(|(s, _)| *s == source)
+        .and_then(|(_, u)| *u)
+}
+pub(crate) fn open_application_with(
+    source: &str,
+    lookup: impl FnOnce(&str) -> Option<String>,
+    open: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let entry = resolve_source(source)?;
+    let url = lookup(entry.source).ok_or("申请链接待配置")?;
+    if !url.starts_with("https://")
+        || url[8..].is_empty()
+        || url.chars().any(|c| c.is_control() || c.is_whitespace())
+        || url[8..].starts_with('/')
+    {
+        return Err("申请链接必须为固定 HTTPS 地址".into());
+    }
+    open(&url)
+}
+#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
+pub(crate) fn open_application(source: &str) -> Result<(), String> {
+    open_application_with(
+        source,
+        |s| application_url(s).map(str::to_string),
+        open_browser,
+    )
+}
+#[cfg(windows)]
+fn open_browser(url: &str) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+    let target: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    if result as isize <= 32 {
+        Err("无法打开系统浏览器".into())
+    } else {
+        Ok(())
+    }
+}
+#[cfg(not(windows))]
+fn open_browser(_: &str) -> Result<(), String> {
+    Err("系统浏览器入口仅支持 Windows".into())
+}
+
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct TestOutcome {
-    /// "success" | "auth_failed" | "quota" | "rate_limited" | "network" | "timeout" | "error" | "missing_key" | "cli_failed"
+    /// success | auth_failed | quota | rate_limited | network | timeout | missing_key | cli_failed | error, or a new value added later; UI must fall back to a raw string.
     pub result: String,
     pub message: String,
 }
-
-/// Map one provider error_type to a user-facing test result. Messages never echo secrets.
 pub(crate) fn classify(error_type: &str, label: &str) -> TestOutcome {
     let (result, message) = match error_type {
-        "invalid" => ("auth_failed", format!("{label} 拒绝了该 Key（认证失败）。请替换为有效的 Key。")),
-        "quota_exhausted" => ("quota", format!("{label} 额度已用尽。请检查账户额度。")),
-        "rate_limit" => ("rate_limited", format!("{label} 触发了频率限制，请稍后再试。")),
-        "network" => ("network", format!("无法连接 {label}，请检查网络连接。")),
-        "timeout" => ("timeout", format!("{label} 请求超时，请稍后重试。")),
-        "missing_key" => ("missing_key", format!("未找到可用的 {label} Key，请先保存。")),
+        "invalid" => ("auth_failed", format!("{label} 认证失败，请替换有效 Key。")),
+        "quota_exhausted" => ("quota", format!("{label} 额度已用尽。")),
+        "rate_limit" => ("rate_limited", format!("{label} 触发频率限制。")),
+        "network" => ("network", format!("无法连接 {label}，请检查网络。")),
+        "timeout" => ("timeout", format!("{label} 请求超时。")),
+        "missing_key" => (
+            "missing_key",
+            format!("未找到可用的 {label} Key，请先保存。"),
+        ),
         "credential_store" => (
             "credential_store",
             format!("无法读取凭据库中 {label} 的 Key。请重新保存该来源的 Key。"),
@@ -228,125 +416,95 @@ pub(crate) fn classify(error_type: &str, label: &str) -> TestOutcome {
         message,
     }
 }
-
-/// Interpret the CLI JSON payload from `search --source <name>` for one allowlisted source.
 pub(crate) fn interpret_source(payload: &Value, entry: &SourceEntry) -> TestOutcome {
-    let rows = payload
+    let row = payload
         .get("provider_status")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let wanted = entry.name.replace('-', "_");
-    let row = rows.iter().find(|row| {
-        row.get("source")
-            .and_then(|s| s.as_str())
-            .is_some_and(|s| s.replace('-', "_") == wanted)
-    });
+        .and_then(Value::as_array)
+        .and_then(|rows| {
+            rows.iter().find(|r| {
+                r.get("source")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| s.replace('-', "_") == entry.source.replace('-', "_"))
+            })
+        });
     let Some(row) = row else {
-        return classify("error", &entry.label);
+        return classify("error", entry.label);
     };
-    let status = row.get("status").and_then(|s| s.as_str()).unwrap_or("");
-    if status == "ok" || status == "partial" {
+    if matches!(
+        row.get("status").and_then(Value::as_str),
+        Some("ok" | "partial")
+    ) {
         return TestOutcome {
             result: "success".into(),
             message: format!("{} 测试成功。", entry.label),
         };
     }
-    let error_type = row
-        .get("errors")
-        .and_then(|e| e.as_array())
-        .and_then(|errors| errors.first())
-        .and_then(|e| e.get("error_type"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("error");
-    classify(error_type, &entry.label)
+    classify(
+        row.get("errors")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(|e| e.get("error_type"))
+            .and_then(Value::as_str)
+            .unwrap_or("error"),
+        entry.label,
+    )
 }
-
-/// Search budget the isolated test run hands to the CLI via `--timeout`.
-pub(crate) const TEST_SEARCH_TIMEOUT_SECS: u64 = 15;
-/// Allowance for process start, Python import, CLI output and exit.
-#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-pub(crate) const TEST_PROCESS_OVERHEAD_SECS: u64 = 10;
-/// Whole-process deadline for one test run: Core's search budget plus the fixed
-/// process overhead. The test run is candidate-only (`--no-fetch`), so there is
-/// deliberately no 60s body-fetch stage to cover here.
-#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-pub(crate) const TEST_TIMEOUT: Duration =
-    Duration::from_secs(TEST_SEARCH_TIMEOUT_SECS + TEST_PROCESS_OVERHEAD_SECS);
-
-/// Arguments for the isolated CLI test run. Key material is never included.
-///
-/// `--no-fetch` makes Core fuse candidates and stop: the test spends one search
-/// budget, contacts no scraper, and writes no body cache. `--timeout` must stay
-/// the same budget [`TEST_TIMEOUT`] was derived from.
 pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
-    // Options first, then `--`: a query starting with `-` stays a query.
+    // Options first, then `--`: a query starting with `-` stays a query. `--no-fetch` keeps the
+    // probe candidate-only, so a credential test never fetches page bodies.
     vec![
         "search".into(),
         "--route".into(),
         "default".into(),
         "--source".into(),
-        entry.name.clone(),
+        entry.source.into(),
         "--no-fetch".into(),
         "--timeout".into(),
-        TEST_SEARCH_TIMEOUT_SECS.to_string(),
+        "15".into(),
         "--format".into(),
         "json".into(),
         "--".into(),
         query.into(),
     ]
 }
+const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+pub(crate) fn supports_storage(payload: &Value) -> bool {
+    payload.get("config_storage").is_some_and(|v| {
+        v.get("backend").and_then(Value::as_str) == Some("sqlite-dpapi")
+            && v.get("schema_version").and_then(Value::as_i64) == Some(1)
+    })
+}
+/// Credential-domain operations. Stateless: the environment is passed in so
+/// `DesktopManager` need not be involved and no domain state leaks into it.
+pub(crate) struct CredentialManager<'a> {
+    pub(crate) environment: &'a crate::RuntimeEnvironment,
+}
 
-/// Keep a temp config path for one test run; removed on drop.
-#[cfg(feature = "native-window")]
-pub(crate) struct TestConfig(pub PathBuf);
-#[cfg(feature = "native-window")]
-impl TestConfig {
-    /// The config is written to a fresh, randomly named file created with `create_new`, so a file
-    /// planted in a shared temp directory can never be read by the CLI as its config.
-    pub fn create(dir: &Path, entry: &SourceEntry, environment: &RuntimeEnvironment) -> std::io::Result<Self> {
-        let view = crate::settings::view(environment);
-        if view.status == "config_unreadable" {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "无法读取搜索设置"));
-        }
-        // The test run does not rely on `no_scrape`: Core ignores it, and
-        // `--no-fetch` expresses candidates-only directly. The temp config only
-        // carries the user's disabled sources and Twitter cookie path.
-        let mut config = serde_json::json!({});
-        config["disabled_sources"] = serde_json::json!(view.disabled_sources);
-        if let Some(cookies) = view.twitter_cookies_path { config["twitter_cookies_path"] = Value::String(cookies); }
-        let path = crate::secure_temp::create_file(dir, &format!("multi-search-{}-test-", entry.key_provider), ".json", &serde_json::to_vec(&config)?)?;
-        Ok(Self(path))
+impl CredentialManager<'_> {
+    pub(crate) fn require_storage_cli(&self, cli: &Path) -> Result<(), String> {
+        crate::credential_commands::require_storage_cli(self.environment, cli)
     }
-}
-#[cfg(feature = "native-window")]
-impl Drop for TestConfig {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
-#[cfg(feature = "native-window")]
-pub(crate) fn test_environment(base: &RuntimeEnvironment, config: &TestConfig) -> RuntimeEnvironment {
-    let mut environment = base.clone();
-    environment
-        .variables
-        .insert(CONFIG_ENV.into(), config.0.to_string_lossy().into_owned());
-    environment
-}
-
-/// Only the native window's explicit source test uses the isolated config path above.
-#[cfg(feature = "native-window")]
-impl DesktopManager {
-    /// Run one explicit test of an allowlisted source through the CLI, which reads the store itself.
-    pub(crate) fn test_source(&self, cli: PathBuf, entry: &SourceEntry, query: &str) -> Result<TestOutcome, String> {
-        let dir = std::env::temp_dir();
-        let config = TestConfig::create(&dir, entry, &self.environment).map_err(|_| "无法准备测试配置".to_string())?;
-        let environment = test_environment(&self.environment, &config);
-        // Only this source's own key variables (and the fetch-stage keys) reach the child.
-        let credentials = crate::execution::search_credentials("default", &[entry.name.clone()]);
-        let output = crate::process::bounded_with(&cli, &test_args(query, entry), &environment, &credentials, TEST_TIMEOUT)
-            .map_err(|_| "无法启动 CLI".to_string())?;
+    pub(crate) fn test_source(
+        &self,
+        cli: PathBuf,
+        entry: &SourceEntry,
+        query: &str,
+    ) -> Result<TestOutcome, String> {
+        self.require_storage_cli(&cli)?;
+        // Only this source's own key variables reach the child, so Core sees the same credential
+        // the UI page shows (env aliases win over the store in Core's resolution order).
+        let names: Vec<&str> = crate::source_catalog::catalog()
+            .source(entry.canonical)
+            .map(|source| source.env.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        let output = crate::process::bounded_with(
+            &cli,
+            &test_args(query, entry),
+            self.environment,
+            &names,
+            TEST_TIMEOUT,
+        )
+        .map_err(|_| "无法启动 CLI".to_string())?;
         if output.timed_out {
             return Ok(TestOutcome {
                 result: "timeout".into(),
@@ -354,7 +512,7 @@ impl DesktopManager {
             });
         }
         match serde_json::from_str::<Value>(&output.stdout) {
-            Ok(payload) if payload.is_object() => Ok(interpret_source(&payload, entry)),
+            Ok(v) if v.is_object() => Ok(interpret_source(&v, entry)),
             _ => Ok(TestOutcome {
                 result: "cli_failed".into(),
                 message: "CLI 未返回有效结果。".into(),
@@ -363,39 +521,41 @@ impl DesktopManager {
     }
 }
 
-/// Non-Windows hosts have no Credential Manager; every operation fails explicitly.
-#[cfg(not(windows))]
-struct UnavailableBackend;
-#[cfg(not(windows))]
-impl CredentialBackend for UnavailableBackend {
-    fn read(&self, _target: &str) -> Result<Option<Vec<u8>>, CredentialError> {
-        Err(CredentialError::Unavailable(
-            "Windows 凭据库仅在 Windows 上可用".into(),
-        ))
+/// Free function so callers that do not own a manager (install/update) can
+/// reuse the same storage-capability gate.
+pub(crate) fn require_storage_cli(
+    environment: &crate::RuntimeEnvironment,
+    cli: &Path,
+) -> Result<(), String> {
+    let output = crate::process::bounded(
+        cli,
+        &[
+            "doctor".into(),
+            "--no-keys".into(),
+            "--format".into(),
+            "json".into(),
+        ],
+        environment,
+        TEST_TIMEOUT,
+    )
+    .map_err(|_| "无法检测 CLI 配置协议".to_string())?;
+    let payload = serde_json::from_str::<Value>(&output.stdout).ok();
+    if output.timed_out || !payload.as_ref().is_some_and(supports_storage) {
+        return Err(
+            "此 CLI 不支持 SQLite/DPAPI 配置协议，请更新 CLI 后重试；不会读取旧 Key 来源。"
+                .into(),
+        );
     }
-    fn write(&self, _target: &str, _blob: &[u8]) -> Result<(), CredentialError> {
-        Err(CredentialError::Unavailable(
-            "Windows 凭据库仅在 Windows 上可用".into(),
-        ))
-    }
-    fn delete(&self, _target: &str) -> Result<bool, CredentialError> {
-        Err(CredentialError::Unavailable(
-            "Windows 凭据库仅在 Windows 上可用".into(),
-        ))
-    }
-}
-
-/// Run an operation against the real platform store. No plaintext fallback exists.
-#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-pub(crate) fn with_native<T>(operation: impl FnOnce(&dyn CredentialBackend) -> T) -> T {
-    #[cfg(windows)]
+    let payload = payload.unwrap();
+    if payload.get("config_error").is_some()
+        || payload.get("keys_error").is_some()
+        || output.code != Some(0)
     {
-        operation(&credential::WindowsCredentialBackend)
+        return Err(
+            "CLI 支持 SQLite/DPAPI，但当前配置数据库或凭据无法读取，请检查数据库。".into(),
+        );
     }
-    #[cfg(not(windows))]
-    {
-        operation(&UnavailableBackend)
-    }
+    Ok(())
 }
 
 // Legacy migration adapter. The Python CLI (`migrate-legacy`) owns every rule and every store
@@ -461,13 +621,13 @@ pub(crate) fn migration_request(
     }
     let mut approved = Vec::new();
     for source in approved_sources {
-        approved.push(resolve_source(source)?.key_provider.to_string());
+        approved.push(resolve_source(source)?.provider.to_string());
     }
     approved.sort();
     approved.dedup();
     let mut choices = BTreeMap::new();
     for (source, choice) in choices_by_source {
-        let provider = resolve_source(source)?.key_provider.to_string();
+        let provider = resolve_source(source)?.provider.to_string();
         if choice != "keep" && choice != "replace" {
             return Err("冲突选择无效，请选择保留或替换".into());
         }
@@ -484,9 +644,9 @@ pub(crate) fn migration_request(
 }
 
 /// Request file under the temp directory; removed on drop. Holds no key material.
-struct RequestFile(PathBuf);
+pub(crate) struct RequestFile(pub(crate) PathBuf);
 impl RequestFile {
-    fn create(dir: &Path, request: &MigrationRequest) -> Result<Self, String> {
+    pub(crate) fn create(dir: &Path, request: &MigrationRequest) -> Result<Self, String> {
         let body = serde_json::to_string(request).map_err(|_| "无法准备迁移请求".to_string())?;
         // Random name + create_new: a pre-placed request file cannot be swapped in.
         let path = crate::secure_temp::create_file(dir, "multi-search-migrate-request-", ".json", body.as_bytes())
@@ -500,15 +660,15 @@ impl Drop for RequestFile {
     }
 }
 
-#[cfg(feature = "native-window")]
+/// Legacy migration is local file/state work and has no network stage.
+const MIGRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn run_migration_cli(
-    manager: &DesktopManager,
+    environment: &crate::RuntimeEnvironment,
     cli: &Path,
     args: &[String],
 ) -> Result<crate::process::Output, String> {
-    // Legacy migration is local file/state work and has no network stage.
-    const MIGRATION_TIMEOUT: Duration = Duration::from_secs(30);
-    let output = crate::process::bounded(cli, args, &manager.environment, MIGRATION_TIMEOUT)
+    let output = crate::process::bounded(cli, args, environment, MIGRATION_TIMEOUT)
         .map_err(|_| "无法启动 CLI".to_string())?;
     if output.timed_out {
         return Err("迁移操作超时，请稍后重试。".into());
@@ -519,220 +679,129 @@ fn run_migration_cli(
     Ok(output)
 }
 
-#[cfg(feature = "native-window")]
-impl DesktopManager {
-    /// Masked preview of the legacy keys file via the CLI.
-    pub(crate) fn migration_plan(&self, cli: PathBuf, keys_file: &Path) -> Result<MigrationPlan, String> {
-        let args = vec![
-            "migrate-legacy".into(),
-            "plan".into(),
-            "--keys-file".into(),
-            keys_file.to_string_lossy().into_owned(),
-            "--format".into(),
-            "json".into(),
-        ];
-        let output = run_migration_cli(self, &cli, &args)?;
-        serde_json::from_str::<MigrationPlan>(&output.stdout)
-            .map_err(|_| "无法解析迁移预览".to_string())
-    }
+/// Masked preview of the legacy keys file via the CLI.
+pub(crate) fn migration_plan(
+    environment: &crate::RuntimeEnvironment,
+    cli: &Path,
+    keys_file: &Path,
+) -> Result<MigrationPlan, String> {
+    let args = vec![
+        "migrate-legacy".into(),
+        "plan".into(),
+        "--keys-file".into(),
+        keys_file.to_string_lossy().into_owned(),
+        "--format".into(),
+        "json".into(),
+    ];
+    let output = run_migration_cli(environment, cli, &args)?;
+    serde_json::from_str::<MigrationPlan>(&output.stdout)
+        .map_err(|_| "无法解析迁移预览".to_string())
+}
 
-    /// Apply an approved request via the CLI, which re-checks the file and store itself.
-    pub(crate) fn migration_apply(
-        &self,
-        cli: PathBuf,
-        keys_file: &Path,
-        request: &MigrationRequest,
-    ) -> Result<MigrationResult, String> {
-        let dir = std::env::temp_dir();
-        let request_file = RequestFile::create(&dir, request)?;
-        let args = vec![
-            "migrate-legacy".into(),
-            "apply".into(),
-            "--keys-file".into(),
-            keys_file.to_string_lossy().into_owned(),
-            "--request".into(),
-            request_file.0.to_string_lossy().into_owned(),
-            "--format".into(),
-            "json".into(),
-        ];
-        let output = run_migration_cli(self, &cli, &args)?;
-        serde_json::from_str::<MigrationResult>(&output.stdout)
-            .map_err(|_| "无法解析迁移结果".to_string())
-    }
+/// Apply an approved request via the CLI, which re-checks the file and store itself.
+pub(crate) fn migration_apply(
+    environment: &crate::RuntimeEnvironment,
+    cli: &Path,
+    keys_file: &Path,
+    request: &MigrationRequest,
+) -> Result<MigrationResult, String> {
+    let dir = std::env::temp_dir();
+    let request_file = RequestFile::create(&dir, request)?;
+    let args = vec![
+        "migrate-legacy".into(),
+        "apply".into(),
+        "--keys-file".into(),
+        keys_file.to_string_lossy().into_owned(),
+        "--request".into(),
+        request_file.0.to_string_lossy().into_owned(),
+        "--format".into(),
+        "json".into(),
+    ];
+    let output = run_migration_cli(environment, cli, &args)?;
+    serde_json::from_str::<MigrationResult>(&output.stdout)
+        .map_err(|_| "无法解析迁移结果".to_string())
 }
 
 #[cfg(test)]
-mod test_run_budget {
+mod tests {
     use super::*;
 
     #[test]
-    fn test_run_is_candidates_only_and_uses_the_same_search_budget() {
-        let entry = resolve_test_source("tavily").unwrap();
-        let args = test_args("synthetic connectivity", entry);
-        assert!(
-            args.iter().any(|argument| argument.as_str() == "--no-fetch"),
-            "a test run must never fetch page bodies: {args:?}"
-        );
-        let index = args
-            .iter()
-            .position(|argument| argument.as_str() == "--timeout")
-            .expect("the test run always passes an explicit search budget");
-        let budget: u64 = args[index + 1].parse().expect("an integer search budget");
-        assert_eq!(budget, TEST_SEARCH_TIMEOUT_SECS);
-        assert!(
-            TEST_TIMEOUT.as_secs() >= budget + 5,
-            "the process deadline must cover the search budget plus real process overhead"
-        );
-    }
-}
-
-#[cfg(test)]
-mod migration_tests {
-    use super::*;
-
-    const TOKEN: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-    #[cfg(feature = "native-window")]
-    #[test]
-    fn source_test_config_keeps_twitter_path_and_disabled_sources_without_cookie_contents() {
-        let root = std::env::temp_dir().join(format!("ms-test-settings-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let cookies = root.join("cookies.json");
-        std::fs::write(&cookies, "synthetic-cookie-secret").unwrap();
-        let settings = root.join("settings.json");
-        std::fs::write(&settings, serde_json::to_vec(&serde_json::json!({"twitter_cookies_path": cookies, "disabled_sources": ["brave"]})).unwrap()).unwrap();
-        let environment = RuntimeEnvironment { variables: BTreeMap::from([
-            ("HOME".into(), root.to_string_lossy().into_owned()),
-            ("USERPROFILE".into(), root.to_string_lossy().into_owned()),
-            (CONFIG_ENV.into(), settings.to_string_lossy().into_owned()),
-        ]), app_path: vec![], user_path: vec![], cwd: root.clone() };
-        let entry = resolve_test_source("twitter").unwrap();
-        let config = TestConfig::create(&root, entry, &environment).unwrap();
-        let raw = std::fs::read_to_string(&config.0).unwrap();
-        let value: Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(value["twitter_cookies_path"], serde_json::json!(cookies));
-        assert_eq!(value["disabled_sources"], serde_json::json!(["brave"]));
-        assert!(
-            value.get("no_scrape").is_none(),
-            "the test run must not rely on the no_scrape key Core ignores"
-        );
-        assert!(!raw.contains("synthetic-cookie-secret"));
-        drop(config);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn migration_request_file_has_an_unpredictable_name_and_never_reuses_a_planted_file() {
-        let dir = std::env::temp_dir().join(format!("ms-request-{}", crate::secure_temp::token()));
-        std::fs::create_dir_all(&dir).unwrap();
-        // The old, guessable name pattern: a file planted there must stay untouched and unused.
-        let planted = dir.join(format!("migrate-request-{}-0.json", std::process::id()));
-        std::fs::write(&planted, b"attacker").unwrap();
-        let request = migration_request(TOKEN, &["tavily".into()], &BTreeMap::new()).unwrap();
-        let first = RequestFile::create(&dir, &request).unwrap();
-        let second = RequestFile::create(&dir, &request).unwrap();
-        assert_ne!(first.0, second.0);
-        assert_ne!(first.0, planted);
-        let name = first.0.file_name().unwrap().to_string_lossy().into_owned();
-        assert!(!name.contains(&std::process::id().to_string()), "{name} must not embed the PID");
-        assert_eq!(std::fs::read(&planted).unwrap(), b"attacker");
-        let written: Value = serde_json::from_slice(&std::fs::read(&first.0).unwrap()).unwrap();
-        assert_eq!(written["approved"], serde_json::json!(["tavily"]));
-        let path = first.0.clone();
-        drop(first);
-        assert!(!path.exists(), "the request file is removed on drop");
-        drop(second);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn github_repos_maps_to_github_provider_and_duplicates_collapse() {
-        let request = migration_request(TOKEN, &["github-repos".into(), "github_repos".into()], &BTreeMap::new()).unwrap();
-        assert_eq!(request.approved, vec!["github".to_string()]);
-    }
-
-    #[test]
-    fn unknown_source_and_bad_token_are_rejected_before_any_cli_call() {
-        assert!(migration_request(TOKEN, &["jina".into()], &BTreeMap::new()).is_err());
-        assert!(migration_request("not-a-token", &["tavily".into()], &BTreeMap::new()).is_err());
-    }
-
-    #[test]
-    fn choice_must_be_keep_or_replace_and_match_an_approved_source() {
-        let bad_value = BTreeMap::from([("tavily".to_string(), "overwrite".to_string())]);
-        assert!(migration_request(TOKEN, &["tavily".into()], &bad_value).is_err());
-        let unapproved = BTreeMap::from([("brave".to_string(), "replace".to_string())]);
-        assert!(migration_request(TOKEN, &["tavily".into()], &unapproved).is_err());
-        let ok = BTreeMap::from([("tavily".to_string(), "replace".to_string())]);
-        assert_eq!(migration_request(TOKEN, &["tavily".into()], &ok).unwrap().choices["tavily"], "replace");
-    }
-
-    #[test]
-    fn request_never_carries_key_material_fields() {
-        let request = migration_request(TOKEN, &["tavily".into()], &BTreeMap::new()).unwrap();
-        let body = serde_json::to_string(&request).unwrap();
-        assert!(body.contains("plan_token") && body.contains("approved") && body.contains("choices"));
-        assert!(!body.contains("api_key") && !body.contains("\"key\""));
-    }
-
-    #[test]
-    fn plan_parse_keeps_preview_masked_and_ignores_unknown_fields() {
-        let json = r#"{"plan_token":"abc","items":[{"provider":"tavily","action":"migrate","preview":"sha256:1a2b3c4d","extra":1}],"migratable":["tavily"],"skipped":[]}"#;
-        let plan: MigrationPlan = serde_json::from_str(json).unwrap();
-        assert_eq!(plan.items[0].preview, "sha256:1a2b3c4d");
-        assert_eq!(plan.migratable, vec!["tavily".to_string()]);
-    }
-}
-
-/// Real Windows Credential Manager round trip with a synthetic, unique namespace.
-/// Runs only when MULTI_SEARCH_NATIVE_CREDENTIAL_TEST=1 so routine test runs never touch the store.
-#[cfg(all(test, windows))]
-mod native_store {
-    use super::*;
-
-    const OPT_IN: &str = "MULTI_SEARCH_NATIVE_CREDENTIAL_TEST";
-
-    struct Cleanup<'a> {
-        backend: &'a credential::WindowsCredentialBackend,
-        namespace: String,
-    }
-    impl Drop for Cleanup<'_> {
-        fn drop(&mut self) {
-            let _ = credential::remove(self.backend, &self.namespace, "tavily");
+    fn default_read_masks_keys_and_returns_nonsecret_revision() {
+        struct Memory;
+        impl CredentialBackend for Memory {
+            fn read(&self, _: &str) -> Result<Option<Vec<u8>>, credential::CredentialError> {
+                Ok(Some(credential::encode_blob(&serde_json::json!(["abcd-secret-wxyz", "tiny"]), 1.0)))
+            }
+            fn write(&self, _: &str, _: &[u8]) -> Result<(), credential::CredentialError> { unreachable!() }
+            fn delete(&self, _: &str) -> Result<bool, credential::CredentialError> { unreachable!() }
         }
-    }
-
-    #[test]
-    fn synthetic_entry_round_trips_through_windows_credential_manager() {
-        if std::env::var(OPT_IN).as_deref() != Ok("1") {
-            return;
-        }
-        let namespace = format!("ticket04-native-{}", std::process::id());
-        let backend = credential::WindowsCredentialBackend;
-        let _cleanup = Cleanup { backend: &backend, namespace: namespace.clone() };
-        let vars = BTreeMap::from([(credential::NAMESPACE_ENV.to_string(), namespace.clone())]);
         let entry = resolve_source("tavily").unwrap();
+        let value = read(&Memory, &BTreeMap::new(), &entry).unwrap();
+        assert_eq!(value.value, "abcd********wxyz\n********");
+        assert_eq!(value.snapshot, credential::snapshot("abcd-secret-wxyz\ntiny"));
+        assert_eq!(reveal(&Memory, &BTreeMap::new(), &entry).unwrap().value, "abcd-secret-wxyz\ntiny");
+    }
 
-        assert_eq!(overview(&backend, &vars, entry).store.state, "absent");
+    #[test]
+    fn storage_capability_rejects_old_cli() {
+        assert!(!supports_storage(&serde_json::json!({})));
+        assert!(supports_storage(
+            &serde_json::json!({"config_storage":{"backend":"sqlite-dpapi","schema_version":1}})
+        ));
+        assert!(!supports_storage(
+            &serde_json::json!({"config_storage":{"backend":"sqlite-dpapi","schema_version":2}})
+        ));
+    }
 
-        let saved = save(&backend, &vars, entry, "  synthetic-native-key-0007  ", 1700000002.0).unwrap();
-        assert_eq!(saved.store.state, "present");
-        assert_eq!(saved.effective_source, "credential_store");
-        assert_eq!(credential::load(&backend, &namespace, &entry.key_provider).unwrap().unwrap().0, "synthetic-native-key-0007");
+    #[test]
+    fn application_entry_requires_allowlist_and_https() {
+        let mut opened = String::new();
+        open_application_with(
+            "github_repos",
+            |s| {
+                assert_eq!(s, "github-repos");
+                Some("https://example.invalid/key".into())
+            },
+            |u| {
+                opened = u.into();
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(opened, "https://example.invalid/key");
+        assert!(open_application_with("../tavily", |_| panic!(), |_| panic!()).is_err());
+        for url in [
+            "http://example.invalid",
+            "file:///tmp/key",
+            "https://",
+            "https:///bad",
+            "https://example.invalid\n",
+        ] {
+            assert!(open_application_with("tavily", |_| Some(url.into()), |_| panic!()).is_err());
+        }
+        assert!(application_url("tavily").unwrap().starts_with("https://"));
+    }
 
-        let replaced = save(&backend, &vars, entry, "synthetic-native-key-0008", 1700000003.0).unwrap();
-        assert_eq!(replaced.store.saved_at, Some(1700000003.0));
-        assert_eq!(credential::load(&backend, &namespace, &entry.key_provider).unwrap().unwrap().0, "synthetic-native-key-0008");
-
-        let mut with_env = vars.clone();
-        with_env.insert("TAVILY_API_KEY".into(), "synthetic-native-env-0009".into());
-        let overridden = overview(&backend, &with_env, entry);
-        assert_eq!(overridden.effective_source, "env");
-        assert!(overridden.env_overrides_store);
-
-        let cleared = delete(&backend, &vars, entry).unwrap();
-        assert_eq!(cleared.store.state, "absent");
-        assert_eq!(cleared.effective_source, "none");
-        assert_eq!(credential::remove(&backend, &namespace, &entry.key_provider), Ok(false));
+    #[test]
+    fn baidu_application_link_is_the_official_iam_key_page() {
+        // Baidu's own Qianfan SDK doc points "how to get an API Key" at this page:
+        // https://cloud.baidu.com/doc/qianfan-docs/s/Fm9l6ocai
+        let expected = "https://console.bce.baidu.com/iam/#/iam/apikey/list";
+        assert_eq!(application_url("baidu"), Some(expected));
+        let mut opened = String::new();
+        open_application_with(
+            "baidu",
+            |s| {
+                assert_eq!(s, "baidu");
+                application_url(s).map(str::to_string)
+            },
+            |url| {
+                opened = url.into();
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(opened, expected);
     }
 }

@@ -7,6 +7,7 @@ const sourceOptions = [
   '<option value="">按路由配置</option>',
   ...SEARCH_SOURCES.map(source => `<option value="${source.name}">${source.label}${source.keyed ? '' : '（无需 API Key）'}</option>`),
 ].join('');
+/** @param {any} root page container (untyped DOM queries, as in the other pages) @param {any} api @param {{ pollInterval?: number, signal?: AbortSignal, number?: string }} [options] */
 export async function mountDiagnostics(root, api, { pollInterval = 150, signal, number = '01' } = {}) {
   root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / LOCAL RUNTIME</p><h1 tabindex="-1">搜索，从本机开始。</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
     <section class="runtime panel"><div class="section-title"><h2>CLI 概览</h2><button type="button" data-action="refresh">重新检测</button></div>
@@ -203,6 +204,30 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       showError(root.querySelector('[data-info="error"]'), error, '检测失败，请重新检测。');
     } finally { if (!disposed) button.disabled = false; }
   }
+  // Route groups are configurable (settings page owns them), so the test search offers exactly the
+  // configured routes when a snapshot is readable. A settings failure keeps the catalog defaults
+  // instead of blocking a test search.
+  async function loadRoutes() {
+    if (typeof api.settingsView !== 'function') return;
+    try {
+      const view = await api.settingsView();
+      if (disposed || !view || !view.routes) return;
+      const entries = Object.entries(view.routes);
+      if (!entries.length) return;
+      const select = root.querySelector('[data-field="route"]');
+      select.replaceChildren();
+      for (const [id, route] of entries) {
+        const option = root.ownerDocument.createElement('option');
+        option.value = id;
+        option.textContent = `${route.label} / ${id}`;
+        option.selected = id === view.route;
+        select.append(option);
+      }
+      const timeoutField = root.querySelector('[data-field="timeout"]');
+      if (Number.isFinite(view.effective_timeout)) timeoutField.value = String(view.effective_timeout);
+    } catch { /* catalog defaults stay in place */ }
+  }
+  await loadRoutes();
   root.querySelector('[data-action="refresh"]').addEventListener('click', detect);
   function dispose() {
     if (disposed) return;

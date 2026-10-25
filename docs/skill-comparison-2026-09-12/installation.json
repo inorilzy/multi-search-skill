@@ -1,0 +1,448 @@
+{
+  "verified_utc": "2026-09-13T03:39:18.885320+00:00",
+  "upstream_repository": "https://github.com/trailofbits/skills",
+  "upstream_commit": "321ccfe628eca0d314b0ee4eaffcdd8a05639aaf",
+  "code_commit": "eb2d5cdeb222b52060c4509c45a22aff4ce911fa",
+  "installed_skills": [
+    {
+      "name": "audit-context-building",
+      "path": "C:\\Users\\zhiyu_liu\\.codex\\skills\\audit-context-building",
+      "verified_relative_links": [
+        "resources/ANALYSIS_FORMAT.md",
+        "resources/FUNCTION_MICRO_ANALYSIS_EXAMPLE.md",
+        "resources/DOMAIN_NOTES.md"
+      ],
+      "supporting_files": [
+        "agents/function-analyzer.md",
+        "workflows/audit-context.js"
+      ],
+      "files": [
+        {
+          "path": "agents/function-analyzer.md",
+          "sha256": "d450f462b63dac6858015340a2e047293851d7e3c671725792d9770dca107d29"
+        },
+        {
+          "path": "agents/openai.yaml",
+          "sha256": "11a851b1841f3e828e7609045d91e0632cac07dfc008b2740f487cee83a5efd1"
+        },
+        {
+          "path": "assets/trail-of-bits-mark.svg",
+          "sha256": "4bf74c789b38dcf6ad762c136b6832363d27ae19fbaa9a18ec18d66ecce6ca05"
+        },
+        {
+          "path": "resources/ANALYSIS_FORMAT.md",
+          "sha256": "029532945776fb0fcbc866f19cd6114fe4152cd3dea1c0f44b266ec13a2cc6e8"
+        },
+        {
+          "path": "resources/DOMAIN_NOTES.md",
+          "sha256": "ca3090f7f8d18f7145b253b283f5d33c36b314cea231aae8466bf23f122e2ed1"
+        },
+        {
+          "path": "resources/FUNCTION_MICRO_ANALYSIS_EXAMPLE.md",
+          "sha256": "3351010d83b61bfb34a0359498f153817fdfa6528cead54536b06e035ff2399c"
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "33fa693dc6e166cfa4919e4373cb6578c009d296234c2ae7cb3cd4e79b443765"
+        },
+        {
+          "path": "workflows/audit-context.js",
+          "sha256": "71cd025216e2589fee1e1a0ffe215fb7bbeaf22751dc7417ca6ce74497e6d0b3"
+        }
+      ]
+    },
+    {
+      "name": "spec-to-code-compliance",
+      "path": "C:\\Users\\zhiyu_liu\\.codex\\skills\\spec-to-code-compliance",
+      "verified_relative_links": [
+        "resources/DIVERGENCE_RUBRIC.md",
+        "resources/DOMAIN_NOTES.md",
+        "resources/ANALYSIS_FORMAT.md",
+        "resources/WORKED_EXAMPLE.md",
+        "resources/DOMAIN_NOTES.md",
+        "resources/DIVERGENCE_RUBRIC.md"
+      ],
+      "supporting_files": [
+        "agents/spec-compliance-checker.md",
+        "workflows/spec-compliance.js"
+      ],
+      "files": [
+        {
+          "path": "agents/openai.yaml",
+          "sha256": "11a851b1841f3e828e7609045d91e0632cac07dfc008b2740f487cee83a5efd1"
+        },
+        {
+          "path": "agents/spec-compliance-checker.md",
+          "sha256": "20dbf4d9b8013e8c42691dab08bd4df1ac0250eb715f3a02b2270be78bc287c4"
+        },
+        {
+          "path": "assets/trail-of-bits-mark.svg",
+          "sha256": "4bf74c789b38dcf6ad762c136b6832363d27ae19fbaa9a18ec18d66ecce6ca05"
+        },
+        {
+          "path": "resources/ANALYSIS_FORMAT.md",
+          "sha256": "802674d5a0622fba7c32d1e480fd236f4bddcd2435841fcf48b17044d5d4d273"
+        },
+        {
+          "path": "resources/DIVERGENCE_RUBRIC.md",
+          "sha256": "c7192803ae5c489501788ae5be56a5dd36b3f0b64f88982bf41f69a4245303f1"
+        },
+        {
+          "path": "resources/DOMAIN_NOTES.md",
+          "sha256": "435459c75d21208ea73a6cda7dfc6910efc468a903f62e20f4837d5bd8b92c4a"
+        },
+        {
+          "path": "resources/WORKED_EXAMPLE.md",
+          "sha256": "7b9ff43b20ba83e1ce934bc9161b14ce58617b65a9ae9c4583026dbf0299e927"
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "eb0d91b50a9c06f50baf8763d1e23566897b9fa3e7ffcf13134eee4e1ccaefe5"
+        },
+        {
+          "path": "workflows/spec-compliance.js",
+          "sha256": "782c17752a1b8f9e83e65120d59b7588548aba0441943ce5388163226f6d5238"
+        }
+      ]
+    },
+    {
+      "name": "variant-analysis",
+      "path": "C:\\Users\\zhiyu_liu\\.codex\\skills\\variant-analysis",
+      "verified_relative_links": [
+        "references/root-cause.md",
+        "references/searching.md",
+        "references/triage.md",
+        "references/reporting.md"
+      ],
+      "supporting_files": [
+        "workflows/variants.js"
+      ],
+      "files": [
+        {
+          "path": "agents/openai.yaml",
+          "sha256": "11a851b1841f3e828e7609045d91e0632cac07dfc008b2740f487cee83a5efd1"
+        },
+        {
+          "path": "assets/trail-of-bits-mark.svg",
+          "sha256": "4bf74c789b38dcf6ad762c136b6832363d27ae19fbaa9a18ec18d66ecce6ca05"
+        },
+        {
+          "path": "references/reporting.md",
+          "sha256": "07a1d8f25537ec3da44b7c6e484bf922ab2eeaee733ced6df423df7bea517906"
+        },
+        {
+          "path": "references/root-cause.md",
+          "sha256": "b4556f22adadc894b22c8df01d98bb94596d4e035386c780fbca73594014660c"
+        },
+        {
+          "path": "references/searching.md",
+          "sha256": "22834e63e7412220feec9bd1d4cfd9298c17679489ad66d13be450928bf5d158"
+        },
+        {
+          "path": "references/triage.md",
+          "sha256": "f1f0277096ae41641be311c783f2f7a1c677c2c6b6e8a485986d8d5ed7fa3653"
+        },
+        {
+          "path": "resources/codeql/cpp.ql",
+          "sha256": "efd574081969d2bdd19e1756302d843fdbf936968a72de62eb24d66db43efc0c"
+        },
+        {
+          "path": "resources/codeql/go.ql",
+          "sha256": "d3fa419af29bb15bf81510c54bc1ce0cf55f5b7adbdbf79cc2c8cd922d2365fb"
+        },
+        {
+          "path": "resources/codeql/java.ql",
+          "sha256": "ee4a92a5cbde67304d17a2c5fb739fe9acf1d39ebac9406e3d3a2c1cbbbb19c1"
+        },
+        {
+          "path": "resources/codeql/javascript.ql",
+          "sha256": "b6ceaa3acb6ba6fa89903c14c8fd3aa7cf48316e6b2588dcacae51bb423b3526"
+        },
+        {
+          "path": "resources/codeql/python.ql",
+          "sha256": "135ec55760e1e827065e34b002c6d954b4c4293d07233a93d7ff31d9d97528a9"
+        },
+        {
+          "path": "resources/semgrep/cpp.yaml",
+          "sha256": "41f034c9a5967cc3b87bf5880243ed21f633017111489ee843dd5d002271b10a"
+        },
+        {
+          "path": "resources/semgrep/go.yaml",
+          "sha256": "8a8257eb8e0a7150cb7dffa2b64813691fd560de24b0f85fa6640ec2bfc6595f"
+        },
+        {
+          "path": "resources/semgrep/java.yaml",
+          "sha256": "5be3990b052bc9ce5e1aa203d1f3c93cb3cde7d46eba463c24c661fc6b342902"
+        },
+        {
+          "path": "resources/semgrep/javascript.yaml",
+          "sha256": "2f97e3545fcac449820c2d058bcb9cc36822e238b6249efa3a5dcb4f5f576912"
+        },
+        {
+          "path": "resources/semgrep/python.yaml",
+          "sha256": "c1ce15574569d45555d582707db030b226763d81b2d521d9e61d6067440948f2"
+        },
+        {
+          "path": "resources/variant-report-template.md",
+          "sha256": "03333c762318a89dd819784a62695f7660713479a5009a15189314400836202f"
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "7b6b78e499bcb88d05c68254ffc91ebc28edabf4e9808adcc40e2628ebb9407e"
+        },
+        {
+          "path": "workflows/variants.js",
+          "sha256": "325fc6b077cd8e2b107d2e13ded23582b573d278928fda7dd23d55c4f8b8e404"
+        }
+      ]
+    }
+  ],
+  "production_files": [
+    {
+      "path": "multi_search_mcp/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "multi_search_mcp/cli.py",
+      "sha256": "f492d8df2a84039380cd823957e961b9b5369a975cc93d0882007132764407eb"
+    },
+    {
+      "path": "multi_search_mcp/server.py",
+      "sha256": "7063dfa48c5801fc93c2573f24796bda26cf396063d7e1639fd431a551e5ff6c"
+    },
+    {
+      "path": "multi_search_mcp/src/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrape.py",
+      "sha256": "84bb2c19432761816e9e4d7718e7d719c507aeabfde7ad47871a1941b75ef4e8"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/__init__.py",
+      "sha256": "49238dc2866ec0a1c518539659cb59a9cbb29827eb3c4cbef929f890d18338c9"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/_eddrit.py",
+      "sha256": "e49b1717fbf8862a103a68a93f79929666ccf879959aaefd9c40785f32e36edc"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/exa.py",
+      "sha256": "bc9735dc0dc98e40905a044feb010d004f77622d23705c903323d20cb824c9a8"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/firecrawl.py",
+      "sha256": "1170a2f7e51306b620e579940633bb80cc46c1cdbf3829452b82ff45920cd082"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/jina.py",
+      "sha256": "c7b96b2c450b2925e70def0d66f6d3a2dd88b16782daf210d635fd589baccc35"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/reddit.py",
+      "sha256": "1dc20b987bc55452636b816fc810bc9f3ddfb4a37e16e90b0fa797adbe483a9f"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/scrapers/tavily.py",
+      "sha256": "ccea9df89b33a3c4711da37007caca33fbfa03e0ac45ca6bfef0339c43a9f7b8"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/stage.py",
+      "sha256": "7bdfe2fd6c081ae2f62cf639fee96289f9d55e9a6a8ef409744e9651db0bbf37"
+    },
+    {
+      "path": "multi_search_mcp/src/scrape/url_classify.py",
+      "sha256": "4b02ad19b2b6b88814eeb671423f961c6fc320253e952c7b08c5967eaae51aa2"
+    },
+    {
+      "path": "multi_search_mcp/src/search/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "multi_search_mcp/src/search/candidate.py",
+      "sha256": "0a40eb97211089ba86f1177c3722d961cf537ca2e9e7e042e2bd0d9647d52fe1"
+    },
+    {
+      "path": "multi_search_mcp/src/search/capabilities.py",
+      "sha256": "0e73f70f3b440f55fa2cc3138b8c65aae1d1ff318d6aea32f242664497fd0988"
+    },
+    {
+      "path": "multi_search_mcp/src/search/evaluation.py",
+      "sha256": "d85cba74d0d90e9ccedbccd1f3f46743f703a654af0be055ebff26ffc25472ec"
+    },
+    {
+      "path": "multi_search_mcp/src/search/query_plan.py",
+      "sha256": "cefbe6ab4982711d9004215905fc7ec855eafbdb3296ba6d33beff68c0ec6cc0"
+    },
+    {
+      "path": "multi_search_mcp/src/search/query_policy.py",
+      "sha256": "c58b11be32b18e70f48d0f7407073b7849b88f2cb9c6256f52dcc352c2cc2462"
+    },
+    {
+      "path": "multi_search_mcp/src/search/registry.py",
+      "sha256": "2c596b967aaf58aa605a90812d409e74ec03a3aa9aca206bfe2a4785a59e4161"
+    },
+    {
+      "path": "multi_search_mcp/src/search/resolve.py",
+      "sha256": "97ab7be9468f734f6f6540221b260c79e227c763629b3405c5960051110b67d3"
+    },
+    {
+      "path": "multi_search_mcp/src/search/search_runner.py",
+      "sha256": "760216ed4e48b03c1131ce1398d1a0250072768de68c8b8f1ea200ed7dd33b53"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/baidu.py",
+      "sha256": "6b3d0f08cad299d47f59d38e749595028d259037709135c7ea5cc23bfb36edca"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/brave.py",
+      "sha256": "3c68b63c4b298a93f280145d5f67cc7759c8996de77bf6aabc1ab195fd7fb74e"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/exa.py",
+      "sha256": "22810aca997319408f7d84371ac32323bc66034b1846227a04bc76b30bcf9aee"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/firecrawl.py",
+      "sha256": "ce74e0ed319da91de42b96512b9398ce4b452c24f2e317703f056ad3453754c5"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/github.py",
+      "sha256": "f78c87cde7fbcc69ce69752d2a219bd0a97bdfbc0ce73ed7c272737a35ef36ae"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/hackernews.py",
+      "sha256": "4799d5ea39201db29a0d6638d04b456fe1d6f06a3320af7c2521c73fbdaae4db"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/parallel.py",
+      "sha256": "e1522ea1346e93d2186d11f2160aad2beeb35eda1d07dd43fb8a2fc21df414b5"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/serpapi.py",
+      "sha256": "6ed449cc222ce8cdfd75aa621ef4615d305bbb4059c83177b44ff05e96eff3c0"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/stackoverflow.py",
+      "sha256": "78dbe771596ccb5f79395530732bf8e61f90764e4c74e4dc804bacf9cdfcd6a5"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/tavily.py",
+      "sha256": "8128defb0b67e31fbeecc4187fa6741f277f1a263428af6933a5e125e2740877"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/twitter.py",
+      "sha256": "c6b8e4508e51185e5da5a5b279e22e4daef0b0967959017dfde7d766ad5cb16f"
+    },
+    {
+      "path": "multi_search_mcp/src/search/searchers/v2ex.py",
+      "sha256": "783837110f35c07b8d6826793b20f778ad25ee1c2b6397745daaa80006efb3fc"
+    },
+    {
+      "path": "multi_search_mcp/src/search/snapshots.py",
+      "sha256": "b224e7ebc04423271586e39312613c6d835ccec0209b5de4b3645727c763fe21"
+    },
+    {
+      "path": "multi_search_mcp/src/service.py",
+      "sha256": "e7943e20ad5a370d4ed35a5bb11ea3a70f301fe1dd883a107bb8209ab89c21bd"
+    },
+    {
+      "path": "multi_search_mcp/src/state/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "multi_search_mcp/src/state/content_store.py",
+      "sha256": "66aa411f9b1bb5f308b1f3ab4048b9f002a231f709f986eb453e69a885e9aa2d"
+    },
+    {
+      "path": "multi_search_mcp/src/state/key_state.py",
+      "sha256": "bc26a979789f21230b82eb0b02f45f17fc29291d2f15225ef813898021b9cb28"
+    },
+    {
+      "path": "multi_search_mcp/src/state/keys.py",
+      "sha256": "d02479ec79e2c39d8b9a1dbb2a29a65fe79b9e55c87bbf29de57d66dc7939ca5"
+    },
+    {
+      "path": "multi_search_mcp/src/state/mark_exhausted.py",
+      "sha256": "ecbdc236dd894705cc014e33a6558bf1f7e5dbe9d59e3e0a9a4f44085cdc46b7"
+    },
+    {
+      "path": "multi_search_mcp/src/state/site_memory.py",
+      "sha256": "bfdc86d6d9a3bd0a7dcacad37396ea4e5f14409cf2823388397c3aadfb77d026"
+    },
+    {
+      "path": "multi_search_mcp/src/state/source_registry.py",
+      "sha256": "2238a2d26d0cc3c7b39b8b189cd7dc1039e3d6a1ac0f7e8f1e1ee6f715761ea9"
+    },
+    {
+      "path": "multi_search_mcp/src/state/state_store.py",
+      "sha256": "2c2e61856e96f9d9c5241dbd9ddece4cd7ed73647c3230ca951a8e9a537a5e2b"
+    },
+    {
+      "path": "multi_search_mcp/src/support/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "multi_search_mcp/src/support/auth.py",
+      "sha256": "85465e53a9444e1b795b27684b872e716929caab9b0c48641be2d028b13ebe2b"
+    },
+    {
+      "path": "multi_search_mcp/src/support/concurrency.py",
+      "sha256": "ad650734cca252a5bf8a45a73b72d2ce51ab6d930bc8d8f00aae8f0c77debeea"
+    },
+    {
+      "path": "multi_search_mcp/src/support/config.py",
+      "sha256": "05bf58574616f607f61c3f9c6559e85ec92eba66fab4c9256ec85bc110a5d547"
+    },
+    {
+      "path": "multi_search_mcp/src/support/dedup.py",
+      "sha256": "21aa0248634b24554aab57a1d14744391a422ae85793b992383d445e3ce4008c"
+    },
+    {
+      "path": "multi_search_mcp/src/support/format.py",
+      "sha256": "27e15ee806115fae2a39d472edbc11fa74a8c48483ac5ae64e345829a6b282bf"
+    },
+    {
+      "path": "multi_search_mcp/src/support/http.py",
+      "sha256": "55fbdfe42c800fef88f894e1113bdc29fddd8a6426893062de5acc4e27f8cf41"
+    },
+    {
+      "path": "multi_search_mcp/src/support/models.py",
+      "sha256": "9a0d67283deb30bba89c4a925877c254033c9ebb36460352eca4c94c1abe1fdb"
+    },
+    {
+      "path": "multi_search_mcp/src/support/secrets.py",
+      "sha256": "7bbaa29526b86a1dcc6f3d0f19c2ed5d73092427b6afad3db9d141f05212d6f7"
+    },
+    {
+      "path": "multi_search_mcp/src/support/tavily.py",
+      "sha256": "c7f5b8eba1e9deddc30fa50da957b74790a24b93adb79949d02f25b65d144835"
+    },
+    {
+      "path": "multi_search_mcp/src/support/url_security.py",
+      "sha256": "d4f0f7df2fe08bb843d33663d0a5bfb57dac3e4da4adeffedf4d921db6feb6f3"
+    },
+    {
+      "path": "multi_search_mcp/src/support/urlutil.py",
+      "sha256": "6c98322642506500a1b897415998aea1af57b15144560b7c1c6709ebe846a0f4"
+    },
+    {
+      "path": "multi_search_mcp/tools.py",
+      "sha256": "0435bb0554044f4e2c9ba51e61710ad131aa0c8d23b91b5de55327abdfce1bd1"
+    }
+  ],
+  "execution_mode": "Codex subagent adaptation; original Workflow runtime unavailable",
+  "runtime_limitations": [
+    "No native slash-workflow invocation or automatic per-item fanout.",
+    "Structured records are validated after writing, not constrained by a model return schema.",
+    "Original workflow and agent files are retained beside each installed skill for reference; plugin-root paths map to the flat skill resources directory."
+  ]
+}

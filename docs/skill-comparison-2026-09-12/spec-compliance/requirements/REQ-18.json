@@ -1,0 +1,60 @@
+{
+  "requirementId": "REQ-18",
+  "title": "搜索timeout是整批共享deadline",
+  "document": "README.md",
+  "location": "README.md:L339",
+  "quote": "搜索阶段整批 deadline",
+  "force": "current-behavior promise",
+  "verdict": "implemented",
+  "confidence": "medium",
+  "searched": [
+    {
+      "where": "rg -n 'search_deadline|source_deadline|submit_before' multi_search_mcp/src/service.py multi_search_mcp/src/search/search_runner.py multi_search_mcp/src/support/concurrency.py",
+      "result": "13 hits in explicit evidence files",
+      "matches": [
+        "multi_search_mcp/src/support/concurrency.py:36:    def submit_before(",
+        "multi_search_mcp/src/search/search_runner.py:307:        source_deadline = time.monotonic() + timeout_seconds",
+        "multi_search_mcp/src/search/search_runner.py:309:            source_deadline = min(source_deadline, deadline)",
+        "multi_search_mcp/src/search/search_runner.py:316:                if time.monotonic() < source_deadline:",
+        "multi_search_mcp/src/search/search_runner.py:322:            remaining = source_deadline - time.monotonic()",
+        "multi_search_mcp/src/search/search_runner.py:328:                deadline=source_deadline,",
+        "multi_search_mcp/src/search/search_runner.py:346:                        deadline=source_deadline,",
+        "multi_search_mcp/src/search/search_runner.py:361:        if time.monotonic() >= source_deadline:",
+        "multi_search_mcp/src/search/search_runner.py:369:            future = _SEARCH_POOL.submit_before(source_deadline, call)",
+        "multi_search_mcp/src/search/search_runner.py:376:                remaining = source_deadline - time.monotonic()",
+        "multi_search_mcp/src/service.py:402:    search_deadline = time.monotonic() + plan.timeout",
+        "multi_search_mcp/src/service.py:404:        query_results[queries[0]] = runner.run(queries[0], deadline=search_deadline)",
+        "multi_search_mcp/src/service.py:410:                pool.submit(runner.run, query, deadline=search_deadline): query"
+      ]
+    }
+  ],
+  "reasoning": "所有expanded query共享service创建的绝对deadline；runner取min，提交池等待、provider context、结果等待都用同一时点。超时保留已publish_partial、为pending写timeout。运行中的线程可能继续，不把返回deadline解释成停止所有底层socket。未逐provider模拟慢DNS/所有SDK边界，因此confidence medium。",
+  "analysisFile": "docs/skill-comparison-2026-09-12/spec-compliance/requirements/REQ-18.md",
+  "evidence": [
+    {
+      "file": "multi_search_mcp/src/service.py",
+      "lines": "L402-L422",
+      "quote": "    search_deadline = time.monotonic() + plan.timeout\n    if len(queries) == 1:\n        query_results[queries[0]] = runner.run(queries[0], deadline=search_deadline)\n    else:\n        with concurrent.futures.ThreadPoolExecutor(\n            max_workers=min(len(queries), MAX_EXPAND_CONCURRENCY)\n        ) as pool:\n            futures = {\n                pool.submit(runner.run, query, deadline=search_deadline): query",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/search/search_runner.py",
+      "lines": "L302-L328",
+      "quote": "    def run(self, query: str, *, deadline: float | None = None) -> list[dict]:\n        results: list[dict] = []\n        jobs: list[tuple[str, Callable[[], list]]] = []\n        source_names = self.route_resolver(self.config.route)\n        timeout_seconds = max(0, self.config.timeout if self.config.timeout is not None else 60)\n        source_deadline = time.monotonic() + timeout_seconds\n        if deadline is not None:\n            source_deadline = min(source_deadline, deadline)\n        partial_results: dict[str, list[dict]] = {}",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/search/search_runner.py",
+      "lines": "L366-L407",
+      "quote": "        pending = {name for name, _ in jobs}\n        future_sources: dict[Future, str] = {}\n        for name, call in jobs:\n            future = _SEARCH_POOL.submit_before(source_deadline, call)\n            if future is not None:\n                future_sources[future] = name\n\n        while future_sources:\n            done = {future for future in future_sources if future.done()}",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    },
+    {
+      "file": "multi_search_mcp/src/support/concurrency.py",
+      "lines": "L36-L48",
+      "quote": "    def submit_before(\n        self,\n        deadline: float,\n        fn: Callable[..., Any],\n        /,\n        *args,\n        **kwargs,\n    ) -> Future | None:\n        remaining = deadline - time.monotonic()",
+      "role": "路径执行与失败分支依据；完整范围见lines，quote仅保留前9行"
+    }
+  ],
+  "refutations": []
+}
