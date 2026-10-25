@@ -1,10 +1,13 @@
 import { pageRoot, disposePage } from './dom.js';
 import { showError } from './api.js';
 import { toMessage } from './errors.js';
+import { createChainSorter } from './scrape-sort.js';
 // 抓取设置：持久化 fallback 链（settings JSON 的 scrape_backends）与站点记忆只读/写操作。
 // 后端列表由 SettingsView.scrape_backend_options 提供，页面不复制后端表。
 
 const cloneChain = chain => (chain || []).map(String);
+
+
 // Mirrors Python ScrapeBackendSpec.key_required, NOT search-provider key requirements.
 // Jina and Firecrawl can scrape anonymously. Runtime cooldown is not a config error.
 const REQUIRED_KEY_BACKENDS = ['exa', 'tavily'];
@@ -13,20 +16,22 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   root = pageRoot(root);
   const doc = root.ownerDocument;
   root.classList.add('settings-page', 'scrape-page');
-  root.innerHTML = `<section class="heading settings-head"><div><p class="eyebrow">${number} / SETTINGS / SCRAPE</p><h1 tabindex="-1">抓取设置</h1><p>配置通用网页抓取的 fallback 顺序，并查看本机站点记忆。设置保存在 SQLite；抓取仍由独立 CLI 按需执行。</p></div><button type="button" data-action="refresh-chain">刷新</button></section>
+  root.innerHTML = `<section class="heading settings-head scrape-page-head"><div><p class="eyebrow">${number} / SCRAPING</p><h1 tabindex="-1">抓取设置</h1><p>拖动左侧手柄即可调整抓取顺序，改动保存后才会生效。</p></div><button type="button" data-action="refresh-chain">刷新</button></section>
     <form data-scrape-form>
-      <section class="panel scrape-chain-panel"><div class="section-title"><div><p class="eyebrow">SCRAPE CHAIN</p><h2>抓取链路</h2></div><span class="draft-badge" data-dirty hidden>有未保存修改</span></div>
+      <section class="panel scrape-chain-panel"><div class="section-title"><div><p class="eyebrow">SCRAPE CHAIN</p><h2>抓取优先级</h2></div><span class="scrape-count" data-chain-count></span><span class="draft-badge" data-dirty hidden>有未保存修改</span></div>
+        <p class="route-help scrape-intro">按顺序尝试，成功后即停止。拖动左侧手柄调整优先级。</p>
         <details class="config-details"><summary>说明</summary><p class="route-help">按顺序尝试，第一个失败才用下一个；最后一个也失败时返回错误。这份顺序只对通用网页抓取生效；Reddit / Twitter 按域名固定使用专用抓取器，不受影响。</p></details>
-        <p class="error-message settings-warning" data-info="chain-warning" ></p>
-        <p class="error-message settings-warning" data-info="saved-chain-warning" ></p>
+        <p class="sr-only" id="scrape-sort-instructions" data-sort-instructions>聚焦手柄后按空格或回车拿起，方向键或 Home / End 调整顺序，回车放下，Escape 取消。</p>
+        <p class="sr-only" role="status" aria-live="polite" data-sort-status></p>
+        <p class="error-message settings-warning scrape-notice" data-info="chain-warning" data-kind="warning" hidden></p>
+        <p class="error-message settings-warning scrape-notice" data-info="saved-chain-warning" data-kind="warning" hidden></p>
         <p data-info="error" class="error-message"></p>
-        <div class="scrape-chain-head"><span>顺序</span><span>后端</span><span>标识</span><span>操作</span></div>
-        <div data-chain-list class="route-list" aria-label="抓取后端顺序"></div>
-        <div class="scrape-disabled"><p class="route-help">未启用（点击加入链尾）：</p><div class="route-chips" data-chain-inactive></div></div>
-        <p class="route-help" data-info="chain-empty" hidden>全部后端已停用，至少保留一个后端才能保存。</p>
+        <div data-chain-list class="route-list scrape-sort-list" role="list" aria-label="抓取后端顺序"></div>
+        <div class="scrape-empty" data-info="chain-empty" hidden><p>全部后端已停用，至少保留一个后端才能保存。从下方把后端加回链尾。</p></div>
+        <div class="scrape-disabled scrape-inactive"><p class="route-help scrape-inactive-title">未启用（点击加入链尾）：</p><div class="route-chips" data-chain-inactive></div></div>
         <div class="run-controls scrape-chain-actions"><button type="button" data-action="restore-chain">恢复默认顺序</button><div data-restore-confirm></div></div>
       </section>
-      <div class="settings-savebar"><div><strong class="status-text" data-status="save" aria-live="polite"></strong><small class="status-text" data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存抓取设置</button></div>
+      <div class="settings-savebar scrape-savebar"><div class="scrape-save-copy"><strong class="status-text" data-status="save" aria-live="polite"></strong><small class="status-text" data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存抓取设置</button></div>
     </form>
 
     <section class="panel scrape-memory-panel"><div class="section-title"><div><p class="eyebrow">SITE MEMORY</p><h2>站点记忆</h2></div><div class="route-actions"><button type="button" data-action="refresh-memory">刷新</button></div></div>
@@ -56,8 +61,26 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   let memoryError = '';
   let filter = '';
   let confirmState = null; // { kind: 'pin'|'reset', site, scraper, token }
+  let sorter = null;
 
   const labelOf = name => options.get(name) || name;
+  const PROVIDER_MARKS = { jina: 'J', exa: 'E', tavily: 'T', firecrawl: 'F' };
+  const providerMark = name => PROVIDER_MARKS[name] || (labelOf(name).trim()[0] || name[0] || '?').toUpperCase();
+
+  function announceSort(message) {
+    const node = q('[data-sort-status]');
+    if (node) node.textContent = message;
+  }
+
+  function chainKeyState(name) {
+    if (!REQUIRED_KEY_BACKENDS.includes(name)) {
+      return { kind: 'ready', text: '可匿名使用' };
+    }
+    const state = credentialStates.get(name);
+    if (state === 'present') return { kind: 'ready', text: 'Key 已配置' };
+    if (state === 'absent' || state === 'unreadable') return { kind: 'warning', text: '待配置 Key' };
+    return { kind: 'unknown', text: '状态待确认' };
+  }
 
   function setEnabled(enabled) {
     // 链内行与加入链尾按钮的禁用由 chainReadOnly 通过 renderChain 派生；
@@ -70,7 +93,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   // 只读状态由 fillChain 写入 chainReadOnly，所有链内按钮的禁用状态都在
   // renderChain 里从它派生，避免重建按钮后丢失禁用。
   function chainDisabled() {
-    return chainReadOnly || saving;
+    return chainReadOnly || saving || refreshing;
   }
 
   // 以“已保存的链”为准（而不是草稿）：pin 只会重排当前链内的后端。
@@ -102,45 +125,88 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     const list = q('[data-chain-list]');
     list.replaceChildren();
     const disabled = chainDisabled();
+    const count = q('[data-chain-count]');
+    if (count) count.textContent = chain.length ? `${chain.length} 个后端` : '';
     chain.forEach((name, index) => {
+      const label = labelOf(name);
       const row = doc.createElement('article');
-      row.className = 'route-row scrape-chain-row';
+      row.className = 'scrape-chain-row';
       row.setAttribute('data-chain-row', name);
+      row.setAttribute('role', 'listitem');
       const order = doc.createElement('span');
       order.className = 'scrape-order';
       order.textContent = String(index + 1).padStart(2, '0');
+      const handle = doc.createElement('button');
+      handle.type = 'button';
+      handle.className = 'scrape-drag-handle';
+      handle.setAttribute('data-chain-action', 'drag');
+      handle.setAttribute('aria-label', `拖动调整 ${label} 的顺序`);
+      handle.setAttribute('aria-describedby', 'scrape-sort-instructions');
+      handle.setAttribute('aria-pressed', 'false');
+      handle.disabled = disabled;
+      const grip = doc.createElement('span');
+      grip.setAttribute('aria-hidden', 'true');
+      grip.textContent = '⋮⋮';
+      handle.append(grip);
+      const mark = doc.createElement('span');
+      mark.className = 'scrape-provider-mark';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.textContent = providerMark(name);
       const body = doc.createElement('div');
-      body.className = 'route-main';
+      body.className = 'route-main scrape-backend-main';
       const title = doc.createElement('div');
-      title.className = 'route-title';
+      title.className = 'route-title scrape-backend-title';
       const heading = doc.createElement('strong');
-      heading.textContent = labelOf(name);
+      heading.textContent = label;
       const code = doc.createElement('code');
       code.textContent = name;
       title.append(heading, code);
       if (index === 0) {
         const badge = doc.createElement('span');
-        badge.className = 'current-badge';
-        badge.textContent = '首选';
+        badge.className = 'current-badge scrape-primary-badge';
+        badge.textContent = '优先';
         title.append(badge);
       }
       body.append(title);
+      const detail = doc.createElement('p');
+      detail.className = 'scrape-muted scrape-backend-detail';
+      detail.textContent = index === 0 ? '最先尝试，成功后即停止。' : `第 ${index + 1} 位，前一个失败时才使用。`;
+      body.append(detail);
+      const state = chainKeyState(name);
+      const stateNode = doc.createElement('span');
+      stateNode.className = 'scrape-backend-state';
+      stateNode.setAttribute('data-kind', state.kind);
+      stateNode.textContent = state.text;
+      body.append(stateNode);
       const actions = doc.createElement('div');
-      actions.className = 'route-row-actions';
+      actions.className = 'route-row-actions scrape-row-actions';
       const up = doc.createElement('button');
-      up.type = 'button'; up.textContent = '上移'; up.setAttribute('data-chain-action', 'up');
+      up.type = 'button'; up.setAttribute('data-chain-action', 'up');
+      up.setAttribute('aria-label', `上移 ${label}`);
+      const upIcon = doc.createElement('span');
+      upIcon.setAttribute('aria-hidden', 'true'); upIcon.textContent = '↑';
+      const upText = doc.createElement('span');
+      upText.className = 'sr-only'; upText.textContent = '上移';
+      up.append(upIcon, upText);
       up.disabled = disabled || index === 0;
       up.addEventListener('click', () => move(index, -1));
       const down = doc.createElement('button');
-      down.type = 'button'; down.textContent = '下移'; down.setAttribute('data-chain-action', 'down');
+      down.type = 'button'; down.setAttribute('data-chain-action', 'down');
+      down.setAttribute('aria-label', `下移 ${label}`);
+      const downIcon = doc.createElement('span');
+      downIcon.setAttribute('aria-hidden', 'true'); downIcon.textContent = '↓';
+      const downText = doc.createElement('span');
+      downText.className = 'sr-only'; downText.textContent = '下移';
+      down.append(downIcon, downText);
       down.disabled = disabled || index === chain.length - 1;
       down.addEventListener('click', () => move(index, 1));
       const off = doc.createElement('button');
       off.type = 'button'; off.textContent = '停用'; off.setAttribute('data-chain-action', 'disable');
+      off.setAttribute('aria-label', `停用 ${label}`);
       off.disabled = disabled;
       off.addEventListener('click', () => disable(name));
       actions.append(up, down, off);
-      row.append(order, body, actions);
+      row.append(order, handle, mark, body, actions);
       list.append(row);
     });
     const holder = q('[data-chain-inactive]');
@@ -151,7 +217,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
       chip.type = 'button';
       chip.className = 'route-chip scrape-add-chip';
       chip.setAttribute('data-add-backend', name);
-      chip.textContent = `${labelOf(name)} · 加入链尾`;
+      chip.textContent = `+ ${labelOf(name)}`;
       chip.disabled = disabled;
       chip.addEventListener('click', () => {
         if (chainDisabled()) return;
@@ -165,7 +231,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     if (!rest.length) {
       const note = doc.createElement('span');
       note.className = 'route-help';
-      note.textContent = '全部后端都已在链中。';
+      note.textContent = '所有后端均已启用。';
       holder.append(note);
     }
     q('[data-info="chain-empty"]').hidden = chain.length > 0;
@@ -198,11 +264,24 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   function validateChain() {
     const empty = chain.length === 0;
     const availability = chainAvailability(chain);
-    text('[data-info="chain-warning"]', empty ? '全部抓取后端都已停用，抓取不会运行。请至少启用一个后端后再保存。' : availability.warning);
+    const draftWarning = empty ? '全部抓取后端都已停用，抓取不会运行。请至少启用一个后端后再保存。' : availability.warning;
+    const draftNode = q('[data-info="chain-warning"]');
+    const savedNode = q('[data-info="saved-chain-warning"]');
     const savedWarning = chainAvailability(cloneChain(loadedView?.scrape_backends)).warning;
-    text('[data-info="saved-chain-warning"]', loadedView?.scrape_backends_invalid
+    const savedText = loadedView?.scrape_backends_invalid
       ? '已保存的抓取链无效，CLI 抓取将报配置错误；请调整后重新保存。'
-      : savedWarning ? `已保存的抓取链：${savedWarning}` : '');
+      : savedWarning ? `已保存的抓取链：${savedWarning}` : '';
+    // 草稿 == 已保存且提示相同时只显示一处，另一节点隐藏但保留文案（避免重复朗读）。
+    const sameChain = chain.join(',') === cloneChain(loadedView?.scrape_backends).join(',');
+    const duplicate = Boolean(!empty && draftWarning && sameChain && !loadedView?.scrape_backends_invalid && draftWarning === savedWarning);
+    if (draftNode) {
+      draftNode.textContent = draftWarning;
+      draftNode.hidden = duplicate || !draftWarning;
+    }
+    if (savedNode) {
+      savedNode.textContent = savedText;
+      savedNode.hidden = !savedText;
+    }
     const save = q('[data-action="save"]');
     save.disabled = saving || refreshing || empty || availability.blocked || !loadedView || loadedView.status === 'config_unreadable';
     return !empty && !availability.blocked;
@@ -215,6 +294,23 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     [chain[index], chain[target]] = [chain[target], chain[index]];
     setDirty('抓取顺序已在草稿中调整');
     renderChain();
+  }
+
+  // 拖放提交：from/to 是移除源行后的目标下标（由 scrape-sort 计算）。
+  function reorder(from, to, name) {
+    if (chainDisabled()) return;
+    if (from === to || from < 0 || from >= chain.length) return;
+    const [moved] = chain.splice(from, 1);
+    chain.splice(Math.min(to, chain.length), 0, moved);
+    setDirty('抓取顺序已在草稿中调整');
+    renderChain();
+    // 重新渲染后把焦点还给该后端的新手柄。
+    if (name) {
+      const next = q(`[data-chain-row="${name}"] .scrape-drag-handle`);
+      next?.focus?.();
+      if (root.ownerDocument.activeElement !== next) root.ownerDocument.activeElement = next;
+    }
+    announceSort(`${labelOf(moved)} 已移到第 ${to + 1} 位，尚未保存`);
   }
 
   function disable(name) {
@@ -266,6 +362,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   async function refreshChain(force = false) {
     if (saving) { text('[data-info="error"]', '正在保存设置，完成后再刷新。'); return; }
     if (refreshing) return;
+    sorter?.cancel('刷新前已取消未放下的拖动');
     // 用户确认丢弃后清掉草稿标记，迟到的响应也不会被草稿挡回。
     if (force) dirty = false;
     if (dirty) {
@@ -288,6 +385,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
       // force 路径已由用户确认丢弃草稿；否则迟到的响应不能覆盖更新的草稿。
       if (!disposed && ticket === refreshTicket && (force || !dirty)) {
         credentialStates = states;
+        refreshing = false;
         fillChain(view);
       }
     } catch (error) {
@@ -315,6 +413,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   async function saveDraft() {
     if (saving || refreshing || !loadedView || loadedView.status === 'config_unreadable') return;
     if (!chain.length) { text('[data-info="error"]', '抓取顺序至少要保留一个后端。'); return; }
+    sorter?.cancel('保存前已取消未放下的拖动');
     const backends = [...chain];
     saving = true;
     q('[data-restore-confirm]').replaceChildren();
@@ -542,6 +641,14 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     }
   }
 
+  sorter = createChainSorter({
+    list: q('[data-chain-list]'),
+    doc,
+    isEnabled: () => !chainDisabled(),
+    onCommit: reorder,
+    announce: announceSort,
+  });
+
   q('[data-action="restore-chain"]').addEventListener('click', openRestoreConfirm);
   q('[data-action="refresh-chain"]').addEventListener('click', () => { void refreshChain(); });
   q('[data-action="refresh-memory"]').addEventListener('click', () => { void refreshMemory(); });
@@ -554,6 +661,8 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   await Promise.all([refreshChain(true), refreshMemory()]);
   return {
     dispose() { disposePage(root);
+      sorter?.dispose();
+      sorter = null;
       disposed = true;
       refreshTicket += 1;
       root.classList.remove('settings-page', 'scrape-page');
