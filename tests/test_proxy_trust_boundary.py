@@ -90,12 +90,23 @@ class ProxyTrustTests(unittest.TestCase):
         self.assertFalse(http._is_trusted_proxy_hop(request, "localhost", 7890))
 
     def test_hostname_proxy_connect_succeeds_through_loopback(self):
+        # Two different DNS boundaries are exercised here: the logical target is
+        # resolved and validated for its public address, the configured proxy hop
+        # is resolved separately and may be loopback. Only the proxy is dialled.
+        target_ip = "93.184.216.34"
+        calls = []
+
         def dns(host, port, *args, **kwargs):
-            self.assertEqual((host, port), ("localhost", 7890))
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 7890))]
+            calls.append((host, int(port)))
+            if (host, int(port)) == ("example.com", 80):
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (target_ip, 80))]
+            if (host, int(port)) == ("localhost", 7890):
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 7890))]
+            raise AssertionError(f"unexpected DNS lookup {(host, port)}")
 
         request = urllib.request.Request("http://example.com/page")
         with mock.patch.object(urllib.request, "getproxies", return_value={"http": "http://localhost:7890"}), \
+                mock.patch.object(urllib.request, "proxy_bypass", return_value=False), \
                 mock.patch.object(url_security.socket, "getaddrinfo", side_effect=dns), \
                 mock.patch.object(socket, "create_connection", side_effect=lambda *a, **k: FakeProxySocket()), \
                 mock.patch.object(http.socket, "socket", side_effect=lambda *a: FakeProxySocket()):
@@ -103,8 +114,18 @@ class ProxyTrustTests(unittest.TestCase):
                 request, timeout=2, extra_handlers=(urllib.request.ProxyHandler({"http": "http://localhost:7890"}),),
             ) as response:
                 self.assertEqual(response.read(), b"ok")
+        # Both boundaries were really consulted: the target through validation and
+        # the proxy hop through plain resolution. Zero DNS calls cannot pass.
+        self.assertIn(("example.com", 80), calls)
+        self.assertIn(("localhost", 7890), calls)
+        self.assertEqual(sorted(set(calls)), [("example.com", 80), ("localhost", 7890)])
+        self.assertEqual(len(FakeProxySocket.instances), 1)
         self.assertEqual(FakeProxySocket.instances[0].connected, [("127.0.0.1", 7890)])
-        self.assertIn(b"Host: example.com", FakeProxySocket.instances[0].sent)
+        sent = FakeProxySocket.instances[0].sent
+        self.assertIn(b"Host: example.com", sent)
+        # The proxy is asked to reach the validated address, never the raw name.
+        self.assertIn(f"http://{target_ip}:80/page".encode(), sent)
+        self.assertNotIn(b"http://example.com", sent)
 
     def test_direct_loopback_target_still_rejected(self):
         def dns(_host, _port, *args, **kwargs):

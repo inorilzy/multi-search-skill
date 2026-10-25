@@ -16,13 +16,13 @@ required-features = ["test-fixtures"]
 
 [[test]]
 name = "diagnostics"
-required-features = ["test-fixtures"]
 path = "tests/diagnostics.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "execution"
-required-features = ["test-fixtures"]
 path = "tests/execution.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "install"
@@ -40,38 +40,38 @@ path = "tests/install_release_boundary.rs"
 
 [[test]]
 name = "installed_cli"
-required-features = ["test-fixtures"]
 path = "tests/installed_cli.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "skill"
-required-features = ["test-fixtures"]
 path = "tests/skill.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "skill_manage"
-required-features = ["test-fixtures"]
 path = "tests/skill_manage.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "credentials"
-required-features = ["test-fixtures"]
 path = "tests/credentials.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "credential_sources"
-required-features = ["test-fixtures"]
 path = "tests/credential_sources.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "settings"
-required-features = ["test-fixtures"]
 path = "tests/settings.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "scrape_memory"
-required-features = ["test-fixtures"]
 path = "tests/scrape_memory.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "source_catalog"
@@ -79,28 +79,28 @@ path = "tests/source_catalog.rs"
 
 [[test]]
 name = "provider_parity"
-required-features = ["test-fixtures"]
 path = "tests/provider_parity.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "process_env"
-required-features = ["test-fixtures"]
 path = "tests/process_env.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "sqlite_credentials"
-required-features = ["test-fixtures"]
 path = "tests/sqlite_credentials.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "credential_rows"
-required-features = ["test-fixtures"]
 path = "tests/credential_rows.rs"
+required-features = ["test-fixtures"]
 
 [[test]]
 name = "ui_contract"
-required-features = ["test-fixtures", "ts"]
 path = "tests/ui_contract.rs"
+required-features = ["test-fixtures", "ts"]
 
 [[bin]]
 name = "multi-search-desktop"

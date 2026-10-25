@@ -191,7 +191,7 @@ pub(crate) fn child_variables(environment: &RuntimeEnvironment, credentials: &[&
 #[cfg(feature = "install-test-boundary")]
 const TEST_PYTHONPATH_KEY: &str = "MULTI_SEARCH_TEST_PYTHONPATH";
 
-#[cfg_attr(not(any(test, feature = "test-fixtures")), allow(dead_code))]
+#[cfg_attr(not(feature = "test-fixtures"), allow(dead_code))]
 /// The allowlisted child environment for a non-credential invocation. Exposed through
 /// `process_fixture` so the boundary tests assert the real filter, not a copy.
 pub(crate) fn child_environment(variables: &BTreeMap<String, String>) -> BTreeMap<String, String> {
