@@ -47,6 +47,50 @@ class Build(unittest.TestCase):
             with self.assertRaises(BundleError):
                 build(runtime, launcher, "0.4.0", root / "b", root / "a.txt")
 
+    def test_bytecode_and_generated_console_scripts_are_never_sealed(self):
+        """A dirty work dir must not leak caches, .pyc files, or absolute-path console scripts."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime, launcher = fake_tree(root)
+            pycache = runtime / "Lib" / "__pycache__"
+            pycache.mkdir()
+            (pycache / "os.cpython-312.pyc").write_bytes(b"BYTECODE")
+            (runtime / "Lib" / "stray.pyc").write_bytes(b"STRAY")
+            scripts = runtime / "Lib" / "site-packages" / "bin"
+            scripts.mkdir(parents=True)
+            leaked = scripts / "multi-search"
+            leaked.write_text("#!/Users/build-machine/.venv/bin/python\n", encoding="utf-8")
+            leaked.chmod(0o755)
+            lock = runtime / "Lib" / "site-packages" / ".lock"
+            lock.write_text("", encoding="utf-8")
+            lock.chmod(0o666)
+            dist_info = runtime / "Lib" / "site-packages" / "multi_search_mcp-0.4.0.dist-info"
+            dist_info.mkdir()
+            (dist_info / "direct_url.json").write_text(
+                '{"url":"file:///Users/build-machine/repo/dist/w.whl"}', encoding="utf-8")
+            (dist_info / "RECORD").write_text(
+                "multi_search_mcp/__init__.py,sha256=abc,1\n"
+                "multi_search_mcp-0.4.0.dist-info/direct_url.json,sha256=def,54\n",
+                encoding="utf-8")
+
+            out, anchor_file = root / "bundle", root / "anchor.txt"
+            anchor = build(runtime, launcher, "0.4.0", out, anchor_file)
+            paths = [f["path"] for f in json.loads((out / "manifest.json").read_bytes())["files"]]
+            self.assertEqual(set(paths), {
+                "bin/multi-search.exe", "runtime/python.exe", "runtime/Lib/os.py",
+                "runtime/Lib/site-packages/multi_search_mcp-0.4.0.dist-info/RECORD",
+            })
+            for rel in ("runtime/Lib/__pycache__", "runtime/Lib/stray.pyc",
+                        "runtime/Lib/site-packages/bin", "runtime/Lib/site-packages/.lock",
+                        "runtime/Lib/site-packages/multi_search_mcp-0.4.0.dist-info/direct_url.json"):
+                with self.subTest(rel=rel):
+                    self.assertFalse((out / rel).exists(), f"{rel} must not be sealed into the bundle")
+            record = out / "runtime/Lib/site-packages/multi_search_mcp-0.4.0.dist-info/RECORD"
+            self.assertEqual(record.read_text(encoding="utf-8").splitlines(),
+                             ["multi_search_mcp/__init__.py,sha256=abc,1"],
+                             "RECORD must not keep a dangling direct_url.json row")
+            self.assertEqual(anchor, hashlib.sha256((out / "manifest.json").read_bytes()).hexdigest())
+
 
 class Release(unittest.TestCase):
     def test_missing_launcher_source_fails_explicitly_before_any_output(self):
