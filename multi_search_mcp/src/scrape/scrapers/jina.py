@@ -12,6 +12,7 @@ from . import (
     _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
     _JINA_REMOVE_SELECTOR,
     _safe_http_url,
+    error_fields,
 )
 
 
@@ -40,6 +41,13 @@ def _reset_jina_anonymous_rate_limit() -> None:
     global _JINA_ANON_RATE_LIMITED_UNTIL
     with _JINA_ANON_LOCK:
         _JINA_ANON_RATE_LIMITED_UNTIL = 0.0
+
+
+# Public names for the handful of callers that should not reach into the
+# module's private surface; the private names stay the patchable seam.
+jina_anonymous_cooling_down = _jina_anonymous_cooling_down
+record_jina_anonymous_rate_limit = _record_jina_anonymous_rate_limit
+reset_jina_anonymous_rate_limit = _reset_jina_anonymous_rate_limit
 
 
 def _jina_request(
@@ -118,15 +126,21 @@ def scrape_url_jina(
     skip_anonymous: bool = False,
     respond_with: str = "markdown",
     extra_headers: dict | None = None,
+    deadline: float | None = None,
 ) -> dict:
     """Fetch page content via Jina Reader."""
     if not _safe_http_url(url):
         return {"url": url, "error": "rejected non-http(s) URL"}
 
+    if deadline is not None:
+        timeout = min(float(timeout), max(0.0, deadline - time.monotonic()))
     secrets = api_key
     last_error = ""
     rate_limited = False
     key_exhausted = False
+    # ``kind`` is the upstream credential signal; quota_exhausted is reserved for
+    # the keyed channel and outranks a generic rate_limit.
+    kind = ""
     if skip_anonymous:
         attempts = (api_key,) if api_key else ()
     else:
@@ -172,11 +186,15 @@ def scrape_url_jina(
                 rate_limited = True
                 if not key:
                     _record_jina_anonymous_rate_limit()
+                    kind = kind or "rate_limit"
                 # Classify exhaustion from the error itself instead of issuing a
                 # blocking balance-API round-trip; the key-state store (and the
                 # caller) only need to know this key is out of quota.
-                if key and _jina_quota_exhausted(exc.code, message):
+                elif _jina_quota_exhausted(exc.code, message):
                     key_exhausted = True
+                    kind = "quota_exhausted"
+                else:
+                    kind = kind or "rate_limit"
             try:
                 exc.close()
             except Exception:
@@ -194,4 +212,6 @@ def scrape_url_jina(
     if key_exhausted:
         result["key_exhausted"] = True
         result["exhausted"] = True
+    if kind:
+        result.update(error_fields(kind=kind, origin="provider"))
     return result

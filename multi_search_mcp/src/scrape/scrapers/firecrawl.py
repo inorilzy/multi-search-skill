@@ -5,7 +5,7 @@ import urllib.request
 
 from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
-from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
+from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url, error_fields
 
 
 _FIRECRAWL_ERROR_BODY_LIMIT = 4096
@@ -13,7 +13,7 @@ _FIRECRAWL_ERROR_BODY_LIMIT = 4096
 # Keep this set narrow: broad site/infrastructure codes do not prove that the
 # provider key is healthy, but they also do not prove that the target failed.
 _FIRECRAWL_TARGET_ERROR_CODES = frozenset({"SCRAPE_SSL_ERROR"})
-_FIRECRAWL_HTTP_ERROR_TYPES = {
+_FIRECRAWL_HTTP_ERROR_KINDS = {
     401: "invalid",
     403: "invalid",
     402: "quota_exhausted",
@@ -50,12 +50,12 @@ def _error_result(
     if status_code is not None and isinstance(data, dict):
         detail = f"HTTP {status_code}: {detail}"
     result = {"url": url, "error": f"Firecrawl: {scrub_secrets(detail, api_key)}"}
-    if status_code in _FIRECRAWL_HTTP_ERROR_TYPES:
-        result.update(error_origin="provider", error_type=_FIRECRAWL_HTTP_ERROR_TYPES[status_code])
+    if status_code in _FIRECRAWL_HTTP_ERROR_KINDS:
+        result.update(error_fields(kind=_FIRECRAWL_HTTP_ERROR_KINDS[status_code], origin="provider"))
     elif code in _FIRECRAWL_TARGET_ERROR_CODES:
-        result.update(error_origin="target", error_type="target")
+        result.update(error_fields(kind="target", origin="target"))
     elif status_code is not None:
-        result.update(error_origin="provider", error_type="error")
+        result.update(error_fields(kind="error", origin="provider"))
     return result
 
 
@@ -79,10 +79,12 @@ def _read_http_error_payload(exc: urllib.error.HTTPError) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def scrape_url_firecrawl(url: str, api_key: str = "", timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS) -> dict:
+def scrape_url_firecrawl(url: str, api_key: str = "", timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS, deadline: float | None = None) -> dict:
     """Fetch main page markdown via Firecrawl /v2/scrape."""
     if not _safe_http_url(url):
         return {"url": url, "error": "rejected non-http(s) URL"}
+    if deadline is not None:
+        timeout = min(float(timeout), max(0.0, deadline - time.monotonic()))
     payload = json.dumps({
         "url": url,
         "formats": ["markdown"],

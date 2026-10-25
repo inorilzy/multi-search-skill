@@ -12,6 +12,8 @@ import urllib.request
 
 from .url_security import (
     UrlSecurityError,
+    _ensure_public_ip,
+    _resolve_host_ips,
     resolve_host_addresses,
     validate_redirect_target,
 )
@@ -20,6 +22,10 @@ from .url_security import (
 # Default verification and strict EOF handling: a TLS stream that ends without
 # close_notify is a truncation and must fail, not read as a complete body.
 _ssl_ctx = ssl.create_default_context()
+
+# Only these methods are safe to retry after SSL/EOF. POST-like requests may
+# charge money or mutate remote state on the first, apparently failed attempt.
+_RETRYABLE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
 
 def _is_certificate_failure(exc: BaseException) -> bool:
@@ -195,6 +201,20 @@ class _DeadlineHTTPResponse(http.client.HTTPResponse):
         super().__init__(sock, *args, **kwargs)
         self.fp = io.BufferedReader(_DeadlineReader(self.fp, sock, deadline))
 
+    def read(self, amt=None):
+        # Central size ceiling: every urlopen_retry response is bounded here, so
+        # no call site can accidentally buffer an unbounded provider body. A
+        # declared oversize Content-Length is refused before reading it.
+        if amt is None:
+            declared = _content_length(self)
+            if declared is not None and declared > MAX_RESPONSE_BYTES:
+                raise ResponseTooLargeError("provider response body", MAX_RESPONSE_BYTES)
+            body = super().read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise ResponseTooLargeError("provider response body", MAX_RESPONSE_BYTES)
+            return body
+        return super().read(amt)
+
 
 def _open_with_deadline(handler, connection_type, req, **connection_options):
     deadline = getattr(req, "_multi_search_deadline", None)
@@ -213,7 +233,9 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
                 if timeout is not None:
                     remaining = min(remaining, timeout)
                 target_host, target_port = address
-                if _is_ip_literal(target_host):
+                pinned = getattr(req, "_multi_search_pinned_addresses", None) or {}
+                addresses = pinned.get((str(target_host).lower(), int(target_port)))
+                if addresses is None and _is_ip_literal(target_host):
                     sock = create_connection(
                         address, timeout=remaining,
                         source_address=source_address, **socket_options,
@@ -225,9 +247,10 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
                         raise
                     return sock
 
-                addresses = resolve_host_addresses(
-                    target_host, target_port, deadline=deadline,
-                )
+                if addresses is None:
+                    addresses = resolve_host_addresses(
+                        target_host, target_port, deadline=deadline,
+                    )
                 last_error = None
                 for family, socktype, proto, _canonname, sockaddr in addresses:
                     sock = None
@@ -274,6 +297,41 @@ class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
         return _open_with_deadline(self, http.client.HTTPSConnection, req, context=self._context)
 
 
+def _pin_redirect_addresses(url: str, deadline: float | None, answers) -> dict:
+    """Resolve a redirect target once; connect to exactly the checked answers.
+
+    ``validate_redirect_target`` checks every answer, but urllib would resolve
+    the host again for the connect call, leaving a DNS-rebinding window. Pinning
+    the validated answers closes it.
+    """
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if not host or _is_ip_literal(host):
+        return {}
+    port = parts.port if parts.port is not None else {"http": 80, "https": 443}.get(parts.scheme.lower())
+    if port is None:
+        return {}
+    if answers is None:
+        try:
+            answers = _resolve_host_ips(host)
+        except UrlSecurityError:
+            # Resolution failures surface later in connect with a clearer error.
+            return {}
+    addresses = []
+    for answer in answers:
+        try:
+            parsed = ipaddress.ip_address(str(answer).strip("[]"))
+        except ValueError:
+            raise UrlSecurityError("redirect target resolved to a non-IP value")
+        _ensure_public_ip(parsed, label="redirect target", resolved=True)
+        ip = str(parsed)
+        if isinstance(parsed, ipaddress.IPv4Address):
+            addresses.append((socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port)))
+        else:
+            addresses.append((socket.AF_INET6, socket.SOCK_STREAM, 6, "", (ip, port, 0, 0)))
+    return {(host, port): addresses} if addresses else {}
+
+
 class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
     def __init__(self, *, resolver=None):
         super().__init__()
@@ -282,9 +340,17 @@ class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         try:
             deadline = getattr(req, "_multi_search_deadline", None)
+            answers: list[str] = []
+
+            def capture(host):
+                found = list((self._resolver or _resolve_host_ips)(host))
+                answers.extend(found)
+                return found
+
             validate_redirect_target(
-                newurl, resolver=self._resolver, deadline=deadline,
+                newurl, resolver=capture, deadline=deadline,
             )
+            pinned = _pin_redirect_addresses(newurl, deadline, answers or None)
             old_origin, new_origin = _origin(req.full_url), _origin(newurl)
             if old_origin[0] == "https" and new_origin[0] == "http":
                 raise UrlSecurityError("HTTPS redirect must not downgrade to HTTP")
@@ -294,6 +360,8 @@ class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
             redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
             if redirected is not None and deadline is not None:
                 redirected._multi_search_deadline = deadline
+                if pinned:
+                    redirected._multi_search_pinned_addresses = pinned
                 # urllib follows the redirect with the original request's timeout.
                 req.timeout = redirected.timeout = _remaining(deadline)
             return redirected
@@ -347,11 +415,14 @@ def urlopen_retry(
             extra_handlers=handlers,
         )
     )
+    retryable = request.get_method().upper() in _RETRYABLE_METHODS
     for _ in range(retries + 1):
         try:
             return opener.open(request, timeout=_remaining(deadline))
         except (ssl.SSLEOFError, ssl.SSLError) as e:
-            if _is_certificate_failure(e):
+            # A certificate failure no retry can fix; a POST-like request may
+            # already have reached the server, so retrying could duplicate it.
+            if _is_certificate_failure(e) or not retryable:
                 raise
             last_exc = e
             continue
@@ -360,6 +431,8 @@ def urlopen_retry(
                 raise
             msg = str(e)
             if "EOF" in msg or "SSL" in msg:
+                if not retryable:
+                    raise
                 last_exc = e
                 continue
             raise

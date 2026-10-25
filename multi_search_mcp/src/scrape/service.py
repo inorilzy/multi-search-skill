@@ -12,8 +12,21 @@ from ..support.config import resolve_int, resolve_nonnegative
 from ..support.format import format_scrapes
 from ..support.models import normalize_scrape_result
 from ..support.requests import ScrapeRequest
-from .scrape import scrape_url_smart
+from .scrape import KNOWN_BACKENDS, scrape_url_smart
 from .scrapers.twitter import is_twitter_url
+
+
+def configured_scrape_backends(config: dict | None) -> tuple[str, ...]:
+    """Resolve the ordered fallback chain for generic scrape backends.
+
+    ``search.resolve`` owns the configuration parsing; until that module lands in
+    this branch, the default jina → exa → tavily → firecrawl order applies.
+    """
+    try:
+        from ..search.resolve import resolve_scrape_backends
+    except ImportError:  # pragma: no cover - search.resolve port lands separately
+        return KNOWN_BACKENDS
+    return tuple(resolve_scrape_backends(config or {}))
 
 
 def run_scrape(
@@ -27,6 +40,10 @@ def run_scrape(
 ) -> dict:
     if isinstance(request, dict):
         request = ScrapeRequest(**request)
+    if request.output not in {"json", "markdown", "both"}:
+        raise ValueError(
+            f"invalid output mode: {request.output!r}; valid: json, markdown, both"
+        )
     result, updates, scrape_chars = run_scrape_raw(
         request, state_store=state_store, scraper=scraper, keys=keys,
         config=config, url_resolver=url_resolver,
@@ -71,21 +88,43 @@ def run_scrape_raw(
     key_manager = SQLiteKeyManager(store) if store else BasicKeyManager()
     site_memory = SiteScraperMemory(store) if store else None
     scraper_fn = scraper or scrape_url_smart
+    # An explicit request order is authoritative and fails eagerly on a missing
+    # key; an unconfigured chain keeps the configured fallback order instead.
+    explicit_backends = tuple(request.backends) if request.backends else None
+    backends = explicit_backends or configured_scrape_backends(resolved_config)
     result = scraper_fn(
         request.url,
         timeout=timeout,
         deadline=deadline,
-        backends=tuple(request.backends) if request.backends else None,
-        jina_keys=[candidate.key for candidate in key_manager.candidates("jina", jina_config_keys(runtime_keys.get("jina")))],
-        exa_keys=[candidate.key for candidate in key_manager.candidates("exa", runtime_keys.get("exa"))],
-        firecrawl_keys=[candidate.key for candidate in key_manager.candidates("firecrawl", runtime_keys.get("firecrawl"))],
-        tavily_keys=[candidate.key for candidate in key_manager.candidates("tavily", runtime_keys.get("tavily"))],
+        backends=backends,
+        strict_backends=explicit_backends is not None,
+        jina_keys=[
+            candidate.key
+            for candidate in key_manager.candidates(
+                "jina", jina_config_keys(runtime_keys.get("jina")),
+            )
+        ],
+        exa_keys=[
+            candidate.key
+            for candidate in key_manager.candidates("exa", runtime_keys.get("exa"))
+        ],
+        firecrawl_keys=[
+            candidate.key
+            for candidate in key_manager.candidates("firecrawl", runtime_keys.get("firecrawl"))
+        ],
+        tavily_keys=[
+            candidate.key
+            for candidate in key_manager.candidates("tavily", runtime_keys.get("tavily"))
+        ],
         site_memory=site_memory,
         key_manager=key_manager,
         scrape_chars=scrape_chars,
         url_resolver=url_resolver,
-        **({"twitter_cookies": runtime_keys.get("twitter") or runtime_keys.get("twitter_cookies", "")}
-           if is_twitter_url(request.url) else {}),
+        **({"twitter_cookies": (
+            runtime_keys.get("twitter_cookies_path")
+            or runtime_keys.get("twitter")
+            or runtime_keys.get("twitter_cookies", "")
+        )} if is_twitter_url(request.url) else {}),
     )
     result = normalize_scrape_result(result, url=request.url)
     return result, site_memory.consume_updates() if site_memory else [], scrape_chars

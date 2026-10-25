@@ -7,7 +7,11 @@ import time
 from urllib.parse import urlsplit
 
 from ...support.url_security import UrlSecurityError
-from ...support.xkit import load_twitter_cookies, scrub_twitter_error
+
+try:  # provider abstraction lands with providers/; keep both import homes working
+    from ...providers.xkit import load_twitter_cookies, scrub_twitter_error
+except ImportError:  # pragma: no cover - current layout
+    from ...support.xkit import load_twitter_cookies, scrub_twitter_error
 
 
 REPLY_LIMIT = 20

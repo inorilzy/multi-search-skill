@@ -5,17 +5,26 @@ import urllib.request
 
 from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
-from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url
+from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url, error_fields
 
 
 _EXA_DEFAULT_MAX_CHARS = 8000
 
+_EXA_HTTP_ERROR_KINDS = {
+    401: "invalid",
+    403: "invalid",
+    402: "quota_exhausted",
+    429: "rate_limit",
+}
+
 
 def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOUT_SECONDS,
-                   max_chars: int | None = None) -> dict:
+                   max_chars: int | None = None, deadline: float | None = None) -> dict:
     """Fetch page content via Exa /contents API. Returns full text."""
     if not _safe_http_url(url):
         return {"url": url, "error": "rejected non-http(s) URL"}
+    if deadline is not None:
+        timeout = min(float(timeout), max(0.0, deadline - time.monotonic()))
     char_cap = _EXA_DEFAULT_MAX_CHARS if not max_chars or max_chars <= 0 else int(max_chars)
     payload = json.dumps({
         "urls": [url],
@@ -47,7 +56,7 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
             # /contents succeeded; statuses describe the target page, not the key.
             return {
                 "url": url, "error": scrub_secrets(msg, api_key),
-                "error_origin": "target", "error_type": "target",
+                **error_fields(kind="target", origin="target"),
             }
         results = data.get("results") or []
         if not results:
@@ -66,8 +75,10 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
     except urllib.error.HTTPError as exc:
         return {
             "url": url, "error": f"Exa: {scrub_secrets(exc, api_key)}",
-            "error_origin": "provider",
-            "error_type": {401: "invalid", 403: "invalid", 402: "quota_exhausted", 429: "rate_limit"}.get(exc.code, "error"),
+            **error_fields(
+                kind=_EXA_HTTP_ERROR_KINDS.get(exc.code, "error"),
+                origin="provider",
+            ),
         }
     except Exception as exc:
         return {"url": url, "error": f"Exa: {scrub_secrets(exc, api_key)}"}

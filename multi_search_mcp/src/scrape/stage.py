@@ -1,6 +1,7 @@
 """Fetch the final ranked results under a shared deadline and bounded pool."""
 from __future__ import annotations
 
+import os
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, wait
 from typing import Any, Callable
@@ -13,8 +14,18 @@ from ..support.concurrency import (
 from ..support.secrets import scrub_secrets
 
 
+def _pool_size_from_env(name: str, default: int, minimum: int = 1) -> int:
+    """Read a positive integer pool capacity from the environment."""
+    text = os.environ.get(name, "").strip()
+    try:
+        value = int(text)
+    except ValueError:
+        return max(minimum, int(default))
+    return max(minimum, value)
+
+
 _SCRAPE_POOL = BoundedDaemonExecutor(
-    max_workers=30,
+    max_workers=_pool_size_from_env("MULTI_SEARCH_SCRAPE_CONCURRENCY", 30),
     thread_name_prefix="multi-search-scrape",
 )
 
@@ -22,6 +33,7 @@ _SCRAPE_POOL = BoundedDaemonExecutor(
 def run_ranked_fetch_stage(
     hits: list[dict], *, fetch: Callable[[dict, float], dict],
     timeout: float, concurrency: int = 5, deadline: float | None = None,
+    executor: BoundedDaemonExecutor | None = None,
 ) -> dict:
     """Fetch already-ranked hits under one deadline without changing their order.
 
@@ -34,6 +46,7 @@ def run_ranked_fetch_stage(
         raise ValueError("concurrency must be at least 1")
     now = time.monotonic()
     deadline = now + timeout if deadline is None else min(deadline, now + timeout)
+    pool = executor or _SCRAPE_POOL
     results: list[dict | None] = [None] * len(hits)
     active: dict[Future, int] = {}
     next_index = 0
@@ -71,7 +84,7 @@ def run_ranked_fetch_stage(
     while next_index < len(hits) or active:
         while next_index < len(hits) and len(active) < concurrency:
             had_budget = deadline - time.monotonic() > 0
-            future = _SCRAPE_POOL.submit_before(deadline, fetch_hit, hits[next_index])
+            future = pool.submit_before(deadline, fetch_hit, hits[next_index])
             # Only the latest admission attempt decides why the remaining hits
             # never ran: no free slot while time remained, or plain timeout.
             saturated = future is None and had_budget
@@ -100,7 +113,7 @@ def run_ranked_fetch_stage(
         else:
             # Free the slot for later requests instead of holding it until the
             # abandoned fetch eventually returns.
-            _SCRAPE_POOL.abandon(future)
+            pool.abandon(future)
 
     def missing_row(index: int, hit: dict) -> dict:
         if saturated and index >= next_index:

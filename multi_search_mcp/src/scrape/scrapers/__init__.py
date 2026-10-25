@@ -19,3 +19,22 @@ def _safe_http_url(url: str) -> str | None:
     if parts.scheme not in ("http", "https") or not parts.netloc:
         return None
     return url
+
+
+def error_fields(*, kind: str = "", origin: str = "") -> dict:
+    """Return a scraper error row's classification metadata.
+
+    The tree is migrating to the ``kind``/``origin`` taxonomy owned by
+    ``support.models`` while the current key-state classifier still reads
+    ``error_type``/``error_origin``. Scrapers emit both spellings until that
+    move lands, so key health is classified correctly either way.
+    """
+    fields = {}
+    if kind:
+        fields["kind"] = kind
+        fields["error_type"] = kind
+    if origin:
+        fields["origin"] = origin
+        fields["error_origin"] = origin
+    return fields
+
