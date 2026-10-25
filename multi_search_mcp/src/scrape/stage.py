@@ -66,7 +66,10 @@ def run_ranked_fetch_stage(
         if remaining <= 0:
             return timeout_row(hit)
         result = fetch(hit, remaining)
-        if time.monotonic() >= deadline:
+        # Work that finished past the deadline still counts when it produced a
+        # body: discarding an acquired page would turn a slow-but-successful
+        # fetch into an error row and lose content the caller could have used.
+        if time.monotonic() >= deadline and not (isinstance(result, dict) and result.get("body")):
             return timeout_row(hit)
         if not isinstance(result, dict) or not result:
             return error_row(hit, "empty or invalid fetch result")

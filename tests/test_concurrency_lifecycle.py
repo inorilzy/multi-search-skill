@@ -79,6 +79,30 @@ class BoundedDaemonExecutorTests(unittest.TestCase):
             release.set()
             pool.shutdown(wait=True, cancel_futures=True)
 
+    def test_publishing_a_result_never_leaves_the_pool_looking_busy(self):
+        """A caller that sees a finished task can always admit the next one.
+
+        The worker used to publish the future result *before* returning its
+        admission slot, so a burst of ranked fetches occasionally saw every
+        permit taken by work that had already finished and reported a spurious
+        "capacity exhausted".
+        """
+        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-admit-after-result")
+        try:
+            for _ in range(200):
+                future = pool.submit_nowait(lambda: "done")
+                self.assertIsNotNone(future)
+                self.assertEqual(future.result(timeout=2), "done")
+                # Observed completion must imply the slot is available again.
+                following = pool.submit_nowait(lambda: "next")
+                self.assertIsNotNone(
+                    following,
+                    "a completed task still held its admission slot",
+                )
+                self.assertEqual(following.result(timeout=2), "next")
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+
     def test_success_releases_argument_closure_and_result_references(self):
         pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-reference-success")
         try:

@@ -200,6 +200,43 @@ class RankedFetchStageTests(unittest.TestCase):
         self.pool.shutdown(wait=True, cancel_futures=True)
         fetch.assert_not_called()
 
+    def test_body_acquired_after_the_deadline_is_kept_instead_of_reported_as_timeout(self):
+        """A slow platform must not turn a finished fetch into a lost body.
+
+        The Windows CI runner took just over the 1s scrape budget inside the
+        X/Twitter reply fixture; the row was replaced with "fetch timeout"
+        although the body had already been acquired.
+        """
+        clock = _Clock()
+        deadline = clock.now + 1
+
+        def slow_fetch(_hit, _remaining):
+            clock.now = deadline + 0.5  # the body arrives past the batch budget
+            return {"source_id": "source-0", "body": "acquired body"}
+
+        fetch = mock.Mock(side_effect=slow_fetch)
+
+        stage_patch, pool_patch = clock.patched()
+        with stage_patch, pool_patch:
+            result = stage.run_ranked_fetch_stage(
+                _hits(1), fetch=fetch, timeout=1, deadline=deadline,
+            )
+        self.assertEqual(result["errors"], [], "an acquired body is not a timeout")
+        self.assertEqual(result["results"][0].get("body"), "acquired body")
+
+    def test_fetch_without_a_body_past_the_deadline_is_still_a_timeout(self):
+        clock = _Clock()
+        fetch = mock.Mock(return_value={"source_id": "source-0"})
+        deadline = clock.now + 1
+        clock.now = deadline + 0.5
+        stage_patch, pool_patch = clock.patched()
+        with stage_patch, pool_patch:
+            result = stage.run_ranked_fetch_stage(
+                _hits(1), fetch=fetch, timeout=1, deadline=deadline,
+            )
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("timeout", result["errors"][0]["error"])
+
     def test_invalid_concurrency_is_explicit(self):
         with self.assertRaisesRegex(ValueError, "concurrency"):
             stage.run_ranked_fetch_stage(_hits(1), fetch=mock.Mock(), timeout=1, concurrency=0)

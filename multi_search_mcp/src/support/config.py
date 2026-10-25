@@ -35,6 +35,22 @@ def dev_config_path() -> Path | None:
 CONFIG_DB_ENV = "MULTI_SEARCH_CONFIG_DB"
 
 
+def _home_from_environment(env) -> Path | None:
+    """Resolve the same env home the desktop uses without consulting ``Path.home()``.
+
+    ``Path.home()`` consults ``os.path.expanduser('~')`` directly, so a cleared
+    environment makes it raise on Windows before the config code can fall back.
+    Keep ``USERPROFILE`` ahead of ``HOME`` to match the desktop/Rust contract.
+    """
+    home = env.get("USERPROFILE") or env.get("HOME")
+    if home:
+        return Path(home)
+    drive, tail = env.get("HOMEDRIVE"), env.get("HOMEPATH")
+    if drive and tail:
+        return Path(drive + tail)
+    return None
+
+
 def config_db_path(environ=None) -> Path:
     """Locate the desktop-owned ``config.sqlite`` (settings + DPAPI credentials).
 
@@ -46,8 +62,7 @@ def config_db_path(environ=None) -> Path:
     selected = env.get(CONFIG_DB_ENV)
     if selected:
         return Path(selected)
-    home = env.get("USERPROFILE") or env.get("HOME")
-    return (Path(home) if home else Path.home()) / ".multi-search" / "config.sqlite"
+    return (_home_from_environment(env) or Path.home()) / ".multi-search" / "config.sqlite"
 
 
 def _sqlite_settings_state() -> tuple[Path, str]:
