@@ -47,6 +47,10 @@ def make_app(root: Path, version: str = "0.4.0", *, executable: bool = True) -> 
     return app
 
 
+@unittest.skipUnless(
+    sys.platform == "darwin",
+    "verifies a macOS .app bundle: POSIX execute bits and a real shell launcher",
+)
 class ShippedBundleTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
