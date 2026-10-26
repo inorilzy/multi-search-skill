@@ -70,46 +70,35 @@ class CliRerankFlagTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         self.assertEqual(captured["kwargs"], {})
 
-    def test_rerank_profile_is_forwarded(self):
-        code, _stdout, stderr, captured = self._captured(
-            ["search", "q", "--rerank", "--rerank-profile", "jev_default"],
-        )
+    def test_endpoint_flags_are_forwarded(self):
+        code, _stdout, stderr, captured = self._captured([
+            "search", "q", "--rerank",
+            "--rerank-base-url", " http://127.0.0.1:3425/v1 ",
+            "--rerank-model", "group/jev",
+        ])
         self.assertEqual(code, 0, stderr)
         self.assertEqual(
             captured["request"].ranking,
-            {"mode": "rrf_model", "reranker_profile_id": "jev_default"},
+            {"mode": "rrf_model", "base_url": "http://127.0.0.1:3425/v1", "model": "group/jev"},
         )
 
-    def test_legacy_jev_profile_is_a_usage_error(self):
-        # "jev" was a CLI-only alias the desktop never accepted; the single
-        # authoritative id is core's "jev_default".
-        with mock.patch.object(cli, "run_search_web") as run:
-            code, _stdout, stderr = self.run_cli(
-                ["search", "q", "--rerank", "--rerank-profile", "jev"],
-            )
-        self.assertEqual(code, 2)
-        self.assertIn("unknown rerank profile", stderr)
-        self.assertIn("jev_default", stderr)
-        run.assert_not_called()
+    def test_endpoint_flags_without_rerank_are_a_usage_error(self):
+        for flags in (
+            ["--rerank-base-url", "http://h/v1"],
+            ["--rerank-model", "m"],
+        ):
+            with self.subTest(flags=flags), mock.patch.object(cli, "run_search_web") as run:
+                code, stdout, stderr = self.run_cli(["search", "q", *flags])
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertIn("require --rerank", stderr)
+                run.assert_not_called()
 
-    def test_profile_without_rerank_is_a_usage_error(self):
+    def test_no_api_key_flag_exists(self):
+        # A key on the command line would be visible to every local user via ps.
         with mock.patch.object(cli, "run_search_web") as run:
-            code, stdout, stderr = self.run_cli(
-                ["search", "q", "--rerank-profile", "jev_default"],
-            )
+            code, _stdout, _stderr = self.run_cli(["search", "q", "--rerank", "--rerank-api-key", "k"])
         self.assertEqual(code, 2)
-        self.assertEqual(stdout, "")
-        self.assertIn("--rerank-profile requires --rerank", stderr)
-        run.assert_not_called()
-
-    def test_unknown_profile_is_a_usage_error_not_a_fallback(self):
-        with mock.patch.object(cli, "run_search_web") as run:
-            code, stdout, stderr = self.run_cli(
-                ["search", "q", "--rerank", "--rerank-profile", "bogus"],
-            )
-        self.assertEqual(code, 2)
-        self.assertEqual(stdout, "")
-        self.assertIn("unknown rerank profile", stderr)
         run.assert_not_called()
 
     def test_invalid_ranking_config_fails_instead_of_falling_back(self):
@@ -265,10 +254,12 @@ class ToolRerankPassthroughTests(unittest.TestCase):
                 request=request, kwargs=kw,
             ) or _search_payload(),
         ):
-            tools.search_web_tool("q", rerank=True, rerank_profile="jev_default")
+            tools.search_web_tool(
+                "q", rerank=True, rerank_base_url="http://h/v1", rerank_model="m",
+            )
         self.assertEqual(
             captured["request"].ranking,
-            {"mode": "rrf_model", "reranker_profile_id": "jev_default"},
+            {"mode": "rrf_model", "base_url": "http://h/v1", "model": "m"},
         )
         # Core builds the adapter; the tool passes no reranker of its own.
         self.assertEqual(captured["kwargs"], {})
@@ -283,11 +274,11 @@ class ToolRerankPassthroughTests(unittest.TestCase):
         ):
             tools.multi_search_tool("q", rerank=True)
         self.assertEqual(captured["request"].ranking, {"mode": "rrf_model"})
-        self.assertIsNone(captured["request"].ranking.get("reranker_profile_id"))
         self.assertEqual(captured["kwargs"], {})
 
-    def test_tool_unknown_profile_is_invalid_request_from_core(self):
-        # The tool has no private profile list: core's registry rejects it.
+    def test_tool_rerank_without_endpoint_is_invalid_request_from_core(self):
+        # rrf_model with no base_url/model anywhere is a config error, not a
+        # silent fallback.
         from multi_search_mcp.src.search.search_runner import ProviderSpec
         from multi_search_mcp.src.service import run_search_web as real_run
 
@@ -300,12 +291,9 @@ class ToolRerankPassthroughTests(unittest.TestCase):
                 request, providers={"brave": provider}, keys={}, config={},
             ),
         ):
-            result = tools.search_web_tool(
-                "q", sources=["brave"], use_state=False,
-                rerank=True, rerank_profile="jev",
-            )
+            result = tools.search_web_tool("q", sources=["brave"], use_state=False, rerank=True)
         self.assertEqual(result["error_type"], "invalid_request")
-        self.assertIn("reranker_profile_id", result["error"])
+        self.assertIn("base_url", result["error"])
 
     def test_config_error_surfaces_as_invalid_request_not_fallback(self):
         with mock.patch.object(
@@ -321,8 +309,8 @@ class ToolRerankPassthroughTests(unittest.TestCase):
 class CliRerankEndToEndTests(unittest.TestCase):
     """Prove ``--rerank`` reaches a real adapter, not the ``reranker=None`` path.
 
-    With no ``TYPESAFE_API_KEY`` the adapter fails closed with ``auth``. If the
-    CLI forgot to build and pass a reranker, the core would report
+    With no ``SYSTEMONE_API_KEY`` (and no keys-file entry) the adapter fails
+    closed with ``auth``. If no adapter were built, the core would report
     ``unavailable`` instead — so the reason code itself proves the wiring.
     """
 
@@ -355,12 +343,18 @@ class CliRerankEndToEndTests(unittest.TestCase):
              mock.patch(
                  "multi_search_mcp.src.search.registry.build_provider_registry",
                  return_value=providers,
+             ), \
+             mock.patch(
+                 "multi_search_mcp.src.search.rerank.load_systemone_key",
+                 return_value="",
+             ), \
+             mock.patch(
+                 "socket.socket.connect", side_effect=AssertionError("network"),
              ):
-            import os
-            os.environ.pop("TYPESAFE_API_KEY", None)
             code = cli.main(
                 ["search", "q", "--source", "brave", "--no-fetch", "--no-state",
-                 "--rerank"],
+                 "--rerank", "--rerank-base-url", "http://gw.test/v1",
+                 "--rerank-model", "m"],
                 stdout=stdout, stderr=stderr,
             )
 

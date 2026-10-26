@@ -90,9 +90,9 @@ export const schemas = {
     keyed: 'b', search: 'b', cookie: 'b', aliases: 'sa',
   }),
   RouteConfig: schema({ label: 's', sources: 'sa', timeout: 'nn' }),
-  RankingInput: schema({ mode: 's', reranker_profile_id: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
-  RankingState: schema({ mode: 's', reranker_profile_id: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
-  RerankerProfileOption: schema({ id: 's', label: 's' }),
+  RankingInput: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
+  RankingState: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
+  RerankKeyStatus: schema({ source: 's', keys_file: 'sn', env_var: 's' }),
   ScrapeBackendOption: schema({ name: 's', label: 's' }),
   ScrapeMemoryRow: schema({
     site: 's', scraper: 's', success_count: 'n', failure_count: 'n',
@@ -119,7 +119,7 @@ export const schemas = {
     ranking_candidate_limit_min: 'n', ranking_candidate_limit_max: 'n',
     ranking_batch_size_min: 'n', ranking_batch_size_max: 'n',
     ranking_rerank_timeout_min: 'n', ranking_rerank_timeout_max: 'n',
-    reranker_profiles: 'RerankerProfileOption[]', status: 's', message: 's',
+    rerank_key: 'RerankKeyStatus', status: 's', message: 's',
   }),
 };
 

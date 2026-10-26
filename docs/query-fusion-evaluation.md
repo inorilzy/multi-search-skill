@@ -64,6 +64,6 @@ blind、private、review、报告及 Markdown 副本继承快照 TTL，过期加
 
 - `apply_rerank` 的 `reranker` 参数可注入；未来如需回放，可以把采集时冻结的模型分数包成注入式 reranker 喂回去，但当前快照格式不保存模型分，`replay`／`compare`／`prepare_review` 一律只回放纯 RRF 路径。
 - 在实现冻结分数回放之前，任何一次 `rrf_model` 响应的排序结果**不得**被当作已通过 `freeze_development` / `evaluate_heldout` 的评测资产，也不得据其报告 `heldout_thresholds_met`。
-- 已知未验项：Jev wire format（`jev-1.14.0`、`POST /v1/systemone`、0–4 分制）未经在线核实，开发机上 `docs.typesafe.ai` 解析到非公网地址；相关结论属待实测确认，不作为质量证据。
+- System One 协议已对本机网关实测可用，但「模型重排是否比 RRF 更好」尚未经过盲审评测，不作为质量证据。
 
 验证：`.venv/Scripts/python.exe -m unittest tests.test_query_evaluation -v`。

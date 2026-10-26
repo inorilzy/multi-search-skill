@@ -61,10 +61,11 @@ fn input(route: &str, timeout: u32, disabled: &[&str]) -> SettingsInput {
 fn ranking_input() -> RankingInput {
     RankingInput {
         mode: "rrf_model".into(),
-        reranker_profile_id: "jev_default".into(),
+        base_url: "http://127.0.0.1:3425/v1".into(),
+        model: "group/jev".into(),
         candidate_limit: 50,
         batch_size: 20,
-        rerank_timeout: 5,
+        rerank_timeout: 10,
     }
 }
 #[test]
@@ -917,19 +918,21 @@ fn unknown_disabled_entries_are_reported_and_kept_through_a_save() {
     );
 }
 
+const STORED_ON: &str = r#""mode":"rrf_model","base_url":"http://gw.test/v1","model":"m""#;
+
 #[test]
 fn omitted_ranking_preserves_the_existing_block() {
     let s = Sandbox::new("ranking-preserve");
     let e = s.env(&[]);
     fixture::save(&e, &input("default", 60, &[])).unwrap();
-    s.replace(
-        r#"{"type":"default","ranking":{"mode":"rrf_model","reranker_profile_id":"jev_default","candidate_limit":80,"batch_size":10,"rerank_timeout":9}}"#,
-    );
+    s.replace(&format!(
+        r#"{{"type":"default","ranking":{{{STORED_ON},"candidate_limit":80,"batch_size":10,"rerank_timeout":9}}}}"#
+    ));
     // ranking 为 None 时整块不动。
     fixture::save(&e, &input("default", 30, &[])).unwrap();
     assert_eq!(
         s.object()["ranking"],
-        serde_json::json!({"mode":"rrf_model","reranker_profile_id":"jev_default","candidate_limit":80,"batch_size":10,"rerank_timeout":9})
+        serde_json::json!({"mode":"rrf_model","base_url":"http://gw.test/v1","model":"m","candidate_limit":80,"batch_size":10,"rerank_timeout":9})
     );
 }
 
@@ -939,21 +942,17 @@ fn absent_ranking_reports_factory_defaults_without_flag() {
     let view = fixture::view(&s.env(&[]));
     assert!(!view.ranking_invalid);
     assert_eq!(view.ranking.mode, "rrf");
-    assert_eq!(view.ranking.reranker_profile_id, "jev_default");
+    assert_eq!(view.ranking.base_url, "");
+    assert_eq!(view.ranking.model, "");
     assert_eq!(view.ranking.candidate_limit, 50);
     assert_eq!(view.ranking.batch_size, 20);
-    assert_eq!(view.ranking.rerank_timeout, 5);
-    assert_eq!(
-        view.reranker_profiles
-            .iter()
-            .map(|profile| profile.id.as_str())
-            .collect::<Vec<_>>(),
-        ["jev_default"]
-    );
+    assert_eq!(view.ranking.rerank_timeout, 10);
     assert_eq!(
         (view.ranking_candidate_limit_min, view.ranking_candidate_limit_max),
         (10, 200)
     );
+    assert_eq!(view.rerank_key.source, "none");
+    assert_eq!(view.rerank_key.env_var, "SYSTEMONE_API_KEY");
 }
 
 #[test]
@@ -962,23 +961,27 @@ fn valid_ranking_writes_and_round_trips() {
     let e = s.env(&[]);
     fixture::save(&e, &input("default", 60, &[])).unwrap();
     let mut request = input("default", 60, &[]);
-    request.ranking = Some(ranking_input());
+    request.ranking = Some(RankingInput {
+        base_url: "  http://127.0.0.1:3425/v1/  ".into(),
+        model: " group/jev ".into(),
+        ..ranking_input()
+    });
     let view = fixture::save(&e, &request).unwrap();
     assert_eq!(
         s.object()["ranking"],
-        serde_json::json!({"mode":"rrf_model","reranker_profile_id":"jev_default","candidate_limit":50,"batch_size":20,"rerank_timeout":5})
+        serde_json::json!({"mode":"rrf_model","base_url":"http://127.0.0.1:3425/v1","model":"group/jev","candidate_limit":50,"batch_size":20,"rerank_timeout":10})
     );
     assert_eq!(view.ranking.mode, "rrf_model");
     assert!(!view.ranking_invalid);
-    // 再保存一次 rrf（关闭开关）也能正确落盘。
+    // 关闭开关时可以不填端点，但已填的端点照常保留。
     let mut off = input("default", 60, &[]);
-    off.ranking = Some(RankingInput {
-        mode: "rrf".into(),
-        ..ranking_input()
-    });
+    off.ranking = Some(RankingInput { mode: "rrf".into(), ..ranking_input() });
     let saved = fixture::save(&e, &off).unwrap();
     assert_eq!(saved.ranking.mode, "rrf");
-    assert_eq!(s.object()["ranking"]["mode"], "rrf");
+    assert_eq!(s.object()["ranking"]["base_url"], "http://127.0.0.1:3425/v1");
+    let mut blank_off = input("default", 60, &[]);
+    blank_off.ranking = Some(RankingInput { mode: "rrf".into(), base_url: String::new(), model: String::new(), ..ranking_input() });
+    assert!(fixture::save(&e, &blank_off).is_ok());
 }
 
 #[test]
@@ -989,7 +992,14 @@ fn invalid_ranking_input_is_rejected_without_writing() {
     let before = std::fs::read(s.db()).unwrap();
     let cases = [
         RankingInput { mode: "bm25".into(), ..ranking_input() },
-        RankingInput { reranker_profile_id: "other".into(), ..ranking_input() },
+        RankingInput { base_url: String::new(), ..ranking_input() },
+        RankingInput { model: String::new(), ..ranking_input() },
+        RankingInput { base_url: "ftp://h/v1".into(), ..ranking_input() },
+        RankingInput { base_url: "127.0.0.1:3425/v1".into(), ..ranking_input() },
+        RankingInput { base_url: "https://".into(), ..ranking_input() },
+        RankingInput { base_url: "https://h/v1?x=1".into(), ..ranking_input() },
+        RankingInput { base_url: "https://h/v1#f".into(), ..ranking_input() },
+        RankingInput { model: "x".repeat(201), ..ranking_input() },
         RankingInput { candidate_limit: 9, ..ranking_input() },
         RankingInput { candidate_limit: 201, ..ranking_input() },
         RankingInput { batch_size: 0, ..ranking_input() },
@@ -998,30 +1008,32 @@ fn invalid_ranking_input_is_rejected_without_writing() {
         RankingInput { rerank_timeout: 61, ..ranking_input() },
     ];
     for ranking in cases {
+        let label = format!("{ranking:?}");
         let request = SettingsInput { ranking: Some(ranking), ..input("default", 60, &[]) };
-        assert!(fixture::save(&e, &request).is_err());
+        assert!(fixture::save(&e, &request).is_err(), "{label} must be rejected");
         assert_eq!(std::fs::read(s.db()).unwrap(), before);
     }
     let mut bad_mode = input("default", 60, &[]);
     bad_mode.ranking = Some(RankingInput { mode: "bm25".into(), ..ranking_input() });
-    assert!(fixture::save(&e, &bad_mode)
-        .unwrap_err()
-        .contains("rrf 或 rrf_model"));
+    assert!(fixture::save(&e, &bad_mode).unwrap_err().contains("rrf 或 rrf_model"));
+    let mut no_endpoint = input("default", 60, &[]);
+    no_endpoint.ranking = Some(RankingInput { base_url: String::new(), ..ranking_input() });
+    assert!(fixture::save(&e, &no_endpoint).unwrap_err().contains("Base URL 与模型名"));
     let mut bad_limit = input("default", 60, &[]);
     bad_limit.ranking = Some(RankingInput { candidate_limit: 0, ..ranking_input() });
-    assert!(fixture::save(&e, &bad_limit)
-        .unwrap_err()
-        .contains("候选数必须在"));
+    assert!(fixture::save(&e, &bad_limit).unwrap_err().contains("候选数必须在"));
 }
 
 #[test]
-fn unknown_keys_inside_ranking_survive_a_save() {
+fn unknown_keys_inside_ranking_survive_a_save_and_the_legacy_profile_is_dropped() {
     let s = Sandbox::new("ranking-unknown-keys");
     let e = s.env(&[]);
     fixture::save(&e, &input("default", 60, &[])).unwrap();
     s.replace(
         r#"{"type":"default","ranking":{"mode":"rrf","reranker_profile_id":"jev_default","candidate_limit":50,"batch_size":20,"rerank_timeout":5,"future_key":{"x":1}}}"#,
     );
+    // An unreleased build's profile key is tolerated on read.
+    assert!(!fixture::view(&e).ranking_invalid);
     let mut request = input("default", 60, &[]);
     request.ranking = Some(RankingInput { candidate_limit: 66, ..ranking_input() });
     fixture::save(&e, &request).unwrap();
@@ -1029,6 +1041,7 @@ fn unknown_keys_inside_ranking_survive_a_save() {
     assert_eq!(block["candidate_limit"], 66);
     assert_eq!(block["mode"], "rrf_model");
     assert_eq!(block["future_key"], serde_json::json!({"x":1}));
+    assert!(block.get("reranker_profile_id").is_none());
 }
 
 #[test]
@@ -1037,9 +1050,13 @@ fn malformed_stored_ranking_is_flagged_and_can_be_repaired() {
     let e = s.env(&[]);
     fixture::save(&e, &input("default", 60, &[])).unwrap();
     for (index, body) in [
-        r#"{"type":"default","ranking":"nope"}"#,
-        r#"{"type":"default","ranking":{"mode":"magic","reranker_profile_id":"jev_default","candidate_limit":50,"batch_size":20,"rerank_timeout":5}}"#,
-        r#"{"type":"default","ranking":{"mode":"rrf_model","reranker_profile_id":"jev_default","candidate_limit":5,"batch_size":20,"rerank_timeout":5}}"#,
+        r#"{"type":"default","ranking":"nope"}"#.to_string(),
+        r#"{"type":"default","ranking":{"mode":"magic"}}"#.to_string(),
+        // Switched on with no endpoint: core would refuse it too.
+        r#"{"type":"default","ranking":{"mode":"rrf_model"}}"#.to_string(),
+        r#"{"type":"default","ranking":{"mode":"rrf","base_url":"ftp://x"}}"#.to_string(),
+        r#"{"type":"default","ranking":{"mode":"rrf","model":7}}"#.to_string(),
+        format!(r#"{{"type":"default","ranking":{{{STORED_ON},"candidate_limit":5}}}}"#),
     ]
     .into_iter()
     .enumerate()
@@ -1047,20 +1064,105 @@ fn malformed_stored_ranking_is_flagged_and_can_be_repaired() {
         let s = Sandbox::new(&format!("ranking-bad-stored-{index}"));
         let e = s.env(&[]);
         fixture::save(&e, &input("default", 60, &[])).unwrap();
-        s.replace(body);
+        s.replace(&body);
         let view = fixture::view(&e);
         assert_eq!(view.status, "ok");
         assert!(view.ranking_invalid, "{body} must be flagged");
         assert_eq!(view.ranking.mode, "rrf", "flagged blocks fall back to defaults");
     }
+    // 缺省键按 core 默认值理解，不算非法。
+    s.replace(&format!(r#"{{"type":"default","ranking":{{{STORED_ON}}}}}"#));
+    let view = fixture::view(&e);
+    assert!(!view.ranking_invalid);
+    assert_eq!(view.ranking.candidate_limit, 50);
     // 修复：一次合法写入清除标志。
-    s.replace(
-        r#"{"type":"default","ranking":{"mode":"magic","reranker_profile_id":"jev_default","candidate_limit":50,"batch_size":20,"rerank_timeout":5}}"#,
-    );
+    s.replace(r#"{"type":"default","ranking":{"mode":"magic"}}"#);
     assert!(fixture::view(&e).ranking_invalid);
     let mut request = input("default", 60, &[]);
     request.ranking = Some(ranking_input());
     let saved = fixture::save(&e, &request).unwrap();
     assert!(!saved.ranking_invalid);
     assert_eq!(saved.ranking.mode, "rrf_model");
+}
+
+fn keys_file(s: &Sandbox) -> PathBuf {
+    s.0.join(".search-keys.json")
+}
+
+#[test]
+fn systemone_key_goes_to_the_keys_file_never_to_settings() {
+    let s = Sandbox::new("rerank-key-write");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    std::fs::write(keys_file(&s), r#"{"brave":"b-key","tavily":["t1","t2"]}"#).unwrap();
+    let view = fixture::save_systemone_key(&e, "  sk-secret  ").unwrap();
+    assert_eq!(view.rerank_key.source, "keys_file");
+    let stored: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(keys_file(&s)).unwrap()).unwrap();
+    // Other providers' keys are untouched.
+    assert_eq!(stored, serde_json::json!({"brave":"b-key","tavily":["t1","t2"],"systemone":"sk-secret"}));
+    // The value never reaches the settings row or the view.
+    let settings = std::fs::read(s.db()).unwrap();
+    assert!(!String::from_utf8_lossy(&settings).contains("sk-secret"));
+    assert!(!serde_json::to_string(&view).unwrap().contains("sk-secret"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(keys_file(&s)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "keys file must be owner-only");
+    }
+    // Clearing removes only our entry.
+    let cleared = fixture::save_systemone_key(&e, "").unwrap();
+    assert_eq!(cleared.rerank_key.source, "none");
+    let stored: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(keys_file(&s)).unwrap()).unwrap();
+    assert_eq!(stored, serde_json::json!({"brave":"b-key","tavily":["t1","t2"]}));
+}
+
+#[test]
+fn systemone_key_tightens_a_world_readable_keys_file() {
+    let s = Sandbox::new("rerank-key-mode");
+    let e = s.env(&[]);
+    std::fs::write(keys_file(&s), "{}").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(keys_file(&s), std::fs::Permissions::from_mode(0o644)).unwrap();
+        fixture::save_systemone_key(&e, "k").unwrap();
+        let mode = std::fs::metadata(keys_file(&s)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+}
+
+#[test]
+fn a_corrupt_keys_file_is_never_overwritten() {
+    let s = Sandbox::new("rerank-key-corrupt");
+    let e = s.env(&[]);
+    std::fs::write(keys_file(&s), "{not json, but other keys live here").unwrap();
+    let error = fixture::save_systemone_key(&e, "k").unwrap_err();
+    assert!(error.contains("不是有效的 JSON"));
+    assert_eq!(std::fs::read_to_string(keys_file(&s)).unwrap(), "{not json, but other keys live here");
+    assert_eq!(fixture::rerank_key_status(&e).source, "unreadable");
+}
+
+#[test]
+fn key_status_prefers_the_environment_and_never_carries_the_value() {
+    let s = Sandbox::new("rerank-key-env");
+    std::fs::write(keys_file(&s), r#"{"systemone":"file-key"}"#).unwrap();
+    let file_only = fixture::rerank_key_status(&s.env(&[]));
+    assert_eq!(file_only.source, "keys_file");
+    let env = s.env(&[("SYSTEMONE_API_KEY", "env-key".into())]);
+    let status = fixture::rerank_key_status(&env);
+    assert_eq!(status.source, "env");
+    assert!(!serde_json::to_string(&status).unwrap().contains("key\""));
+    assert_eq!(status.keys_file.as_deref(), keys_file(&s).to_str());
+}
+
+#[test]
+fn invalid_key_input_is_rejected_and_clearing_an_absent_key_is_a_no_op() {
+    let s = Sandbox::new("rerank-key-invalid");
+    let e = s.env(&[]);
+    assert!(fixture::save_systemone_key(&e, "line\nbreak").is_err());
+    assert!(fixture::save_systemone_key(&e, &"x".repeat(5000)).is_err());
+    assert!(!keys_file(&s).exists());
+    fixture::save_systemone_key(&e, "").unwrap();
+    assert!(!keys_file(&s).exists(), "clearing nothing must not create the file");
 }

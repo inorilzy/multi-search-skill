@@ -14,6 +14,11 @@ from unittest import mock
 
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 
+BASE = "http://gw.test/v1"
+MODEL = "test-model"
+# An enabled ranking block: rrf_model always needs a System One base URL and model.
+ON = {"mode": "rrf_model", "base_url": BASE, "model": MODEL}
+
 
 def _rows(source, count):
     return [
@@ -80,21 +85,21 @@ class RerankPolicyTests(unittest.TestCase):
         self.assertFalse(RerankPolicy.from_config({}).enabled)
         self.assertFalse(RerankPolicy.from_config({"other": {}}).enabled)
         self.assertFalse(RerankPolicy.from_config({"ranking": {}}).enabled)
-        policy = RerankPolicy.from_config({"ranking": {"mode": "rrf_model"}})
+        policy = RerankPolicy.from_config({"ranking": dict(ON)})
         self.assertTrue(policy.enabled)
+        self.assertEqual((policy.base_url, policy.model), (BASE, MODEL))
 
     def test_request_override_wins_and_is_validated(self):
         from multi_search_mcp.src.search.rerank import RerankPolicy
         from multi_search_mcp.src.support.config import ConfigError
 
         policy = RerankPolicy.from_config(
-            {"ranking": {"mode": "rrf_model", "candidate_limit": 30}},
+            {"ranking": {**ON, "candidate_limit": 30}},
             {"candidate_limit": 12},
         )
         self.assertEqual(policy.candidate_limit, 12)
-        self.assertEqual(policy.profile_id, "jev_default")
-        policy = RerankPolicy.from_config({}, {"reranker_profile_id": "jev_default"})
-        self.assertEqual(policy.profile_id, "jev_default")
+        policy = RerankPolicy.from_config({"ranking": dict(ON)}, {"model": "other"})
+        self.assertEqual(policy.model, "other")
         with self.assertRaises(ConfigError):
             RerankPolicy.from_config({}, {"mode": "bogus"})
         with self.assertRaises(ConfigError):
@@ -120,7 +125,7 @@ class ApplyRerankTests(unittest.TestCase):
         # Everything not named here scores 0.5.
         reranker = _FakeReranker({rrf_order[0]: 0.9, rrf_order[2]: 1.0})
         # The tail beyond candidate_limit (slots 10, 11) is never sent.
-        policy = RerankPolicy(mode="rrf_model", candidate_limit=10, batch_size=20)
+        policy = RerankPolicy(mode="rrf_model", base_url=BASE, model=MODEL, candidate_limit=10, batch_size=20)
 
         reordered, meta = apply_rerank(
             hits, "query", reranker, policy=policy,
@@ -149,7 +154,7 @@ class ApplyRerankTests(unittest.TestCase):
         reranker = _FakeReranker({hit["source_id"]: 0.5 for hit in hits})
         apply_rerank(
             hits, "query", reranker,
-            policy=RerankPolicy(mode="rrf_model"), deadline=time.monotonic() + 5,
+            policy=RerankPolicy(mode="rrf_model", base_url=BASE, model=MODEL), deadline=time.monotonic() + 5,
         )
         self.assertEqual(len(reranker.calls), 1)
         for candidate in reranker.calls[0]:
@@ -167,7 +172,7 @@ class ApplyRerankTests(unittest.TestCase):
         reranker = _FakeReranker({hit["source_id"]: 0.5 for hit in hits})
         apply_rerank(
             hits, "query", reranker,
-            policy=RerankPolicy(mode="rrf_model", batch_size=2),
+            policy=RerankPolicy(mode="rrf_model", base_url=BASE, model=MODEL, batch_size=2),
             deadline=time.monotonic() + 5,
         )
         self.assertEqual([len(batch) for batch in reranker.calls], [2, 2, 1])
@@ -186,7 +191,7 @@ class ApplyRerankFallbackTests(unittest.TestCase):
         original = [hit["source_id"] for hit in hits]
         reordered, meta = apply_rerank(
             hits, "query", reranker,
-            policy=RerankPolicy(mode="rrf_model", batch_size=3),
+            policy=RerankPolicy(mode="rrf_model", base_url=BASE, model=MODEL, batch_size=3),
             deadline=time.monotonic() + budget,
         )
         self.assertEqual([hit["source_id"] for hit in reordered], original)
@@ -257,7 +262,7 @@ class ApplyRerankFallbackTests(unittest.TestCase):
         )
         reordered, meta = apply_rerank(
             hits, "query", _FakeReranker(),
-            policy=RerankPolicy(mode="rrf_model"),
+            policy=RerankPolicy(mode="rrf_model", base_url=BASE, model=MODEL),
             deadline=time.monotonic() - 1,
         )
         self.assertEqual(meta["fallback_reason"], "timeout")
@@ -282,7 +287,7 @@ class ApplyRerankFallbackTests(unittest.TestCase):
         reranker = _FakeReranker({hit["source_id"]: 0.0 for hit in scored})
         reordered, meta = apply_rerank(
             hits, "query", reranker,
-            policy=RerankPolicy(mode="rrf_model", candidate_limit=10),
+            policy=RerankPolicy(mode="rrf_model", base_url=BASE, model=MODEL, candidate_limit=10),
             deadline=time.monotonic() + 5,
         )
         self.assertEqual(meta["mode_used"], "rrf_model")
@@ -293,79 +298,135 @@ class ApplyRerankFallbackTests(unittest.TestCase):
             self.assertNotEqual(hit["relevance_score"], 0.0)
 
 
-class JevRerankerTests(unittest.TestCase):
-    def test_missing_api_key_fails_closed_as_auth(self):
-        from multi_search_mcp.src.search.rerank import JevReranker, RerankError
+def _answers(scores):
+    return {"answers": {
+        source_id: {"type": "score", "score": score, "confidence": 0.9}
+        for source_id, score in scores.items()
+    }}
 
-        with mock.patch.dict("os.environ", {}, clear=False):
-            import os
-            os.environ.pop(JevReranker.KEY_ENV, None)
-            with self.assertRaises(RerankError) as ctx:
-                JevReranker().score("q", [{"source_id": "s1"}], deadline=time.monotonic() + 5)
+
+class SystemOneRerankerTests(unittest.TestCase):
+    def _reranker(self, opener, **kwargs):
+        from multi_search_mcp.src.search.rerank import SystemOneReranker
+
+        kwargs.setdefault("api_key", "k")
+        return SystemOneReranker(BASE, MODEL, opener=opener, **kwargs)
+
+    def test_missing_api_key_fails_closed_as_auth(self):
+        from multi_search_mcp.src.search.rerank import RerankError
+
+        opener = mock.Mock(side_effect=AssertionError("no request without a key"))
+        reranker = self._reranker(opener, api_key=None, key_loader=lambda: "")
+        with self.assertRaises(RerankError) as ctx:
+            reranker.score("q", [{"source_id": "s1"}], deadline=time.monotonic() + 5)
         self.assertEqual(ctx.exception.reason, "auth")
+        opener.assert_not_called()
 
     def test_http_error_classification(self):
-        from multi_search_mcp.src.search.rerank import JevReranker, RerankError
+        from multi_search_mcp.src.search.rerank import RerankError
 
         def opener_for(code):
             def opener(_req, **_kw):
-                body = io.BytesIO(b"")
-                try:
-                    raise urllib.error.HTTPError("u", code, "m", {}, body)
-                finally:
-                    body.close()
+                raise urllib.error.HTTPError("u", code, "m", {}, io.BytesIO(b""))
             return opener
 
-        for code, reason in ((401, "auth"), (403, "auth"), (429, "rate_limit"), (500, "unavailable")):
+        for code, reason in (
+            (401, "auth"), (403, "auth"), (429, "rate_limit"),
+            (400, "invalid_response"), (500, "unavailable"), (503, "unavailable"),
+        ):
             with self.subTest(code=code):
-                reranker = JevReranker(api_key="k", opener=opener_for(code))
                 with self.assertRaises(RerankError) as ctx:
-                    reranker.score("q", [{"source_id": "s1"}], deadline=time.monotonic() + 5)
+                    self._reranker(opener_for(code)).score(
+                        "q", [{"source_id": "s1"}], deadline=time.monotonic() + 5,
+                    )
                 self.assertEqual(ctx.exception.reason, reason)
 
-    def test_grades_normalize_and_payload_names_single_candidates(self):
-        from multi_search_mcp.src.search.rerank import JevReranker
-
+    def test_system_one_wire_format(self):
         captured = {}
 
         def opener(req, **_kw):
+            captured["url"] = req.full_url
+            captured["auth"] = req.get_header("Authorization")
             captured["payload"] = json.loads(req.data.decode())
-            return io.BytesIO(json.dumps({
-                "scores": [{"id": "a", "grade": 4}, {"id": "b", "grade": 1}],
-            }).encode())
+            return io.BytesIO(json.dumps(_answers({"a": 4, "b": 1})).encode())
 
-        reranker = JevReranker(api_key="k", opener=opener)
-        scores = reranker.score(
-            "q", [{"source_id": "a"}, {"source_id": "b"}],
+        scores = self._reranker(opener).score(
+            "python sqlite cache",
+            [
+                {"source_id": "a", "url": "https://x/a", "title": "A", "content": "sa",
+                 "published_at": "2026-01-01", "rrf_score": 9, "provider_ranks": [1]},
+                {"source_id": "b", "url": "https://x/b", "title": "B", "content": "sb"},
+            ],
             deadline=time.monotonic() + 5,
         )
         self.assertEqual(scores, {"a": 1.0, "b": 0.25})
-        self.assertEqual(captured["payload"]["model"], "jev-1.14.0")
-        instructions = [q["instructions"] for q in captured["payload"]["questions"]]
-        self.assertIn("仅评价候选 a", instructions[0])
-        self.assertIn("仅评价候选 b", instructions[1])
+        self.assertEqual(captured["url"], BASE + "/systemone")
+        self.assertEqual(captured["auth"], "Bearer k")
+        payload = captured["payload"]
+        self.assertEqual(payload["model"], MODEL)
+        self.assertEqual(payload["state"]["query"], "python sqlite cache")
+        self.assertEqual(payload["state"]["candidates"]["a"], {
+            "title": "A", "url": "https://x/a", "snippet": "sa", "published_at": "2026-01-01",
+        })
+        self.assertNotIn("published_at", payload["state"]["candidates"]["b"])
+        # Ranking signals never reach the model.
+        self.assertNotIn("rrf_score", json.dumps(payload))
+        self.assertEqual(set(payload["questions"]), {"a", "b"})
+        for source_id, question in payload["questions"].items():
+            self.assertEqual(question["type"], "score")
+            self.assertEqual(len(question["criteria"]), 5)
+            # The question key is not shown to the model: instructions name it.
+            self.assertIn(f"仅评价候选 {source_id}", question["instructions"])
+
+    def test_base_url_trailing_slash_is_normalized(self):
+        from multi_search_mcp.src.search.rerank import SystemOneReranker
+
+        self.assertEqual(
+            SystemOneReranker(BASE + "/", MODEL).endpoint, BASE + "/systemone",
+        )
 
     def test_defensive_response_parsing(self):
-        from multi_search_mcp.src.search.rerank import JevReranker, RerankError
-
-        def reranker_for(body):
-            return JevReranker(
-                api_key="k",
-                opener=lambda _req, **_kw: io.BytesIO(json.dumps(body).encode()),
-            )
+        from multi_search_mcp.src.search.rerank import RerankError
 
         candidates = [{"source_id": "a"}, {"source_id": "b"}]
         for body in (
             {},
-            {"scores": [{"id": "a", "grade": 1}]},                # missing id
-            {"scores": [{"id": "a", "grade": 1}, {"id": "z", "grade": 1}]},  # unknown id
-            {"scores": [{"id": "a", "grade": 5}, {"id": "b", "grade": 1}]},  # out of range
-            {"scores": [{"id": "a", "grade": float("nan")}, {"id": "b", "grade": 1}]},
+            {"answers": []},
+            _answers({"a": 1}),                       # missing id
+            _answers({"a": 1, "b": 1, "z": 1}),       # unknown id
+            _answers({"a": 4.1, "b": 1}),             # out of range
+            _answers({"a": -0.1, "b": 1}),
+            _answers({"a": float("nan"), "b": 1}),
+            _answers({"a": True, "b": 1}),
+            {"answers": {"a": {"score": "3"}, "b": {"score": 1}}},
+            {"answers": {"a": None, "b": {"score": 1}}},
         ):
             with self.subTest(body=body):
+                opener = lambda _req, body=body, **_kw: io.BytesIO(json.dumps(body).encode())
                 with self.assertRaises(RerankError) as ctx:
-                    reranker_for(body).score("q", candidates, deadline=time.monotonic() + 5)
+                    self._reranker(opener).score("q", candidates, deadline=time.monotonic() + 5)
                 self.assertEqual(ctx.exception.reason, "invalid_response")
+
+    def test_key_env_wins_over_keys_file(self):
+        import tempfile
+        from pathlib import Path
+        from multi_search_mcp.src.search.rerank import load_systemone_key
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "keys.json"
+            path.write_text(json.dumps({"systemone": " file-key ", "brave": "b"}))
+            self.assertEqual(load_systemone_key({}, path), "file-key")
+            self.assertEqual(load_systemone_key({"SYSTEMONE_API_KEY": "env"}, path), "env")
+            path.write_text("{not json")
+            self.assertEqual(load_systemone_key({}, path), "")
+            self.assertEqual(load_systemone_key({}, Path(tmp) / "absent.json"), "")
+
+    def test_redirect_is_never_followed(self):
+        # The bearer key must reach only the configured endpoint.
+        from multi_search_mcp.src.search import rerank
+
+        handler = rerank._NoRedirect()
+        self.assertIsNone(handler.redirect_request(None, None, 302, "", {}, "http://evil/"))
 
 
 class CandidatesIntegrationTests(unittest.TestCase):
@@ -410,7 +471,7 @@ class CandidatesIntegrationTests(unittest.TestCase):
             for candidate in batch
         ])
         response = self._run(
-            ranking={"mode": "rrf_model"}, reranker=reranker,
+            ranking=dict(ON), reranker=reranker,
         )
         self.assertEqual(response["mode_used"], "rrf_model")
         self.assertEqual(len(response["results"]), 15)
@@ -429,7 +490,7 @@ class CandidatesIntegrationTests(unittest.TestCase):
 
         baseline = self._run()
         response = self._run(
-            ranking={"mode": "rrf_model"},
+            ranking=dict(ON),
             reranker=_FakeReranker(error=RerankError("auth")),
         )
         self.assertEqual(response["mode_used"], "rrf")
@@ -465,7 +526,7 @@ class CandidatesIntegrationTests(unittest.TestCase):
             response = run_search_web(
                 SearchWebRequest(
                     query="q", sources=["brave", "tavily"], count=30,
-                    use_state=False, ranking={"mode": "rrf_model"},
+                    use_state=False, ranking=dict(ON),
                 ),
                 providers=_providers(
                     brave=_rows("brave", 30), tavily=_rows("tavily", 30),
@@ -502,12 +563,11 @@ class FusionInvariantTests(unittest.TestCase):
         self.assertEqual(results[0]["canonical_url"], "https://example.com/brave-1")
 
 
-class _FakeJevOpener:
-    """Stands in for the HTTP transport of the real ``JevReranker``.
+class _FakeSystemOneOpener:
+    """Stands in for the HTTP transport of the real ``SystemOneReranker``.
 
-    It answers every question with grade 4 for the first id it sees and
-    grade 1 for the rest, and records each request so tests can prove the
-    adapter really sent one.
+    It grades the last question it sees 4 and every other one 1, and records
+    each request so tests can prove the adapter really sent one.
     """
 
     def __init__(self):
@@ -520,29 +580,30 @@ class _FakeJevOpener:
             "auth": request.get_header("Authorization"),
             "payload": payload,
         })
-        ids = [question["id"] for question in payload["questions"]]
-        grades = [
-            {"id": source_id, "grade": 4 if index == len(ids) - 1 else 1}
+        ids = list(payload["questions"])
+        return io.BytesIO(json.dumps(_answers({
+            source_id: 4 if index == len(ids) - 1 else 1
             for index, source_id in enumerate(ids)
-        ]
-        return io.BytesIO(json.dumps({"scores": grades}).encode("utf-8"))
+        })).encode("utf-8"))
 
 
 class CoreAdapterConstructionTests(unittest.TestCase):
-    """F1: core builds the adapter itself from the merged policy."""
+    """Core builds the System One adapter itself from the merged policy."""
 
-    def _run(self, *, ranking=None, config=None, factory=None):
+    def _run(self, *, ranking=None, config=None, opener=None, key="test-key", builder=None):
         from multi_search_mcp.src.search import rerank
         from multi_search_mcp.src.service import (
             SearchWebRequest, run_search_candidates,
         )
 
-        registry = (
-            {rerank.DEFAULT_RERANKER_PROFILE: factory}
-            if factory is not None else dict(rerank.RERANKER_PROFILES)
-        )
-        with mock.patch.dict(rerank.RERANKER_PROFILES, registry, clear=True):
-            return run_search_candidates(
+        real = rerank.SystemOneReranker
+
+        def build(policy):
+            return real(policy.base_url, policy.model, opener=opener, key_loader=lambda: key)
+
+        with mock.patch("multi_search_mcp.src.search.candidates.build_reranker",
+                        side_effect=builder or build) as built:
+            response = run_search_candidates(
                 SearchWebRequest(
                     query="q", sources=["brave"], count=12,
                     use_state=False, ranking=ranking,
@@ -550,19 +611,15 @@ class CoreAdapterConstructionTests(unittest.TestCase):
                 providers=_providers(brave=_rows("brave", 12)),
                 keys={}, config=config or {},
             )
+        return response, built
 
     def test_rrf_model_without_injection_calls_the_real_adapter(self):
-        from multi_search_mcp.src.search.rerank import JevReranker
-
-        opener = _FakeJevOpener()
-        with mock.patch.dict("os.environ", {JevReranker.KEY_ENV: "test-key"}):
-            response = self._run(
-                ranking={"mode": "rrf_model"},
-                factory=lambda: JevReranker(opener=opener),
-            )
+        opener = _FakeSystemOneOpener()
+        response, _built = self._run(ranking=dict(ON), opener=opener)
         self.assertEqual(len(opener.requests), 1)
         self.assertEqual(opener.requests[0]["auth"], "Bearer test-key")
-        self.assertTrue(opener.requests[0]["url"].endswith("/v1/systemone"))
+        self.assertEqual(opener.requests[0]["url"], BASE + "/systemone")
+        self.assertEqual(opener.requests[0]["payload"]["model"], MODEL)
         self.assertEqual(response["mode_requested"], "rrf_model")
         self.assertEqual(response["mode_used"], "rrf_model")
         self.assertIsNone(response["fallback_reason"])
@@ -574,14 +631,8 @@ class CoreAdapterConstructionTests(unittest.TestCase):
         self.assertEqual(response["results"][1]["relevance_score"], 0.25)
 
     def test_rrf_model_without_key_falls_back_auth(self):
-        from multi_search_mcp.src.search.rerank import JevReranker
-
-        opener = _FakeJevOpener()
-        with mock.patch.dict("os.environ", {JevReranker.KEY_ENV: ""}):
-            response = self._run(
-                ranking={"mode": "rrf_model"},
-                factory=lambda: JevReranker(opener=opener),
-            )
+        opener = _FakeSystemOneOpener()
+        response, _built = self._run(ranking=dict(ON), opener=opener, key="")
         self.assertEqual(opener.requests, [])
         self.assertEqual(response["mode_used"], "rrf")
         # "auth" proves the adapter ran; "unavailable" would mean no adapter.
@@ -591,28 +642,23 @@ class CoreAdapterConstructionTests(unittest.TestCase):
     def test_config_file_only_switch_still_reranks(self):
         # The desktop toggle writes only the config file; the request carries
         # no override. Core must still build and call the adapter.
-        from multi_search_mcp.src.search.rerank import JevReranker
-
-        opener = _FakeJevOpener()
-        with mock.patch.dict("os.environ", {JevReranker.KEY_ENV: "test-key"}):
-            response = self._run(
-                ranking=None,
-                config={"ranking": {
-                    "mode": "rrf_model", "reranker_profile_id": "jev_default",
-                    "candidate_limit": 50, "batch_size": 20, "rerank_timeout": 5,
-                }},
-                factory=lambda: JevReranker(opener=opener),
-            )
+        opener = _FakeSystemOneOpener()
+        response, built = self._run(
+            ranking=None,
+            config={"ranking": {**ON, "candidate_limit": 50, "batch_size": 20, "rerank_timeout": 5}},
+            opener=opener,
+        )
         self.assertEqual(len(opener.requests), 1)
         self.assertEqual(response["mode_used"], "rrf_model")
+        policy = built.call_args.args[0]
+        self.assertEqual((policy.base_url, policy.model), (BASE, MODEL))
 
     def test_default_rrf_never_builds_reads_key_or_networks(self):
-        from multi_search_mcp.src.search.rerank import JevReranker
+        from multi_search_mcp.src.search.rerank import SystemOneReranker
 
-        factory = mock.Mock(side_effect=AssertionError("must not construct"))
-        # The key is only ever read inside JevReranker.score; trap it too.
+        builder = mock.Mock(side_effect=AssertionError("must not construct"))
         with mock.patch.object(
-            JevReranker, "score", side_effect=AssertionError("key read"),
+            SystemOneReranker, "score", side_effect=AssertionError("key read"),
         ) as score, mock.patch(
             "socket.socket.connect", side_effect=AssertionError("network"),
         ) as connect:
@@ -620,92 +666,102 @@ class CoreAdapterConstructionTests(unittest.TestCase):
                 (None, {}),
                 ({"mode": "rrf"}, {}),
                 (None, {"ranking": {"mode": "rrf"}}),
+                # A configured but switched-off endpoint stays untouched.
+                (None, {"ranking": {**ON, "mode": "rrf"}}),
             ):
                 with self.subTest(ranking=ranking, config=config):
-                    response = self._run(
-                        ranking=ranking, config=config, factory=factory,
-                    )
+                    response, _built = self._run(ranking=ranking, config=config, builder=builder)
                     self.assertEqual(response["mode_used"], "rrf")
                     self.assertIsNone(response["fallback_reason"])
-        factory.assert_not_called()
+        builder.assert_not_called()
         score.assert_not_called()
         connect.assert_not_called()
 
-    def test_injected_reranker_takes_precedence_over_registry(self):
-        from multi_search_mcp.src.search import rerank
+    def test_injected_reranker_takes_precedence(self):
         from multi_search_mcp.src.service import (
             SearchWebRequest, run_search_candidates,
         )
 
-        factory = mock.Mock(side_effect=AssertionError("must not construct"))
         fake = _FakeReranker()
-        with mock.patch.dict(
-            rerank.RERANKER_PROFILES,
-            {rerank.DEFAULT_RERANKER_PROFILE: factory}, clear=True,
-        ):
+        with mock.patch(
+            "multi_search_mcp.src.search.candidates.build_reranker",
+            side_effect=AssertionError("must not construct"),
+        ) as built:
             response = run_search_candidates(
                 SearchWebRequest(
                     query="q", sources=["brave"], count=12, use_state=False,
-                    ranking={"mode": "rrf_model"},
+                    ranking=dict(ON),
                 ),
                 providers=_providers(brave=_rows("brave", 12)),
                 keys={}, config={}, reranker=fake,
             )
-        factory.assert_not_called()
+        built.assert_not_called()
         self.assertTrue(fake.calls)
         self.assertEqual(response["mode_used"], "rrf_model")
 
-    def test_build_reranker_uses_the_registry(self):
+    def test_build_reranker_targets_the_configured_endpoint(self):
         from multi_search_mcp.src.search.rerank import (
-            JevReranker, RERANKER_PROFILES, build_reranker,
+            RerankPolicy, SystemOneReranker, build_reranker,
         )
-        from multi_search_mcp.src.support.config import ConfigError
 
-        self.assertEqual(set(RERANKER_PROFILES), {"jev_default"})
-        self.assertIsInstance(build_reranker("jev_default"), JevReranker)
-        for bad in ("jev", "bogus", ""):
-            with self.subTest(bad=bad), self.assertRaises(ConfigError):
-                build_reranker(bad)
+        reranker = build_reranker(RerankPolicy(**ON))
+        self.assertIsInstance(reranker, SystemOneReranker)
+        self.assertEqual(reranker.endpoint, BASE + "/systemone")
 
 
-class ProfileIdentityTests(unittest.TestCase):
-    """F2: one authoritative profile id, shared with the desktop editor."""
+class EndpointConfigTests(unittest.TestCase):
+    """base_url / model are required to switch on, and validated."""
 
-    def test_core_accepts_jev_default_and_rejects_others(self):
+    def test_enabled_without_endpoint_is_a_config_error(self):
         from multi_search_mcp.src.search.rerank import RerankPolicy
         from multi_search_mcp.src.support.config import ConfigError
 
-        self.assertEqual(RerankPolicy().profile_id, "jev_default")
-        policy = RerankPolicy.from_config(
-            {"ranking": {"mode": "rrf_model", "reranker_profile_id": "jev_default"}},
-        )
-        self.assertEqual(policy.profile_id, "jev_default")
-        for bad in ("jev", "JEV_DEFAULT", "bogus", "", None, 7):
+        for ranking in (
+            {"mode": "rrf_model"},
+            {"mode": "rrf_model", "base_url": BASE},
+            {"mode": "rrf_model", "model": MODEL},
+        ):
+            with self.subTest(ranking=ranking), self.assertRaises(ConfigError):
+                RerankPolicy.from_config({"ranking": ranking})
+
+    def test_base_url_and_model_validation(self):
+        from multi_search_mcp.src.search.rerank import RerankPolicy
+        from multi_search_mcp.src.support.config import ConfigError
+
+        for good in ("http://127.0.0.1:3425/v1", "https://api.example.com/v1", "https://h"):
+            with self.subTest(good=good):
+                RerankPolicy.from_config({}, {**ON, "base_url": good})
+        for bad in ("ftp://h/v1", "127.0.0.1:3425/v1", "https://", "https://h/v1?x=1",
+                    "https://h/v1#f", " https://h/v1", 7, None):
             with self.subTest(bad=bad), self.assertRaises(ConfigError):
-                RerankPolicy.from_config({}, {"reranker_profile_id": bad})
+                RerankPolicy.from_config({}, {**ON, "base_url": bad})
+        for bad in (" m", "m ", 7, None, "x" * 201):
+            with self.subTest(bad=bad), self.assertRaises(ConfigError):
+                RerankPolicy.from_config({}, {**ON, "model": bad})
 
-    def test_cli_unknown_profile_exits_2(self):
-        import multi_search_mcp.cli as cli
+    def test_api_key_never_lives_in_settings(self):
+        from multi_search_mcp.src.search.rerank import RerankPolicy
+        from multi_search_mcp.src.support.config import ConfigError
 
-        for bad in ("jev", "bogus"):
-            with self.subTest(bad=bad), \
-                 mock.patch.object(cli, "run_search_web") as run:
-                stdout, stderr = io.StringIO(), io.StringIO()
-                code = cli.main(
-                    ["search", "q", "--rerank", "--rerank-profile", bad],
-                    stdout=stdout, stderr=stderr,
-                )
-                self.assertEqual(code, 2)
-                self.assertIn("unknown rerank profile", stderr.getvalue())
-                run.assert_not_called()
+        for key in ("api_key", "key", "token"):
+            with self.subTest(key=key), self.assertRaises(ConfigError):
+                RerankPolicy.from_config({"ranking": {**ON, key: "secret"}})
 
-    def test_cli_has_no_private_profile_list(self):
+    def test_legacy_profile_key_is_ignored_not_fatal(self):
+        # An unreleased build wrote reranker_profile_id; it must not break search.
+        from multi_search_mcp.src.search.rerank import RerankPolicy
+
+        policy = RerankPolicy.from_config({"ranking": {"mode": "rrf", "reranker_profile_id": "jev_default"}})
+        self.assertFalse(policy.enabled)
+
+    def test_cli_has_no_profile_surface(self):
         import multi_search_mcp.cli as cli
         import multi_search_mcp.tools as tools
+        import inspect
 
-        self.assertFalse(hasattr(cli, "KNOWN_RERANK_PROFILES"))
         self.assertFalse(hasattr(cli, "_reranker_for"))
         self.assertFalse(hasattr(tools, "_reranker_for"))
+        self.assertNotIn("rerank_profile", inspect.signature(tools.search_web_tool).parameters)
 
 
 # Mirrors desktop/src-tauri/src/settings.rs RANKING_*_MIN/MAX. If either side
@@ -733,7 +789,7 @@ class NumericBoundsTests(unittest.TestCase):
         for key, cases in self.CASES.items():
             for value, accepted in cases.items():
                 with self.subTest(key=key, value=value):
-                    config = {"ranking": {"mode": "rrf_model", key: value}}
+                    config = {"ranking": {**ON, key: value}}
                     if accepted:
                         policy = RerankPolicy.from_config(config)
                         self.assertEqual(getattr(policy, key), value)

@@ -24,7 +24,7 @@
 
 **重排（Rerank）**：在两级 RRF 融合之后、正文抓取之前，用可选的外部模型给候选打相关性分数（`relevance_score`，[0,1]）并重新排序；默认关闭，排序完全由 RRF 决定且不产生任何模型调用。
 
-**重排配置（Rerank profile）**：一个预置的重排模型适配标识，写在 `ranking.reranker_profile_id`；默认且 v1 唯一的取值是 `jev_default`；core 的 profile 注册表是唯一权威来源，新增 profile 需在 core 注册，并同步桌面端设置页的 profile 白名单。未注册的取值是显式错误，不会静默回退。
+**重排端点（Rerank endpoint）**：打分模型所在的 System One 服务，由 `ranking.base_url` 与 `ranking.model` 指定，请求发往 `{base_url}/systemone`；开启重排时两者都必填。API 密钥不属于设置，保存在 `~/.search-keys.json` 的 `systemone` 条目，环境变量 `SYSTEMONE_API_KEY` 优先。
 
 **重排回退（Rerank fallback）**：模型阶段出现任何失败（缺 key、超时、限流、鉴权或响应非法）时整体放弃重排，保留完整 RRF 顺序，响应标记 `mode_used="rrf"` 与无凭据的 `fallback_reason`，所有 `relevance_score` 为 `null`。
 

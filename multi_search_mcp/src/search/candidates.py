@@ -200,7 +200,7 @@ def run_search_candidates(
         # config — reranks without having to build anything.  An injected
         # reranker (tests, offline replay) takes precedence.
         if reranker is None:
-            reranker = build_reranker(rerank_policy.profile_id)
+            reranker = build_reranker(rerank_policy)
         hits, rerank_meta = apply_rerank(
             hits, request.query, reranker, policy=rerank_policy,
             deadline=time.monotonic() + rerank_policy.rerank_timeout,

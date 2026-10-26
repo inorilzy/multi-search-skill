@@ -75,7 +75,7 @@ macro_rules! for_each_contract_type {
             contract::RouteConfig,
             contract::RankingInput,
             contract::RankingState,
-            contract::RerankerProfileOption,
+            contract::RerankKeyStatus,
             contract::ScrapeBackendOption,
             contract::ScrapeMemoryRow,
             contract::ScrapeMemoryView,

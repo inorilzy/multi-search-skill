@@ -33,42 +33,65 @@ pub const TIMEOUT_MAX: u32 = 90;
 pub const SCRAPE_BACKENDS: &[&str] = &["jina", "exa", "tavily", "firecrawl"];
 
 /// 模型重排的可编辑边界（与 core 的 `ranking` 配置键一致）。
-/// mode 只允许 "rrf" / "rrf_model"；profile 见 RERANKER_PROFILES。
+/// mode 只允许 "rrf" / "rrf_model"；开启时必须同时配置 System One 的 base_url 与 model。
 pub const RANKING_MODES: &[&str] = &["rrf", "rrf_model"];
-pub const RERANKER_PROFILES: &[&str] = &["jev_default"];
 pub const RANKING_CANDIDATE_LIMIT_MIN: u32 = 10;
 pub const RANKING_CANDIDATE_LIMIT_MAX: u32 = 200;
 pub const RANKING_BATCH_SIZE_MIN: u32 = 1;
 pub const RANKING_BATCH_SIZE_MAX: u32 = 50;
 pub const RANKING_RERANK_TIMEOUT_MIN: u32 = 1;
 pub const RANKING_RERANK_TIMEOUT_MAX: u32 = 60;
+/// 与 core 的 `BASE_URL_MAX` / `MODEL_MAX` 一致（按字符计）。
+pub const RANKING_BASE_URL_MAX: usize = 2048;
+pub const RANKING_MODEL_MAX: usize = 200;
+/// `~/.search-keys.json` 里 System One 密钥的条目名；与 core 的 `SYSTEMONE_KEY_NAME` 一致。
+pub const SYSTEMONE_KEY_NAME: &str = "systemone";
+/// 覆盖 keys 文件的环境变量；与 core 的 `SYSTEMONE_KEY_ENV` 一致。
+pub const SYSTEMONE_KEY_ENV: &str = "SYSTEMONE_API_KEY";
+const SYSTEMONE_KEY_MAX: usize = 4096;
 
 /// core 的出厂 `ranking` 块；配置缺失或整体非法时作为回退值展示。
 fn default_ranking() -> RankingState {
     RankingState {
         mode: "rrf".into(),
-        reranker_profile_id: "jev_default".into(),
+        base_url: String::new(),
+        model: String::new(),
         candidate_limit: 50,
         batch_size: 20,
-        rerank_timeout: 5,
+        rerank_timeout: 10,
     }
 }
 
-fn reranker_profile_label(id: &str) -> &'static str {
-    match id {
-        "jev_default" => "JEV 默认重排",
-        _ => "",
+/// 与 core `_valid_base_url` 同义：http(s)、有主机、无 query 与 fragment、前后无空白。
+fn base_url_valid(value: &str) -> bool {
+    if value.is_empty() {
+        return true;
     }
+    if value.chars().count() > RANKING_BASE_URL_MAX || value != value.trim() {
+        return false;
+    }
+    let rest = if let Some(rest) = value.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = value.strip_prefix("http://") {
+        rest
+    } else {
+        return false;
+    };
+    if rest.contains('?') || rest.contains('#') || rest.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let authority = rest.split('/').next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let host = if host.starts_with('[') {
+        host.split(']').next().map(|h| h.trim_start_matches('[')).unwrap_or("")
+    } else {
+        host.split(':').next().unwrap_or("")
+    };
+    !host.is_empty()
 }
 
-fn reranker_profile_options() -> Vec<RerankerProfileOption> {
-    RERANKER_PROFILES
-        .iter()
-        .map(|id| RerankerProfileOption {
-            id: (*id).into(),
-            label: reranker_profile_label(id).into(),
-        })
-        .collect()
+fn model_valid(value: &str) -> bool {
+    value.chars().count() <= RANKING_MODEL_MAX && value == value.trim()
 }
 
 /// 宽容读取已保存的 `ranking`：块缺失或为 null 时回落默认且不报错；
@@ -82,29 +105,52 @@ fn ranking_state(object: &Map<String, Value>) -> (RankingState, bool) {
     let Some(map) = value.as_object() else {
         return (default_ranking(), true);
     };
-    let mode = map.get("mode").and_then(Value::as_str);
-    let profile = map.get("reranker_profile_id").and_then(Value::as_str);
-    let candidate_limit = map.get("candidate_limit").and_then(Value::as_u64);
-    let batch_size = map.get("batch_size").and_then(Value::as_u64);
-    let rerank_timeout = map.get("rerank_timeout").and_then(Value::as_u64);
-    let valid = mode.is_some_and(|m| RANKING_MODES.contains(&m))
-        && profile.is_some_and(|p| RERANKER_PROFILES.contains(&p))
-        && candidate_limit.is_some_and(|v| v >= RANKING_CANDIDATE_LIMIT_MIN as u64 && v <= RANKING_CANDIDATE_LIMIT_MAX as u64)
-        && batch_size.is_some_and(|v| v >= RANKING_BATCH_SIZE_MIN as u64 && v <= RANKING_BATCH_SIZE_MAX as u64)
-        && rerank_timeout.is_some_and(|v| v >= RANKING_RERANK_TIMEOUT_MIN as u64 && v <= RANKING_RERANK_TIMEOUT_MAX as u64);
-    if !valid {
-        return (default_ranking(), true);
+    let defaults = default_ranking();
+    // 缺省键按 core 的默认值理解（core 也是这样合并的）；存在但类型不对才算非法。
+    fn text<'a>(map: &'a Map<String, Value>, key: &str) -> Option<Option<&'a str>> {
+        match map.get(key) {
+            None => Some(None),
+            Some(Value::String(s)) => Some(Some(s.as_str())),
+            Some(_) => None,
+        }
     }
-    (
-        RankingState {
-            mode: mode.unwrap_or_default().to_string(),
-            reranker_profile_id: profile.unwrap_or_default().to_string(),
-            candidate_limit: candidate_limit.unwrap_or_default() as u32,
-            batch_size: batch_size.unwrap_or_default() as u32,
-            rerank_timeout: rerank_timeout.unwrap_or_default() as u32,
-        },
-        false,
-    )
+    fn number(map: &Map<String, Value>, key: &str) -> Option<Option<u64>> {
+        match map.get(key) {
+            None => Some(None),
+            Some(value) => value.as_u64().map(Some),
+        }
+    }
+    let (Some(mode), Some(base_url), Some(model), Some(candidate_limit), Some(batch_size), Some(rerank_timeout)) = (
+        text(map, "mode"),
+        text(map, "base_url"),
+        text(map, "model"),
+        number(map, "candidate_limit"),
+        number(map, "batch_size"),
+        number(map, "rerank_timeout"),
+    ) else {
+        return (defaults, true);
+    };
+    let state = RankingState {
+        mode: mode.unwrap_or(&defaults.mode).to_string(),
+        base_url: base_url.unwrap_or_default().to_string(),
+        model: model.unwrap_or_default().to_string(),
+        candidate_limit: candidate_limit.unwrap_or(defaults.candidate_limit as u64).min(u32::MAX as u64) as u32,
+        batch_size: batch_size.unwrap_or(defaults.batch_size as u64).min(u32::MAX as u64) as u32,
+        rerank_timeout: rerank_timeout.unwrap_or(defaults.rerank_timeout as u64).min(u32::MAX as u64) as u32,
+    };
+    let enabled = state.mode == "rrf_model";
+    let valid = RANKING_MODES.contains(&state.mode.as_str())
+        && base_url_valid(&state.base_url)
+        && model_valid(&state.model)
+        && (!enabled || (!state.base_url.is_empty() && !state.model.is_empty()))
+        && (RANKING_CANDIDATE_LIMIT_MIN..=RANKING_CANDIDATE_LIMIT_MAX).contains(&state.candidate_limit)
+        && (RANKING_BATCH_SIZE_MIN..=RANKING_BATCH_SIZE_MAX).contains(&state.batch_size)
+        && (RANKING_RERANK_TIMEOUT_MIN..=RANKING_RERANK_TIMEOUT_MAX).contains(&state.rerank_timeout);
+    if valid {
+        (state, false)
+    } else {
+        (defaults, true)
+    }
 }
 
 pub fn scrape_backend_label(name: &str) -> &'static str {
@@ -175,23 +221,17 @@ pub struct ScrapeBackendOption {
     pub label: String,
 }
 
-/// 模型重排的可选 profile；v1 只有 `jev_default`。密钥只走后端环境变量，UI 不持有。
-#[derive(Clone, Debug, Serialize)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
-pub struct RerankerProfileOption {
-    pub id: String,
-    pub label: String,
-}
-
 /// 保存时提交的 `ranking` 块；字段名与 core 的配置键严格一致。
+/// 密钥不在这里：它单独写进 `~/.search-keys.json`（见 `save_systemone_key`）。
 #[derive(Clone, Debug, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct RankingInput {
     /// 只允许 "rrf" / "rrf_model"。
     pub mode: String,
-    pub reranker_profile_id: String,
+    /// System One 的 Base URL，例如 `http://127.0.0.1:3425/v1`；请求发往 `{base_url}/systemone`。
+    pub base_url: String,
+    pub model: String,
     pub candidate_limit: u32,
     pub batch_size: u32,
     pub rerank_timeout: u32,
@@ -204,10 +244,23 @@ pub struct RankingInput {
 #[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct RankingState {
     pub mode: String,
-    pub reranker_profile_id: String,
+    pub base_url: String,
+    pub model: String,
     pub candidate_limit: u32,
     pub batch_size: u32,
     pub rerank_timeout: u32,
+}
+
+/// System One 密钥的来源（只报来源，绝不回传值）。
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct RerankKeyStatus {
+    /// env | keys_file | none | unreadable, or a new value added later; UI must fall back to a raw string.
+    pub source: String,
+    /// 密钥文件路径（非密钥），供 UI 说明保存位置。
+    pub keys_file: Option<String>,
+    pub env_var: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -353,7 +406,7 @@ pub struct SettingsView {
     pub active_sources: Vec<String>,
     /// 当前生效的 `ranking` 块（缺失/非法时回退出厂默认）。
     pub ranking: RankingState,
-    /// 已保存的 `ranking` 块非法（非对象、未知 mode/profile、数值缺省或越界）；
+    /// 已保存的 `ranking` 块非法（非对象、未知 mode、Base URL/模型名非法、开启却未配置端点、数值越界）；
     /// 此时 `ranking` 是回退值，UI 必须提示而不是假装有效。
     pub ranking_invalid: bool,
     /// `ranking` 数值键的可编辑上下界；越界的已存值仍以原样展示并保留。
@@ -363,8 +416,8 @@ pub struct SettingsView {
     pub ranking_batch_size_max: u32,
     pub ranking_rerank_timeout_min: u32,
     pub ranking_rerank_timeout_max: u32,
-    /// 可选的重排 profile；v1 只有 `jev_default`。
-    pub reranker_profiles: Vec<RerankerProfileOption>,
+    /// System One 密钥的来源；值本身永不进入 SettingsView。
+    pub rerank_key: RerankKeyStatus,
     /// ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub message: String,
@@ -533,16 +586,23 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
     })
 }
 
-/// 校验提交的 `ranking` 块：mode 白名单、profile 白名单、三个数值各自的上下界。
-/// 错误文案与 `timeout` 一样用中文说明合法范围。
+/// 校验提交的 `ranking` 块：mode 白名单、Base URL 与模型名、三个数值各自的上下界。
+/// 开启重排时 Base URL 与模型名都必填。错误文案与 `timeout` 一样用中文说明合法范围。
 fn validate_ranking(input: &RankingInput) -> Result<RankingState, String> {
     let mode = input.mode.trim();
     if !RANKING_MODES.contains(&mode) {
         return Err("重排模式必须是 rrf 或 rrf_model".into());
     }
-    let profile = input.reranker_profile_id.trim();
-    if !RERANKER_PROFILES.contains(&profile) {
-        return Err("不支持的重排模型配置".into());
+    let base_url = input.base_url.trim().trim_end_matches('/');
+    if !base_url_valid(base_url) {
+        return Err("Base URL 必须是 http(s) 地址，例如 http://127.0.0.1:3425/v1，且不能带 ? 或 #".into());
+    }
+    let model = input.model.trim();
+    if !model_valid(model) {
+        return Err(format!("模型名不能超过 {RANKING_MODEL_MAX} 个字符"));
+    }
+    if mode == "rrf_model" && (base_url.is_empty() || model.is_empty()) {
+        return Err("开启模型重排需要填写 Base URL 与模型名".into());
     }
     if !(RANKING_CANDIDATE_LIMIT_MIN..=RANKING_CANDIDATE_LIMIT_MAX)
         .contains(&input.candidate_limit)
@@ -564,11 +624,79 @@ fn validate_ranking(input: &RankingInput) -> Result<RankingState, String> {
     }
     Ok(RankingState {
         mode: mode.to_string(),
-        reranker_profile_id: profile.to_string(),
+        base_url: base_url.to_string(),
+        model: model.to_string(),
         candidate_limit: input.candidate_limit,
         batch_size: input.batch_size,
         rerank_timeout: input.rerank_timeout,
     })
+}
+
+/// `~/.search-keys.json` 的位置；与 CLI 读取的是同一个文件。
+pub fn keys_file_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
+    environment
+        .variables
+        .get("USERPROFILE")
+        .filter(|v| !v.is_empty())
+        .or_else(|| environment.variables.get("HOME").filter(|v| !v.is_empty()))
+        .map(|home| PathBuf::from(home).join(".search-keys.json"))
+}
+
+fn read_keys_object(path: &Path) -> Result<Map<String, Value>, String> {
+    match std::fs::read_to_string(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Map::new()),
+        Err(_) => Err("无法读取密钥文件".into()),
+        Ok(text) => match serde_json::from_str(text.trim_start_matches('\u{feff}')) {
+            Ok(Value::Object(map)) => Ok(map),
+            // 不覆盖一个无法解析的密钥文件：里面可能有其它搜索源的 Key。
+            _ => Err("密钥文件不是有效的 JSON 对象，未保存；请先修复 ~/.search-keys.json".into()),
+        },
+    }
+}
+
+/// 只报来源、不回传值：环境变量优先于 keys 文件，和 core 的读取顺序一致。
+pub fn rerank_key_status(environment: &RuntimeEnvironment) -> RerankKeyStatus {
+    let path = keys_file_path(environment);
+    let env_set = environment
+        .variables
+        .get(SYSTEMONE_KEY_ENV)
+        .is_some_and(|v| !v.trim().is_empty());
+    let source = if env_set {
+        "env"
+    } else {
+        match path.as_deref().map(read_keys_object) {
+            Some(Ok(map)) if map.get(SYSTEMONE_KEY_NAME).and_then(Value::as_str).is_some_and(|v| !v.trim().is_empty()) => "keys_file",
+            Some(Err(_)) => "unreadable",
+            _ => "none",
+        }
+    };
+    RerankKeyStatus {
+        source: source.into(),
+        keys_file: path.map(|p| p.to_string_lossy().into_owned()),
+        env_var: SYSTEMONE_KEY_ENV.into(),
+    }
+}
+
+/// 写入（或在 `key` 为空时删除）`~/.search-keys.json` 的 `systemone` 条目。
+/// 其它条目原样保留；文件以 0600 原子替换（Unix），绝不经过设置数据库。
+pub fn save_systemone_key(environment: &RuntimeEnvironment, key: &str) -> Result<SettingsView, String> {
+    let key = key.trim();
+    if key.chars().count() > SYSTEMONE_KEY_MAX || key.chars().any(char::is_control) {
+        return Err("API 密钥格式无效".into());
+    }
+    let path = keys_file_path(environment).ok_or("无法定位用户目录")?;
+    let mut map = read_keys_object(&path)?;
+    if key.is_empty() {
+        if map.remove(SYSTEMONE_KEY_NAME).is_none() {
+            return Ok(view(environment));
+        }
+    } else {
+        map.insert(SYSTEMONE_KEY_NAME.into(), Value::String(key.into()));
+    }
+    let mut body = serde_json::to_vec_pretty(&Value::Object(map)).map_err(|_| "无法序列化密钥文件".to_string())?;
+    body.push(b'\n');
+    crate::secure_temp::replace_private_file(&path, &body).map_err(|_| "无法写入密钥文件".to_string())?;
+    Ok(view(environment))
 }
 
 fn read_object(connection: &rusqlite::Connection) -> Result<Map<String, Value>, String> {
@@ -633,10 +761,10 @@ fn merge(mut map: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
             _ => Map::new(),
         };
         block.insert("mode".into(), Value::String(ranking.mode.clone()));
-        block.insert(
-            "reranker_profile_id".into(),
-            Value::String(ranking.reranker_profile_id.clone()),
-        );
+        block.insert("base_url".into(), Value::String(ranking.base_url.clone()));
+        block.insert("model".into(), Value::String(ranking.model.clone()));
+        // 旧版本写过 profile 键；新的 Base URL / 模型名取代了它。
+        block.remove("reranker_profile_id");
         block.insert("candidate_limit".into(), Value::from(ranking.candidate_limit));
         block.insert("batch_size".into(), Value::from(ranking.batch_size));
         block.insert("rerank_timeout".into(), Value::from(ranking.rerank_timeout));
@@ -753,7 +881,7 @@ fn unreadable_view(path: Option<PathBuf>, environment: &RuntimeEnvironment) -> S
         ranking_batch_size_max: RANKING_BATCH_SIZE_MAX,
         ranking_rerank_timeout_min: RANKING_RERANK_TIMEOUT_MIN,
         ranking_rerank_timeout_max: RANKING_RERANK_TIMEOUT_MAX,
-        reranker_profiles: reranker_profile_options(),
+        rerank_key: rerank_key_status(environment),
         status: "config_unreadable".into(),
         message: "配置数据库无法读取，或 routes/type 不是有效配置；保存已被阻止。".into(),
     }
@@ -884,7 +1012,7 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
         ranking_batch_size_max: RANKING_BATCH_SIZE_MAX,
         ranking_rerank_timeout_min: RANKING_RERANK_TIMEOUT_MIN,
         ranking_rerank_timeout_max: RANKING_RERANK_TIMEOUT_MAX,
-        reranker_profiles: reranker_profile_options(),
+        rerank_key: rerank_key_status(environment),
         status: status.into(),
         message,
     }

@@ -24,7 +24,8 @@ function setup() {
 }
 test.afterEach(() => { try { current?.close(); } catch { /* already closed */ } current = null; });
 
-const RANKING_DEFAULTS = { mode: 'rrf', reranker_profile_id: 'jev_default', candidate_limit: 50, batch_size: 20, rerank_timeout: 5 };
+const RANKING_DEFAULTS = { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10 };
+const KEY_NONE = { source: 'none', keys_file: '/home/u/.search-keys.json', env_var: 'SYSTEMONE_API_KEY' };
 const RANKING_BOUNDS_FIELDS = {
   ranking_candidate_limit_min: 10,
   ranking_candidate_limit_max: 200,
@@ -62,7 +63,7 @@ function view(overrides = {}) {
     ranking: clone(RANKING_DEFAULTS),
     ranking_invalid: false,
     ...RANKING_BOUNDS_FIELDS,
-    reranker_profiles: [{ id: 'jev_default', label: 'JEV 默认重排' }],
+    rerank_key: clone(KEY_NONE),
     status: 'ok',
     message: '',
     ...overrides,
@@ -612,44 +613,142 @@ test('ranking toggle is off by default and saving without touching it submits an
   assert.equal(root.querySelector('[data-ranking-advanced]').hidden, true);
   root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await flush();
-  assert.deepEqual(sent.ranking, { mode: 'rrf', reranker_profile_id: 'jev_default', candidate_limit: 50, batch_size: 20, rerank_timeout: 5 });
+  assert.deepEqual(sent.ranking, { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10 });
   window.close();
 });
 
-test('enabling model rerank reveals profile and advanced fields and submits rrf_model', async () => {
+const enable = (window, root, { baseUrl = 'http://127.0.0.1:3425/v1', model = 'group/jev' } = {}) => {
+  const toggle = root.querySelector('[data-field="ranking-enabled"]');
+  toggle.checked = true;
+  toggle.dispatchEvent(new window.Event('change'));
+  for (const [selector, value] of [['[data-field="rerank-base-url"]', baseUrl], ['[data-field="rerank-model"]', model]]) {
+    const node = root.querySelector(selector);
+    node.value = value;
+    node.dispatchEvent(new window.Event('input'));
+  }
+};
+const submit = (window, root) => root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+
+test('enabling model rerank reveals Base URL, model, key and advanced fields and submits rrf_model', async () => {
   const { window, root } = setup();
   let sent = null;
   await mountSettings(root, ({
     settingsView: async () => view(),
     settingsSave: async input => { sent = input; return savedView(input); },
   }));
-  const toggle = root.querySelector('[data-field="ranking-enabled"]');
-  toggle.checked = true;
-  toggle.dispatchEvent(new window.Event('change'));
+  enable(window, root, { baseUrl: ' http://127.0.0.1:3425/v1/ ' });
   assert.equal(root.querySelector('[data-ranking-advanced]').hidden, false);
-  const profile = root.querySelector('[data-field="reranker-profile"]');
-  assert.equal(profile.disabled, false);
-  assert.equal(profile.value, 'jev_default');
-  assert.equal(root.querySelector('[data-field="candidate-limit"]').disabled, false);
+  for (const selector of ['[data-field="rerank-base-url"]', '[data-field="rerank-model"]', '[data-field="rerank-api-key"]', '[data-field="candidate-limit"]']) {
+    assert.equal(root.querySelector(selector).disabled, false, selector);
+  }
+  assert.equal(root.querySelector('[data-field="rerank-api-key"]').type, 'password');
+  assert.match(root.querySelector('.ranking-panel').textContent, /\/systemone/);
   root.querySelector('[data-field="candidate-limit"]').value = '80';
   root.querySelector('[data-field="candidate-limit"]').dispatchEvent(new window.Event('input'));
   root.querySelector('[data-field="rerank-timeout"]').value = '9';
   root.querySelector('[data-field="rerank-timeout"]').dispatchEvent(new window.Event('input'));
-  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  submit(window, root);
   await flush();
-  assert.equal(sent.ranking.mode, 'rrf_model');
-  assert.equal(sent.ranking.reranker_profile_id, 'jev_default');
-  assert.equal(sent.ranking.candidate_limit, 80);
-  assert.equal(sent.ranking.rerank_timeout, 9);
+  assert.deepEqual(sent.ranking, {
+    mode: 'rrf_model', base_url: 'http://127.0.0.1:3425/v1', model: 'group/jev',
+    candidate_limit: 80, batch_size: 20, rerank_timeout: 9,
+  });
+  // The key is never part of the settings payload.
+  assert.equal(JSON.stringify(sent).includes('api_key'), false);
+  window.close();
+});
+
+test('enabling rerank without Base URL or model is refused locally', async () => {
+  for (const [opts, message] of [
+    [{ baseUrl: '' }, /需要填写 Base URL/],
+    [{ model: '' }, /需要填写模型名/],
+    [{ baseUrl: 'ftp://h/v1' }, /http\(s\)/],
+    [{ baseUrl: 'http://h/v1?x=1' }, /不能带 \? 或 #/],
+    [{ baseUrl: 'not a url' }, /完整的 http\(s\) 地址/],
+  ]) {
+    const { window, root } = setup();
+    let saves = 0;
+    await mountSettings(root, ({
+      settingsView: async () => view(),
+      settingsSave: async input => { saves += 1; return savedView(input); },
+    }));
+    enable(window, root, opts);
+    submit(window, root);
+    await flush();
+    assert.equal(saves, 0, JSON.stringify(opts));
+    assert.match(root.querySelector('[data-info="error"]').textContent, message);
+    window.close();
+  }
+});
+
+test('the API key is saved on its own, cleared from the field and never echoed', async () => {
+  const { window, root } = setup();
+  const keys = [];
+  let settingsSaves = 0;
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    settingsSave: async input => { settingsSaves += 1; return savedView(input); },
+    rerankKeySave: async key => { keys.push(key); return view({ rerank_key: { ...KEY_NONE, source: key ? 'keys_file' : 'none' } }); },
+  }));
+  enable(window, root);
+  const field = root.querySelector('[data-field="rerank-api-key"]');
+  assert.equal(root.querySelector('[data-action="rerank-key-clear"]').disabled, true);
+  root.querySelector('[data-action="rerank-key-save"]').click();
+  await flush();
+  assert.deepEqual(keys, []);
+  assert.match(root.querySelector('[data-info="error"]').textContent, /请先粘贴/);
+  field.value = '  sk-secret  ';
+  root.querySelector('[data-action="rerank-key-save"]').click();
+  await flush();
+  assert.deepEqual(keys, ['sk-secret']);
+  assert.equal(field.value, '');
+  assert.match(root.querySelector('[data-status="rerank-key"]').textContent, /已保存/);
+  assert.equal(root.textContent.includes('sk-secret'), false);
+  assert.equal(settingsSaves, 0);
+  assert.equal(root.querySelector('[data-action="rerank-key-clear"]').disabled, false);
+  root.querySelector('[data-action="rerank-key-clear"]').click();
+  await flush();
+  assert.deepEqual(keys, ['sk-secret', '']);
+  assert.match(root.querySelector('[data-status="rerank-key"]').textContent, /未设置/);
+  window.close();
+});
+
+test('key status reports an environment override and the keys file location', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, ({ settingsView: async () => view({
+    ranking: { ...RANKING_DEFAULTS, mode: 'rrf_model', base_url: 'http://h/v1', model: 'm' },
+    rerank_key: { ...KEY_NONE, source: 'env' },
+  }) }));
+  const status = root.querySelector('[data-status="rerank-key"]').textContent;
+  assert.match(status, /环境变量/);
+  assert.match(status, /\/home\/u\/\.search-keys\.json/);
+  assert.match(status, /SYSTEMONE_API_KEY/);
+  window.close();
+});
+
+test('a failed key save keeps a readable error', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    rerankKeySave: async () => { throw new Error('密钥文件不是有效的 JSON 对象，未保存'); },
+  }));
+  enable(window, root);
+  root.querySelector('[data-field="rerank-api-key"]').value = 'k';
+  root.querySelector('[data-action="rerank-key-save"]').click();
+  await flush();
+  assert.match(root.querySelector('[data-info="error"]').textContent, /不是有效的 JSON/);
+  assert.notEqual(root.querySelector('[data-status="save"]').textContent, '密钥已保存。');
   window.close();
 });
 
 test('a stored rrf_model ranking arrives with the toggle on', async () => {
   const { window, root } = setup();
-  await mountSettings(root, ({ settingsView: async () => view({ ranking: { ...RANKING_DEFAULTS, mode: 'rrf_model', candidate_limit: 70 } }) }));
+  await mountSettings(root, ({ settingsView: async () => view({ ranking: { ...RANKING_DEFAULTS, mode: 'rrf_model', base_url: 'http://h/v1', model: 'm', candidate_limit: 70 } }) }));
   assert.equal(root.querySelector('[data-field="ranking-enabled"]').checked, true);
   assert.equal(root.querySelector('[data-ranking-advanced]').hidden, false);
   assert.equal(root.querySelector('[data-field="candidate-limit"]').value, '70');
+  assert.equal(root.querySelector('[data-field="rerank-base-url"]').value, 'http://h/v1');
+  assert.equal(root.querySelector('[data-field="rerank-model"]').value, 'm');
   window.close();
 });
 
@@ -669,9 +768,7 @@ test('out-of-range ranking edits are refused locally before save', async () => {
     settingsView: async () => view(),
     settingsSave: async input => { saves += 1; return savedView(input); },
   }));
-  const toggle = root.querySelector('[data-field="ranking-enabled"]');
-  toggle.checked = true;
-  toggle.dispatchEvent(new window.Event('change'));
+  enable(window, root);
   const field = root.querySelector('[data-field="candidate-limit"]');
   field.value = '9';
   field.dispatchEvent(new window.Event('input'));
@@ -693,9 +790,7 @@ test('ranking save failure surfaces a readable error instead of a false success'
     settingsView: async () => view(),
     settingsSave: async () => { throw new Error('重排超时必须在 1 到 60 秒之间'); },
   }));
-  const toggle = root.querySelector('[data-field="ranking-enabled"]');
-  toggle.checked = true;
-  toggle.dispatchEvent(new window.Event('change'));
+  enable(window, root);
   root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await flush();
   assert.match(root.querySelector('[data-info="error"]').textContent, /重排超时必须在 1 到 60 秒之间/);

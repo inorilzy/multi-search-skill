@@ -38,20 +38,22 @@ from .src.state.operations import (
 _VALID_OUTPUT = {"json", "markdown", "both"}
 
 
-def _ranking_override(rerank: bool, rerank_profile: str | None) -> dict | None:
-    """Map the ``rerank`` flags to a request ``ranking`` override.
+def _ranking_override(
+    rerank: bool, rerank_base_url: str | None, rerank_model: str | None,
+) -> dict | None:
+    """Map the ``rerank`` arguments to a request ``ranking`` override.
 
-    ``None`` keeps the config/default behavior (pure RRF). The core's
-    ``RerankPolicy.from_config`` rejects unknown modes, fields and profile ids
-    (validated against core's ``RERANKER_PROFILES`` registry), so no silent
-    fallback happens on a bad value. Core also builds the adapter itself from
-    the merged policy, so this surface never constructs a reranker.
+    ``None`` keeps the config/default behavior (pure RRF). Core validates the
+    merged policy and builds the System One adapter itself, so this surface
+    never constructs a reranker or handles the key.
     """
     if not rerank:
         return None
     ranking: dict = {"mode": "rrf_model"}
-    if rerank_profile is not None:
-        ranking["reranker_profile_id"] = rerank_profile
+    if rerank_base_url is not None:
+        ranking["base_url"] = rerank_base_url.strip()
+    if rerank_model is not None:
+        ranking["model"] = rerank_model.strip()
     return ranking
 
 
@@ -79,9 +81,10 @@ def search_web_tool(
     expand: list[str] | None = None,
     use_state: bool = True,
     rerank: bool = False,
-    rerank_profile: str | None = None,
+    rerank_base_url: str | None = None,
+    rerank_model: str | None = None,
 ) -> dict[str, Any]:
-    ranking = _ranking_override(rerank, rerank_profile)
+    ranking = _ranking_override(rerank, rerank_base_url, rerank_model)
 
     def call() -> dict[str, Any]:
         request = SearchWebRequest(
@@ -147,7 +150,8 @@ def multi_search_tool(
     use_state: bool = True,
     output: Literal["json", "markdown", "both"] = "both",
     rerank: bool = False,
-    rerank_profile: str | None = None,
+    rerank_base_url: str | None = None,
+    rerank_model: str | None = None,
 ) -> dict[str, Any]:
     if output not in _VALID_OUTPUT:
         return _error(
@@ -155,7 +159,7 @@ def multi_search_tool(
             "invalid_request",
             valid_output=sorted(_VALID_OUTPUT),
         )
-    ranking = _ranking_override(rerank, rerank_profile)
+    ranking = _ranking_override(rerank, rerank_base_url, rerank_model)
 
     def call() -> dict[str, Any]:
         request = MultiSearchRequest(

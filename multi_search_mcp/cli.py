@@ -103,20 +103,20 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument(
         "--rerank", action="store_true",
         help=(
-            "reorder the fused RRF candidates with the configured reranker "
-            "profile before the body-fetch stage (ranking.mode=rrf_model); "
-            "on any model failure the complete RRF order is kept and the "
-            "response reports mode_used/fallback_reason"
+            "reorder the fused RRF candidates with a System One scoring model "
+            "before the body-fetch stage (ranking.mode=rrf_model); on any "
+            "model failure the complete RRF order is kept and the response "
+            "reports mode_used/fallback_reason. The key is read from "
+            "SYSTEMONE_API_KEY or the 'systemone' entry of ~/.search-keys.json"
         ),
     )
     search_parser.add_argument(
-        "--rerank-profile",
-        metavar="PROFILE",
-        help=(
-            "reranker profile id for --rerank "
-            "(ranking.reranker_profile_id); the only built-in profile is "
-            "'jev_default' — an unknown value is a usage error, not a silent fallback"
-        ),
+        "--rerank-base-url", metavar="URL",
+        help="System One base URL for --rerank (ranking.base_url), e.g. http://127.0.0.1:3425/v1",
+    )
+    search_parser.add_argument(
+        "--rerank-model", metavar="MODEL",
+        help="System One model for --rerank (ranking.model)",
     )
     search_parser.add_argument(
         "--no-state", action="store_true",
@@ -304,31 +304,25 @@ def entrypoint() -> None:
 
 
 def _ranking_override(args: argparse.Namespace) -> dict[str, Any] | None:
-    """Map --rerank/--rerank-profile onto the request ``ranking`` override.
+    """Map --rerank/--rerank-base-url/--rerank-model onto the ``ranking`` override.
 
     ``None`` (no flags) preserves today's behavior exactly: the config decides
-    and pure RRF remains the default. A profile without ``--rerank`` is a
-    usage error — it would otherwise look like it did something while the
-    request stayed in pure-RRF mode.
+    and pure RRF remains the default. A base URL or model without
+    ``--rerank`` is a usage error — it would otherwise look like it did
+    something while the request stayed in pure-RRF mode. Missing values fall
+    back to the config; core rejects an enabled rerank with neither.
     """
-    profile = getattr(args, "rerank_profile", None)
-    if profile is not None:
-        # The profile registry is owned by core; the CLI only maps an unknown
-        # id to a usage error (exit 2) instead of core's ConfigError (exit 1).
-        from .src.search.rerank import RERANKER_PROFILES
-
-        if profile not in RERANKER_PROFILES:
-            raise CLIUsageError(
-                f"unknown rerank profile: {profile!r} "
-                f"(known: {', '.join(sorted(RERANKER_PROFILES))})"
-            )
+    base_url = getattr(args, "rerank_base_url", None)
+    model = getattr(args, "rerank_model", None)
     if not getattr(args, "rerank", False):
-        if profile is not None:
-            raise CLIUsageError("--rerank-profile requires --rerank")
+        if base_url is not None or model is not None:
+            raise CLIUsageError("--rerank-base-url/--rerank-model require --rerank")
         return None
     ranking: dict[str, Any] = {"mode": "rrf_model"}
-    if profile is not None:
-        ranking["reranker_profile_id"] = profile
+    if base_url is not None:
+        ranking["base_url"] = base_url.strip()
+    if model is not None:
+        ranking["model"] = model.strip()
     return ranking
 
 

@@ -24,18 +24,33 @@ const routesObject = routes => Object.fromEntries([...routes].map(([id, route]) 
 const charLength = value => Array.from(value).length;
 
 // core 的出厂 ranking 块；SettingsView 缺失字段时的兜底展示值。
-const RANKING_FACTORY = { mode: 'rrf', reranker_profile_id: 'jev_default', candidate_limit: 50, batch_size: 20, rerank_timeout: 5 };
+const RANKING_FACTORY = { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10 };
 const RANKING_BOUNDS = {
   candidate_limit: [10, 200],
   batch_size: [1, 50],
   rerank_timeout: [1, 60],
 };
 const RANKING_FIELD_NAMES = { candidate_limit: '候选数', batch_size: '重排批量', rerank_timeout: '重排超时（秒）' };
-const RANKING_MODE_LABELS = { rrf: 'RRF（不调用模型）', rrf_model: '模型重排' };
+const RERANK_KEY_SOURCE_LABELS = {
+  env: '已由环境变量提供（优先于这里保存的密钥）',
+  keys_file: '已保存',
+  none: '未设置',
+  unreadable: '密钥文件无法读取，请检查 ~/.search-keys.json',
+};
+// 与 core 的 _valid_base_url 同义：http(s)、有主机、无 ? 与 #。
+const baseUrlError = value => {
+  if (!value) return '';
+  let url;
+  try { url = new URL(value); } catch { return 'Base URL 必须是完整的 http(s) 地址，例如 http://127.0.0.1:3425/v1。'; }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) return 'Base URL 必须是 http(s) 地址。';
+  if (value.includes('?') || value.includes('#')) return 'Base URL 不能带 ? 或 #。';
+  return '';
+};
 
 const cloneRanking = ranking => ({
   mode: String(ranking?.mode ?? RANKING_FACTORY.mode),
-  reranker_profile_id: String(ranking?.reranker_profile_id ?? RANKING_FACTORY.reranker_profile_id),
+  base_url: String(ranking?.base_url ?? RANKING_FACTORY.base_url),
+  model: String(ranking?.model ?? RANKING_FACTORY.model),
   candidate_limit: Number(ranking?.candidate_limit ?? RANKING_FACTORY.candidate_limit),
   batch_size: Number(ranking?.batch_size ?? RANKING_FACTORY.batch_size),
   rerank_timeout: Number(ranking?.rerank_timeout ?? RANKING_FACTORY.rerank_timeout),
@@ -78,7 +93,14 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
         <label class="ranking-toggle"><input type="checkbox" data-field="ranking-enabled" disabled><span>启用模型重排<small>开启后会把你的搜索问题与结果摘要发送给第三方模型服务；关闭时完全不调用模型。</small></span></label>
         <p class="error-message" data-info="ranking-warning" role="alert"></p>
         <div class="ranking-advanced" data-ranking-advanced hidden>
-          <label>重排模型配置<select data-field="reranker-profile" disabled></select></label>
+          <p class="note">走 System One 协议：请求发往 <code>{Base URL}/systemone</code>。</p>
+          <label>Base URL<input data-field="rerank-base-url" type="url" autocomplete="off" spellcheck="false" maxlength="2048" placeholder="http://127.0.0.1:3425/v1" disabled></label>
+          <label>模型<input data-field="rerank-model" type="text" autocomplete="off" spellcheck="false" maxlength="200" placeholder="例如 group/jev" disabled></label>
+          <div class="rerank-key">
+            <label>API 密钥<input data-field="rerank-api-key" type="password" autocomplete="off" spellcheck="false" maxlength="4096" placeholder="粘贴 API 密钥" disabled></label>
+            <div class="run-controls"><button type="button" data-action="rerank-key-save" disabled>保存密钥</button><button type="button" data-action="rerank-key-clear" disabled>清除密钥</button></div>
+            <p class="note" data-status="rerank-key" role="status"></p>
+          </div>
           <div class="settings-default-grid"><label>候选数<input data-field="candidate-limit" type="number" step="1" disabled></label><label>重排批量<input data-field="batch-size" type="number" step="1" disabled></label><label>重排超时（秒）<input data-field="rerank-timeout" type="number" step="1" disabled></label></div>
         </div>
       </section>
@@ -111,7 +133,8 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   let ranking = cloneRanking(null);
   let rankingInvalid = false;
   let rankingBounds = JSON.parse(JSON.stringify(RANKING_BOUNDS));
-  let rerankerProfiles = [];
+  let rerankKey = { source: 'none', keys_file: null, env_var: 'SYSTEMONE_API_KEY' };
+  let keySaving = false;
   let loadedView = null;
   let dirty = false;
   let editorDirty = false;
@@ -127,7 +150,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       const node = q(selector);
       if (node) node.disabled = !enabled || (selector === '[data-action="save"]' && saving);
     }
-    for (const selector of ['[data-field="reranker-profile"]', '[data-field="candidate-limit"]', '[data-field="batch-size"]', '[data-field="rerank-timeout"]']) {
+    for (const selector of ['[data-field="rerank-base-url"]', '[data-field="rerank-model"]', '[data-field="rerank-api-key"]', '[data-action="rerank-key-save"]', '[data-action="rerank-key-clear"]', '[data-field="candidate-limit"]', '[data-field="batch-size"]', '[data-field="rerank-timeout"]']) {
       const node = q(selector);
       if (node) node.disabled = !enabled || !rankingEnabled;
     }
@@ -414,22 +437,25 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     if (editor) mountEditor(editor.panel);
   }
 
+  function renderRerankKey() {
+    const path = rerankKey.keys_file || '~/.search-keys.json';
+    const label = RERANK_KEY_SOURCE_LABELS[rerankKey.source] ?? rerankKey.source;
+    text('[data-status="rerank-key"]', `密钥状态：${label}。保存在 ${path}（仅你本人可读），不写入设置；环境变量 ${rerankKey.env_var} 优先。`);
+  }
+
   function renderRanking() {
     const toggle = q('[data-field="ranking-enabled"]');
     toggle.checked = rankingEnabled;
     q('[data-ranking-advanced]').hidden = !rankingEnabled;
-    const select = q('[data-field="reranker-profile"]');
-    select.replaceChildren();
-    const options = rerankerProfiles.length ? rerankerProfiles : [{ id: ranking.reranker_profile_id || RANKING_FACTORY.reranker_profile_id, label: ranking.reranker_profile_id || RANKING_FACTORY.reranker_profile_id }];
-    for (const option of options) {
-      const node = doc.createElement('option');
-      node.value = option.id;
-      node.textContent = option.label && option.label !== option.id ? `${option.label} / ${option.id}` : option.id;
-      node.selected = option.id === ranking.reranker_profile_id;
-      select.append(node);
+    const off = toggle.disabled || !rankingEnabled;
+    for (const [key, selector] of [['base_url', '[data-field="rerank-base-url"]'], ['model', '[data-field="rerank-model"]']]) {
+      const node = q(selector);
+      node.value = ranking[key];
+      node.disabled = off;
     }
-    if (!options.some(option => option.id === ranking.reranker_profile_id)) select.value = options[0].id;
-    select.disabled = toggle.disabled || !rankingEnabled;
+    q('[data-field="rerank-api-key"]').disabled = off || keySaving;
+    q('[data-action="rerank-key-save"]').disabled = off || keySaving;
+    q('[data-action="rerank-key-clear"]').disabled = off || keySaving || rerankKey.source !== 'keys_file';
     const fields = { candidate_limit: '[data-field="candidate-limit"]', batch_size: '[data-field="batch-size"]', rerank_timeout: '[data-field="rerank-timeout"]' };
     for (const [key, selector] of Object.entries(fields)) {
       const node = q(selector);
@@ -437,18 +463,22 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       node.min = String(min);
       node.max = String(max);
       node.value = String(ranking[key]);
-      node.disabled = toggle.disabled || !rankingEnabled;
+      node.disabled = off;
     }
+    renderRerankKey();
     const boundsText = Object.entries(fields).map(([key]) => `${RANKING_FIELD_NAMES[key]} ${rankingBounds[key][0]}–${rankingBounds[key][1]}`).join('，');
-    text('[data-info="ranking-warning"]', rankingInvalid ? `已保存的重排配置非法（应为 ${boundsText}），当前显示默认值；重新保存可修复。` : '');
+    text('[data-info="ranking-warning"]', rankingInvalid ? `已保存的重排配置非法（开启时需要 Base URL 与模型名；${boundsText}），当前显示默认值；重新保存可修复。` : '');
   }
 
   // null = 合法；否则返回中文错误。关闭时只有「已保存值非法」本身会阻止保存。
   function rankingError() {
+    ranking.base_url = q('[data-field="rerank-base-url"]').value.trim().replace(/\/+$/, '');
+    ranking.model = q('[data-field="rerank-model"]').value.trim();
     if (!rankingEnabled) return rankingInvalid ? '已保存的重排配置非法，请先开启模型重排并修正后再保存。' : null;
-    if (ranking.mode !== 'rrf' && ranking.mode !== 'rrf_model') return '重排模式只能是 rrf 或 rrf_model。';
-    if (!rerankerProfiles.length) return '没有可选的重排模型配置。';
-    if (!rerankerProfiles.some(option => option.id === ranking.reranker_profile_id)) return '重排模型配置无效。';
+    if (!ranking.base_url) return '开启模型重排需要填写 Base URL。';
+    const urlProblem = baseUrlError(ranking.base_url);
+    if (urlProblem) return urlProblem;
+    if (!ranking.model) return '开启模型重排需要填写模型名。';
     const fields = { candidate_limit: '[data-field="candidate-limit"]', batch_size: '[data-field="batch-size"]', rerank_timeout: '[data-field="rerank-timeout"]' };
     for (const [key, selector] of Object.entries(fields)) {
       const raw = q(selector).value.trim();
@@ -460,6 +490,29 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       ranking[key] = value;
     }
     return null;
+  }
+
+  // 密钥单独保存：直接写进 ~/.search-keys.json，不随设置草稿提交，也从不回显。
+  async function saveRerankKey(clear) {
+    if (keySaving) return;
+    const field = q('[data-field="rerank-api-key"]');
+    const key = clear ? '' : field.value.trim();
+    if (!clear && !key) { text('[data-info="error"]', '请先粘贴 API 密钥。'); return; }
+    keySaving = true;
+    renderRanking();
+    text('[data-info="error"]', '');
+    try {
+      const view = await api.rerankKeySave(key);
+      if (disposed) return;
+      field.value = '';
+      rerankKey = view.rerank_key ?? rerankKey;
+      text('[data-status="save"]', clear ? '密钥已清除。' : '密钥已保存。');
+    } catch (error) {
+      if (!disposed) showError(q('[data-info="error"]'), error, '重排 API 密钥保存失败，原密钥文件未改变。');
+    } finally {
+      keySaving = false;
+      if (!disposed) renderRanking();
+    }
   }
 
   function renderAll() {
@@ -503,7 +556,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     ranking = cloneRanking(view.ranking);
     rankingEnabled = ranking.mode === 'rrf_model';
     rankingInvalid = view.ranking_invalid === true;
-    rerankerProfiles = Array.isArray(view.reranker_profiles) ? view.reranker_profiles : [];
+    rerankKey = view.rerank_key ?? { source: 'none', keys_file: null, env_var: 'SYSTEMONE_API_KEY' };
     rankingBounds = {
       candidate_limit: [Number(view.ranking_candidate_limit_min ?? RANKING_BOUNDS.candidate_limit[0]), Number(view.ranking_candidate_limit_max ?? RANKING_BOUNDS.candidate_limit[1])],
       batch_size: [Number(view.ranking_batch_size_min ?? RANKING_BOUNDS.batch_size[0]), Number(view.ranking_batch_size_max ?? RANKING_BOUNDS.batch_size[1])],
@@ -574,8 +627,8 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       disabled_sources: [...disabledSources],
       routes: routesObject(routes),
       twitter_cookies_path: twitterPath,
-      // 关闭时提交 rrf 块（沿用当前 profile/数值草稿），core 完全不调用模型。
-      ranking: { mode: rankingEnabled ? 'rrf_model' : 'rrf', reranker_profile_id: ranking.reranker_profile_id, candidate_limit: ranking.candidate_limit, batch_size: ranking.batch_size, rerank_timeout: ranking.rerank_timeout },
+      // 关闭时提交 rrf 块（保留已填的端点与数值草稿），core 完全不调用模型。密钥不在这里。
+      ranking: { mode: rankingEnabled ? 'rrf_model' : 'rrf', base_url: ranking.base_url, model: ranking.model, candidate_limit: ranking.candidate_limit, batch_size: ranking.batch_size, rerank_timeout: ranking.rerank_timeout },
     };
   }
 
@@ -686,7 +739,10 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     setDirty();
     renderRanking();
   });
-  q('[data-field="reranker-profile"]').addEventListener('change', event => { ranking.reranker_profile_id = event.target.value; setDirty(); });
+  q('[data-field="rerank-base-url"]').addEventListener('input', event => { ranking.base_url = event.target.value; setDirty(); });
+  q('[data-field="rerank-model"]').addEventListener('input', event => { ranking.model = event.target.value; setDirty(); });
+  q('[data-action="rerank-key-save"]').addEventListener('click', () => { void saveRerankKey(false); });
+  q('[data-action="rerank-key-clear"]').addEventListener('click', () => { void saveRerankKey(true); });
   for (const [key, selector] of Object.entries({ candidate_limit: '[data-field="candidate-limit"]', batch_size: '[data-field="batch-size"]', rerank_timeout: '[data-field="rerank-timeout"]' })) {
     q(selector).addEventListener('input', event => { ranking[key] = Number(event.target.value); setDirty(); });
   }
