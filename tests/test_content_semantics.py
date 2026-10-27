@@ -18,7 +18,6 @@ from multi_search_mcp.src.search.searchers.tavily import search_tavily
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support.models import SearchResult
 
-
 class _FakeResponse:
     def __init__(self, payload, headers=None):
         self._payload = payload
@@ -37,7 +36,6 @@ class _FakeResponse:
             return self._payload.encode("utf-8")
         return json.dumps(self._payload).encode("utf-8")
 
-
 class SearchResultContractTests(unittest.TestCase):
     def test_search_result_round_trip_preserves_content_kind(self):
         row = SearchResult(
@@ -53,7 +51,6 @@ class SearchResultContractTests(unittest.TestCase):
 
         self.assertEqual(restored.content_kind, "body")
         self.assertEqual(restored.to_dict()["content_kind"], "body")
-
 
 class ProviderContentKindTests(unittest.TestCase):
     def test_brave_rows_mark_descriptions_as_excerpt(self):
@@ -249,7 +246,6 @@ class ProviderContentKindTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["content_kind"], "metadata")
 
-
 class SearchWebContentKindTests(unittest.TestCase):
     def setUp(self):
         temp = TemporaryDirectory(prefix="search-content-semantics-")
@@ -274,7 +270,7 @@ class SearchWebContentKindTests(unittest.TestCase):
             return service.run_search_web(
                 service.SearchWebRequest(query="query", sources=list(providers), use_state=use_state),
                 providers=providers, keys={}, config={}, state_store=self.store,
-                scraper=scraper, url_resolver=lambda _host: ["93.184.216.34"],
+                scraper=scraper,
             )
 
     def test_excerpt_does_not_block_scrape_even_when_long(self):
@@ -369,7 +365,6 @@ class SearchWebContentKindTests(unittest.TestCase):
             service.ReadSourceRequest(source_id=hit["source_id"]), state_store=self.store,
         )
         self.assertEqual(cached["content"], "body")
-
 
 if __name__ == "__main__":
     unittest.main()

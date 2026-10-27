@@ -14,16 +14,10 @@ from multi_search_mcp.src.state.content_store import DEFAULT_MAX_OBJECT_BYTES
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support.config import load_config
 
-
 URL = "https://evidence.example/preview"
 MARKER = "UNIQUE_PREVIEW_BODY"
 BODY = MARKER + "正文abc0123;" * 1000
 ROOT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "multi-search-config.json"
-
-
-def _resolver(_host):
-    return ["93.184.216.34"]
-
 
 class PreviewDefaultTests(unittest.TestCase):
     def setUp(self):
@@ -70,7 +64,7 @@ class PreviewDefaultTests(unittest.TestCase):
         response = service.run_search_web(
             service.SearchWebRequest(query="preview", sources=["brave"]),
             providers=self.providers, keys={}, config={}, state_store=store,
-            scraper=self.scraper, url_resolver=_resolver,
+            scraper=self.scraper,
         )
         self.assertEqual(response["errors"], [])
         page = response["scrapes"][0]
@@ -93,7 +87,7 @@ class PreviewDefaultTests(unittest.TestCase):
         current = service.run_search_web(
             service.SearchWebRequest(query="preview", sources=["brave"], use_state=False),
             providers=self.providers, keys={}, config={}, scraper=self.scraper,
-            url_resolver=_resolver,
+
         )
         self.assertEqual(current["errors"], [])
         expected = current["scrapes"][0]["markdown"]
@@ -102,7 +96,7 @@ class PreviewDefaultTests(unittest.TestCase):
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=self.providers),
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", self.scraper),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
+            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             for mode in ("json", "markdown", "both"):
                 with self.subTest(mode=mode):
@@ -148,7 +142,6 @@ class PreviewDefaultTests(unittest.TestCase):
                         self.assertEqual("_...truncated (" in response["markdown"], size < len(BODY))
                         if size < len(BODY):
                             self.assertNotIn(BODY[:size + 1], response["markdown"])
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,6 @@ from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.content_store import ContentStore
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 class FetchSourceCoreTests(unittest.TestCase):
     def test_fetch_by_source_id_scrapes_once_then_reuses_cached_body(self):
         from multi_search_mcp.src.service import (
@@ -64,7 +63,7 @@ class FetchSourceCoreTests(unittest.TestCase):
                 scraper=fake_scraper,
                 keys={},
                 config={},
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
             second = run_fetch_source(
                 request,
@@ -72,7 +71,7 @@ class FetchSourceCoreTests(unittest.TestCase):
                 scraper=fake_scraper,
                 keys={},
                 config={},
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         self.assertEqual(scrape_calls, ["https://evidence.example/article"])
@@ -100,7 +99,7 @@ class FetchSourceCoreTests(unittest.TestCase):
                 scraper=fake_scraper,
                 keys={},
                 config={},
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
             registered = SourceRegistry(store).get(fetched["source_id"])
             cached = run_fetch_source(
@@ -109,7 +108,7 @@ class FetchSourceCoreTests(unittest.TestCase):
                 scraper=fake_scraper,
                 keys={},
                 config={},
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         self.assertTrue(fetched["source_id"].startswith("src_"))
@@ -126,7 +125,6 @@ class FetchSourceCoreTests(unittest.TestCase):
 
         observed = {}
         now = [100.0]
-        resolver = mock.Mock(side_effect=AssertionError("URL preflight must not resolve"))
 
         def fake_scraper(url, **kwargs):
             observed.update(kwargs)
@@ -134,6 +132,9 @@ class FetchSourceCoreTests(unittest.TestCase):
 
         with TemporaryDirectory() as tmp, mock.patch(
             "multi_search_mcp.src.scrape.fetch.time.monotonic", side_effect=lambda: now[0],
+        ), mock.patch(
+            "multi_search_mcp.src.support.url_security._resolve_host_ips",
+            side_effect=AssertionError("URL preflight used local DNS"),
         ):
             config_path = Path(tmp) / "config.json"
             config_path.write_text('{"scrape_timeout": 7}', encoding="utf-8")
@@ -146,12 +147,10 @@ class FetchSourceCoreTests(unittest.TestCase):
                 state_store=store,
                 scraper=fake_scraper,
                 keys={},
-                url_resolver=resolver,
             )
 
         self.assertEqual(observed["deadline"], 107.0)
         self.assertEqual(observed["timeout"], 7.0)
-        resolver.assert_not_called()
 
     def test_prefetched_provider_body_is_reused_without_scraping(self):
         from multi_search_mcp.src.service import (
@@ -195,7 +194,7 @@ class FetchSourceCoreTests(unittest.TestCase):
                 scraper=lambda *_args, **_kwargs: self.fail("scraper must not run"),
                 keys={},
                 config={},
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         self.assertTrue(fetched["cache_hit"])
@@ -296,7 +295,7 @@ class FetchSourceCoreTests(unittest.TestCase):
                 scraper=fake_scraper,
                 keys={},
                 config={},
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
             with self.assertRaisesRegex(ValueError, "call fetch_source"):
                 run_read_source(
@@ -306,7 +305,6 @@ class FetchSourceCoreTests(unittest.TestCase):
         self.assertEqual(fetched["body"], "one-call body")
         self.assertFalse(fetched["persisted"])
         self.assertEqual(calls, ["https://evidence.example/no-retention"])
-
 
 class ReadSourceCoreTests(unittest.TestCase):
     def test_read_is_cache_only_and_supports_keyword_offset_and_limit(self):
@@ -496,7 +494,6 @@ class ReadSourceCoreTests(unittest.TestCase):
         self.assertEqual(after["expires_at"], before["expires_at"])
         self.assertEqual(after["last_access_at"], now[0].isoformat())
 
-
 class SourceContentToolTests(unittest.TestCase):
     def test_fetch_tool_does_not_replace_an_omitted_timeout(self):
         from multi_search_mcp import tools
@@ -558,7 +555,6 @@ class SourceContentToolTests(unittest.TestCase):
 
         self.assertFalse(fetched["cache_hit"])
         self.assertEqual(read["content"], "needle")
-
 
 if __name__ == "__main__":
     unittest.main()

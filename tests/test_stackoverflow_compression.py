@@ -8,7 +8,6 @@ from multi_search_mcp.src import service
 from multi_search_mcp.src.search.registry import build_provider_registry
 from multi_search_mcp.src.search.searchers import stackoverflow
 
-
 class _FakeResponse:
     def __init__(self, body, headers=None):
         self._body = body
@@ -22,7 +21,6 @@ class _FakeResponse:
 
     def read(self, size=-1):
         return self._body
-
 
 class StackOverflowCompressionTests(unittest.TestCase):
     @staticmethod
@@ -170,7 +168,7 @@ class StackOverflowCompressionTests(unittest.TestCase):
                         "markdown": "fixture body",
                         "via": "fixture",
                     },
-                    url_resolver=lambda _host: ["93.184.216.34"],
+
                 )
 
             self.assertIn("stackoverflow", response["diagnostics"]["route_sources"])
@@ -178,7 +176,6 @@ class StackOverflowCompressionTests(unittest.TestCase):
                 [row["url"] for row in response["results"]],
                 ["https://stackoverflow.com/questions/1"],
             )
-
 
 if __name__ == "__main__":
     unittest.main()

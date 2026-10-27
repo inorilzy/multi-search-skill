@@ -33,7 +33,6 @@ from multi_search_mcp.src.support import config as config_module
 from multi_search_mcp.src.support.dedup import _norm_url
 from multi_search_mcp.src import service as service_module
 
-
 def _fake_ranked_fetch_stage(hits, **kwargs):
     """Return deterministic fetched bodies without running the network callback."""
     return {
@@ -44,7 +43,6 @@ def _fake_ranked_fetch_stage(hits, **kwargs):
         ],
         "errors": [],
     }
-
 
 class PluginRouteRedesignTests(unittest.TestCase):
     def test_routes_are_semantic_profiles_not_single_provider_aliases(self):
@@ -114,7 +112,6 @@ class PluginRouteRedesignTests(unittest.TestCase):
         )
         self.assertNotIn("摘要", output)
 
-
 class PluginKeyStateTests(unittest.TestCase):
     def test_sqlite_key_manager_uses_unused_then_lru_order(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -148,7 +145,7 @@ class PluginKeyStateTests(unittest.TestCase):
                     backends=("exa",),
                     exa_keys=["bad", "good"],
                     key_manager=manager,
-                    url_resolver=lambda _host: ["93.184.216.34"],
+
                 )
 
             self.assertNotIn("error", result)
@@ -160,7 +157,6 @@ class PluginKeyStateTests(unittest.TestCase):
             self.assertEqual(good["status"], "active")
             self.assertEqual(good["success_count"], 1)
             self.assertEqual(good["use_count"], 1)
-
 
 class PluginScrapeReviewFixTests(unittest.TestCase):
     """Covers the adversarial-review scrape-layer fixes (P0-A, P1-B/C, P2-F/G/I)."""
@@ -277,7 +273,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 "https://example.com",
                 primary="firecrawl",
                 backends=("firecrawl",),
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         self.assertEqual(result["via"], "firecrawl")
@@ -324,7 +320,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 backends=("exa",),
                 exa_keys=["ek"],
                 scrape_chars=2048,
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         self.assertEqual(result["via"], "exa")
@@ -378,7 +374,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     jina_keys=["jk1", "jk2"],
                     jina_prefer_keyed=True,
                     key_manager=manager,
-                    url_resolver=lambda _host: ["93.184.216.34"],
+
                 )
 
             self.assertNotIn("error", result)
@@ -448,7 +444,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     backends=("jina", "tavily"),
                     tavily_keys=["tk"],
                     site_memory=memory,
-                    url_resolver=lambda _host: ["93.184.216.34"],
+
                 )
 
             self.assertEqual(result["via"], "tavily")
@@ -475,7 +471,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 ),
                 keys={"exa": "ek"},
                 config={},
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         self.assertEqual(result["backend"], "exa")
@@ -499,7 +495,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                 primary="tavily",
                 backends=("jina", "tavily"),
                 tavily_keys=["tk"],
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         self.assertEqual(result["via"], "tavily")
@@ -530,12 +526,11 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     backends=("jina", "tavily"),
                     tavily_keys=["tk"],
                     site_memory=memory,
-                    url_resolver=lambda _host: ["93.184.216.34"],
+
                 )
 
             self.assertEqual(result["via"], "tavily")
             self.assertEqual(calls[:1], ["tavily"])
-
 
 class PluginServiceConfigTests(unittest.TestCase):
     def _fake_fetch_stage(self, hits, **kwargs):
@@ -1142,7 +1137,6 @@ class PluginServiceConfigTests(unittest.TestCase):
         self.assertIn("keys file is not valid JSON", data["keys_error"])
         self.assertEqual(data["configured_keys"], {})
 
-
 class PluginDisabledSourcesTests(unittest.TestCase):
     def _fake_fetch_stage(self, hits, **kwargs):
         return _fake_ranked_fetch_stage(hits, **kwargs)
@@ -1265,7 +1259,6 @@ class PluginDisabledSourcesTests(unittest.TestCase):
         for _query, sources in runs:
             self.assertEqual(sources, ["github_repos", "hackernews", "stackoverflow"])
 
-
 class PluginEntryLayerTests(unittest.TestCase):
     def test_multi_search_unknown_route_returns_structured_error(self):
         result = tools.multi_search_tool("q", route="discussion", use_state=False)
@@ -1368,7 +1361,6 @@ class PluginEntryLayerTests(unittest.TestCase):
         with mock.patch.object(config_module, "resolve_config_path", return_value=missing):
             self.assertEqual(config_module.load_config(), {})
 
-
 class PluginNormUrlTests(unittest.TestCase):
     def test_drops_tracking_params(self):
         norm = _norm_url("https://x.com/a?utm_source=g&fbclid=1&gclid=2&ref=partner&q=hi")
@@ -1422,7 +1414,6 @@ class PluginRankingTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         captured["ok"] = True
         self.assertTrue(captured["ok"])
-
 
 class PluginRRFSearchContractTests(unittest.TestCase):
     def _run_both(self, rows, fetch_stage=_fake_ranked_fetch_stage):
@@ -1514,7 +1505,6 @@ class PluginRRFSearchContractTests(unittest.TestCase):
         markdown = responses[1]["markdown"]
         self.assertLess(markdown.index("https://example.com/first"),
                         markdown.index("https://example.com/second"))
-
 
 class PluginRegistryConsistencyTests(unittest.TestCase):
     def test_route_meta_covers_every_route_profile(self):

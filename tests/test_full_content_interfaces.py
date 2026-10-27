@@ -7,11 +7,9 @@ from unittest import mock
 from multi_search_mcp import cli, tools
 from multi_search_mcp.src import service
 
-
 URL = "https://evidence.example/full-content"
 MARKER = "UNIQUE_FULL_CONTENT_BODY"
 BODY = MARKER + " acquired source text" * 1500
-
 
 class FullContentInterfaceTests(unittest.TestCase):
     def setUp(self):
@@ -87,7 +85,7 @@ class FullContentInterfaceTests(unittest.TestCase):
         def fetch_fixture(request):
             return service.run_fetch_source(
                 request, keys={}, config={}, prefetched_body=BODY,
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         cases = (
@@ -103,7 +101,6 @@ class FullContentInterfaceTests(unittest.TestCase):
                 self.assertEqual(payload["body"], BODY[:expected_length])
                 self.assertEqual(payload["content_length"], len(BODY))
                 self.assertIs(payload["truncated"], expected_length < len(BODY))
-
 
 if __name__ == "__main__":
     unittest.main()

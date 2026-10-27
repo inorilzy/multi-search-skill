@@ -1,4 +1,5 @@
 import email.message
+import functools
 import io
 import socket
 import subprocess
@@ -17,9 +18,19 @@ from multi_search_mcp.src.support import http, url_security
 from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
 from multi_search_mcp.src.support.url_security import UrlSecurityError
 
-
 PUBLIC_IP = "93.184.216.34"
 
+
+def _no_local_dns(test):
+    """Fail the test if URL preflight consults the process DNS resolver."""
+    def wrapper(self, *args, **kwargs):
+        with mock.patch(
+            "multi_search_mcp.src.support.url_security._resolve_host_ips",
+            side_effect=AssertionError("URL preflight used local DNS"),
+        ):
+            return test(self, *args, **kwargs)
+
+    return functools.wraps(test)(wrapper)
 
 class DnsDeadlineTests(unittest.TestCase):
     def setUp(self):
@@ -76,13 +87,13 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertIn("DNS", str(error.exception))
         self._finish_late_resolution(finished)
 
+    @_no_local_dns
     def test_scrape_core_does_not_resolve_delegated_urls_locally(self):
         # A delegated backend fetches the URL from the provider's network, so a
         # local DNS preflight adds no SSRF protection and wrongly rejects
-        # fake-IP/TUN routing. The resolver must not even be consulted.
+        # fake-IP/TUN routing. No local DNS lookup may run.
         for backend in ("firecrawl", "jina", "exa", "tavily"):
             with self.subTest(backend=backend):
-                resolver = mock.Mock(side_effect=AssertionError("delegated URL resolved locally"))
                 with mock.patch(
                     "multi_search_mcp.src.scrape.scrape._jina_anonymous_cooling_down",
                     return_value=False,
@@ -96,16 +107,15 @@ class DnsDeadlineTests(unittest.TestCase):
                         backends=(backend,),
                         **({f"{backend}_keys": ["synthetic-key"]} if backend in {"exa", "tavily"} else {}),
                         deadline=time.monotonic() + 5,
-                        url_resolver=resolver,
+
                     )
 
-                resolver.assert_not_called()
                 scraper.assert_called_once()
                 self.assertEqual(result["via"], backend)
                 self.assertIn("delegated backend error", result["error"])
 
+    @_no_local_dns
     def test_delegated_url_still_rejects_local_targets_without_dns(self):
-        resolver = mock.Mock(side_effect=AssertionError("unsafe URL must fail before DNS"))
         for url, reason in (
             ("http://127.0.0.1/admin", "loopback"),
             ("http://[::1]/admin", "loopback"),
@@ -185,18 +195,17 @@ class DnsDeadlineTests(unittest.TestCase):
                  mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl") as scraper:
                 result = scrape_url_smart(
                     url, primary="firecrawl", backends=("firecrawl",),
-                    deadline=time.monotonic() + 5, url_resolver=resolver,
+                    deadline=time.monotonic() + 5,
                 )
                 self.assertIn(reason, result["error"])
                 self.assertNotIn("secret", result["error"])
                 scraper.assert_not_called()
-        resolver.assert_not_called()
 
+    @_no_local_dns
     def test_delegated_url_accepts_public_and_fake_ip_domains_without_dns(self):
         # Fake-IP/TUN routing only shows up in DNS answers, which the delegated
         # path never requests. Real domains (including numeric labels before
         # the TLD and IDNs) and public literals still dispatch.
-        resolver = mock.Mock(side_effect=AssertionError("delegated URL resolved locally"))
         for url in (
             "https://fake-ip.tun.example/article",
             "https://163.com/news",
@@ -214,18 +223,17 @@ class DnsDeadlineTests(unittest.TestCase):
             ) as scraper:
                 result = scrape_url_smart(
                     url, primary="firecrawl", backends=("firecrawl",),
-                    deadline=time.monotonic() + 5, url_resolver=resolver,
+                    deadline=time.monotonic() + 5,
                 )
                 self.assertNotIn("error", result)
                 self.assertEqual(result["via"], "firecrawl")
                 scraper.assert_called_once()
-        resolver.assert_not_called()
 
+    @_no_local_dns
     def test_delegated_backend_receives_the_rebuilt_url_not_the_raw_string(self):
         # The provider parses the URL itself; it must receive the components
         # that were validated, never the raw input another parser may read
         # differently.
-        resolver = mock.Mock(side_effect=AssertionError("delegated URL resolved locally"))
         for raw, rebuilt in (
             ("HTTPS://Example.COM:8443/a\\b c?q=1 2#frag",
              "https://example.com:8443/a%5Cb%20c?q=1%202#frag"),
@@ -241,14 +249,14 @@ class DnsDeadlineTests(unittest.TestCase):
             ) as scraper:
                 result = scrape_url_smart(
                     raw, primary="firecrawl", backends=("firecrawl",),
-                    deadline=time.monotonic() + 5, url_resolver=resolver,
+                    deadline=time.monotonic() + 5,
                 )
                 self.assertNotIn("error", result)
                 scraper.assert_called_once()
                 self.assertEqual(scraper.call_args.args[0], rebuilt)
                 self.assertEqual(result["url"], rebuilt)
-        resolver.assert_not_called()
 
+    @_no_local_dns
     def test_delegated_scrape_does_not_dispatch_after_deadline(self):
         with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl") as scraper:
             result = scrape_url_smart(
@@ -256,16 +264,16 @@ class DnsDeadlineTests(unittest.TestCase):
                 primary="firecrawl",
                 backends=("firecrawl",),
                 deadline=time.monotonic() - 1,
-                url_resolver=mock.Mock(side_effect=AssertionError("no DNS")),
+
             )
 
         self.assertIn("deadline", result["error"])
         scraper.assert_not_called()
 
+    @_no_local_dns
     def test_scrape_core_does_not_resolve_reddit_url_locally(self):
         # Reddit post URLs are parsed for an id; the request goes to fixed
         # endpoints, so the preflight must never consult local DNS.
-        resolver = mock.Mock(side_effect=AssertionError("Reddit URL resolved locally"))
         reddit_result = {
             "url": "https://www.reddit.com/r/test/comments/abc123/title",
             "markdown": "post body", "via": "reddit",
@@ -277,10 +285,9 @@ class DnsDeadlineTests(unittest.TestCase):
             result = scrape_url_smart(
                 "https://www.reddit.com/r/test/comments/abc123/title",
                 deadline=time.monotonic() + 5,
-                url_resolver=resolver,
+
             )
 
-        resolver.assert_not_called()
         scraper.assert_called_once()
         self.assertEqual(result["via"], "reddit")
         self.assertEqual(result["markdown"], "post body")
@@ -348,13 +355,13 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertIsInstance(error.exception.reason, socket.gaierror)
         socket_factory.assert_not_called()
 
+    @_no_local_dns
     def test_fetch_delegated_backends_bypass_tun_dns_for_urls_and_sources(self):
         url = "https://tun.example/article"
         for backend in ("jina", "exa", "tavily", "firecrawl"):
             for by_source in (False, True):
                 for scraper in (None, scrape_url_smart):
                     with self.subTest(backend=backend, by_source=by_source, explicit_scraper=scraper is not None):
-                        resolver = mock.Mock(return_value=["198.18.0.93"])
                         source = {"source_id": "src-fixture", "url": url, "providers": ["brave"]}
                         request = {"source_id": source["source_id"]} if by_source else {"url": url}
                         with mock.patch(
@@ -366,14 +373,14 @@ class DnsDeadlineTests(unittest.TestCase):
                             response = service.run_fetch_source(
                                 {**request, "backends": [backend], "use_state": False},
                                 scraper=scraper, keys={backend: "synthetic-key"}, config={},
-                                source_record=source if by_source else None, url_resolver=resolver,
+                                source_record=source if by_source else None,
                             )
                         self.assertEqual(response["body"], "fetched via provider")
                         self.assertEqual(response["backend"], backend)
                         fetch.assert_called_once()
                         self.assertEqual(fetch.call_args.args[0], url)
-                        resolver.assert_not_called()
 
+    @_no_local_dns
     def test_fetch_uses_the_same_configured_chain_as_dispatch(self):
         from multi_search_mcp.src.scrape import service as scrape_service
 
@@ -381,7 +388,6 @@ class DnsDeadlineTests(unittest.TestCase):
             with self.subTest(config=config):
                 chain = scrape_service.configured_scrape_backends(config)
                 expected = "firecrawl" if config.get("scrape_backends") else "jina"
-                resolver = mock.Mock(return_value=["198.18.0.93"])
                 with mock.patch(
                     "multi_search_mcp.src.scrape.scrape._jina_anonymous_cooling_down", return_value=False,
                 ), mock.patch(
@@ -390,18 +396,17 @@ class DnsDeadlineTests(unittest.TestCase):
                 ) as backend:
                     result = service.run_fetch_source(
                         {"url": "https://tun.example/config", "use_state": False},
-                        keys={}, config=config, url_resolver=resolver,
+                        keys={}, config=config,
                     )
                 self.assertEqual(result["backend"], expected)
                 self.assertEqual(chain[0], expected)
                 self.assertEqual(len(chain), len(set(chain)))
                 backend.assert_called_once()
-                resolver.assert_not_called()
 
+    @_no_local_dns
     def test_fetch_delegated_config_file_load_and_explicit_backend_precedence(self):
         for backends, expected in ((None, "firecrawl"), (["jina"], "jina")):
             with self.subTest(backends=backends):
-                resolver = mock.Mock(return_value=["198.18.0.93"])
                 with mock.patch(
                     "multi_search_mcp.src.scrape.fetch.runtime.load_config_safe",
                     return_value={"scrape_backends": ["firecrawl"]},
@@ -414,15 +419,14 @@ class DnsDeadlineTests(unittest.TestCase):
                     result = service.run_fetch_source(
                         {"url": "https://tun.example/config", "use_state": False,
                          "config_path": "fixture.json", "timeout": 2, "backends": backends},
-                        keys={}, url_resolver=resolver,
+                        keys={},
                     )
                 load.assert_called_once_with("fixture.json")
                 backend.assert_called_once()
-                resolver.assert_not_called()
                 self.assertEqual(result["backend"], expected)
 
+    @_no_local_dns
     def test_fetch_delegated_rejects_unsafe_urls_before_acquisition(self):
-        resolver = mock.Mock(return_value=["198.18.0.93"])
         for url in (
             "http://127.0.0.1/", "http://[::1]/", "http://10.0.0.5/",
             "http://169.254.169.254/", "http://198.18.0.93/",
@@ -438,23 +442,22 @@ class DnsDeadlineTests(unittest.TestCase):
                 with self.assertRaises(UrlSecurityError) as error:
                     service.run_fetch_source(
                         {"url": url, "backends": ["firecrawl"], "use_state": False},
-                        keys={}, config={}, url_resolver=resolver,
+                        keys={}, config={},
                     )
                 self.assertNotIn("secret", str(error.exception))
                 backend.assert_not_called()
-        resolver.assert_not_called()
 
+    @_no_local_dns
     def test_fetch_delegated_dispatches_rebuilt_url_under_original_deadline(self):
         raw = "HTTPS://Example.COM:8443/a\\b c?q=1 2"
         rebuilt = "https://example.com:8443/a%5Cb%20c?q=1%202"
-        resolver = mock.Mock(return_value=["198.18.0.93"])
         deadline = time.monotonic() + 2
         with mock.patch(
             "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl", return_value={"markdown": "body"},
         ) as backend:
             result = service.run_fetch_source(
                 {"url": raw, "backends": ["firecrawl"], "use_state": False},
-                keys={}, config={}, url_resolver=resolver, deadline=deadline,
+                keys={}, config={}, deadline=deadline,
             )
             backend.assert_called_once()
             self.assertEqual(backend.call_args.args[0], rebuilt)
@@ -464,11 +467,11 @@ class DnsDeadlineTests(unittest.TestCase):
             with self.assertRaisesRegex(UrlSecurityError, "deadline"):
                 service.run_fetch_source(
                     {"url": raw, "backends": ["firecrawl"], "use_state": False},
-                    keys={}, config={}, url_resolver=resolver, deadline=time.monotonic() - 1,
+                    keys={}, config={}, deadline=time.monotonic() - 1,
                 )
             backend.assert_not_called()
-        resolver.assert_not_called()
 
+    @_no_local_dns
     def test_search_to_fetch_delegates_without_tun_dns(self):
         from multi_search_mcp.src.search.search_runner import ProviderSpec
 
@@ -476,36 +479,34 @@ class DnsDeadlineTests(unittest.TestCase):
             "source": "hackernews", "url": "https://tun.example/article", "title": "Fixture",
             "description": "candidate only", "content_kind": "excerpt",
         }])
-        resolver = mock.Mock(return_value=["198.18.0.93"])
         with mock.patch(
             "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl", return_value={"markdown": "body"},
         ) as backend:
             result = service.run_search_web(
                 {"query": "fixture", "sources": ["hackernews"], "use_state": False},
                 providers={"hackernews": provider}, keys={},
-                config={"scrape_backends": ["firecrawl"]}, url_resolver=resolver,
+                config={"scrape_backends": ["firecrawl"]},
             )
         self.assertEqual(result["diagnostics"]["body_success_count"], 1)
         backend.assert_called_once()
-        resolver.assert_not_called()
 
+    @_no_local_dns
     def test_fetch_custom_and_local_paths_use_format_checks_only(self):
         # A caller-supplied scraper, a prefetched body and Reddit never resolve
         # the URL locally: fake-IP DNS answers must not block them.
-        resolver = mock.Mock(return_value=["198.18.0.93"])
 
         custom = mock.Mock(return_value={"markdown": "custom body", "via": "custom"})
         response = service.run_fetch_source(
             {"url": "https://local.example/path", "backends": ["firecrawl"],
              "use_state": False},
-            keys={}, config={}, url_resolver=resolver, scraper=custom,
+            keys={}, config={}, scraper=custom,
         )
         self.assertEqual(response["body"], "custom body")
         custom.assert_called_once()
 
         response = service.run_fetch_source(
             {"url": "https://local.example/path", "use_state": False},
-            keys={}, config={}, url_resolver=resolver,
+            keys={}, config={},
             prefetched_body="already fetched",
         )
         self.assertEqual(response["body"], "already fetched")
@@ -518,7 +519,7 @@ class DnsDeadlineTests(unittest.TestCase):
             response = service.run_fetch_source(
                 {"url": "https://www.reddit.com/r/test/comments/abc123/title",
                  "use_state": False},
-                keys={}, config={}, url_resolver=resolver,
+                keys={}, config={},
             )
         self.assertEqual(response["body"], "reddit body")
         reddit.assert_called_once()
@@ -529,9 +530,8 @@ class DnsDeadlineTests(unittest.TestCase):
             service.run_fetch_source(
                 {"url": "https://local.example/path", "backends": ["typo"],
                  "use_state": False},
-                keys={}, config={}, url_resolver=resolver,
+                keys={}, config={},
             )
-        resolver.assert_not_called()
 
         # Literal local destinations are still rejected by those checks, again
         # without ever consulting DNS.
@@ -544,29 +544,27 @@ class DnsDeadlineTests(unittest.TestCase):
                 with self.assertRaisesRegex(UrlSecurityError, reason):
                     service.run_fetch_source(
                         {"url": url, "use_state": False},
-                        keys={}, config={}, url_resolver=resolver, scraper=custom,
+                        keys={}, config={}, scraper=custom,
                     )
-        resolver.assert_not_called()
 
+    @_no_local_dns
     def test_fetch_rejects_invalid_configured_chains_before_dispatch(self):
         for chain in ([], ["unknown"], ["firecrawl", "direct"], "firecrawl"):
             with self.subTest(chain=chain), mock.patch(
                 "multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl",
             ) as backend:
-                resolver = mock.Mock(return_value=["198.18.0.93"])
                 with self.assertRaises(ValueError):
                     service.run_fetch_source(
                         {"url": "https://tun.example/path", "use_state": False},
-                        keys={}, config={"scrape_backends": chain}, url_resolver=resolver,
+                        keys={}, config={"scrape_backends": chain},
                     )
                 backend.assert_not_called()
-                resolver.assert_not_called()
 
+    @_no_local_dns
     def test_fetch_core_never_resolves_the_url_and_keeps_its_deadline(self):
         # The URL preflight no longer resolves, so a supplied deadline reaches
-        # the acquisition unchanged and the resolver stays unused.
+        # the acquisition unchanged and no DNS lookup runs.
         scraper = mock.Mock(return_value={"markdown": "ok", "via": "fixture"})
-        resolver = mock.Mock(side_effect=AssertionError("URL preflight must not resolve"))
         deadline = time.monotonic() + 5
 
         result = service.run_fetch_source(
@@ -574,13 +572,12 @@ class DnsDeadlineTests(unittest.TestCase):
             scraper=scraper,
             keys={},
             config={},
-            url_resolver=resolver,
+
             deadline=deadline,
         )
 
         self.assertEqual(result["body"], "ok")
         self.assertEqual(scraper.call_args.kwargs["deadline"], deadline)
-        resolver.assert_not_called()
 
     def test_redirect_dns_preflight_uses_original_http_deadline(self):
         finished = threading.Event()
@@ -623,7 +620,7 @@ class DnsDeadlineTests(unittest.TestCase):
         try:
             with mock.patch.object(url_security, "_DNS_POOL", pool):
                 with self.assertRaises(UrlSecurityError) as first:
-                    url_security.validate_redirect_target(
+                    url_security._validate_redirect_target(
                         "https://blocked.example/path",
                         resolver=blocking_resolver,
                         deadline=time.monotonic() + 0.02,
@@ -633,7 +630,7 @@ class DnsDeadlineTests(unittest.TestCase):
                 self.assertEqual(pool.detached_count, 1)
                 # The stuck resolver no longer blocks an unrelated lookup.
                 self.assertEqual(
-                    url_security.validate_redirect_target(
+                    url_security._validate_redirect_target(
                         "https://next.example/path",
                         resolver=lambda _host: [PUBLIC_IP],
                         deadline=time.monotonic() + 1,
@@ -643,13 +640,13 @@ class DnsDeadlineTests(unittest.TestCase):
                 # The detached budget (1) is spent: a second stuck lookup keeps
                 # its slot and further work reports capacity, not a timeout.
                 with self.assertRaises(UrlSecurityError):
-                    url_security.validate_redirect_target(
+                    url_security._validate_redirect_target(
                         "https://blocked-again.example/path",
                         resolver=lambda _host: released.wait(timeout=2) and [PUBLIC_IP],
                         deadline=time.monotonic() + 0.02,
                     )
                 with self.assertRaises(UrlSecurityError) as saturated:
-                    url_security.validate_redirect_target(
+                    url_security._validate_redirect_target(
                         "https://full.example/path",
                         resolver=lambda _host: [PUBLIC_IP],
                         deadline=time.monotonic() + 1,
@@ -679,7 +676,7 @@ class DnsDeadlineTests(unittest.TestCase):
         try:
             with mock.patch.object(url_security, "_DNS_POOL", pool):
                 with self.assertRaises(UrlSecurityError) as first:
-                    url_security.validate_redirect_target(
+                    url_security._validate_redirect_target(
                         "https://blocked.example/path",
                         resolver=blocking_resolver,
                         deadline=time.monotonic() + 0.02,
@@ -690,7 +687,7 @@ class DnsDeadlineTests(unittest.TestCase):
 
                 for _ in range(4):
                     with self.assertRaises(UrlSecurityError) as saturated:
-                        url_security.validate_redirect_target(
+                        url_security._validate_redirect_target(
                             "https://full.example/path",
                             resolver=lambda _host: [PUBLIC_IP],
                             deadline=time.monotonic() + 1,
@@ -700,7 +697,7 @@ class DnsDeadlineTests(unittest.TestCase):
                 released.set()
                 self._finish_late_resolution(finished)
                 self.assertEqual(
-                    url_security.validate_redirect_target(
+                    url_security._validate_redirect_target(
                         "https://reusable.example/path",
                         resolver=lambda _host: [PUBLIC_IP],
                         deadline=time.monotonic() + 1,
@@ -739,7 +736,6 @@ except Exception:
             check=False,
         )
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-
 
 if __name__ == "__main__":
     unittest.main()

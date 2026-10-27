@@ -37,65 +37,53 @@ class DnsResolutionError(OSError):
 
 
 def validate_public_http_url(
-    url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
+    url: str, *, deadline: float | None = None,
     allow_fake_ip: bool | None = None,
 ) -> str:
     """Validate a URL that is never fetched by this process.
 
     Only checks that need no DNS run: scheme, host presence, credentials,
-    localhost and literal non-public destinations. ``resolver`` is accepted for
-    signature compatibility but never called, so TUN fake-IP routing works.
+    localhost and literal non-public destinations, so TUN fake-IP routing works.
     """
-    return _validate_url(
-        url, label="URL", resolver=resolver, deadline=deadline,
-        allow_fake_ip=allow_fake_ip, use_dns=False,
-    )
+    candidate = str(url or "").strip()
+    _validate_format_only(candidate, label="URL", deadline=deadline)
+    return candidate
 
 
 def validate_scrape_url(
-    url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
+    url: str, *, deadline: float | None = None,
     allow_fake_ip: bool | None = None,
 ) -> str:
     """Validate a scrape target without a local DNS lookup (see above)."""
-    return _validate_url(
-        url, label="scrape URL", resolver=resolver, deadline=deadline,
-        allow_fake_ip=allow_fake_ip, use_dns=False,
-    )
+    candidate = str(url or "").strip()
+    _validate_format_only(candidate, label="scrape URL", deadline=deadline)
+    return candidate
 
 
 def validate_redirect_target(
-    url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
+    url: str, *, deadline: float | None = None,
     allow_fake_ip: bool | None = None,
 ) -> str:
-    return _validate_url(
-        url, label="redirect target", resolver=resolver, deadline=deadline,
-        allow_fake_ip=allow_fake_ip,
+    """Validate a redirect target, resolving it with the system resolver."""
+    return _validate_redirect_target(
+        url, resolver=None, deadline=deadline, allow_fake_ip=allow_fake_ip,
     )
 
 
-def allow_fake_ip_default() -> bool:
-    """Accept resolved TUN benchmark addresses only after an explicit opt-in."""
-    return os.environ.get(FAKE_IP_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _validate_url(
-    url: str, *, label: str, resolver: Resolver | None, deadline: float | None,
-    allow_fake_ip: bool | None = None, use_dns: bool = True,
+def _validate_redirect_target(
+    url: str, *, resolver: Resolver | None, deadline: float | None,
+    allow_fake_ip: bool | None = None,
 ) -> str:
+    """Resolve a redirect target and reject a non-public destination.
+
+    The injected resolver exists only for the HTTP redirect handler, which also
+    pins the exact answers it validated; it is not part of any public API.
+    """
     candidate = str(url or "").strip()
-    _parts, host, _port = http_target(candidate, label=label)
-    direct_ip = numeric_host(host)
+    host, direct_ip = _check_format(
+        candidate, label="redirect target", deadline=deadline,
+    )
     if direct_ip is not None:
-        _ensure_deadline(deadline, label)
-        _ensure_public_ip(direct_ip, label=label, resolved=False)
-        return candidate
-    if not use_dns:
-        # The URL is handed to a provider or reduced to an identifier, never
-        # dialed locally, so a local DNS answer says nothing about the target.
-        # Reject local names explicitly now that no resolver does it for us.
-        if host == "localhost" or host.endswith(".localhost"):
-            raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
-        _ensure_deadline(deadline, label)
         return candidate
     accept_fake_ip = allow_fake_ip_default() if allow_fake_ip is None else bool(allow_fake_ip)
     resolve = resolver or _resolve_host_ips
@@ -107,17 +95,42 @@ def _validate_url(
                 lambda: list(resolve(host)), deadline=deadline,
             )
     except DnsResolutionError as exc:
-        raise UrlSecurityError(f"{label} {exc}") from exc
+        raise UrlSecurityError(f"redirect target {exc}") from exc
     if not answers:
-        raise UrlSecurityError(f"{label} host did not resolve to any IP")
+        raise UrlSecurityError("redirect target host did not resolve to any IP")
     for answer in answers:
         ip = _parse_ip(answer)
         if ip is None:
-            raise UrlSecurityError(f"{label} host resolved to a non-IP value")
+            raise UrlSecurityError("redirect target host resolved to a non-IP value")
         _ensure_public_ip(
-            ip, label=label, resolved=True, allow_fake_ip=accept_fake_ip,
+            ip, label="redirect target", resolved=True, allow_fake_ip=accept_fake_ip,
         )
     return candidate
+
+
+def allow_fake_ip_default() -> bool:
+    """Accept resolved TUN benchmark addresses only after an explicit opt-in."""
+    return os.environ.get(FAKE_IP_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _validate_format_only(candidate: str, *, label: str, deadline: float | None) -> None:
+    """Run only checks that need no DNS, including an explicit localhost ban."""
+    host, _direct_ip = _check_format(candidate, label=label, deadline=deadline)
+    if host == "localhost" or host.endswith(".localhost"):
+        # No resolver runs any more, so reject local names explicitly.
+        raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
+
+
+def _check_format(
+    candidate: str, *, label: str, deadline: float | None,
+) -> tuple[str, object | None]:
+    """Check scheme/host/credentials and unsafe literals; return ``(host, ip)``."""
+    _parts, host, _port = http_target(candidate, label=label)
+    direct_ip = numeric_host(host)
+    _ensure_deadline(deadline, label)
+    if direct_ip is not None:
+        _ensure_public_ip(direct_ip, label=label, resolved=False)
+    return host, direct_ip
 
 
 def normalize_http_host(host: str) -> str:

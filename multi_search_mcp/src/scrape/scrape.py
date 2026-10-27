@@ -181,7 +181,6 @@ class ScrapeContext:
     deadline: float | None = None
     site_memory: Any = None
     key_manager: Any = None
-    url_resolver: Any = None
     scrape_chars: int | None = None
     timeout: float = _DEFAULT_SCRAPE_TIMEOUT_SECONDS
     jina_prefer_keyed: bool = False
@@ -478,14 +477,9 @@ def validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
 
 
 def _prepare_scrape_target(
-    url: str, *, resolver=None, deadline: float | None = None,
+    url: str, *, deadline: float | None = None,
 ) -> tuple[str, str]:
-    """Validate a generic (delegated) scrape target without local DNS.
-
-    ``resolver`` is accepted for signature compatibility but intentionally
-    unused: this policy only runs checks that need no DNS.
-    """
-    del resolver
+    """Validate a generic (delegated) scrape target without local DNS."""
     safe_url = _validate_delegated_url(url, deadline=deadline)
     return safe_url, safe_url
 
@@ -616,7 +610,7 @@ _SCRAPE_DISPATCH: dict[str, Callable[[str, ScrapeContext, dict], dict | None]] =
 
 _LEGACY_OPTION_KEYS = frozenset({
     "timeout", "primary", "backends", "deadline", "site_memory", "key_manager",
-    "scrape_chars", "jina_prefer_keyed", "twitter_cookies", "url_resolver",
+    "scrape_chars", "jina_prefer_keyed", "twitter_cookies",
     "jina_key", "jina_keys", "exa_key", "exa_keys", "firecrawl_key",
     "firecrawl_keys", "tavily_key", "tavily_keys", "strict_backends",
 })
@@ -648,7 +642,6 @@ def _legacy_context(options: dict) -> ScrapeContext:
         deadline=options.get("deadline"),
         site_memory=options.get("site_memory"),
         key_manager=options.get("key_manager"),
-        url_resolver=options.get("url_resolver"),
         scrape_chars=options.get("scrape_chars"),
         timeout=options.get("timeout", _DEFAULT_SCRAPE_TIMEOUT_SECONDS),
         jina_prefer_keyed=bool(options.get("jina_prefer_keyed", False)),
@@ -664,7 +657,7 @@ def _legacy_context(options: dict) -> ScrapeContext:
 def scrape_url_smart(url: str, ctx: ScrapeContext | None = None, **options) -> dict:
     """Dispatch platform URLs to their scrapers; use generic backends otherwise.
 
-    ``ctx`` carries keys, deadline, site memory, resolver and per-call options;
+    ``ctx`` carries keys, deadline, site memory and per-call options;
     omitted means the historical keyword arguments are used to build one.
     """
     if ctx is None:
@@ -694,7 +687,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                 # to fixed Reddit endpoints. The shared URL policy still runs so
                 # credentials and non-public destinations are rejected.
                 safe_url = validate_scrape_url(
-                    url, resolver=ctx.url_resolver, deadline=ctx.deadline,
+                    url, deadline=ctx.deadline,
                 )
         except ValueError as exc:
             return normalize_scrape_result({"error": str(exc)}, url=url, via=backend)
@@ -702,12 +695,11 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
         if backend == "twitter":
             result = scrape_url_twitter(
                 safe_url, cookies=ctx.twitter_cookies, timeout=ctx.timeout,
-                deadline=ctx.deadline, url_resolver=ctx.url_resolver,
+                deadline=ctx.deadline,
             )
         else:
             result = scrape_url_reddit(
                 safe_url, timeout=ctx.timeout, deadline=ctx.deadline,
-                url_resolver=ctx.url_resolver,
             )
         result = normalize_scrape_result(result, url=safe_url, via=backend)
         if ctx.site_memory is not None:
@@ -735,7 +727,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
         # resolves the URL from its own network. Only literal local
         # destinations are meaningful here; see _validate_delegated_url.
         safe_url, scrape_target = _prepare_scrape_target(
-            url, resolver=ctx.url_resolver, deadline=ctx.deadline,
+            url, deadline=ctx.deadline,
         )
     except UrlSecurityError as exc:
         return normalize_scrape_result({"error": str(exc)}, url=url)

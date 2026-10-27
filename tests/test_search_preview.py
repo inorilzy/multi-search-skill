@@ -6,10 +6,8 @@ from multi_search_mcp.src import service
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 TITLE = "TaskGroup cancellation"
 URL = "https://example.com/taskgroup"
-
 
 class SearchPreviewTests(unittest.TestCase):
     def search(self, body, *, limit=1200, store=None, snippet="candidate excerpt"):
@@ -28,7 +26,7 @@ class SearchPreviewTests(unittest.TestCase):
             providers={"brave": provider}, keys={}, config={}, state_store=store,
             scrape_chars=limit,
             scraper=lambda url, **_: {"url": url, "markdown": body, "via": "fixture"},
-            url_resolver=lambda _: ["93.184.216.34"],
+
         )
 
     def test_navigation_no_longer_hides_question_and_full_body_is_unchanged(self):
@@ -50,7 +48,7 @@ class SearchPreviewTests(unittest.TestCase):
                 self.assertTrue(page["truncated"])
                 fetched = service.run_fetch_source(
                     service.FetchSourceRequest(source_id=page["source_id"], full_content=True),
-                    state_store=store, url_resolver=lambda _: ["93.184.216.34"],
+                    state_store=store,
                 )
                 self.assertTrue(fetched["cache_hit"])
                 self.assertEqual(fetched["body"], body)
@@ -115,7 +113,6 @@ class SearchPreviewTests(unittest.TestCase):
                 self.assertEqual(page["preview_start"], 0)
                 self.assertEqual(page["preview_end"], min(30, len(body)))
                 self.assertEqual(page["truncated"], len(body) > 30)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,19 +8,12 @@ from multi_search_mcp.src.scrape.scrape import scrape_url_smart
 from multi_search_mcp.src.scrape.service import configured_scrape_backends
 from multi_search_mcp.src.scrape.scrape import KNOWN_BACKENDS as DEFAULT_SCRAPE_BACKENDS
 
-
 def resolve_scrape_backends(config):
     return list(configured_scrape_backends(config))
-
 
 from multi_search_mcp.src.support.config import ConfigError
 
 URL = "https://example.com/article"
-
-
-def _resolver(_host):
-    return ["93.184.216.34"]
-
 
 class ResolveScrapeBackendsTests(unittest.TestCase):
     def test_missing_or_null_uses_the_legacy_default_order(self):
@@ -57,8 +50,6 @@ class ResolveScrapeBackendsTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "scrape_backends requires a list of strings"):
             resolve_scrape_backends({"scrape_backends": "jina"})
 
-
-
 class ScrapeChainExecutionTests(unittest.TestCase):
     def _run(self, config, request, *, calls):
         def firecrawl(url, key="", timeout=0, deadline=None):
@@ -86,7 +77,7 @@ class ScrapeChainExecutionTests(unittest.TestCase):
         ):
             return run_scrape_raw(
                 request, scraper=scrape_url_smart, keys={}, config=config,
-                url_resolver=_resolver,
+
             )[0]
 
     def test_configured_chain_controls_fallback_order(self):
@@ -127,7 +118,6 @@ class ScrapeChainExecutionTests(unittest.TestCase):
         )
         self.assertEqual(result["error"], "missing key for backend: exa")
         self.assertEqual(calls, [])
-
 
 if __name__ == "__main__":
     unittest.main()

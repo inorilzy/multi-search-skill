@@ -75,7 +75,7 @@ def _text(tweet) -> str:
 
 
 def scrape_url_twitter(url: str, cookies: dict | str = "", timeout: float = 60, *,
-                       deadline: float | None = None, url_resolver=None) -> dict:
+                       deadline: float | None = None) -> dict:
     end = time.monotonic() + max(0.0, timeout)
     if deadline is not None:
         end = min(end, deadline)

@@ -17,11 +17,6 @@ from multi_search_mcp.src.state.content_store import ContentStore
 from multi_search_mcp.src.state.source_registry import SourceRegistry
 from multi_search_mcp.src.state.state_store import StateStore
 
-
-def _resolver(_host):
-    return ["93.184.216.34"]
-
-
 def _row(source, name):
     return {
         "source": source,
@@ -31,13 +26,11 @@ def _row(source, name):
         "content_kind": "excerpt",
     }
 
-
 def _provider(source, query_rows):
     def search(query, config, context, key):
         return [dict(row) for row in query_rows[query]]
 
     return ProviderSpec(name=source, public_name=source, call=search)
-
 
 def _late_shared_rows(source, prefix):
     return [
@@ -45,7 +38,6 @@ def _late_shared_rows(source, prefix):
         _row(source, "shared"),
         _row(source, f"{prefix}-tail"),
     ]
-
 
 class SearchFetchPipelineTests(unittest.TestCase):
     def setUp(self):
@@ -67,7 +59,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
                 expand=expand or [], use_state=use_state,
             ),
             providers=providers, keys={}, config={}, scraper=scraper,
-            url_resolver=_resolver, **options,
+            **options,
         )
 
     def test_fuses_all_provider_ranks_then_fetches_only_final_fifteen(self):
@@ -272,7 +264,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         self.assertEqual(excerpt["content_length"], len(body))
         cached = service.run_fetch_source(
             service.FetchSourceRequest(source_id=hit["source_id"], max_chars=100),
-            state_store=store, scraper=scraper, keys={}, config={}, url_resolver=_resolver,
+            state_store=store, scraper=scraper, keys={}, config={},
         )
         self.assertTrue(cached["cache_hit"])
         self.assertEqual(cached["body"], body[:100])
@@ -292,7 +284,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", scraper),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
+            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             legacy = service.run_multi_search(service.MultiSearchRequest(
                 query="primary", sources=list(providers), count=30, use_state=False,
@@ -326,7 +318,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             result = service.run_fetch_source(
                 service.FetchSourceRequest(url="https://evidence.example/direct"),
                 state_store=StateStore(self.state_path), scraper=scraper,
-                keys={}, config={}, url_resolver=_resolver,
+                keys={}, config={},
             )
         search.assert_not_called()
         registry.assert_not_called()
@@ -355,7 +347,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
                 use_state=True, no_fetch=True,
             ),
             providers={"brave": provider}, keys={}, config={}, scraper=scraper,
-            url_resolver=_resolver,
+
         )
 
         self.assertEqual(response["errors"], [])
@@ -396,7 +388,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", scraper),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
+            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             output, errors = StringIO(), StringIO()
             code = cli.main(
@@ -428,7 +420,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", side_effect=scraper),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
+            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             for output_format in ("human", "markdown"):
                 with self.subTest(output_format=output_format):
@@ -451,7 +443,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", side_effect=lambda url, **kwargs: {
                 "url": url, "markdown": "VISIBLE hidden tail beyond preview", "via": "fake",
             }),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
+            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             for output_format in ("human", "markdown"):
                 with self.subTest(output_format=output_format):
@@ -475,7 +467,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", side_effect=lambda url, **kwargs: {
                 "url": url, "markdown": f"MCP_BODY:{url}", "via": "fake",
             }),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=_resolver),
+            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             for call in (tools.search_web_tool, tools.multi_search_tool):
                 with self.subTest(tool=call.__name__):
@@ -526,7 +518,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             response = service.run_search_web(
                 service.SearchWebRequest(query="primary", sources=["brave"], use_state=False),
                 providers={"brave": provider}, keys={"exa": "fake-exa-key"}, config={},
-                scraper=real_scraper, url_resolver=_resolver, scrape_timeout=2,
+                scraper=real_scraper, scrape_timeout=2,
             )
             self.assertTrue(started.is_set())
             self.assertIn("timeout", response["results"][0]["body_error"])
@@ -565,7 +557,6 @@ class SearchFetchPipelineTests(unittest.TestCase):
             service.run_read_source(
                 service.ReadSourceRequest(source_id=hit["source_id"]), state_store=store,
             )
-
 
 if __name__ == "__main__":
     unittest.main()

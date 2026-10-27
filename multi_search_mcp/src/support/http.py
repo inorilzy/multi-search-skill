@@ -21,7 +21,7 @@ from .url_security import (
     http_target,
     resolve_host_addresses,
     resolve_validated_addresses,
-    validate_redirect_target,
+    _validate_redirect_target,
 )
 
 
@@ -452,7 +452,7 @@ class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
 def _pin_redirect_addresses(url: str, deadline: float | None, answers) -> dict:
     """Resolve a redirect target once; connect to exactly the checked answers.
 
-    ``validate_redirect_target`` checks every answer, but urllib would resolve
+    ``_validate_redirect_target`` checks every answer, but urllib would resolve
     the host again for the connect call, leaving a DNS-rebinding window. Pinning
     the validated answers closes it.
     """
@@ -496,7 +496,7 @@ class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
                 answers.extend(found)
                 return found
 
-            validate_redirect_target(
+            _validate_redirect_target(
                 newurl, resolver=capture, deadline=deadline,
             )
             pinned = _pin_redirect_addresses(newurl, deadline, answers or None)

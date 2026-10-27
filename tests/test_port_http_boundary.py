@@ -21,13 +21,11 @@ FAKE_IP = "198.18.0.93"
 OK = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
 CONNECT_OK = b"HTTP/1.1 200 Connection established\r\n\r\n"
 
-
 def addresses(address, port):
     """A real getaddrinfo-shaped answer, with the requested port preserved."""
     v6 = ":" in address
     return [(socket.AF_INET6 if v6 else socket.AF_INET, socket.SOCK_STREAM, 6,
              "", (address, port, 0, 0) if v6 else (address, port))]
-
 
 class WireSocket:
     def __init__(self, responses, connect_error=None, read_error=None):
@@ -71,7 +69,6 @@ class WireSocket:
 
     def close(self):
         self.closed = True
-
 
 class HttpConnectBoundaryTests(unittest.TestCase):
     @contextmanager
@@ -467,11 +464,9 @@ class HttpConnectBoundaryTests(unittest.TestCase):
         if hasattr(ssl, "OP_IGNORE_UNEXPECTED_EOF"):
             self.assertFalse(http._ssl_ctx.options & ssl.OP_IGNORE_UNEXPECTED_EOF)
         with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_firecrawl", return_value={"markdown": "body"}) as backend:
-            result = scrape_url_smart("HTTPS://Example.COM:8443/a\\b c", backends=("firecrawl",),
-                url_resolver=mock.Mock(side_effect=AssertionError("delegated DNS")))
+            result = scrape_url_smart("HTTPS://Example.COM:8443/a\\b c", backends=("firecrawl",))
         self.assertEqual(result["via"], "firecrawl")
         self.assertEqual(backend.call_args.args[0], "https://example.com:8443/a%5Cb%20c")
-
 
 if __name__ == "__main__":
     unittest.main()

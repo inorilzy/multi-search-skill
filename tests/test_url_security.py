@@ -14,14 +14,13 @@ from multi_search_mcp.src.support.url_security import (
     validate_scrape_url,
 )
 
-
 class UrlSecurityTests(unittest.TestCase):
     @staticmethod
-    def _resolver(mapping):
-        def resolve(hostname: str) -> list[str]:
-            return list(mapping.get(hostname.lower(), []))
-
-        return resolve
+    def _no_dns():
+        return mock.patch(
+            "multi_search_mcp.src.support.url_security._resolve_host_ips",
+            side_effect=AssertionError("URL preflight must not use DNS"),
+        )
 
     @staticmethod
     def _redirect_response(url: str, location: str):
@@ -39,33 +38,31 @@ class UrlSecurityTests(unittest.TestCase):
         return response
 
     def test_accepts_public_http_urls_without_a_local_dns_lookup(self):
-        resolver = mock.Mock(return_value=["93.184.216.34"])
-
-        validated = validate_public_http_url(" HTTPS://Example.com/path?q=1 ", resolver=resolver)
+        with self._no_dns():
+            validated = validate_public_http_url(" HTTPS://Example.com/path?q=1 ")
 
         self.assertEqual(validated, "HTTPS://Example.com/path?q=1")
-        resolver.assert_not_called()
 
     def test_rejects_non_http_scheme(self):
         with self.assertRaises(UrlSecurityError) as ctx:
-            validate_public_http_url("file:///etc/passwd", resolver=self._resolver({}))
+            validate_public_http_url("file:///etc/passwd")
 
         self.assertIn("unsupported URL scheme", str(ctx.exception))
 
     def test_rejects_missing_host_and_credentials(self):
         with self.assertRaises(UrlSecurityError) as missing_host:
-            validate_public_http_url("https:///path-only", resolver=self._resolver({}))
+            validate_public_http_url("https:///path-only")
         self.assertIn("missing host", str(missing_host.exception))
 
         with self.assertRaises(UrlSecurityError) as credentials:
-            validate_public_http_url("https://user:pass@example.com/private", resolver=self._resolver({}))
+            validate_public_http_url("https://user:pass@example.com/private")
         self.assertIn("must not include credentials", str(credentials.exception))
 
     def test_rejects_localhost_targets(self):
         for url in ("http://localhost/", "https://api.localhost/", "http://LOCALHOST./"):
             with self.subTest(url=url):
                 with self.assertRaises(UrlSecurityError) as ctx:
-                    validate_public_http_url(url, resolver=self._resolver({}))
+                    validate_public_http_url(url)
                 self.assertIn("localhost is not allowed", str(ctx.exception))
 
     def test_rejects_unsafe_direct_ip_targets(self):
@@ -90,48 +87,36 @@ class UrlSecurityTests(unittest.TestCase):
         for url, expected_reason in cases.items():
             with self.subTest(url=url):
                 with self.assertRaises(UrlSecurityError) as ctx:
-                    validate_public_http_url(url, resolver=self._resolver({}))
+                    validate_public_http_url(url)
                 self.assertIn(expected_reason, str(ctx.exception))
 
-    def test_domain_urls_pass_regardless_of_dns_answers(self):
+    def test_domain_urls_pass_without_consulting_dns(self):
         # The URL is never dialed locally (provider fetch or post-id parsing),
-        # so no DNS answer may reject it and the resolver must not be consulted.
-        for answers in (
-            ["192.168.1.20"],
-            ["198.18.1.241"],
-            ["127.0.0.1"],
-            ["fe80::1"],
-            [],
-            ["not-an-ip"],
-        ):
-            with self.subTest(answers=answers):
-                resolver = mock.Mock(return_value=answers)
-                self.assertEqual(
-                    validate_public_http_url("https://internal.example/data", resolver=resolver),
-                    "https://internal.example/data",
-                )
-                resolver.assert_not_called()
+        # so no DNS answer may reject it and no lookup may run.
+        with self._no_dns():
+            for url in (
+                "https://internal.example/data",
+                "https://tun.example/article",
+            ):
+                with self.subTest(url=url):
+                    self.assertEqual(validate_public_http_url(url), url)
 
     def test_scrape_url_preflight_never_resolves_the_host(self):
-        resolver = mock.Mock(side_effect=AssertionError("scrape preflight must not use DNS"))
+        with self._no_dns():
+            for url in (
+                "https://www.reddit.com/r/python/comments/abc123/example/",
+                "https://evidence.example/article",
+            ):
+                with self.subTest(url=url):
+                    self.assertEqual(validate_scrape_url(url), url)
 
-        for url in (
-            "https://www.reddit.com/r/python/comments/abc123/example/",
-            "https://evidence.example/article",
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(validate_scrape_url(url, resolver=resolver), url)
-        resolver.assert_not_called()
-
-    def test_redirect_target_uses_same_policy(self):
-        resolver = self._resolver({"redirect.example": ["fe80::1"]})
-
-        with self.assertRaises(UrlSecurityError) as ctx:
-            validate_redirect_target("https://redirect.example/next", resolver=resolver)
+    def test_redirect_target_rejects_literal_non_public_ip_without_dns(self):
+        with self._no_dns():
+            with self.assertRaises(UrlSecurityError) as ctx:
+                validate_redirect_target("https://[fe80::1]/next")
 
         self.assertIn("unsafe redirect target", str(ctx.exception))
         self.assertIn("link-local", str(ctx.exception))
-        self.assertNotIn("redirect.example", str(ctx.exception))
         self.assertNotIn("fe80::1", str(ctx.exception))
 
     def test_urlopen_retry_rejects_unsafe_redirect_target_without_following(self):
@@ -209,8 +194,6 @@ class UrlSecurityTests(unittest.TestCase):
         backend.assert_not_called()
 
     def test_scrape_url_smart_preserves_github_repository_url(self):
-        resolver = self._resolver({"github.com": ["140.82.112.3"]})
-
         def fake_jina(url, key, timeout=0, **kwargs):
             return {"url": url, "markdown": "ok", "via": "jina"}
 
@@ -219,7 +202,6 @@ class UrlSecurityTests(unittest.TestCase):
                 "https://github.com/openai/example",
                 primary="jina",
                 backends=("jina",),
-                url_resolver=resolver,
             )
 
         self.assertEqual(result["via"], "jina")
@@ -227,7 +209,6 @@ class UrlSecurityTests(unittest.TestCase):
             backend.call_args.args[0],
             "https://github.com/openai/example",
         )
-
 
 if __name__ == "__main__":
     unittest.main()

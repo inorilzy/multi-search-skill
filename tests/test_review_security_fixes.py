@@ -34,47 +34,35 @@ def _process_worker(args):
 
 
 class EmbeddedAddressTests(unittest.TestCase):
-    def _resolver(self, mapping):
-        return lambda host: list(mapping.get(host, []))
-
     def test_nat64_embedded_private_ipv4_is_rejected(self):
         with self.assertRaises(UrlSecurityError) as ctx:
-            validate_public_http_url("https://[64:ff9b::a00:1]/", resolver=self._resolver({}))
+            validate_public_http_url("https://[64:ff9b::a00:1]/")
         self.assertIn("private", str(ctx.exception))
 
     def test_6to4_embedded_private_ipv4_is_rejected(self):
         for address in ("2002:0a00:0001::", "2002:c0a8:0101::"):
             with self.subTest(address=address), self.assertRaises(UrlSecurityError):
-                validate_public_http_url(f"https://[{address}]/", resolver=self._resolver({}))
+                validate_public_http_url(f"https://[{address}]/")
 
     def test_nat64_embedded_public_ipv4_is_allowed(self):
         self.assertEqual(
-            validate_public_http_url("https://[64:ff9b::5db8:d822]/", resolver=self._resolver({})),
+            validate_public_http_url("https://[64:ff9b::5db8:d822]/"),
             "https://[64:ff9b::5db8:d822]/",
         )
 
 
 class FakeIpCompatibilityTests(unittest.TestCase):
-    """Clash/TUN fake-IP answers are accepted only behind an explicit opt-in."""
+    """Clash/TUN fake-IP answers never reach the DNS-free URL preflight."""
 
     FAKE_IP = "198.18.7.7"
 
-    def setUp(self):
-        self.resolver = lambda _host: [self.FAKE_IP]
-
     def test_fake_ip_domain_preflight_needs_no_opt_in_and_no_dns(self):
-        resolver = mock.Mock(return_value=[self.FAKE_IP])
-        with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: ""}):
+        with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: ""}), mock.patch(
+            "multi_search_mcp.src.support.url_security._resolve_host_ips",
+            side_effect=AssertionError("preflight used DNS"),
+        ):
             self.assertEqual(
-                validate_public_http_url("https://clash.example/page", resolver=resolver),
-                "https://clash.example/page",
-            )
-        resolver.assert_not_called()
-
-    def test_fake_ip_is_allowed_when_opted_in(self):
-        with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: "1"}):
-            self.assertEqual(
-                validate_public_http_url("https://clash.example/page", resolver=self.resolver),
+                validate_public_http_url("https://clash.example/page"),
                 "https://clash.example/page",
             )
 

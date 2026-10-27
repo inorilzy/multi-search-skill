@@ -17,10 +17,8 @@ from multi_search_mcp.src.state.key_state import (
 )
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 URL = "https://example.com/article"
 KEYS = ["fixture-tavily-first", "fixture-tavily-second"]
-
 
 def target_error(code: int, detail: str) -> dict:
     return {
@@ -31,10 +29,8 @@ def target_error(code: int, detail: str) -> dict:
         }],
     }
 
-
 def response(payload: dict) -> io.BytesIO:
     return io.BytesIO(json.dumps(payload).encode())
-
 
 class TavilyTargetErrorTests(unittest.TestCase):
     def setUp(self):
@@ -50,7 +46,7 @@ class TavilyTargetErrorTests(unittest.TestCase):
             keys=self.keys,
             config={},
             state_store=self.store,
-            url_resolver=lambda _host: ["93.184.216.34"],
+
         )["result"]
 
     def test_target_401_and_403_do_not_rotate_or_change_key_health(self):
@@ -68,7 +64,7 @@ class TavilyTargetErrorTests(unittest.TestCase):
                         keys=self.keys,
                         config={},
                         state_store=store,
-                        url_resolver=lambda _host: ["93.184.216.34"],
+
                     )["result"]
 
                 self.assertEqual(fetch.call_count, 2)
@@ -169,7 +165,6 @@ class TavilyTargetErrorTests(unittest.TestCase):
         self.assertNotIn(KEYS[0], json.dumps(result))
         self.assertIn("403", result["error"])
         self.assertEqual(result["error_origin"], "target")
-
 
 if __name__ == "__main__":
     unittest.main()

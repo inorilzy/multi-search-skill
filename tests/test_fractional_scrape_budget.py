@@ -7,14 +7,8 @@ from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape import scrape
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 
-
 URL = "https://example.com/fixture"
 BODY = "# Fixture\n\ninstant body"
-
-
-def _resolver(_host):
-    return ["93.184.216.34"]
-
 
 def _provider():
     return ProviderSpec(
@@ -27,7 +21,6 @@ def _provider():
             "description": "fixture excerpt",
         }],
     )
-
 
 class FractionalScrapeBudgetTests(unittest.TestCase):
     def setUp(self):
@@ -61,7 +54,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
                 keys={},
                 config={"scrape_timeout": 1},
                 scraper=scrape.scrape_url_smart,
-                url_resolver=_resolver,
+
             )
 
         self.assertEqual(len(calls), 1)
@@ -83,7 +76,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
             scraper=instant_scraper,
             keys={},
             config={},
-            url_resolver=_resolver,
+
             deadline=time.monotonic() + 0.25,
             runtime_timeout=0.25,
         )
@@ -106,7 +99,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
                 scraper=scrape.scrape_url_smart,
                 keys={},
                 config={},
-                url_resolver=_resolver,
+
             )
 
         self.assertEqual(result["result"]["markdown"], BODY)
@@ -127,7 +120,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
                     scraper=scrape.scrape_url_smart,
                     keys={},
                     config={},
-                    url_resolver=_resolver,
+
                 )
 
             backend.assert_not_called()
@@ -154,7 +147,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
                 keys={},
                 config={"scrape_timeout": 1},
                 scraper=instant_scraper,
-                url_resolver=_resolver,
+
             )
 
         self.assertEqual(response["diagnostics"]["body_success_count"], 1)
@@ -174,7 +167,7 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
                 backends=["jina"],
                 timeout=1,
                 deadline=100.05,
-                url_resolver=_resolver,
+
             )
 
         self.assertNotIn("error", result)
@@ -193,12 +186,11 @@ class FractionalScrapeBudgetTests(unittest.TestCase):
                 backends=["jina"],
                 timeout=1,
                 deadline=100.0,
-                url_resolver=_resolver,
+
             )
 
         backend.assert_not_called()
         self.assertTrue(result.get("error"))
-
 
 if __name__ == "__main__":
     unittest.main()

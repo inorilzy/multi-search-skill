@@ -14,9 +14,7 @@ from multi_search_mcp.src.state.content_store import ContentStore
 from multi_search_mcp.src.state.source_registry import SourceRegistry
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 URL = "https://evidence.example/article"
-
 
 def _row(source, body, *, url=URL):
     return {
@@ -24,7 +22,6 @@ def _row(source, body, *, url=URL):
         "description": "search excerpt", "content_kind": "body",
         "scraped_content": body,
     }
-
 
 def _providers(query_rows):
     def provider(source, rows):
@@ -34,7 +31,6 @@ def _providers(query_rows):
         )
 
     return {source: provider(source, rows) for source, rows in query_rows.items()}
-
 
 class PrefetchedBodySelectionTests(unittest.TestCase):
     def setUp(self):
@@ -54,7 +50,7 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
                 use_state=use_state,
             ),
             providers=_providers(query_rows), keys={}, config={}, state_store=self.store,
-            scraper=self.scraper, url_resolver=lambda _host: ["93.184.216.34"],
+            scraper=self.scraper,
             **options,
         )
         self.assertEqual(len(response["errors"]), expected_errors, response["errors"])
@@ -65,7 +61,7 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
         return service.run_fetch_source(
             service.FetchSourceRequest(source_id=source_id, full_content=True),
             state_store=self.store, keys={}, config={}, scraper=self.scraper,
-            url_resolver=lambda _host: ["93.184.216.34"], **options,
+            **options,
         )
 
     def test_equal_bodies_across_queries_match_with_and_without_state(self):
@@ -280,7 +276,6 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
         with self.store.connect() as conn:
             total_bytes = conn.execute("SELECT SUM(content_bytes) FROM content_objects").fetchone()[0]
         self.assertEqual(total_bytes, 5)
-
 
 if __name__ == "__main__":
     unittest.main()

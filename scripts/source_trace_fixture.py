@@ -156,10 +156,10 @@ def main() -> None:
                 arguments,
                 providers={name: provider(name) for name in ("brave", "exa")},
                 keys={}, config=config, state_store=store,
-                scraper=scraper, url_resolver=lambda _host: ["93.184.216.34"],
+                scraper=scraper,
             )
         elif options.tool == "fetch_source":
-            result = run_fetch_source(arguments, scraper=scraper, keys={}, config={}, state_store=store, url_resolver=lambda _host: ["93.184.216.34"])
+            result = run_fetch_source(arguments, scraper=scraper, keys={}, config={}, state_store=store)
         else:
             result = run_read_source(arguments, state_store=store)
     except Exception as exc:

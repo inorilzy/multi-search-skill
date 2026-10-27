@@ -12,13 +12,11 @@ from multi_search_mcp.src.search import registry
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 def stable_hits(response):
     # The second adapter reuses the first one's URL cache; ranking/content stay
     # identical, while the actual acquisition backend truthfully changes.
     return [{key: value for key, value in hit.items() if key not in {"source_id", "content_ref", "body_backend"}}
             for hit in response["results"]]
-
 
 class QueryFusionAdapterTests(unittest.TestCase):
     def test_mcp_cli_share_policy_candidates_source_references_and_cached_reading(self):
@@ -60,7 +58,7 @@ class QueryFusionAdapterTests(unittest.TestCase):
                         fetched = service.run_fetch_source(
                             {"source_id": source_id, "max_chars": 12}, state_store=store,
                             scraper=lambda url, **_: {"url": url, "markdown": "Attribution: original release. " * 20},
-                            keys={}, config={}, url_resolver=lambda _: ["93.184.216.34"],
+                            keys={}, config={},
                         )
                         self.assertEqual(len(fetched["body"]), 12)
                         mcp_read = tools.read_source_tool(source_id, keyword="original", limit=17)
@@ -69,7 +67,6 @@ class QueryFusionAdapterTests(unittest.TestCase):
                                                   stdout=read_output, stderr=errors), 0, errors.getvalue())
                         self.assertEqual(mcp_read, json.loads(read_output.getvalue()))
                         self.assertEqual(mcp_read["content"], "original release.")
-
 
 if __name__ == "__main__":
     unittest.main()

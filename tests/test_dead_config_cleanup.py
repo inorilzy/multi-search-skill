@@ -28,7 +28,6 @@ from multi_search_mcp.src.support import dedup
 from multi_search_mcp.src.support.format import format_results
 from multi_search_mcp.src.support.requests import MultiSearchRequest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "multi-search-config.json"
 
@@ -44,7 +43,6 @@ DEAD_KEYS = {
     "title_url_only", "want_content",
 }
 
-
 class ExampleConfigTests(unittest.TestCase):
     def test_example_config_contains_only_live_keys(self):
         config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
@@ -53,7 +51,6 @@ class ExampleConfigTests(unittest.TestCase):
 
     def test_dead_keys_are_explicitly_deprecated(self):
         self.assertEqual(set(DEPRECATED_CONFIG_KEYS), DEAD_KEYS)
-
 
 class RequestSurfaceTests(unittest.TestCase):
     def test_request_dtos_no_longer_expose_dead_fields(self):
@@ -85,12 +82,11 @@ class RequestSurfaceTests(unittest.TestCase):
             service.SearchWebRequest(query="fast", route="fast", sources=["baidu"], use_state=False),
             providers=providers, keys={}, config={},
             scraper=lambda target, **_kwargs: {"url": target, "markdown": "body", "via": "fixture"},
-            url_resolver=lambda _host: ["93.184.216.34"],
+
         )
         self.assertEqual(response["diagnostics"]["body_fetch_count"], 1)
         self.assertEqual(response["diagnostics"]["body_success_count"], 1)
         self.assertLessEqual(len(response["results"]), SEARCH_RESULT_LIMIT)
-
 
 class DeprecationTests(unittest.TestCase):
     def test_every_dead_config_key_warns_and_has_no_effect(self):
@@ -115,7 +111,6 @@ class DeprecationTests(unittest.TestCase):
             })
         self.assertEqual([item for item in caught if issubclass(item.category, FutureWarning)], [])
 
-
 class NoLegacyRerankTests(unittest.TestCase):
     def test_rank_results_helper_is_removed(self):
         self.assertFalse(hasattr(dedup, "rank_results"))
@@ -133,7 +128,6 @@ class NoLegacyRerankTests(unittest.TestCase):
             output.index("https://example.com/second"),
             "RRF order must not be reranked by body length or consensus",
         )
-
 
 if __name__ == "__main__":
     unittest.main()

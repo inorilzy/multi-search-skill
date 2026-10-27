@@ -17,17 +17,13 @@ except ImportError:  # pragma: no cover - exercised by installs without xkit-py
 
 from multi_search_mcp.src.scrape.scrapers import twitter
 
-
 TWIKIT_AVAILABLE = Tweet is not None
 REQUIRES_TWIKIT = unittest.skipUnless(
     TWIKIT_AVAILABLE, "twikit (installed with xkit-py) is not available",
 )
 
-
 URL = "https://x.com/fixture/status/12345"
-PUBLIC = lambda _host: ["104.244.42.1"]
 COOKIES = {"auth_token": "fixture-token", "ct0": "fixture-csrf"}
-
 
 def tweet(text="Ordinary post", *, note=None, replies=None, reply_count=0):
     # Use the installed library's properties: legacy text and note text really
@@ -40,7 +36,6 @@ def tweet(text="Ordinary post", *, note=None, replies=None, reply_count=0):
     result = Tweet(None, data, SimpleNamespace(screen_name="fixture"))
     result.replies = replies
     return result
-
 
 class Page(list):
     def __init__(self, rows, next_page=None, *, error=None, delay=0, cursor=None):
@@ -57,13 +52,11 @@ class Page(list):
             raise self.error
         return self.next_page
 
-
 def client_fixture(full=None):
     return SimpleNamespace(
         get_tweet_by_id=mock.AsyncMock(return_value=full or tweet()),
         set_cookies=mock.Mock(), http=SimpleNamespace(aclose=mock.AsyncMock()),
     )
-
 
 @REQUIRES_TWIKIT
 class TwitterScraperTests(unittest.TestCase):
@@ -71,7 +64,6 @@ class TwitterScraperTests(unittest.TestCase):
         client = client or client_fixture(full)
         factory = mock.Mock(return_value=client)
         kwargs.setdefault("cookies", COOKIES)
-        kwargs.setdefault("url_resolver", PUBLIC)
         with mock.patch.dict(sys.modules, {"xkit": SimpleNamespace(Client=factory)}):
             result = twitter.scrape_url_twitter(kwargs.pop("url", URL), **kwargs)
         return result, client, factory
@@ -269,7 +261,7 @@ class TwitterScraperTests(unittest.TestCase):
 
     def test_missing_xkit_is_explicit_installation_error(self):
         with mock.patch.dict(sys.modules, {"xkit": None}):
-            result = twitter.scrape_url_twitter(URL, cookies=COOKIES, url_resolver=PUBLIC)
+            result = twitter.scrape_url_twitter(URL, cookies=COOKIES)
         self.assertIn("XKit-py unavailable", result["error"])
         self.assertNotIn("markdown", result)
 
@@ -300,11 +292,9 @@ class TwitterScraperTests(unittest.TestCase):
                 self.assertEqual(result["url"], url)
                 client.get_tweet_by_id.assert_awaited_once_with("12345")
 
-    def test_tun_fake_ip_resolver_is_unused_for_fixed_xkit_endpoints(self):
-        resolver = mock.Mock(return_value=["198.18.0.11"])
-        result, client, _factory = self.fetch(url_resolver=resolver)
+    def test_fixed_xkit_endpoints_do_not_touch_local_dns(self):
+        result, client, _factory = self.fetch()
         self.assertNotIn("error", result)
-        resolver.assert_not_called()
         client.get_tweet_by_id.assert_awaited_once_with("12345")
         client.set_cookies.assert_called_once_with(COOKIES)
 
@@ -336,7 +326,6 @@ class TwitterScraperTests(unittest.TestCase):
                 load.assert_not_called()
                 with self.assertRaises(twitter.UrlSecurityError):
                     twitter.validate_twitter_url(url)
-
 
 class TwitterScraperOptionalDependencyTests(unittest.TestCase):
     """Regression: no xkit-py must mean a skip, not a loader error."""
@@ -372,7 +361,6 @@ print("twikit-skip-ok")
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("twikit-skip-ok", completed.stdout or "")
-
 
 if __name__ == "__main__":
     unittest.main()

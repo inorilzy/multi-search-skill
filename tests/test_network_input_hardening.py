@@ -12,12 +12,10 @@ from multi_search_mcp.src.search.candidate import fuse_search_results
 from multi_search_mcp.src.state.content_store import ContentStore
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 def run_cli(argv):
     stdout, stderr = io.StringIO(), io.StringIO()
     code = cli.main(argv, stdout=stdout, stderr=stderr)
     return code, stdout.getvalue(), stderr.getvalue()
-
 
 def _fake_search(captured):
     def fake(request):
@@ -25,7 +23,6 @@ def _fake_search(captured):
         return {"query": request.query, "results": [], "provider_status": [], "diagnostics": {}}
 
     return fake
-
 
 class DashQueryTests(unittest.TestCase):
     def test_query_after_option_terminator_is_a_query_even_when_it_looks_like_an_option(self):
@@ -61,7 +58,6 @@ class DashQueryTests(unittest.TestCase):
                 # Single quotes, per the Skill shell-safety contract (fix 07).
                 self.assertIn("-- '<query>'", text)
 
-
 class CliNumericValidationTests(unittest.TestCase):
     def test_read_offset_and_limit_must_be_valid_integers(self):
         for argv in (
@@ -94,7 +90,6 @@ class CliNumericValidationTests(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
         self.assertEqual((captured[0].offset, captured[0].limit), (0, 9000))
 
-
 class ServiceNumericValidationTests(unittest.TestCase):
     """The dict/tools entry gets a named, clear error instead of a bare int() failure."""
 
@@ -114,7 +109,7 @@ class ServiceNumericValidationTests(unittest.TestCase):
             service.run_fetch_source(
                 service.FetchSourceRequest(url="https://example.com/a", max_chars="lots", use_state=False),
                 scraper=mock.Mock(return_value={"markdown": "body", "via": "fake"}),
-                keys={}, config={}, url_resolver=lambda _host: ["93.184.216.34"],
+                keys={}, config={},
             )
 
     def test_tools_entry_reports_invalid_request(self):
@@ -123,7 +118,6 @@ class ServiceNumericValidationTests(unittest.TestCase):
         result = tools.read_source_tool("src_x", offset="abc")
         self.assertEqual(result["error_type"], "invalid_request")
         self.assertIn("offset must be an integer", result["error"])
-
 
 class ProviderRankTests(unittest.TestCase):
     def test_malformed_provider_rank_does_not_fail_fusion(self):
@@ -141,7 +135,6 @@ class ProviderRankTests(unittest.TestCase):
             for rank in hit["provider_ranks"]:
                 self.assertIsInstance(rank["rank"], int)
                 self.assertGreaterEqual(rank["rank"], 1)
-
 
 class JinaAnonymousRateLimitTests(unittest.TestCase):
     def test_anonymous_rate_limit_is_recorded_exactly_once(self):
@@ -169,7 +162,7 @@ class JinaAnonymousRateLimitTests(unittest.TestCase):
                                return_value={"url": "https://example.com/p", "error": "fixture"}):
             scrape.scrape_url_smart(
                 "https://example.com/p", backends=("jina",),
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
         self.assertEqual(recorded.call_count, 1)
         self.assertTrue(jina._jina_anonymous_cooling_down())
@@ -177,7 +170,6 @@ class JinaAnonymousRateLimitTests(unittest.TestCase):
     def test_scrape_layer_no_longer_records_the_limit_itself(self):
         source = Path(__file__).resolve().parents[1] / "multi_search_mcp" / "src" / "scrape" / "scrape.py"
         self.assertNotIn("_record_jina_anonymous_rate_limit", source.read_text(encoding="utf-8"))
-
 
 if __name__ == "__main__":
     unittest.main()

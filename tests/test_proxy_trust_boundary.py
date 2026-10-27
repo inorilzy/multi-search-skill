@@ -161,7 +161,7 @@ class ProxyTrustTests(unittest.TestCase):
 
         request = urllib.request.Request("http://example.com/start")
         with mock.patch.object(urllib.request, "getproxies", return_value={"http": "http://localhost:7890"}), \
-                mock.patch("multi_search_mcp.src.support.http.validate_redirect_target", wraps=url_security.validate_redirect_target), \
+                mock.patch("multi_search_mcp.src.support.http._validate_redirect_target", wraps=url_security._validate_redirect_target), \
                 mock.patch.object(http.socket, "socket", side_effect=lambda *a: FakeProxySocket()):
             with self.assertRaises(UrlSecurityError) as caught:
                 http.urlopen_retry(

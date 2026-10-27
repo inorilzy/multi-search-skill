@@ -17,14 +17,12 @@ from multi_search_mcp.src.state.key_state import SQLiteKeyManager
 from multi_search_mcp.src.state.keys import load_keys
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 PAYLOAD = {"items": [{
     "full_name": "fixture/repository",
     "html_url": "https://github.com/fixture/repository",
     "description": "Repository excerpt",
     "stargazers_count": 12,
 }]}
-
 
 class GitHubKeyPoolTests(unittest.TestCase):
     def setUp(self):
@@ -57,7 +55,7 @@ class GitHubKeyPoolTests(unittest.TestCase):
             {"query": "fixture", "sources": ["github"], "count": 1, "use_state": use_state},
             config={}, state_store=self.store,
             scraper=lambda url, **_kwargs: {"url": url, "markdown": "Repository body", "via": "fixture"},
-            url_resolver=lambda _host: ["93.184.216.34"],
+
         )
 
     def _authorizations(self):
@@ -258,7 +256,6 @@ class GitHubKeyPoolTests(unittest.TestCase):
             self.assertEqual(tools.reset_key_state_tool("github"), {"updated": 1})
             self.assertEqual(self.manager.candidates("github", "fixture-token-one"), [])
             self.assertEqual(self.manager.status_rows("github")[0]["manually_disabled"], 1)
-
 
 if __name__ == "__main__":
     unittest.main()

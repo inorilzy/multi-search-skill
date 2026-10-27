@@ -9,14 +9,8 @@ from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.content_store import DEFAULT_MAX_OBJECT_BYTES, max_acquisition_chars
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 URL = "https://evidence.example/long-article"
 BODY = "# Long article\n" + "正文 with context. " * 3000 + "\nEND_OF_ARTICLE"
-
-
-def resolver(_host):
-    return ["93.184.216.34"]
-
 
 class FullContentFlowTests(unittest.TestCase):
     def setUp(self):
@@ -33,7 +27,7 @@ class FullContentFlowTests(unittest.TestCase):
     def fetch(self, **request):
         return service.run_fetch_source(
             service.FetchSourceRequest(**request), state_store=self.store,
-            scraper=self.scraper, keys={}, config={}, url_resolver=resolver,
+            scraper=self.scraper, keys={}, config={},
         )
 
     def assert_full_body(self, response):
@@ -85,7 +79,7 @@ class FullContentFlowTests(unittest.TestCase):
         response = service.run_search_web(
             service.SearchWebRequest(query="evidence", sources=["brave"], count=15),
             providers={"brave": provider}, keys={}, config={}, state_store=self.store,
-            scraper=self.scraper, url_resolver=resolver,
+            scraper=self.scraper,
         )
         self.assertEqual(response["errors"], [])
         self.assertEqual(len(response["scrapes"]), 15)
@@ -114,11 +108,9 @@ class FullContentFlowTests(unittest.TestCase):
         self.assertIn("exceeds max object bytes", fetched["persist_error"]["message"])
         self.assertEqual(self.store.rows("SELECT * FROM content_objects"), [])
 
-
 # 100,000 CJK characters: ~100K characters (well under the character
 # acquisition bound) but 300,000 UTF-8 bytes (over the 256 KiB cache bound).
 LARGE_CJK_BODY = "# 大型中文页面\n" + "中文正文内容" * 16_666 + "\n文章结束"
-
 
 class LargeCjkFetchTests(unittest.TestCase):
     def setUp(self):
@@ -135,7 +127,7 @@ class LargeCjkFetchTests(unittest.TestCase):
     def fetch(self, **request):
         return service.run_fetch_source(
             service.FetchSourceRequest(**request), state_store=self.store,
-            scraper=self.scraper, keys={}, config={}, url_resolver=resolver,
+            scraper=self.scraper, keys={}, config={},
         )
 
     def test_fixture_exceeds_the_byte_limit_but_not_the_character_limit(self):
@@ -198,7 +190,7 @@ class LargeCjkFetchTests(unittest.TestCase):
         response = service.run_search_web(
             service.SearchWebRequest(query="中文", sources=["brave"], count=1),
             providers={"brave": provider}, keys={}, config={}, state_store=self.store,
-            scraper=self.scraper, url_resolver=resolver,
+            scraper=self.scraper,
         )
         self.assertEqual(response["errors"], [])
         page = response["scrapes"][0]
@@ -213,7 +205,6 @@ class LargeCjkFetchTests(unittest.TestCase):
         self.assertEqual(failure["source_id"], hit["source_id"])
         self.assertEqual(failure["reason"], "content_too_large")
         self.assertEqual(response["diagnostics"]["body_success_count"], 1)
-
 
 if __name__ == "__main__":
     unittest.main()

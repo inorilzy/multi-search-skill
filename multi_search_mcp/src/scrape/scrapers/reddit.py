@@ -108,18 +108,15 @@ def _render(data, post_id: str) -> tuple[str, str]:
     return title, "\n\n".join(chunks)
 
 
-def scrape_url_reddit(url: str, timeout: float = 60, *, deadline: float | None = None,
-                      url_resolver=None) -> dict:
+def scrape_url_reddit(url: str, timeout: float = 60, *, deadline: float | None = None) -> dict:
     end = time.monotonic() + max(0.0, timeout)
     if deadline is not None:
         end = min(end, deadline)
     try:
         remaining(end)
-        safe_url = validate_scrape_url(
-            url, resolver=url_resolver, deadline=end,
-        )
+        safe_url = validate_scrape_url(url, deadline=end)
         post_id, params = _post_target(safe_url)
-        data = get_post_json(post_id, params, end, resolver=url_resolver)
+        data = get_post_json(post_id, params, end)
         title, markdown = _render(data, post_id)
         return {"url": safe_url, "title": title, "markdown": markdown,
                 "length": len(markdown), "via": "reddit"}

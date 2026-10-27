@@ -8,17 +8,14 @@ from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.search.searchers.baidu import _rows_from_response
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 URL = "https://example.com/taskgroup"
 SUMMARY = "TaskGroup cancels sibling tasks when one fails."
-
 
 def rows(reference):
     return _rows_from_response(
         {"references": [{"title": "TaskGroup", "url": URL, **reference}]},
         endpoint="/v2/ai_search/web_summary", max_references=1,
     )
-
 
 class BaiduContentTests(unittest.TestCase):
     def test_summary_content_is_excerpt_even_when_longer_than_preview(self):
@@ -50,7 +47,7 @@ class BaiduContentTests(unittest.TestCase):
             response = service.run_search_web(
                 service.SearchWebRequest(query="TaskGroup", sources=["baidu"], count=1),
                 providers={"baidu": provider}, keys={}, config={}, state_store=store,
-                scraper=scraper, url_resolver=lambda _: ["93.184.216.34"],
+                scraper=scraper,
             )
             scraper.assert_called_once()
             page = response["scrapes"][0]
@@ -58,12 +55,11 @@ class BaiduContentTests(unittest.TestCase):
             self.assertEqual(page["via"], "fixture")
             fetched = service.run_fetch_source(
                 service.FetchSourceRequest(source_id=page["source_id"], full_content=True),
-                state_store=store, url_resolver=lambda _: ["93.184.216.34"],
+                state_store=store,
             )
             self.assertTrue(fetched["cache_hit"])
             self.assertFalse(fetched["truncated"])
             self.assertEqual(fetched["body"], body)
-
 
 if __name__ == "__main__":
     unittest.main()
