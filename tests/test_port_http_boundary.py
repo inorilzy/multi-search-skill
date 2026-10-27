@@ -6,7 +6,6 @@ a browser or curl. These tests exercise that boundary directly.
 """
 import io
 import ipaddress
-import os
 import socket
 import ssl
 import threading
@@ -121,9 +120,6 @@ class HttpConnectBoundaryTests(unittest.TestCase):
 
         with ExitStack() as stack:
             stack.enter_context(mock.patch.object(socket, "create_connection", side_effect=create_connection))
-            # Prove no opt-in switch is required: fake-IP answers must just work.
-            stack.enter_context(mock.patch.dict(os.environ, {}, clear=False))
-            os.environ.pop("MULTI_SEARCH_ALLOW_FAKE_IP", None)
             stack.enter_context(mock.patch.object(urllib.request, "getproxies", return_value={}))
             # A missed mock is a hard error rather than an external connection.
             stack.enter_context(mock.patch.object(socket.socket, "connect", side_effect=AssertionError("real socket forbidden")))
@@ -453,11 +449,9 @@ class SearchRouteFakeIpTests(unittest.TestCase):
         )
         try:
             with mock.patch.object(socket, "create_connection", side_effect=create_connection), \
-                    mock.patch.dict(os.environ, {}, clear=False), \
                     mock.patch.object(urllib.request, "getproxies", return_value={}), \
                     mock.patch.object(socket, "getaddrinfo", side_effect=slow_dns) as dns, \
                     mock.patch.object(socket, "socket", side_effect=lambda *a: factory()):
-                os.environ.pop("MULTI_SEARCH_ALLOW_FAKE_IP", None)
                 rows = runner.run("query")
         finally:
             pool.shutdown(wait=True, cancel_futures=True)
