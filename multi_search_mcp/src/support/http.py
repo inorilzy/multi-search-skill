@@ -234,7 +234,7 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
     # hostname to the proxy, so the destination is checked here instead.
     if getattr(req, "full_url", None):
         _parts, logical_host, _logical_port = http_target(req.full_url)
-        check_host_is_not_local(logical_host, label="URL")
+        check_host_is_not_local(logical_host, label="HTTP connection")
     proxy_hop = bool(
         getattr(req, "has_proxy", lambda: False)()
         or getattr(req, "_tunnel_host", None)

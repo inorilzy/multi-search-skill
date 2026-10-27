@@ -299,8 +299,15 @@ class HttpConnectBoundaryTests(unittest.TestCase):
         self.assertEqual(len(sockets), 1)
         self.assertNotIn(("connect", (PUBLIC_IP, 8443)), sockets[0].events)
 
-    def test_literal_connect_target_keeps_http_connection_label(self):
-        """A literal connect target keeps the original 'HTTP connection' error text."""
+    def test_literal_targets_keep_http_connection_label_on_public_path(self):
+        """Literal rejections through urlopen_retry keep main's 'HTTP connection' text."""
+        for url in ("http://10.0.0.1/x", "https://127.0.0.1/x", "http://[fe80::1]/x"):
+            with self.subTest(url=url), self.wire() as (sockets, dns, factory, _):
+                with self.assertRaises(UrlSecurityError) as error:
+                    http.urlopen_retry(url, timeout=2, extra_handlers=(urllib.request.ProxyHandler({}),))
+                self.assertTrue(str(error.exception).startswith("unsafe HTTP connection: direct address is "),
+                                str(error.exception))
+                self.assert_no_wire(sockets, factory)
         with self.wire() as (sockets, dns, factory, _):
             with self.assertRaises(UrlSecurityError) as error:
                 http._ensure_connect_address("10.0.0.8")
