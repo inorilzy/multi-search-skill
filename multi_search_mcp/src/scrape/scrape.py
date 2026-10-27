@@ -463,7 +463,7 @@ def uses_delegated_backends(url: str, backends, *, scraper=None) -> bool:
 
     A custom fetch callback is an unknown/local trust boundary regardless of
     backend names. Platform dispatch also wins over any generic backend list.
-    Unknown or mixed chains keep the local URL preflight (fail closed).
+    Unknown or mixed chains use the local format-only URL preflight.
     """
     if scraper is not None and scraper is not scrape_url_smart:
         return False
@@ -483,7 +483,7 @@ def _prepare_scrape_target(
     """Validate a generic (delegated) scrape target without local DNS.
 
     ``resolver`` is accepted for signature compatibility but intentionally
-    unused: only locally fetched paths (Reddit, direct HTTP) resolve the host.
+    unused: this policy only runs checks that need no DNS.
     """
     del resolver
     safe_url = _validate_delegated_url(url, deadline=deadline)

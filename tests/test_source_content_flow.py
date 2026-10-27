@@ -126,10 +126,7 @@ class FetchSourceCoreTests(unittest.TestCase):
 
         observed = {}
         now = [100.0]
-
-        def resolver(_host):
-            now[0] += 0.25
-            return ["93.184.216.34"]
+        resolver = mock.Mock(side_effect=AssertionError("URL preflight must not resolve"))
 
         def fake_scraper(url, **kwargs):
             observed.update(kwargs)
@@ -153,7 +150,8 @@ class FetchSourceCoreTests(unittest.TestCase):
             )
 
         self.assertEqual(observed["deadline"], 107.0)
-        self.assertEqual(observed["timeout"], 6.75)
+        self.assertEqual(observed["timeout"], 7.0)
+        resolver.assert_not_called()
 
     def test_prefetched_provider_body_is_reused_without_scraping(self):
         from multi_search_mcp.src.service import (
