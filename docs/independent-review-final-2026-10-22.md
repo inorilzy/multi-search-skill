@@ -27,7 +27,7 @@
 | `uv lock --check --offline` | exit 0（27 packages） | 终端输出 |
 | `cargo test --test cookies` | exit 0；5 passed（Windows DPAPI/回滚/源文件不变/跨语言） | `t14-cookies.log` |
 | 合成 managed-cookie 运行链路 | 2 个场景通过；无 key_state 行 | `t14-cookie-rotation.log` |
-| 合成 localhost 代理复现 | `UrlSecurityError unsafe HTTP connection: resolved address is loopback` | `t14-proxy-hostname.log` |
+| 合成 localhost 代理复现 | `UrlSecurityError unsafe HTTP connection: resolved address is loopback`（【已被票 01–04 取代】该错误路径已删除） | `t14-proxy-hostname.log` |
 
 说明：实施者报告 fixture,ts 为 169 passed，本轮逐 target 实测为 **171**；差异为计数口径（本轮含 `install_release_boundary` 2 项），不是测试减少。旧 17 个 Rust test target 全部保留，旧测试函数名无删除；新增 `cookies` target 及 5 个新测试名。忽略项：fixture 矩阵 3 个（`installed_cli` 2 个真实安装、`ui_contract::emit_types_d_ts` 1 个显式生成）；native 矩阵 4 个（另加 `install` 1 个真实安装）。
 
@@ -78,8 +78,8 @@
 
 ## 安全边界复核（t12）
 
-- DNS：`_run_bounded_dns` 在准入后重算 remaining；`test_dns_remaining_recomputed_after_admission` 通过。
-- redirect：单次 resolver 捕获 + `_pin_redirect_addresses` 固定地址；`test_redirect_resolver_called_once_and_answers_pinned`、`test_slow_redirect_resolver_is_deadline_bounded` 通过。
+- DNS：`_run_bounded_dns` 在准入后重算 remaining；`test_dns_remaining_recomputed_after_admission` 通过。【已被票 01–04 取代：DNS 线程池与 `_run_bounded_dns` 已删除，出站不再在本机解析域名，超时由外层搜索池/抓取池负责。】
+- redirect：单次 resolver 捕获 + `_pin_redirect_addresses` 固定地址；`test_redirect_resolver_called_once_and_answers_pinned`、`test_slow_redirect_resolver_is_deadline_bounded` 通过。【已被票 01–04 取代：`_pin_redirect_addresses` 与重定向 DNS 校验已删除，重定向只做同主机/协议规则，不再解析。】
 - fake-IP：默认拒绝 literal；resolved 答案需显式 opt-in；`test_literal_fake_ip_rejected_even_with_opt_in` 通过。
 - 代理：`_configured_proxy_addresses` 只信任精确 host:port；但发现 **F-01**。
 - 原子 reserve：`SQLiteKeyManager.reserve` 在 `BEGIN IMMEDIATE` 内选择并 `use_count+1`；`test_atomic_reservation_distributes_two_simultaneous_attempts` 通过；`rotate_keys` 对 SQLite manager 走 reserve。
@@ -209,7 +209,7 @@
 
 ### F-01 — medium：hostname 形式的本地代理被 SSRF 校验拒绝
 
-- 路径：[http.py](../multi_search_mcp/src/support/http.py#L189-L220) 的 `connect_socket`：`proxy_hop` 只在 IP literal 分支使用；非 literal 代理主机走 `resolve_validated_addresses`，随后无条件 `_ensure_connect_address(..., resolved=True)`，把 `localhost`→`127.0.0.1` 当 loopback 拒绝。
+- 【已被票 01–04 取代：本条描述的 `connect_socket` 与 `resolve_validated_addresses` 路径已删除；保留作为 F-01 的历史发现记录。】路径：[http.py](../multi_search_mcp/src/support/http.py#L189-L220) 的 `connect_socket`：`proxy_hop` 只在 IP literal 分支使用；非 literal 代理主机走 `resolve_validated_addresses`，随后无条件 `_ensure_connect_address(..., resolved=True)`，把 `localhost`→`127.0.0.1` 当 loopback 拒绝。
 - 复现（已保存 `t14-proxy-hostname.log`）：`HTTPS_PROXY/ProxyHandler = http://localhost:7890`，DNS 合成 `127.0.0.1:7890`，结果 `UrlSecurityError unsafe HTTP connection: resolved address is loopback`；同配置 `127.0.0.1:7890` 可用。
 - 影响：常见 `localhost` 代理用户全部网络失败；这是“环境代理精确信任”修复的功能回归。
 - 建议修复：仅当 `(target_host,target_port)` 精确匹配 `_configured_proxy_addresses()` 时，对解析地址应用 proxy-hop 豁免；仍拒绝任意私有地址；增加 `localhost`/hostname 代理回归，保留 `127.0.0.1` 与恶意代理测试。
