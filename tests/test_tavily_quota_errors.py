@@ -19,22 +19,17 @@ from multi_search_mcp.src.state.key_state import (
 )
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 URL = "https://example.com/article"
 KEYS = ["fixture-tavily-first", "fixture-tavily-second"]
-
 
 def response(payload):
     return io.BytesIO(json.dumps(payload).encode())
 
-
 def quota_body(message="Plan usage limit exceeded"):
     return response({"detail": {"error": message}})
 
-
 def http_error(url, code, reason="", body=None):
     return HTTPError(url, code, reason, {}, body)
-
 
 class TrackingBody(io.BytesIO):
     def __init__(self, value):
@@ -44,7 +39,6 @@ class TrackingBody(io.BytesIO):
     def read(self, size=-1):
         self.read_sizes.append(size)
         return super().read(size)
-
 
 class TavilyQuotaErrorTests(unittest.TestCase):
     def setUp(self):
@@ -158,7 +152,7 @@ class TavilyQuotaErrorTests(unittest.TestCase):
                                     scraper=lambda *_args, **_kwargs: {
                                         "markdown": "fixture body", "via": "fixture",
                                     },
-                                    url_resolver=lambda _host: ["93.184.216.34"],
+
                                 )
                             self.assertEqual(result["errors"], [])
                             self.assertEqual(result["results"][0]["url"], URL)
@@ -169,7 +163,7 @@ class TavilyQuotaErrorTests(unittest.TestCase):
                                         url=URL, backends=["tavily"], timeout=5, output="json",
                                     ),
                                     keys={"tavily": KEYS}, state_store=store,
-                                    url_resolver=lambda _host: ["93.184.216.34"],
+
                                 )
                             self.assertEqual(result["result"]["markdown"], "fixture body")
 
@@ -214,7 +208,7 @@ class TavilyQuotaErrorTests(unittest.TestCase):
                                 scraper=lambda *_args, **_kwargs: {
                                     "markdown": "fixture body", "via": "fixture",
                                 },
-                                url_resolver=lambda _host: ["93.184.216.34"],
+
                             )
                         self.assertTrue(result["errors"])
                     else:
@@ -224,7 +218,7 @@ class TavilyQuotaErrorTests(unittest.TestCase):
                                     url=URL, backends=["tavily"], timeout=5, output="json",
                                 ),
                                 keys={"tavily": KEYS}, state_store=store,
-                                url_resolver=lambda _host: ["93.184.216.34"],
+
                             )
                         self.assertEqual(result["result"]["error_type"], "error")
 
@@ -240,7 +234,6 @@ class TavilyQuotaErrorTests(unittest.TestCase):
                     self.assertEqual(first["status"], "active")
                     self.assertEqual(first["quota_error_count"], 0)
                     self.assertEqual(second["use_count"], 0)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -79,7 +79,7 @@
 | 一.4 桌面互斥/poison/cancel | mutation fail-fast、执行锁恢复、completion/cancel 竞争回归通过；install feature 的完整生命周期未独立跑。 |
 | 一.5 key 并发健康状态 | 中性错误保留强状态测试通过；success 仍可能清后来的失败、quota/invalid 阈值及到期优先级在 Python 台账明确 partial，待 t12/最终复验。 |
 | 一.6 deadline 无限等待 | 隔离 suite 包含 bounded future 回归通过；不可取消线程占槽属明确限制，不宣称强杀。 |
-| 一.7 fake-IP | 默认拒绝+opt-in 有测试；代抓入口/HTTP literal/代理边界仍需最终端到端证明，不以单 helper 通过概括全部 fetch。 |
+| 一.7 fake-IP | 【已被票 01–04 取代：`MULTI_SEARCH_ALLOW_FAKE_IP` 与 opt-in 已删除】默认拒绝+opt-in 有测试；代抓入口/HTTP literal/代理边界仍需最终端到端证明，不以单 helper 通过概括全部 fetch。 |
 | 一.8 导航竞态 | stale mount、stale rejection、失败重试的 happy-dom 测试通过；独立子容器与 dispose 设计有源代码支持。 |
 | 一.9 失败 promise 缓存 | provider load 失败后重试测试通过。 |
 | 二 分层越界 | snapshots/evaluation、resolve→scrape、credential_store 迁移仍 deferred；不能说已修。 |

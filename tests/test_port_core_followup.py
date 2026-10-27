@@ -17,7 +17,6 @@ from multi_search_mcp.src.state.content_store import (
 from multi_search_mcp.src.state.key_state import KeyOutcome, SQLiteKeyManager
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 class AcquisitionMetadataTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="port-core-cache-")
@@ -33,7 +32,7 @@ class AcquisitionMetadataTests(unittest.TestCase):
         request.setdefault("full_content", True)
         return run_fetch_source(
             request, state_store=self.store, keys={}, config={},
-            scraper=self.scraper, url_resolver=lambda _: ["93.184.216.34"],
+            scraper=self.scraper,
         )
 
     def test_existing_v2_acquisition_flag_reaches_fetch_and_read(self):
@@ -111,7 +110,7 @@ class AcquisitionMetadataTests(unittest.TestCase):
         response = run_search_web(
             {"query": "article", "sources": ["brave"]},
             providers={"brave": provider}, state_store=self.store, keys={}, config={},
-            scraper=self.scraper, url_resolver=lambda _: ["93.184.216.34"],
+            scraper=self.scraper,
         )
         self.assertEqual(response["errors"], [])
         page, hit = response["scrapes"][0], response["results"][0]
@@ -144,7 +143,6 @@ class AcquisitionMetadataTests(unittest.TestCase):
                     self.assertEqual(self.store.rows("SELECT * FROM content_sources"), [])
                     with self.assertRaises(ContentTooLargeError):
                         self.cache.put("over-limit", body, truncated=truncated)
-
 
 class ExplicitResetTests(unittest.TestCase):
     @staticmethod
@@ -193,7 +191,6 @@ class ExplicitResetTests(unittest.TestCase):
                         self.assertEqual(row["status"], "active" if provider in selected else "cooldown")
                     self.assertEqual(rows["exa"]["manually_disabled"], 1)
                     self.assertEqual(manager.candidates("exa", "synthetic-exa"), [])
-
 
 if __name__ == "__main__":
     unittest.main()

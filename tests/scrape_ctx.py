@@ -8,7 +8,7 @@ from multi_search_mcp.src.scrape.scrape import ScrapeContext, keys_for_backend
 
 
 _ALLOWED = {
-    "backends", "strict_backends", "deadline", "site_memory", "key_manager", "url_resolver",
+    "backends", "strict_backends", "deadline", "site_memory", "key_manager",
     "scrape_chars", "timeout", "jina_prefer_keyed", "twitter_cookies",
     "primary",
 }

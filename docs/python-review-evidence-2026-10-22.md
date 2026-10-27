@@ -7,7 +7,7 @@
 以下 supersede t9 表中对应 partial（其余架构延期仍有效）。
 
 - DNS admission 后重算 remaining；redirect resolver 在原 deadline 内只调用一次，校验捕获的同一答案构建 pinned sockaddr，连接不重复 DNS。慢 resolver/单次 resolver 回归已验证。
-- HTTP literal fake-IP 即使 opt-in 也拒绝；仅 resolved=True 的域名答案可获 fake-IP 例外。代理例外移至连接 request 确认为 proxy/tunnel 且精确配置 host:port，不再额外豁免端口80/443。代理仍是用户选择的信任边界，远端 DNS 无法由本地证明。
+- 【已被票 01–04 取代：`MULTI_SEARCH_ALLOW_FAKE_IP` 开关与 fake-IP 例外已删除，出站不再做解析结果检查。】HTTP literal fake-IP 即使 opt-in 也拒绝；仅 resolved=True 的域名答案可获 fake-IP 例外。代理例外移至连接 request 确认为 proxy/tunnel 且精确配置 host:port，不再额外豁免端口80/443（【已被票 01–04 取代】该代理例外随 `_trusted_proxy_targets` 一并删除）。代理仍是用户选择的信任边界，远端 DNS 无法由本地证明。
 - SQLiteKeyManager.reserve 在 BEGIN IMMEDIATE 内重新检查健康状态、按最新 last_used_at 选候选并原子递增 use_count。rotate_keys 使用 reserve（不再先选后记）；一次旋转不重复使用同候选。不是独占 lease：provider 允许同 key 并发，目标是 LRU 分配而非串行化网络。双并发分配回归验证两把可用 key 不再基于旧快照总取第一把。
 - generic scraper Jina/Exa/Firecrawl/Tavily 的 ctx.deadline 传到 urlopen_retry；固定 Reddit 和 XKit 原有 deadline 保留。测试 doubles 接收明确 deadline，不删除断言。
 - cache_scope 使用实际配置的默认 backend 链和相关 credential；无关搜索 key 不影响正文 scope。managed cookie reference 不序列化为 secret，也不执行 eager 解密：以每次随机非秘密 scope 禁止跨 source URL reuse；source-id 缓存仍为原 TTL（访问同一个 source-id 本来就是显式缓存读取）。t9 truncated 元数据原样保留。
@@ -17,6 +17,9 @@
 
 ## t15 F-01：hostname 本地代理精确授权
 
+> **已被票 01–04 取代：** 下文的 `_trusted_proxy_targets`、`_is_trusted_proxy_hop`、`resolve_validated_addresses` 与代理 hop 豁免均已删除。出站连接不再在本机解析域名或检查解析结果，hostname 代理因此不再被 loopback 规则误拒；本节仅保留当时的复现与修复记录。
+
+- 【已被票 01–04 取代】以下 `resolve_validated_addresses`、`_is_trusted_proxy_hop`、`_trusted_proxy_targets` 均已删除，仅作历史记录。
 - 复现（独立临时脚本，不修改产品）：合成 `localhost:7890`→`127.0.0.1` 后，旧路径 `resolve_validated_addresses` 输出 `unsafe HTTP connection: resolved address is loopback`；修复后 `_is_trusted_proxy_hop(localhost,7890)=True`，错误端口 `7891=False`，直接 `127.0.0.1` 目标 `=False`。该输出与 `t14-proxy-hostname.log` 的旧症状一致。
 - 实现：[http.py](../multi_search_mcp/src/support/http.py) `_trusted_proxy_targets` 合并进程代理设置与该请求由 urllib 配置的 `req.host`（HTTP proxy 的 `has_proxy()` 或 HTTPS tunnel 的 `_tunnel_host`），仅精确 host:port 命中；命中的 hop 用未做目标校验的 DNS 结果连接，其他任何目标仍走 `resolve_validated_addresses`/`_ensure_connect_address`。literal 分支同样使用精确 hop 判断。redirect 仍只验证重定向目标，不因代理配置获得豁免。
 - 回归：[test_proxy_trust_boundary.py](../tests/test_proxy_trust_boundary.py) 8 条：localhost、127.0.0.1、`[::1]`、错误端口、直接 loopback/private 拒绝、hostname 代理真实 connect 成功且发出 `Host: example.com`、无 env 的显式 ProxyHandler、代理存在时 redirect 到 localhost 仍拒绝且错误不含 token。
@@ -76,7 +79,7 @@
 | 2 run_all_before | fixed | 到期只读取 done futures；其余取消/超时行，运行中的线程仍占槽直到返回（Python 无安全强杀线程机制）。有 deadline 回归。 |
 | 3 fake-IP 与信任边界 | partial | 默认禁止 benchmark IP、显式环境 opt-in；Reddit 只取 ID，固定端点禁 redirect，去掉无意义 permalink DNS 预检。代抓做字面量/localhost 检查。需继续复核 HTTP literal 与 resolved opt-in 区分、代理精确端口授权；body_fetch 入口仍做 public URL DNS 预检，故不能称全 fetch fake-IP 问题已解决。 |
 | 4 字节缓存 | fixed in t9 | t1 截断但未保存 metadata；t9 加 v2 source 元数据并恢复命中断言。首次、缓存、read 一致，写失败返回正文。 |
-| 5 HTTP SSRF | partial | 连接前逐地址复核，内嵌 NAT64/6to4 v4 检查，redirect 保存地址。现有 redirect 仍可能重复解析（validator 与 pin），pin 自定义 resolver 的等待也需重新检查 deadline；环境代理信任例外应由独立安全复核收口。 |
+| 5 HTTP SSRF | partial | 连接前逐地址复核，内嵌 NAT64/6to4 v4 检查，redirect 保存地址。现有 redirect 仍可能重复解析（validator 与 pin），pin 自定义 resolver 的等待也需重新检查 deadline；环境代理信任例外应由独立安全复核收口。（【已被票 01–04 取代】redirect 地址固定与代理信任例外均已删除，本行只保留当时的状态。） |
 | 6 DNS capacity | partial | 8→32，submit_before 等待槽；等待后的 result timeout 必须重算 remaining（当前保留初始 remaining），否则可超出 deadline。仍未实现 runtime 注入 DNS executor。 |
 | 7 site_memory | partial | query/fragment 去除，错误 scrub；30 天 TTL，每站 200 条。仍无全局站点/条数上限，历史敏感数据未迁移，userinfo/path secrets 仍需策略。 |
 | 8 SQLite | partial | WAL/busy timeout、版本/列检查快速路径，候选读取+注册 BEGIN IMMEDIATE，多进程增量计数测试。候选选择事务并未原子预留首 key，也未合并后续 record_use，因此不等于并发 LRU 分配解决。 |

@@ -1,6 +1,19 @@
-"""HTTP requests with safe redirects and a shared retry/read deadline."""
+"""HTTP requests with safe redirects and a shared retry/read deadline.
+
+Trust model: every outbound target is a provider address fixed in code (search
+APIs, scrape backends, the Reddit API, the X API), while externally supplied
+URLs are only handed to those providers as parameters. The HTTP layer therefore
+never resolves a target name itself and never checks resolved addresses: name
+resolution and dialing are left to the standard library socket connect, so a
+TUN fake-IP proxy works exactly as it does for a browser or curl. Only checks
+that need no DNS remain: http/https, a valid host, no credentials, no
+``localhost`` and no non-public IP literal (including numeric aliases and
+embedded IPv4 forms).
+
+If a future scraper connects to an external URL from this machine, it must add
+resolved-address checks back before calling :func:`urlopen_retry`.
+"""
 import http.client
-import ipaddress
 import io
 import socket
 import ssl
@@ -12,16 +25,9 @@ import urllib.request
 
 from .url_security import (
     UrlSecurityError,
-    _ensure_public_ip,
-    _resolve_host_ips,
-    allow_fake_ip_default,
-    ensure_public_ip,
-    numeric_host,
-    normalize_http_host,
+    check_host_is_not_local,
     http_target,
-    resolve_host_addresses,
-    resolve_validated_addresses,
-    validate_redirect_target,
+    numeric_host,
 )
 
 
@@ -48,17 +54,9 @@ def _is_certificate_failure(exc: BaseException) -> bool:
     return False
 
 
-_CREDENTIAL_HEADERS = {
-    "authorization", "proxy-authorization", "cookie",
-    "x-api-key", "x-subscription-token", "x-appbuilder-authorization",
-}
-
-
-def _origin(url: str) -> tuple[str, str, int | None]:
-    parts = urllib.parse.urlsplit(url)
-    scheme = parts.scheme.lower()
-    port = parts.port if parts.port is not None else {"http": 80, "https": 443}.get(scheme)
-    return scheme, (parts.hostname or "").lower(), port
+def _origin(url: str) -> tuple[str, str, int]:
+    parts, host, port = http_target(url)
+    return parts.scheme.lower(), host, port
 
 
 # One size bound for every provider response body (search and scrape APIs,
@@ -158,71 +156,9 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
-def _is_ip_literal(host: str) -> bool:
-    try:
-        ipaddress.ip_address(host.strip("[]"))
-    except ValueError:
-        return False
-    return True
-
-
-def _configured_proxy_addresses() -> set[tuple[str, int]]:
-    """Exact endpoints explicitly configured as this process's proxies."""
-    targets: set[tuple[str, int]] = set()
-    defaults = {"http": 80, "https": 443, "socks": 1080, "socks5": 1080, "socks4": 1080}
-    for proxy_url in urllib.request.getproxies().values():
-        target = _proxy_host_port(str(proxy_url), defaults=defaults)
-        if target is not None:
-            targets.add(target)
-    return targets
-
-
-def _proxy_host_port(
-    target: str, *, defaults: dict[str, int] | None = None,
-) -> tuple[str, int] | None:
-    text = str(target or "").strip()
-    if not text:
-        return None
-    if "://" not in text:
-        text = "//" + text
-    try:
-        parts = urllib.parse.urlsplit(text)
-        host = normalize_http_host(parts.hostname or "")
-        port = parts.port
-        if port is None:
-            port = (defaults or {"http": 80, "https": 443}).get(parts.scheme.lower(), 80)
-        return host, int(port)
-    except (ValueError, UnicodeError):
-        return None
-
-
-def _trusted_proxy_targets(req) -> set[tuple[str, int]]:
-    """Configured proxy hops only; request destinations never grant trust."""
-    targets = set(_configured_proxy_addresses())
-    if getattr(req, "has_proxy", lambda: False)() or bool(getattr(req, "_tunnel_host", None)):
-        request_proxy = _proxy_host_port(getattr(req, "host", ""))
-        if request_proxy is not None:
-            targets.add(request_proxy)
-    return targets
-
-
-def _is_trusted_proxy_hop(req, host: str, port: int) -> bool:
-    has_proxy = getattr(req, "has_proxy", lambda: False)
-    if not (has_proxy() or bool(getattr(req, "_tunnel_host", None))):
-        return False
-    normalized = str(host or "").strip("[]").lower()
-    return (normalized, int(port)) in _trusted_proxy_targets(req)
-
-
-def _ensure_connect_address(raw_address: str, port=None, *, resolved: bool = False) -> None:
-    ensure_public_ip(
-        str(raw_address).strip("[]"), label="HTTP connection", resolved=resolved,
-        allow_fake_ip=allow_fake_ip_default() if resolved else False,
-    )
-
-
-def _sockaddr_host(sockaddr) -> str:
-    return str(sockaddr[0]).strip("[]")
+def _ensure_connect_address(raw_address: str) -> None:
+    """Refuse a literal connect target that is not public, before any socket."""
+    check_host_is_not_local(str(raw_address).strip("[]"), label="HTTP connection")
 
 
 class _DeadlineReader(io.RawIOBase):
@@ -293,43 +229,16 @@ def _socket_budget(deadline, timeout):
 
 def _open_with_deadline(handler, connection_type, req, **connection_options):
     deadline = getattr(req, "_multi_search_deadline", None)
-    # Validate the logical URL separately from the socket hop. Parse before
-    # urllib sends HTTP absolute-form GET or HTTPS CONNECT to a trusted proxy.
-    parts = None
+    # Validate the logical URL, not the socket hop. With an explicit proxy the
+    # socket hop is the user's proxy (loopback is normal) and urllib hands the
+    # hostname to the proxy, so the destination is checked here instead.
     if getattr(req, "full_url", None):
-        parts, logical_host, logical_port = http_target(req.full_url)
-        literal = numeric_host(logical_host)
-        if literal is not None:
-            _ensure_connect_address(str(literal))
-    proxy_target = None
-    proxy_hop_target = _proxy_host_port(req.host) if (
-        getattr(req, "has_proxy", lambda: False)() or getattr(req, "_tunnel_host", None)
-    ) else None
-    original_selector = getattr(req, "selector", None)
-    if proxy_hop_target is not None:
-        if parts is None:
-            raise UrlSecurityError("proxy request is missing its logical target")
-        pinned = getattr(req, "_multi_search_pinned_addresses", {})
-        answers = pinned.get((logical_host, logical_port))
-        if answers is None:
-            answers = resolve_validated_addresses(logical_host, logical_port, deadline=deadline)
-        for answer in answers:
-            _ensure_connect_address(answer[4][0], resolved=literal is None)
-        if not answers:
-            raise UrlSecurityError("URL host did not resolve to any IP")
-        # Reuse the checked destination even across idempotent retry attempts.
-        req._multi_search_pinned_addresses = {**pinned, (logical_host, logical_port): answers}
-        proxy_target = answers[0][4][0]
-        if not getattr(req, "_tunnel_host", None):
-            authority = f"[{proxy_target}]" if ":" in proxy_target else proxy_target
-            origin = f"[{logical_host}]" if ":" in logical_host else logical_host
-            if parts.port is not None:
-                origin += f":{logical_port}"
-            req.add_unredirected_header("Host", origin)
-            # Only the routing authority changes. The origin Host stays intact.
-            req.selector = urllib.parse.urlunsplit((
-                parts.scheme, f"{authority}:{logical_port}", parts.path or "/", parts.query, "",
-            ))
+        _parts, logical_host, _logical_port = http_target(req.full_url)
+        check_host_is_not_local(logical_host, label="HTTP connection")
+    proxy_hop = bool(
+        getattr(req, "has_proxy", lambda: False)()
+        or getattr(req, "_tunnel_host", None)
+    )
 
     def connection(host, **options):
         if deadline is not None:
@@ -341,83 +250,33 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
         def connect_socket(address, timeout=None, source_address=None, **socket_options):
             remaining = _socket_budget(deadline, timeout)
             target_host, target_port = address
-            target_host = normalize_http_host(target_host)
-            proxy_hop = proxy_hop_target == (target_host, int(target_port))
-            pinned = getattr(req, "_multi_search_pinned_addresses", None) or {}
-            addresses = pinned.get((str(target_host).lower(), int(target_port)))
-            literal = numeric_host(target_host)
-            if literal is not None and not proxy_hop:
-                _ensure_connect_address(str(literal))
-                target_host = str(literal)
-                address = (target_host, target_port)
-            if addresses is None and _is_ip_literal(target_host):
-                if not proxy_hop:
-                    _ensure_connect_address(str(target_host))
-                sock = create_connection(
-                    address, timeout=remaining,
-                    source_address=source_address, **socket_options,
-                )
-                try:
-                    sock.settimeout(_socket_budget(deadline, timeout))
-                except BaseException:
-                    sock.close()
-                    raise
-                return sock
-
-            if addresses is None:
-                # Validate the exact answers used for connect; a second lookup
-                # is a DNS-rebinding window. Proxy hops resolve without inheriting
-                # the destination's public-address requirement.
-                if proxy_hop:
-                    addresses = resolve_host_addresses(
-                        target_host, target_port, deadline=deadline,
-                    )
-                else:
-                    addresses = resolve_validated_addresses(
-                        target_host, target_port, deadline=deadline,
-                    )
-            last_error = None
-            for family, socktype, proto, _canonname, sockaddr in addresses:
-                if not proxy_hop:
-                    _ensure_connect_address(_sockaddr_host(sockaddr), resolved=True)
-                sock = None
-                try:
-                    sock = socket.socket(family, socktype, proto)
-                    sock.settimeout(_socket_budget(deadline, timeout))
-                    if source_address:
-                        sock.bind(source_address)
-                    sock.connect(sockaddr)
-                    sock.settimeout(_socket_budget(deadline, timeout))
-                    return sock
-                except OSError as exc:
-                    last_error = exc
-                    if sock is not None:
-                        sock.close()
-            if last_error is not None:
-                raise last_error
-            raise OSError("HTTP DNS resolution returned no addresses")
+            if not proxy_hop:
+                # Re-check the exact host handed to the dialer, and canonicalise
+                # a numeric alias so getaddrinfo cannot read it another way.
+                literal = numeric_host(target_host)
+                if literal is not None:
+                    _ensure_connect_address(str(literal))
+                    address = (str(literal), target_port)
+            # Hostnames are resolved and dialed by socket.create_connection; the
+            # resolved address is not checked here.
+            sock = create_connection(
+                address, timeout=remaining,
+                source_address=source_address, **socket_options,
+            )
+            try:
+                sock.settimeout(_socket_budget(deadline, timeout))
+            except BaseException:
+                sock.close()
+                raise
+            return sock
 
         def connect_tunnel():
-            original_host = conn._tunnel_host
-            original_headers = conn._tunnel_headers.copy()
             try:
-                if proxy_target is not None:
-                    conn._tunnel_host = proxy_target
-                    authority = f"[{proxy_target}]" if ":" in proxy_target else proxy_target
-                    conn._tunnel_headers["Host"] = f"{authority}:{conn._tunnel_port}"
-                    # Python 3.10 renders CONNECT without RFC IPv6 brackets.
-                    if not hasattr(conn, "_wrap_ipv6") and ":" in conn._tunnel_host:
-                        conn._tunnel_host = authority
                 tunnel()
                 conn.sock.settimeout(_socket_budget(deadline, conn.timeout))
             except BaseException:
                 conn.close()
                 raise
-            finally:
-                # HTTPSConnection uses this after CONNECT for SNI/certificate
-                # identity. Only CONNECT's routing address is replaced.
-                conn._tunnel_host = original_host
-                conn._tunnel_headers = original_headers
 
         if deadline is not None:
             conn.response_class = partial(
@@ -430,13 +289,7 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
         conn._tunnel = connect_tunnel
         return conn
 
-    try:
-        return handler.do_open(connection, req, **connection_options)
-    finally:
-        # has_proxy() depends on selector == full_url; preserve urllib's proxy
-        # state for retries while never forwarding the unchecked selector.
-        if original_selector is not None:
-            req.selector = original_selector
+    return handler.do_open(connection, req, **connection_options)
 
 
 class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
@@ -449,70 +302,51 @@ class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
         return _open_with_deadline(self, http.client.HTTPSConnection, req, context=self._context)
 
 
-def _pin_redirect_addresses(url: str, deadline: float | None, answers) -> dict:
-    """Resolve a redirect target once; connect to exactly the checked answers.
-
-    ``validate_redirect_target`` checks every answer, but urllib would resolve
-    the host again for the connect call, leaving a DNS-rebinding window. Pinning
-    the validated answers closes it.
-    """
-    _parts, host, port = http_target(url, label="redirect target")
-    literal = numeric_host(host)
-    if literal is not None:
-        _ensure_connect_address(str(literal))
-        return {}
-    if not answers:
-        # Validation must supply the exact DNS answers; never silently perform
-        # a second lookup when pinning the connection.
-        raise UrlSecurityError("redirect target host did not resolve to any IP")
-    addresses = []
-    for answer in answers:
-        try:
-            parsed = ipaddress.ip_address(str(answer).strip("[]"))
-        except ValueError:
-            raise UrlSecurityError("redirect target resolved to a non-IP value")
-        _ensure_public_ip(parsed, label="redirect target", resolved=True,
-                          allow_fake_ip=allow_fake_ip_default())
-        ip = str(parsed)
-        if isinstance(parsed, ipaddress.IPv4Address):
-            addresses.append((socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port)))
-        else:
-            addresses.append((socket.AF_INET6, socket.SOCK_STREAM, 6, "", (ip, port, 0, 0)))
-    return {(host, port): addresses} if addresses else {}
+def _has_explicit_port(url: str) -> bool:
+    try:
+        return urllib.parse.urlsplit(url).port is not None
+    except ValueError:
+        return False
 
 
 class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def __init__(self, *, resolver=None):
-        super().__init__()
-        self._resolver = resolver
+    """Redirects by rules that need no DNS.
+
+    Allowed: the same scheme, host and port, and an http -> https upgrade on
+    the same host to the default https port or the port the original URL
+    named. Cross-host targets, https -> http downgrades, other port changes
+    and non-public IP-literal targets fail; the error names the reason without
+    echoing the full target URL. Because cross-host redirects never follow, no
+    credential header can be forwarded to another host.
+    """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         try:
             deadline = getattr(req, "_multi_search_deadline", None)
-            answers: list[str] = []
-
-            def capture(host):
-                found = list((self._resolver or _resolve_host_ips)(host))
-                answers.extend(found)
-                return found
-
-            validate_redirect_target(
-                newurl, resolver=capture, deadline=deadline,
-            )
-            pinned = _pin_redirect_addresses(newurl, deadline, answers or None)
-            old_origin, new_origin = _origin(req.full_url), _origin(newurl)
-            if old_origin[0] == "https" and new_origin[0] == "http":
-                raise UrlSecurityError("HTTPS redirect must not downgrade to HTTP")
-            has_credentials = any(name.lower() in _CREDENTIAL_HEADERS for name, _ in req.header_items())
-            if old_origin != new_origin and has_credentials:
-                raise UrlSecurityError("cross-origin redirect must not forward credentials")
+            old_scheme, old_host, old_port = _origin(req.full_url)
+            _parts, new_host, new_port = http_target(newurl, label="redirect target")
+            check_host_is_not_local(new_host, label="redirect target")
+            new_scheme = urllib.parse.urlsplit(newurl).scheme.lower()
+            if old_scheme == "https" and new_scheme == "http":
+                raise UrlSecurityError("unsafe redirect target: HTTPS must not downgrade to HTTP")
+            if new_host != old_host:
+                raise UrlSecurityError("unsafe redirect target: cross-host redirect is not allowed")
+            if old_scheme == "http" and new_scheme == "https":
+                # An upgrade may only reach the default https port, or the port the
+                # original URL named explicitly. Any other port is a different service.
+                allowed_ports = {443} | ({old_port} if _has_explicit_port(req.full_url) else set())
+                if new_port not in allowed_ports:
+                    raise UrlSecurityError(
+                        "unsafe redirect target: upgrade may only keep the default or original port"
+                    )
+            elif (new_scheme, new_port) != (old_scheme, old_port):
+                raise UrlSecurityError(
+                    "unsafe redirect target: redirect must keep the same scheme and port"
+                )
             redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-            if redirected is not None:
-                if pinned:
-                    redirected._multi_search_pinned_addresses = pinned
-                if deadline is not None:
-                    redirected._multi_search_deadline = deadline
-                    req.timeout = redirected.timeout = _remaining(deadline)
+            if redirected is not None and deadline is not None:
+                redirected._multi_search_deadline = deadline
+                req.timeout = redirected.timeout = _remaining(deadline)
             return redirected
         except Exception:
             fp.close()
@@ -521,11 +355,10 @@ class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def _build_safe_opener(
     *,
-    redirect_resolver=None,
     extra_handlers: Iterable[urllib.request.BaseHandler] = (),
 ):
     return urllib.request.build_opener(
-        _SafeHTTPRedirectHandler(resolver=redirect_resolver),
+        _SafeHTTPRedirectHandler(),
         _DeadlineHTTPHandler(),
         _DeadlineHTTPSHandler(context=_ssl_ctx),
         *extra_handlers,
@@ -541,7 +374,6 @@ def urlopen_retry(
     retries: int = 2,
     *,
     deadline: float | None = None,
-    redirect_resolver=None,
     extra_handlers: Iterable[urllib.request.BaseHandler] = (),
 ):
     """Keep SSL retries, redirects and response reads within one time budget.
@@ -558,11 +390,8 @@ def urlopen_retry(
     handlers = tuple(extra_handlers)
     opener = (
         _shared_opener
-        if redirect_resolver is None and not handlers
-        else _build_safe_opener(
-            redirect_resolver=redirect_resolver,
-            extra_handlers=handlers,
-        )
+        if not handlers
+        else _build_safe_opener(extra_handlers=handlers)
     )
     retryable = request.get_method().upper() in _RETRYABLE_METHODS
     for _ in range(retries + 1):

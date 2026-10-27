@@ -18,10 +18,8 @@ from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support.auth import is_key_retryable_error
 from multi_search_mcp.src.support.models import normalize_scrape_result
 
-
 URL = "https://example.com/article"
 KEYS = ["fixture-exa-first", "fixture-exa-second"]
-
 
 def target_error(code=403, detail="SOURCE_NOT_AVAILABLE"):
     return {"results": [], "statuses": [{
@@ -29,10 +27,8 @@ def target_error(code=403, detail="SOURCE_NOT_AVAILABLE"):
         "error": {"tag": detail, "httpStatusCode": code},
     }]}
 
-
 def response(payload):
     return io.BytesIO(json.dumps(payload).encode())
-
 
 class ExaTargetErrorTests(unittest.TestCase):
     def setUp(self):
@@ -46,7 +42,7 @@ class ExaTargetErrorTests(unittest.TestCase):
         return service.run_scrape(
             service.ScrapeRequest(url=URL, backends=["exa"], output="json"),
             keys=self.keys, config={}, state_store=self.store,
-            url_resolver=lambda _host: ["93.184.216.34"],
+
         )["result"]
 
     def test_target_403_does_not_rotate_or_cool_keys(self):
@@ -129,7 +125,7 @@ class ExaTargetErrorTests(unittest.TestCase):
                     service.SearchWebRequest(query="fixture", sources=["exa"]),
                     keys=self.keys, config={}, state_store=self.store,
                     scraper=lambda *_a, **_k: {"markdown": "Fixture body", "via": "fixture"},
-                    url_resolver=lambda _host: ["93.184.216.34"],
+
                 )
                 self.assertEqual(result["errors"], [])
                 self.assertEqual(result["results"][0]["url"], URL)
@@ -207,7 +203,7 @@ class ExaTargetErrorTests(unittest.TestCase):
         with mock.patch.object(exa_scraper, "urlopen_retry", side_effect=lambda *_a, **_k: response(payload)) as fetch:
             result = service.run_scrape(
                 service.ScrapeRequest(url=URL, backends=["exa"], output="json", use_state=False),
-                keys=self.keys, config={}, url_resolver=lambda _host: ["93.184.216.34"],
+                keys=self.keys, config={},
             )
         self.assertEqual(fetch.call_count, 1)
         self.assertIn("forbidden 401 / 403", result["result"]["error"])
@@ -216,7 +212,7 @@ class ExaTargetErrorTests(unittest.TestCase):
         def fetch_source(request):
             return service.run_fetch_source(
                 request, keys=self.keys, config={}, state_store=self.store,
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         # The current key is echoed by the simulated provider to test redaction
@@ -252,7 +248,7 @@ class ExaTargetErrorTests(unittest.TestCase):
         def scrape(request):
             return service.run_scrape(
                 request, keys=self.keys, config={}, state_store=self.store,
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
         with mock.patch.object(exa_scraper, "urlopen_retry", side_effect=lambda *_a, **_k: response(target_error())), \
@@ -267,7 +263,6 @@ class ExaTargetErrorTests(unittest.TestCase):
                     self.assertIn("SOURCE_NOT_AVAILABLE (403)", payload["result"]["error"])
                     if mode != "json":
                         self.assertIn("SOURCE_NOT_AVAILABLE (403)", payload["markdown"])
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,7 +10,6 @@ from multi_search_mcp.src.read import run_read_source
 from multi_search_mcp.src.state.content_store import ContentStore, ContentStoreError
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 class CacheTruncationTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -22,10 +21,9 @@ class CacheTruncationTests(unittest.TestCase):
         return run_fetch_source(
             {'url': 'https://example.com/article', 'full_content': True, **request},
             state_store=self.store, keys={}, config={},
-            url_resolver=lambda _: ['93.184.216.34'],
+
             scraper=lambda url, **kw: {'markdown': body, 'via': 'fixture'},
         )
-
 
     def test_metadata_is_per_acquisition_not_shared_content_hash(self):
         cache = ContentStore(self.store)
@@ -49,7 +47,6 @@ class CacheTruncationTests(unittest.TestCase):
         self.assertEqual(row['content'], 'old body')
         self.assertFalse(row['truncated'])  # legacy acquisition has no truncation evidence
         self.assertEqual(migrated.rows('PRAGMA user_version')[0]['user_version'], 2)
-
 
     def test_preview_truncation_does_not_mark_complete_acquisition(self):
         first = self.fetch('complete body', full_content=False, max_chars=2)

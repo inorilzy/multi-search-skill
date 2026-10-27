@@ -21,14 +21,11 @@ from multi_search_mcp.src.state.key_state import (
 )
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 URL = "https://example.com/article"
 KEY = "fixture-firecrawl-key"
 
-
 def response(payload: dict) -> io.BytesIO:
     return io.BytesIO(json.dumps(payload).encode())
-
 
 class RecordingBody:
     def __init__(self, payload: bytes):
@@ -48,7 +45,6 @@ class RecordingBody:
 
     def __exit__(self, *_args):
         self.close()
-
 
 class FirecrawlTargetErrorTests(unittest.TestCase):
     def setUp(self):
@@ -90,7 +86,7 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                 keys=self.keys,
                 config={},
                 state_store=self.store,
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )["result"]
 
         self.assertEqual(fetch.call_count, 1)
@@ -116,7 +112,7 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                 keys=self.keys,
                 config={},
                 state_store=self.store,
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )["result"]
 
         self.assertEqual(fetch.call_count, 1)
@@ -164,7 +160,7 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                         keys=self.keys,
                         config={},
                         state_store=self.store,
-                        url_resolver=lambda _host: ["93.184.216.34"],
+
                     )["result"]
 
                 self.assertEqual(fetch.call_count, 1)
@@ -203,7 +199,7 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                         keys={"firecrawl": keys},
                         config={},
                         state_store=self.store,
-                        url_resolver=lambda _host: ["93.184.216.34"],
+
                     )["result"]
 
                 self.assertEqual(fetch.call_count, 2)
@@ -311,7 +307,7 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                 keys=self.keys,
                 config={},
                 state_store=self.store,
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )["result"]
 
         with mock.patch.object(
@@ -346,7 +342,6 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
         self.assertEqual(result["markdown"], "# Fixture")
         self.assertEqual(result["length"], len("# Fixture"))
         self.assertEqual(result["via"], "firecrawl")
-
 
 if __name__ == "__main__":
     unittest.main()

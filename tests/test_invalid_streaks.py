@@ -21,9 +21,7 @@ from multi_search_mcp.src.state.key_state import (
 )
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 URL = "https://example.com/article"
-
 
 def target_error():
     return {
@@ -34,7 +32,6 @@ def target_error():
             "error": {"tag": "SOURCE_NOT_AVAILABLE", "httpStatusCode": 403},
         }],
     }
-
 
 class InvalidStreakTests(unittest.TestCase):
     def test_mixed_provider_results_break_the_invalid_streak(self):
@@ -111,7 +108,6 @@ class InvalidStreakTests(unittest.TestCase):
             self.assertEqual(after["cooldown_until"], before["cooldown_until"])
             self.assertEqual(after["failure_count"], before["failure_count"] + 1)
 
-
     def test_three_consecutive_invalid_results_still_escalate(self):
         base = datetime(2026, 9, 13, tzinfo=timezone.utc)
         clock = [base]
@@ -154,7 +150,7 @@ class InvalidStreakTests(unittest.TestCase):
                         keys={"exa": [candidate.key]},
                         config={},
                         state_store=store,
-                        url_resolver=lambda _host: ["93.184.216.34"],
+
                     )["result"]
 
             self.assertEqual(request.call_count, 1)
@@ -182,7 +178,6 @@ class InvalidStreakTests(unittest.TestCase):
                     KeyOutcome(False, False, "target", "target page unavailable"),
                 )
             self.assertEqual(manager.status_rows("exa"), before_target)
-
 
 if __name__ == "__main__":
     unittest.main()

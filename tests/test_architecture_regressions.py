@@ -10,7 +10,6 @@ from multi_search_mcp.src.state.content_store import ContentStore, DEFAULT_MAX_O
 from multi_search_mcp.src.state.source_registry import SourceRegistry
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 class ContentFlowRegressionTests(unittest.TestCase):
     def setUp(self):
         self.temp = TemporaryDirectory()
@@ -18,7 +17,7 @@ class ContentFlowRegressionTests(unittest.TestCase):
         self.store = StateStore(Path(self.temp.name) / "state.sqlite")
         self.fetch_options = dict(
             state_store=self.store, keys={}, config={},
-            url_resolver=lambda _host: ["93.184.216.34"],
+
         )
 
     def search(self, row):
@@ -128,7 +127,6 @@ class ContentFlowRegressionTests(unittest.TestCase):
         self.assertFalse(hit["body_available"])
         self.assertIsNone(ContentStore(self.store).get(hit["source_id"]))
 
-
 class SourceRegistryLifecycleRegressionTests(unittest.TestCase):
     def test_register_purges_expired_rows_without_deleting_live_sources(self):
         with TemporaryDirectory() as tmp:
@@ -143,7 +141,6 @@ class SourceRegistryLifecycleRegressionTests(unittest.TestCase):
             current.register("new", [{"source_id": "new", "url": "https://evidence.example/new"}])
             rows = store.rows("SELECT source_id FROM search_sources ORDER BY source_id")
             self.assertEqual([row["source_id"] for row in rows], ["live", "new"])
-
 
 if __name__ == "__main__":
     unittest.main()

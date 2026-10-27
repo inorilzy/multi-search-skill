@@ -1,6 +1,7 @@
 """X search/fetch integration through the real service and domain dispatcher."""
 import asyncio
 import json
+import socket
 import sys
 import unittest
 from pathlib import Path
@@ -17,11 +18,6 @@ from multi_search_mcp.src.state.source_registry import SourceRegistry
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
 
-
-def public_resolver(_hostname):
-    return ["93.184.216.34"]
-
-
 def tweet(tweet_id, full_text, *, replies=None):
     return SimpleNamespace(
         id=tweet_id, text="Legacy shortened body", full_text=full_text,
@@ -29,7 +25,6 @@ def tweet(tweet_id, full_text, *, replies=None):
         favorite_count=7, retweet_count=2,
         reply_count=len(replies or []), replies=replies,
     )
-
 
 class XKitFixture:
     def __init__(self, count=1):
@@ -76,7 +71,6 @@ class XKitFixture:
     def detail_ids(self):
         return [event[1] for event in self.events if event[0] == "detail"]
 
-
 class TwitterFetchFlowTests(unittest.TestCase):
     def setUp(self):
         self.directory = TemporaryDirectory()
@@ -94,7 +88,7 @@ class TwitterFetchFlowTests(unittest.TestCase):
         self.cookies = {"auth_token": "fixture-auth-token", "ct0": "fixture-csrf-token"}
         self.options = {
             "state_store": self.store, "keys": {"twitter": self.cookies},
-            "config": {}, "url_resolver": public_resolver,
+            "config": {},
         }
 
     def test_only_final_fifteen_candidates_fetch_after_search_and_cache_full_text(self):
@@ -345,34 +339,32 @@ class TwitterFetchFlowTests(unittest.TestCase):
 
     def test_x_fixed_endpoint_fetch_bypasses_tun_dns_but_generic_urls_stay_guarded(self):
         api = XKitFixture()
-        forbidden_resolver = mock.Mock(side_effect=AssertionError("X URL must not resolve through generic DNS validation"))
-        with api.patched():
+        with api.patched(), mock.patch(
+            "socket.getaddrinfo",
+            side_effect=AssertionError("URL preflight used local DNS"),
+        ):
             fetched = run_fetch_source(
                 {"url": "https://x.com/fixture/status/1", "backends": ["exa"]},
-                **{**self.options, "url_resolver": forbidden_resolver},
+                **self.options,
             )
             self.assertEqual(fetched["backend"], "twitter")
             self.assertIn("Fetched full body 1", fetched["body"])
-            forbidden_resolver.assert_not_called()
             self.assertEqual(api.events, [("detail", "1")])
             self.assertEqual(len(api.clients), 1)
 
-            private_resolver = mock.Mock(return_value=["198.18.0.123"])
             # Exa fetches from its own network. A TUN DNS answer must not mask
             # the actual configuration error (no Exa key is configured here).
             with self.assertRaisesRegex(ValueError, "missing key for backend: exa"):
                 run_fetch_source(
                     {"url": "https://evidence.example/article", "backends": ["exa"]},
-                    **{**self.options, "url_resolver": private_resolver},
+                    **self.options,
                 )
-            private_resolver.assert_not_called()
             # Literal private targets are still denied, without consulting DNS.
             with self.assertRaisesRegex(ValueError, "private"):
                 run_fetch_source(
                     {"url": "https://10.0.0.5/article", "backends": ["exa"]},
-                    **{**self.options, "url_resolver": private_resolver},
+                    **self.options,
                 )
-            private_resolver.assert_not_called()
             self.assertEqual(api.events, [("detail", "1")])
             self.assertEqual(len(api.clients), 1)
 
@@ -393,7 +385,6 @@ class TwitterFetchFlowTests(unittest.TestCase):
         self.assertNotIn("twitter_cookies", observed[0])
         self.assertEqual(api.clients, [])
         self.assertEqual(api.events, [])
-
 
 if __name__ == "__main__":
     unittest.main()
