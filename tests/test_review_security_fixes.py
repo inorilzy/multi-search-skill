@@ -53,11 +53,6 @@ class EmbeddedAddressTests(unittest.TestCase):
             "https://[64:ff9b::5db8:d822]/",
         )
 
-    def test_dns_answers_with_embedded_private_ipv4_are_rejected(self):
-        resolver = self._resolver({"nat64.example": ["64:ff9b::a00:1"]})
-        with self.assertRaises(UrlSecurityError):
-            validate_public_http_url("https://nat64.example/", resolver=resolver)
-
 
 class FakeIpCompatibilityTests(unittest.TestCase):
     """Clash/TUN fake-IP answers are accepted only behind an explicit opt-in."""
@@ -67,10 +62,14 @@ class FakeIpCompatibilityTests(unittest.TestCase):
     def setUp(self):
         self.resolver = lambda _host: [self.FAKE_IP]
 
-    def test_fake_ip_is_rejected_by_default(self):
+    def test_fake_ip_domain_preflight_needs_no_opt_in_and_no_dns(self):
+        resolver = mock.Mock(return_value=[self.FAKE_IP])
         with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: ""}):
-            with self.assertRaises(UrlSecurityError):
-                validate_public_http_url("https://clash.example/page", resolver=self.resolver)
+            self.assertEqual(
+                validate_public_http_url("https://clash.example/page", resolver=resolver),
+                "https://clash.example/page",
+            )
+        resolver.assert_not_called()
 
     def test_fake_ip_is_allowed_when_opted_in(self):
         with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: "1"}):

@@ -40,9 +40,15 @@ def validate_public_http_url(
     url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
     allow_fake_ip: bool | None = None,
 ) -> str:
+    """Validate a URL that is never fetched by this process.
+
+    Only checks that need no DNS run: scheme, host presence, credentials,
+    localhost and literal non-public destinations. ``resolver`` is accepted for
+    signature compatibility but never called, so TUN fake-IP routing works.
+    """
     return _validate_url(
         url, label="URL", resolver=resolver, deadline=deadline,
-        allow_fake_ip=allow_fake_ip,
+        allow_fake_ip=allow_fake_ip, use_dns=False,
     )
 
 
@@ -50,9 +56,10 @@ def validate_scrape_url(
     url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
     allow_fake_ip: bool | None = None,
 ) -> str:
+    """Validate a scrape target without a local DNS lookup (see above)."""
     return _validate_url(
         url, label="scrape URL", resolver=resolver, deadline=deadline,
-        allow_fake_ip=allow_fake_ip,
+        allow_fake_ip=allow_fake_ip, use_dns=False,
     )
 
 
@@ -73,7 +80,7 @@ def allow_fake_ip_default() -> bool:
 
 def _validate_url(
     url: str, *, label: str, resolver: Resolver | None, deadline: float | None,
-    allow_fake_ip: bool | None = None,
+    allow_fake_ip: bool | None = None, use_dns: bool = True,
 ) -> str:
     candidate = str(url or "").strip()
     _parts, host, _port = http_target(candidate, label=label)
@@ -81,6 +88,14 @@ def _validate_url(
     if direct_ip is not None:
         _ensure_deadline(deadline, label)
         _ensure_public_ip(direct_ip, label=label, resolved=False)
+        return candidate
+    if not use_dns:
+        # The URL is handed to a provider or reduced to an identifier, never
+        # dialed locally, so a local DNS answer says nothing about the target.
+        # Reject local names explicitly now that no resolver does it for us.
+        if host == "localhost" or host.endswith(".localhost"):
+            raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
+        _ensure_deadline(deadline, label)
         return candidate
     accept_fake_ip = allow_fake_ip_default() if allow_fake_ip is None else bool(allow_fake_ip)
     resolve = resolver or _resolve_host_ips

@@ -11,6 +11,7 @@ from multi_search_mcp.src.support.url_security import (
     UrlSecurityError,
     validate_public_http_url,
     validate_redirect_target,
+    validate_scrape_url,
 )
 
 
@@ -37,12 +38,13 @@ class UrlSecurityTests(unittest.TestCase):
         response.msg = "OK"
         return response
 
-    def test_accepts_public_http_urls_with_case_insensitive_host_lookup(self):
-        resolver = self._resolver({"example.com": ["93.184.216.34"]})
+    def test_accepts_public_http_urls_without_a_local_dns_lookup(self):
+        resolver = mock.Mock(return_value=["93.184.216.34"])
 
         validated = validate_public_http_url(" HTTPS://Example.com/path?q=1 ", resolver=resolver)
 
         self.assertEqual(validated, "HTTPS://Example.com/path?q=1")
+        resolver.assert_not_called()
 
     def test_rejects_non_http_scheme(self):
         with self.assertRaises(UrlSecurityError) as ctx:
@@ -59,9 +61,23 @@ class UrlSecurityTests(unittest.TestCase):
             validate_public_http_url("https://user:pass@example.com/private", resolver=self._resolver({}))
         self.assertIn("must not include credentials", str(credentials.exception))
 
+    def test_rejects_localhost_targets(self):
+        for url in ("http://localhost/", "https://api.localhost/", "http://LOCALHOST./"):
+            with self.subTest(url=url):
+                with self.assertRaises(UrlSecurityError) as ctx:
+                    validate_public_http_url(url, resolver=self._resolver({}))
+                self.assertIn("localhost is not allowed", str(ctx.exception))
+
     def test_rejects_unsafe_direct_ip_targets(self):
         cases = {
             "http://127.0.0.1/": "loopback",
+            "http://127.1/": "loopback",
+            "http://2130706433/": "loopback",
+            "http://0x7f000001/": "loopback",
+            "http://010.0.0.05/": "non-canonical numeric",
+            "http://[::ffff:127.0.0.1]/": "loopback",
+            "http://[64:ff9b::a00:1]/": "private",
+            "http://[2002:0a00:0001::]/": "private",
             "http://10.0.0.8/": "private",
             "http://100.64.0.8/": "shared",
             "http://169.254.169.254/": "link-local",
@@ -77,25 +93,35 @@ class UrlSecurityTests(unittest.TestCase):
                     validate_public_http_url(url, resolver=self._resolver({}))
                 self.assertIn(expected_reason, str(ctx.exception))
 
-    def test_rejects_domain_resolving_to_unsafe_ip(self):
-        resolver = self._resolver({"internal.example": ["192.168.1.20"]})
+    def test_domain_urls_pass_regardless_of_dns_answers(self):
+        # The URL is never dialed locally (provider fetch or post-id parsing),
+        # so no DNS answer may reject it and the resolver must not be consulted.
+        for answers in (
+            ["192.168.1.20"],
+            ["198.18.1.241"],
+            ["127.0.0.1"],
+            ["fe80::1"],
+            [],
+            ["not-an-ip"],
+        ):
+            with self.subTest(answers=answers):
+                resolver = mock.Mock(return_value=answers)
+                self.assertEqual(
+                    validate_public_http_url("https://internal.example/data", resolver=resolver),
+                    "https://internal.example/data",
+                )
+                resolver.assert_not_called()
 
-        with self.assertRaises(UrlSecurityError) as ctx:
-            validate_public_http_url("https://internal.example/data", resolver=resolver)
+    def test_scrape_url_preflight_never_resolves_the_host(self):
+        resolver = mock.Mock(side_effect=AssertionError("scrape preflight must not use DNS"))
 
-        self.assertIn("resolved address is private", str(ctx.exception))
-        self.assertNotIn("internal.example", str(ctx.exception))
-        self.assertNotIn("192.168.1.20", str(ctx.exception))
-
-    def test_documentation_domains_do_not_bypass_dns_safety(self):
-        resolver = self._resolver({"example.com": ["127.0.0.1"]})
-
-        with self.assertRaises(UrlSecurityError) as ctx:
-            validate_public_http_url("https://example.com/data", resolver=resolver)
-
-        self.assertIn("resolved address is loopback", str(ctx.exception))
-        self.assertNotIn("example.com", str(ctx.exception))
-        self.assertNotIn("127.0.0.1", str(ctx.exception))
+        for url in (
+            "https://www.reddit.com/r/python/comments/abc123/example/",
+            "https://evidence.example/article",
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(validate_scrape_url(url, resolver=resolver), url)
+        resolver.assert_not_called()
 
     def test_redirect_target_uses_same_policy(self):
         resolver = self._resolver({"redirect.example": ["fe80::1"]})

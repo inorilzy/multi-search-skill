@@ -70,12 +70,22 @@ class RedditRoutingTests(unittest.TestCase):
         self.assertEqual(result["via"], "reddit")
         generic.assert_not_called()
 
-    def test_private_resolution_and_credentials_are_rejected_before_auth(self):
-        for url, resolver in ((URL, lambda host: ["127.0.0.1"]),
-                              (URL.replace("https://", "https://user:password@"), PUBLIC)):
-            with self.subTest(url=url), mock.patch.object(reddit, "get_post_json") as fetch:
-                self.assertIn("error", scrape_url_smart(url, url_resolver=resolver))
-                fetch.assert_not_called()
+    def test_credentials_are_rejected_before_auth(self):
+        with mock.patch.object(reddit, "get_post_json") as fetch:
+            result = scrape_url_smart(
+                URL.replace("https://", "https://user:password@"), url_resolver=PUBLIC,
+            )
+        self.assertIn("must not include credentials", result["error"])
+        fetch.assert_not_called()
+
+    def test_fake_ip_dns_answer_does_not_block_the_reddit_preflight(self):
+        resolver = mock.Mock(return_value=["198.18.1.241"])
+        with mock.patch.object(reddit, "get_post_json", return_value=response_data()) as fetch:
+            result = scrape_url_smart(URL, url_resolver=resolver)
+        self.assertEqual(result["via"], "reddit")
+        self.assertIn("Nested comment", result["markdown"])
+        fetch.assert_called_once()
+        resolver.assert_not_called()
 
     def test_supported_permalink_variants_and_comment_focus(self):
         urls = [URL, URL.replace("www.", "old."), URL.replace("www.", "new."),
@@ -245,13 +255,20 @@ class RedditTransportTests(unittest.TestCase):
         self.assertIsInstance(error, _reddit_transport.RedditError)
         self.assertEqual(response.read_sizes, [_reddit_transport.MAX_RESPONSE_BYTES + 1])
 
-    def test_private_destination_is_rejected_before_any_request(self):
-        with mock.patch.object(_reddit_transport, "urlopen_retry") as opened:
-            with self.assertRaises(Exception):
-                _reddit_transport.get_post_json(
-                    "abc123", {}, time.monotonic() + 10, resolver=lambda host: ["127.0.0.1"],
-                )
-        opened.assert_not_called()
+    def test_fixed_reddit_api_host_is_not_resolved_locally(self):
+        resolver = mock.Mock(side_effect=AssertionError("fixed API host must not use DNS"))
+        with mock.patch.object(_reddit_transport, "urlopen_retry",
+                               return_value=FakeResponse(response_data())) as opened:
+            data = _reddit_transport.get_post_json(
+                "abc123", {}, time.monotonic() + 10, resolver=resolver,
+            )
+        self.assertEqual(data[0]["data"]["children"][0]["data"]["id"], "abc123")
+        opened.assert_called_once()
+        self.assertEqual(
+            opened.call_args.args[0].full_url,
+            "https://www.reddit.com/comments/abc123.json",
+        )
+        resolver.assert_not_called()
 
 
 if __name__ == "__main__":

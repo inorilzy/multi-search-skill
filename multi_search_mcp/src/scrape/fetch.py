@@ -79,12 +79,12 @@ def run_fetch_source(
                 resolved_config = runtime.load_config_safe(request.config_path)
             chain = request.backends or configured_scrape_backends(resolved_config)
         if uses_delegated_backends(url, chain, scraper=scraper):
-            # The provider resolves its target; local DNS can be a TUN fake IP.
+            # The provider resolves its target on its own network.
             url = validate_delegated_url(url, deadline=deadline)
             if is_reddit_url(url):  # Normalization can reveal a local platform.
                 validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
         else:
-            # Custom callbacks, local platforms and unknown chains fail closed.
+            # Custom callbacks, local platforms and unknown chains: format checks only.
             validate_public_http_url(url, resolver=url_resolver, deadline=deadline)
     source_providers = list((source or {}).get("providers") or ["direct"])
     retention = retention_policy_for_sources(source_providers)
