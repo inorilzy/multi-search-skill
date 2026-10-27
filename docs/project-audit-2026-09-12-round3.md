@@ -74,6 +74,7 @@ flowchart LR
 - **复现：** `urlopen_retry(timeout=0.01)` 内模拟 DNS 阻塞 0.08 秒后报错，实际 **0.0807 秒**才返回；无真实 DNS、TCP 或 provider 调用。
 - **影响边界：** 外层 SearchRunner 仍可按自己的截止时间返回；滞留的 provider/fetch worker 不能及时释放，直接 Core fetch/doctor 也可能越过预期预算。这里确认的是超时覆盖缺口，**未证明 SSRF 绕过**。
 - **最小方向：** 将解析放入有限容量、按 deadline 停止等待的边界，明确尚未返回解析任务的生命周期；安全预检与实际连接共同扣除预算。不能用每次启动无限线程解决。验收慢解析后及时返回、不再发 TCP/TLS、解析结束可释放容量。
+- **处理记录：** DNS 线程池及其“有界 DNS”层已删除（集成分支 `integ/fake-ip-dns`，票 01–04）。出站请求不再在本机解析域名，因此没有 DNS 阶段需要 deadline：超时由外层的搜索池（按 route 的 timeout）和抓取池（按 `scrape_timeout`）负责，卡住的调用会被让出。已接受的残余风险：单条 `fetch` 与 `doctor --network` 不经过外层池，DNS 卡住时会等到系统 DNS 超时才返回，可能超过设定的 timeout；用户已接受该取舍，本条不再作为回归。
 
 ### R3-07 · P2：导入库会覆盖宿主进程的全局 urllib 配置
 

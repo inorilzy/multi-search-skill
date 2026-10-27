@@ -1,4 +1,5 @@
 import json
+import socket
 import threading
 import time
 import unittest
@@ -284,7 +285,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", scraper),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
+            mock.patch("socket.getaddrinfo", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             legacy = service.run_multi_search(service.MultiSearchRequest(
                 query="primary", sources=list(providers), count=30, use_state=False,
@@ -388,7 +389,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", scraper),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
+            mock.patch("socket.getaddrinfo", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             output, errors = StringIO(), StringIO()
             code = cli.main(
@@ -420,7 +421,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=providers),
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", side_effect=scraper),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
+            mock.patch("socket.getaddrinfo", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             for output_format in ("human", "markdown"):
                 with self.subTest(output_format=output_format):
@@ -443,7 +444,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", side_effect=lambda url, **kwargs: {
                 "url": url, "markdown": "VISIBLE hidden tail beyond preview", "via": "fake",
             }),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
+            mock.patch("socket.getaddrinfo", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             for output_format in ("human", "markdown"):
                 with self.subTest(output_format=output_format):
@@ -467,7 +468,7 @@ class SearchFetchPipelineTests(unittest.TestCase):
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", side_effect=lambda url, **kwargs: {
                 "url": url, "markdown": f"MCP_BODY:{url}", "via": "fake",
             }),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
+            mock.patch("socket.getaddrinfo", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             for call in (tools.search_web_tool, tools.multi_search_tool):
                 with self.subTest(tool=call.__name__):

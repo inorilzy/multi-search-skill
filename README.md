@@ -457,6 +457,7 @@ Provider 参考文档和现行/历史文档分类见 [docs/README.md](docs/READM
 - 不要提交 `~/.search-keys.json`、`~/.multi-search/config.sqlite`、`.env`、Cookie 文件或真实 provider key。
 - provider error 输出前会尽量 scrub 可能出现的 key 值。
 - 第三方抓取正文始终按 untrusted data 处理。
+- 出站请求只连接代码里写死的服务商地址（搜索 API、抓取服务、Reddit API、X 接口），靠 HTTPS 证书校验确认对端。外部给定的 URL（`fetch --url`、搜索结果链接）只交给服务商或用于提取 ID，本机不直接连接它们，所以 URL 只做格式检查：协议、主机、无凭据、非 localhost、非公网 IP 字面量。本机不解析域名、不检查解析结果，因此 TUN fake-IP 代理（如 `198.18.0.0/15`）下不需要任何开关。新增在本机直接连接外部 URL 的抓取器，必须重新加入解析结果检查。
 
 ## Troubleshooting
 

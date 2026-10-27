@@ -1,6 +1,6 @@
 """Regression tests for the Python review fixes (security and behaviour)."""
 import io
-import os
+import socket
 import ssl
 import tempfile
 import threading
@@ -52,13 +52,13 @@ class EmbeddedAddressTests(unittest.TestCase):
 
 
 class FakeIpCompatibilityTests(unittest.TestCase):
-    """Clash/TUN fake-IP answers never reach the DNS-free URL preflight."""
+    """Clash/TUN fake-IP answers need no switch: the URL preflight never resolves."""
 
     FAKE_IP = "198.18.7.7"
 
-    def test_fake_ip_domain_preflight_needs_no_opt_in_and_no_dns(self):
-        with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: ""}), mock.patch(
-            "multi_search_mcp.src.support.url_security._resolve_host_ips",
+    def test_fake_ip_domain_preflight_needs_no_switch_and_no_dns(self):
+        with mock.patch(
+            "socket.getaddrinfo",
             side_effect=AssertionError("preflight used DNS"),
         ):
             self.assertEqual(
@@ -66,15 +66,15 @@ class FakeIpCompatibilityTests(unittest.TestCase):
                 "https://clash.example/page",
             )
 
-    def test_fake_ip_opt_in_never_allows_a_literal_ip(self):
-        with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: "1"}):
-            with self.assertRaises(UrlSecurityError):
-                validate_public_http_url(f"https://{self.FAKE_IP}/page")
+    def test_fake_ip_literal_is_rejected_without_any_switch(self):
+        with self.assertRaises(UrlSecurityError):
+            validate_public_http_url(f"https://{self.FAKE_IP}/page")
+        with self.assertRaises(UrlSecurityError):
+            http._ensure_connect_address(self.FAKE_IP)
 
-    def test_a_fake_ip_literal_is_never_a_direct_connection_target(self):
-        with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: "1"}):
-            with self.assertRaises(UrlSecurityError):
-                http._ensure_connect_address(self.FAKE_IP)
+    def test_fake_ip_switch_is_gone(self):
+        self.assertFalse(hasattr(url_security, "FAKE_IP_ENV"))
+        self.assertFalse(hasattr(url_security, "allow_fake_ip_default"))
 
 
 class HttpHardeningTests(unittest.TestCase):

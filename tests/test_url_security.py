@@ -1,16 +1,17 @@
 import email.message
 import io
+import socket
 import unittest
 import urllib.request
 import urllib.response
 from unittest import mock
 
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
+from multi_search_mcp.src.support import http
 from multi_search_mcp.src.support.http import urlopen_retry
 from multi_search_mcp.src.support.url_security import (
     UrlSecurityError,
     validate_public_http_url,
-    validate_redirect_target,
     validate_scrape_url,
 )
 
@@ -18,7 +19,7 @@ class UrlSecurityTests(unittest.TestCase):
     @staticmethod
     def _no_dns():
         return mock.patch(
-            "multi_search_mcp.src.support.url_security._resolve_host_ips",
+            "socket.getaddrinfo",
             side_effect=AssertionError("URL preflight must not use DNS"),
         )
 
@@ -111,9 +112,11 @@ class UrlSecurityTests(unittest.TestCase):
                     self.assertEqual(validate_scrape_url(url), url)
 
     def test_redirect_target_rejects_literal_non_public_ip_without_dns(self):
-        with self._no_dns():
-            with self.assertRaises(UrlSecurityError) as ctx:
-                validate_redirect_target("https://[fe80::1]/next")
+        req = urllib.request.Request("https://93.184.216.34/start")
+        with self._no_dns(), self.assertRaises(UrlSecurityError) as ctx:
+            http._SafeHTTPRedirectHandler().redirect_request(
+                req, io.BytesIO(), 302, "Found", {}, "https://[fe80::1]/next",
+            )
 
         self.assertIn("unsafe redirect target", str(ctx.exception))
         self.assertIn("link-local", str(ctx.exception))

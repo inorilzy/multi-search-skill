@@ -1,6 +1,5 @@
 """Synthetic regressions for deadline, authorization and managed-cookie boundaries."""
 import io
-import os
 import tempfile
 import time
 import unittest
@@ -19,10 +18,9 @@ from multi_search_mcp.src.state.state_store import StateStore
 
 
 class RemainingBoundariesTests(unittest.TestCase):
-    def test_literal_fake_ip_rejected_even_with_opt_in(self):
-        with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: '1'}):
-            with self.assertRaises(url_security.UrlSecurityError):
-                http._ensure_connect_address('198.18.0.1')
+    def test_literal_fake_ip_rejected(self):
+        with self.assertRaises(url_security.UrlSecurityError):
+            http._ensure_connect_address('198.18.0.1')
 
     def test_redirect_does_not_resolve_or_pin_addresses(self):
         req = urllib.request.Request('https://example.com/a')
@@ -33,18 +31,6 @@ class RemainingBoundariesTests(unittest.TestCase):
             )
         self.assertEqual(result.full_url, 'https://example.com/b')
         self.assertFalse(hasattr(result, '_multi_search_pinned_addresses'))
-
-    def test_dns_remaining_recomputed_after_admission(self):
-        future = mock.Mock()
-        pool = mock.Mock()
-        clock = [10.0]
-        def submit(*args):
-            clock[0] = 10.8
-            return future
-        pool.submit_nowait.side_effect = submit
-        with mock.patch.object(url_security, '_DNS_POOL', pool), mock.patch.object(url_security.time, 'monotonic', side_effect=lambda: clock[0]):
-            url_security._run_bounded_dns(lambda: [], deadline=11.0)
-        self.assertAlmostEqual(future.result.call_args.kwargs['timeout'], .2)
 
     def test_atomic_reservation_distributes_two_simultaneous_attempts(self):
         with tempfile.TemporaryDirectory() as temp:

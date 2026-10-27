@@ -1,3 +1,4 @@
+import socket
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -96,7 +97,7 @@ class PreviewDefaultTests(unittest.TestCase):
         with (
             mock.patch("multi_search_mcp.src.search.registry.build_provider_registry", return_value=self.providers),
             mock.patch("multi_search_mcp.src.scrape.service.scrape_url_smart", self.scraper),
-            mock.patch("multi_search_mcp.src.support.url_security._resolve_host_ips", side_effect=AssertionError("URL preflight used local DNS")),
+            mock.patch("socket.getaddrinfo", side_effect=AssertionError("URL preflight used local DNS")),
         ):
             for mode in ("json", "markdown", "both"):
                 with self.subTest(mode=mode):

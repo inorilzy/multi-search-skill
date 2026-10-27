@@ -1,3 +1,4 @@
+import socket
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -133,7 +134,7 @@ class FetchSourceCoreTests(unittest.TestCase):
         with TemporaryDirectory() as tmp, mock.patch(
             "multi_search_mcp.src.scrape.fetch.time.monotonic", side_effect=lambda: now[0],
         ), mock.patch(
-            "multi_search_mcp.src.support.url_security._resolve_host_ips",
+            "socket.getaddrinfo",
             side_effect=AssertionError("URL preflight used local DNS"),
         ):
             config_path = Path(tmp) / "config.json"

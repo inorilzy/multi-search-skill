@@ -132,7 +132,7 @@
 | 取消时持锁等待子进程 | FIXED | finish 移出锁；spawn_blocking；竞争测试 |
 | key 熔断状态被并发覆盖 | PARTIAL | 中性错误/强状态 CASE 已修并有测试；success 与并发旧失败因果、quota/invalid 阈值优先级仍在 Python 台账保留，未宣称完整状态机 |
 | deadline 后无限等待 | FIXED | `run_all_before` 到期不等待；回归通过 |
-| fake-IP 代理下抓取失败 | PARTIAL | 默认拒绝 + 显式 opt-in；body_fetch 入口仍做 public URL DNS 预检；F-01 代理 hostname 回归 |
+| fake-IP 代理下抓取失败 | FIXED | 出站边界改为按目标划分，不再做本机 DNS 预检，`MULTI_SEARCH_ALLOW_FAKE_IP` 已删除（ticket 01–04） |
 | 固定端点 DNS 预检无价值 | FIXED | Reddit/固定端点去预检测试 |
 | 前端切页竞态 | FIXED | stale mount/rejection、失败重试测试 |
 | dispose 空实现 | FIXED | install/skill dispose 与监听清理 |
@@ -164,7 +164,7 @@
 | 大页面字符/字节失败 | FIXED | t9 v2 truncated + 字节截断 + 缓存失败降级；850 通过 |
 | 付费 POST 自动重试 | FIXED | 非幂等方法不重试；测试 |
 | 响应体/gzip 无上限 | FIXED（中心路径）/PARTIAL | `_DeadlineHTTPResponse` + `gunzip_limited`；第三方/分段 read 未全覆盖 |
-| DNS 池仅 8 | FIXED | 32 + admission；runtime 注入未完全 |
+| DNS 池仅 8 | SUPERSEDED | DNS 线程池已删除（ticket 04）：出站请求不再在本机解析域名，超时由外层搜索池/抓取池负责；单条 fetch 与 doctor --network 的 DNS 残余风险已接受 |
 | SQLite 无 WAL/迁移抢锁/选 key 非原子 | FIXED | WAL/busy_timeout/user_version 快速路径/原子 reserve；迁移快速路径 |
 | site_memory 原样 URL/错误、永不清理 | FIXED | origin-only、scrub、30 天/200/5000、历史 sanitize 事务 |
 | Twitter cookies 明文/BOM | PARTIAL | BOM 已修；managed DPAPI opt-in；默认 file 仍明文，不自动迁移 |

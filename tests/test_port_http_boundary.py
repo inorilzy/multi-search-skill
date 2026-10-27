@@ -379,18 +379,6 @@ class HttpConnectBoundaryTests(unittest.TestCase):
         self.assertEqual(url_security.validate_public_http_url("https://[64:ff9b::5db8:d822]/"),
                          "https://[64:ff9b::5db8:d822]/")
 
-    def test_dns_result_timeout_is_recomputed_after_admission(self):
-        future, pool, clock = mock.Mock(), mock.Mock(), [10.0]
-        def submit(*_args):
-            clock[0] = 10.8
-            return future
-        pool.submit_nowait.side_effect = submit
-        with mock.patch.object(url_security, "_DNS_POOL", pool), mock.patch.object(
-            url_security.time, "monotonic", side_effect=lambda: clock[0],
-        ):
-            url_security._run_bounded_dns(lambda: [], deadline=11.0)
-        self.assertAlmostEqual(future.result.call_args.kwargs["timeout"], 0.2)
-
     def test_exa_and_firecrawl_deadline_branches(self):
         from multi_search_mcp.src.scrape.scrapers import exa, firecrawl
         for module, function in ((exa, exa.scrape_url_exa), (firecrawl, firecrawl.scrape_url_firecrawl)):
@@ -416,7 +404,7 @@ class HttpConnectBoundaryTests(unittest.TestCase):
         self.assertEqual(backend.call_args.args[0], "https://example.com:8443/a%5Cb%20c")
 
 class SearchRouteFakeIpTests(unittest.TestCase):
-    """The `all` route fans out past the old 8-slot DNS pool boundary."""
+    """The `all` route fans out past the old 8-slot DNS pool (removed in ticket 04)."""
 
     def test_all_route_sources_have_no_local_dns_capacity_errors(self):
         names = list(search_runner_module.ROUTE_SOURCE_ORDER["all"])

@@ -1,7 +1,6 @@
 import functools
 import io
 import socket
-import threading
 import time
 import unittest
 import urllib.error
@@ -11,17 +10,16 @@ from unittest import mock
 from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
 from multi_search_mcp.src.support import http, url_security
-from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
 from multi_search_mcp.src.support.url_security import UrlSecurityError
 
 PUBLIC_IP = "93.184.216.34"
 
 
 def _no_local_dns(test):
-    """Fail the test if URL preflight consults the process DNS resolver."""
+    """Fail the test if URL preflight performs any local DNS lookup."""
     def wrapper(self, *args, **kwargs):
         with mock.patch(
-            "multi_search_mcp.src.support.url_security._resolve_host_ips",
+            "socket.getaddrinfo",
             side_effect=AssertionError("URL preflight used local DNS"),
         ):
             return test(self, *args, **kwargs)
@@ -492,108 +490,6 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertGreater(redirected.timeout, 0)
         self.assertLessEqual(redirected.timeout, 5)
 
-    def test_timed_out_resolution_frees_its_slot_for_the_next_lookup(self):
-        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-r3-dns-detach")
-        released = threading.Event()
-        finished = threading.Event()
-
-        def blocking_resolver(_host):
-            try:
-                released.wait(timeout=2)
-                return [PUBLIC_IP]
-            finally:
-                finished.set()
-
-        try:
-            with mock.patch.object(url_security, "_DNS_POOL", pool):
-                with self.assertRaises(UrlSecurityError) as first:
-                    url_security._validate_redirect_target(
-                        "https://blocked.example/path",
-                        resolver=blocking_resolver,
-                        deadline=time.monotonic() + 0.02,
-                    )
-                self.assertIn("deadline", str(first.exception))
-                self.assertFalse(finished.is_set())
-                self.assertEqual(pool.detached_count, 1)
-                # The stuck resolver no longer blocks an unrelated lookup.
-                self.assertEqual(
-                    url_security._validate_redirect_target(
-                        "https://next.example/path",
-                        resolver=lambda _host: [PUBLIC_IP],
-                        deadline=time.monotonic() + 1,
-                    ),
-                    "https://next.example/path",
-                )
-                # The detached budget (1) is spent: a second stuck lookup keeps
-                # its slot and further work reports capacity, not a timeout.
-                with self.assertRaises(UrlSecurityError):
-                    url_security._validate_redirect_target(
-                        "https://blocked-again.example/path",
-                        resolver=lambda _host: released.wait(timeout=2) and [PUBLIC_IP],
-                        deadline=time.monotonic() + 0.02,
-                    )
-                with self.assertRaises(UrlSecurityError) as saturated:
-                    url_security._validate_redirect_target(
-                        "https://full.example/path",
-                        resolver=lambda _host: [PUBLIC_IP],
-                        deadline=time.monotonic() + 1,
-                    )
-                self.assertIn("capacity", str(saturated.exception))
-                self.assertNotIn("deadline", str(saturated.exception))
-        finally:
-            released.set()
-            pool.shutdown(wait=True, cancel_futures=True)
-
-    def test_dns_capacity_is_retained_when_no_detached_budget_remains(self):
-        pool = BoundedDaemonExecutor(
-            max_workers=1, thread_name_prefix="test-r3-dns", max_detached=0,
-        )
-        started = threading.Event()
-        released = threading.Event()
-        finished = threading.Event()
-
-        def blocking_resolver(_host):
-            started.set()
-            try:
-                released.wait(timeout=2)
-                return [PUBLIC_IP]
-            finally:
-                finished.set()
-
-        try:
-            with mock.patch.object(url_security, "_DNS_POOL", pool):
-                with self.assertRaises(UrlSecurityError) as first:
-                    url_security._validate_redirect_target(
-                        "https://blocked.example/path",
-                        resolver=blocking_resolver,
-                        deadline=time.monotonic() + 0.02,
-                    )
-                self.assertIn("deadline", str(first.exception))
-                self.assertTrue(started.wait(timeout=1))
-                self.assertFalse(finished.is_set())
-
-                for _ in range(4):
-                    with self.assertRaises(UrlSecurityError) as saturated:
-                        url_security._validate_redirect_target(
-                            "https://full.example/path",
-                            resolver=lambda _host: [PUBLIC_IP],
-                            deadline=time.monotonic() + 1,
-                        )
-                    self.assertIn("capacity", str(saturated.exception))
-
-                released.set()
-                self.assertTrue(finished.wait(timeout=5))
-                self.assertEqual(
-                    url_security._validate_redirect_target(
-                        "https://reusable.example/path",
-                        resolver=lambda _host: [PUBLIC_IP],
-                        deadline=time.monotonic() + 1,
-                    ),
-                    "https://reusable.example/path",
-                )
-        finally:
-            released.set()
-            pool.shutdown(wait=True, cancel_futures=True)
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 """X search/fetch integration through the real service and domain dispatcher."""
 import asyncio
 import json
+import socket
 import sys
 import unittest
 from pathlib import Path
@@ -339,7 +340,7 @@ class TwitterFetchFlowTests(unittest.TestCase):
     def test_x_fixed_endpoint_fetch_bypasses_tun_dns_but_generic_urls_stay_guarded(self):
         api = XKitFixture()
         with api.patched(), mock.patch(
-            "multi_search_mcp.src.support.url_security._resolve_host_ips",
+            "socket.getaddrinfo",
             side_effect=AssertionError("URL preflight used local DNS"),
         ):
             fetched = run_fetch_source(
