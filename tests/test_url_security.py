@@ -143,14 +143,14 @@ class UrlSecurityTests(unittest.TestCase):
                 if req.full_url == "https://93.184.216.34/start":
                     return UrlSecurityTests._redirect_response(
                         req.full_url,
-                        "https://151.101.1.69/next",
+                        "https://93.184.216.34/next",
                     )
-                if req.full_url == "https://151.101.1.69/next":
+                if req.full_url == "https://93.184.216.34/next":
                     return UrlSecurityTests._redirect_response(
                         req.full_url,
-                        "https://151.101.65.69/result",
+                        "https://93.184.216.34/result",
                     )
-                if req.full_url == "https://151.101.65.69/result":
+                if req.full_url == "https://93.184.216.34/result":
                     return UrlSecurityTests._ok_response(req.full_url, body=b"safe")
                 raise AssertionError(f"unexpected request: {req.full_url}")
 
@@ -166,9 +166,37 @@ class UrlSecurityTests(unittest.TestCase):
             requests_seen,
             [
                 "https://93.184.216.34/start",
-                "https://151.101.1.69/next",
-                "https://151.101.65.69/result",
+                "https://93.184.216.34/next",
+                "https://93.184.216.34/result",
             ],
+        )
+
+    def test_urlopen_retry_follows_same_host_http_upgrade(self):
+        requests_seen: list[str] = []
+
+        class FakeHandler(urllib.request.BaseHandler):
+            def default_open(self, req):
+                requests_seen.append(req.full_url)
+                if req.full_url == "http://93.184.216.34/start":
+                    return UrlSecurityTests._redirect_response(
+                        req.full_url,
+                        "https://93.184.216.34/secure",
+                    )
+                if req.full_url == "https://93.184.216.34/secure":
+                    return UrlSecurityTests._ok_response(req.full_url, body=b"upgraded")
+                raise AssertionError(f"unexpected request: {req.full_url}")
+
+        with urlopen_retry(
+            "http://93.184.216.34/start",
+            timeout=1,
+            extra_handlers=(FakeHandler(),),
+        ) as resp:
+            body = resp.read()
+
+        self.assertEqual(body, b"upgraded")
+        self.assertEqual(
+            requests_seen,
+            ["http://93.184.216.34/start", "https://93.184.216.34/secure"],
         )
 
     def test_scrape_url_smart_rejects_unsafe_input_before_backend_dispatch(self):

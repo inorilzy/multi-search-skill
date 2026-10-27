@@ -84,13 +84,10 @@ class FakeIpCompatibilityTests(unittest.TestCase):
             with self.assertRaises(UrlSecurityError):
                 validate_public_http_url(f"https://{self.FAKE_IP}/page")
 
-    def test_connect_address_check_accepts_fake_ip_only_when_opted_in(self):
-        with mock.patch.object(http, "_configured_proxy_addresses", return_value=set()):
-            with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: ""}):
-                with self.assertRaises(UrlSecurityError):
-                    http._ensure_connect_address(self.FAKE_IP, resolved=True)
-            with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: "1"}):
-                http._ensure_connect_address(self.FAKE_IP, resolved=True)
+    def test_a_fake_ip_literal_is_never_a_direct_connection_target(self):
+        with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: "1"}):
+            with self.assertRaises(UrlSecurityError):
+                http._ensure_connect_address(self.FAKE_IP)
 
 
 class HttpHardeningTests(unittest.TestCase):

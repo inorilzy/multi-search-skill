@@ -61,7 +61,7 @@ def get_post_json(post_id: str, params: dict, deadline: float, *, resolver=None)
     try:
         with urlopen_retry(
             request, timeout=remaining(deadline), retries=0,
-            deadline=deadline, redirect_resolver=resolver,
+            deadline=deadline,
         ) as resp:
             return _decode(resp)
     except urllib.error.HTTPError as exc:
