@@ -1,3 +1,10 @@
+# HISTORICAL EVIDENCE — DO NOT RUN.
+#
+# This script was used to check the proxy trust boundary (t18, 2026-10-22)
+# against the code of that time. It only applies to code before ticket 01 of
+# the fake-IP/DNS cleanup: it imports `_is_trusted_proxy_hop`, which has since
+# been removed, so it fails with ImportError on the current code. The original
+# logic is kept unchanged for the record; do not treat it as a current test.
 import sys, socket, threading, http.server, json, urllib.request
 from pathlib import Path
 from unittest.mock import patch
