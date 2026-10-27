@@ -25,10 +25,9 @@ import urllib.request
 
 from .url_security import (
     UrlSecurityError,
-    ensure_public_ip,
-    numeric_host,
-    normalize_http_host,
+    check_host_is_not_local,
     http_target,
+    numeric_host,
 )
 
 
@@ -157,23 +156,9 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
-def _reject_unsafe_host(host: str, *, label: str) -> None:
-    """Reject the host forms that need no DNS: localhost and unsafe literals.
-
-    Name resolution is the standard library's job, so resolved answers are not
-    judged here; only literal addresses (all numeric spellings included) are
-    checked, before any socket exists.
-    """
-    normalized = normalize_http_host(host)
-    if normalized == "localhost" or normalized.endswith(".localhost"):
-        raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
-    literal = numeric_host(normalized)
-    if literal is not None:
-        ensure_public_ip(str(literal), label=label, resolved=False)
-
-
 def _ensure_connect_address(raw_address: str) -> None:
-    ensure_public_ip(str(raw_address).strip("[]"), label="HTTP connection", resolved=False)
+    """Refuse a literal connect target that is not public, before any socket."""
+    check_host_is_not_local(str(raw_address).strip("[]"), label="HTTP connection")
 
 
 class _DeadlineReader(io.RawIOBase):
@@ -249,7 +234,7 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
     # hostname to the proxy, so the destination is checked here instead.
     if getattr(req, "full_url", None):
         _parts, logical_host, _logical_port = http_target(req.full_url)
-        _reject_unsafe_host(logical_host, label="URL")
+        check_host_is_not_local(logical_host, label="URL")
     proxy_hop = bool(
         getattr(req, "has_proxy", lambda: False)()
         or getattr(req, "_tunnel_host", None)
@@ -266,15 +251,14 @@ def _open_with_deadline(handler, connection_type, req, **connection_options):
             remaining = _socket_budget(deadline, timeout)
             target_host, target_port = address
             if not proxy_hop:
-                # Defense in depth: the logical target was checked above, but
-                # re-check the exact host handed to the dialer and canonicalize
-                # numeric aliases so getaddrinfo cannot reinterpret them.
+                # Re-check the exact host handed to the dialer, and canonicalise
+                # a numeric alias so getaddrinfo cannot read it another way.
                 literal = numeric_host(target_host)
                 if literal is not None:
                     _ensure_connect_address(str(literal))
                     address = (str(literal), target_port)
-            # Name resolution and dialing are the standard library's job now, so
-            # a fake-IP/TUN answer is treated exactly like a browser would.
+            # Hostnames are resolved and dialed by socket.create_connection; the
+            # resolved address is not checked here.
             sock = create_connection(
                 address, timeout=remaining,
                 source_address=source_address, **socket_options,
@@ -318,11 +302,19 @@ class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
         return _open_with_deadline(self, http.client.HTTPSConnection, req, context=self._context)
 
 
+def _has_explicit_port(url: str) -> bool:
+    try:
+        return urllib.parse.urlsplit(url).port is not None
+    except ValueError:
+        return False
+
+
 class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Redirects by rules that need no DNS.
 
     Allowed: the same scheme, host and port, and an http -> https upgrade on
-    the same host. Cross-host targets, https -> http downgrades, port changes
+    the same host to the default https port or the port the original URL
+    named. Cross-host targets, https -> http downgrades, other port changes
     and non-public IP-literal targets fail; the error names the reason without
     echoing the full target URL. Because cross-host redirects never follow, no
     credential header can be forwarded to another host.
@@ -333,14 +325,21 @@ class _SafeHTTPRedirectHandler(urllib.request.HTTPRedirectHandler):
             deadline = getattr(req, "_multi_search_deadline", None)
             old_scheme, old_host, old_port = _origin(req.full_url)
             _parts, new_host, new_port = http_target(newurl, label="redirect target")
-            _reject_unsafe_host(new_host, label="redirect target")
+            check_host_is_not_local(new_host, label="redirect target")
             new_scheme = urllib.parse.urlsplit(newurl).scheme.lower()
             if old_scheme == "https" and new_scheme == "http":
                 raise UrlSecurityError("unsafe redirect target: HTTPS must not downgrade to HTTP")
             if new_host != old_host:
                 raise UrlSecurityError("unsafe redirect target: cross-host redirect is not allowed")
-            upgrade = old_scheme == "http" and new_scheme == "https"
-            if not upgrade and (new_scheme, new_port) != (old_scheme, old_port):
+            if old_scheme == "http" and new_scheme == "https":
+                # An upgrade may only reach the default https port, or the port the
+                # original URL named explicitly. Any other port is a different service.
+                allowed_ports = {443} | ({old_port} if _has_explicit_port(req.full_url) else set())
+                if new_port not in allowed_ports:
+                    raise UrlSecurityError(
+                        "unsafe redirect target: upgrade may only keep the default or original port"
+                    )
+            elif (new_scheme, new_port) != (old_scheme, old_port):
                 raise UrlSecurityError(
                     "unsafe redirect target: redirect must keep the same scheme and port"
                 )

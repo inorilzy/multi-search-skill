@@ -22,7 +22,7 @@ from ..support.auth import is_key_retryable_error
 from ..support.models import normalize_scrape_result
 from ..support.url_security import (
     UrlSecurityError,
-    _ensure_public_ip,
+    check_host_is_not_local,
     validate_scrape_url,
 )
 from .scrapers import _DEFAULT_SCRAPE_TIMEOUT_SECONDS
@@ -317,13 +317,11 @@ def _validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise UrlSecurityError(f"{label} deadline exceeded")
     host = _normalize_delegated_host(hostname, label=label)
-    if host == "localhost" or host.endswith(".localhost"):
-        raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
     literal = _literal_ip(host, label=label)
+    if literal is not None and getattr(literal, "scope_id", None):
+        raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
+    check_host_is_not_local(host, label=label)
     if literal is not None:
-        if getattr(literal, "scope_id", None):
-            raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
-        _ensure_public_ip(literal, label=label, resolved=False)
         # Forward the address exactly as validated, never its alternate spelling.
         host = f"[{literal.compressed}]" if literal.version == 6 else str(literal)
     netloc = host if port is None else f"{host}:{port}"
@@ -474,14 +472,6 @@ def uses_delegated_backends(url: str, backends, *, scraper=None) -> bool:
 def validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
     """Public entry for the delegated-backend URL policy (no DNS, fail-closed)."""
     return _validate_delegated_url(url, deadline=deadline)
-
-
-def _prepare_scrape_target(
-    url: str, *, deadline: float | None = None,
-) -> tuple[str, str]:
-    """Validate a generic (delegated) scrape target without local DNS."""
-    safe_url = _validate_delegated_url(url, deadline=deadline)
-    return safe_url, safe_url
 
 
 # ---------------------------------------------------------------------------
@@ -726,9 +716,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
         # Generic backends delegate the fetch to a third-party service, which
         # resolves the URL from its own network. Only literal local
         # destinations are meaningful here; see _validate_delegated_url.
-        safe_url, scrape_target = _prepare_scrape_target(
-            url, deadline=ctx.deadline,
-        )
+        safe_url = _validate_delegated_url(url, deadline=ctx.deadline)
     except UrlSecurityError as exc:
         return normalize_scrape_result({"error": str(exc)}, url=url)
 
@@ -751,7 +739,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
         dispatch = _SCRAPE_DISPATCH.get(backend)
         if dispatch is None:
             continue
-        result = dispatch(scrape_target, ctx, policy)
+        result = dispatch(safe_url, ctx, policy)
         if result is None:
             continue
         result = normalize_scrape_result(result, url=safe_url, via=backend)

@@ -31,26 +31,35 @@ class UrlSecurityError(ValueError):
 
 def validate_public_http_url(url: str, *, deadline: float | None = None) -> str:
     """Validate a URL that this process never dials itself (format checks only)."""
-    candidate = str(url or "").strip()
-    _validate_format(candidate, label="URL", deadline=deadline)
-    return candidate
+    return _validate_format(url, label="URL", deadline=deadline)
 
 
 def validate_scrape_url(url: str, *, deadline: float | None = None) -> str:
     """Validate a scrape target (format checks only, no DNS)."""
+    return _validate_format(url, label="scrape URL", deadline=deadline)
+
+
+def _validate_format(url: str, *, label: str, deadline: float | None) -> str:
     candidate = str(url or "").strip()
-    _validate_format(candidate, label="scrape URL", deadline=deadline)
+    _parts, host, _port = http_target(candidate, label=label)
+    _ensure_deadline(deadline, label)
+    check_host_is_not_local(host, label=label)
     return candidate
 
 
-def _validate_format(candidate: str, *, label: str, deadline: float | None) -> None:
-    _parts, host, _port = http_target(candidate, label=label)
-    _ensure_deadline(deadline, label)
-    if host == "localhost" or host.endswith(".localhost"):
+def check_host_is_not_local(host: str, *, label: str) -> None:
+    """Reject ``localhost`` and non-public IP literals, without any DNS lookup.
+
+    Every host-level check that needs no DNS goes through here: the URL
+    format check, the HTTP connect/redirect hop, and the delegated scrape
+    policy. ``host`` may be any spelling; it is normalised first.
+    """
+    normalized = normalize_http_host(host)
+    if normalized == "localhost" or normalized.endswith(".localhost"):
         raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
-    literal = numeric_host(host)
+    literal = numeric_host(normalized)
     if literal is not None:
-        _ensure_public_ip(literal, label=label, resolved=False)
+        _ensure_public_ip(literal, label=label)
 
 
 def normalize_http_host(host: str) -> str:
@@ -136,26 +145,20 @@ def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | Non
 
 
 def _ensure_public_ip(
-    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
-    *,
-    label: str,
-    resolved: bool,
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address, *, label: str,
 ) -> None:
     reason = _unsafe_reason(ip)
     if reason is None:
         return
-    address_kind = "resolved address" if resolved else "direct address"
-    raise UrlSecurityError(f"unsafe {label}: {address_kind} is {reason}")
+    raise UrlSecurityError(f"unsafe {label}: direct address is {reason}")
 
 
-def ensure_public_ip(
-    value: str, *, label: str = "connection", resolved: bool = True,
-) -> None:
+def ensure_public_ip(value: str, *, label: str = "connection") -> None:
     """Raise when an address literal is not internet-routable."""
     ip = _parse_ip(str(value))
     if ip is None:
         raise UrlSecurityError(f"unsafe {label}: address is not an IP")
-    _ensure_public_ip(ip, label=label, resolved=resolved)
+    _ensure_public_ip(ip, label=label)
 
 
 def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:

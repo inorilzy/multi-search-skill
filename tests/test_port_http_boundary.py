@@ -266,6 +266,47 @@ class HttpConnectBoundaryTests(unittest.TestCase):
         self.assertEqual(upgraded.full_url, "https://origin.example/next")
         self.assertFalse(hasattr(upgraded, "_multi_search_pinned_addresses"))
 
+    def test_http_to_https_upgrade_port_rule(self):
+        """An upgrade keeps the host; the port may only be 443 or the original explicit port."""
+        cases = (
+            ("http://origin.example/start", "https://origin.example/next", True),
+            ("http://origin.example:8080/start", "https://origin.example:8080/next", True),
+            ("http://origin.example/start", "https://origin.example:8443/next", False),
+            ("http://origin.example:80/start", "https://origin.example:8443/next", False),
+            ("http://origin.example:8080/start", "https://origin.example:443/next", True),
+        )
+        for origin, target, allowed in cases:
+            with self.subTest(origin=origin, target=target):
+                if allowed:
+                    self.assertEqual(self.redirect(target, url=origin).full_url, target)
+                else:
+                    with self.assertRaises(UrlSecurityError) as error:
+                        self.redirect(target, url=origin)
+                    self.assertIn("upgrade", str(error.exception))
+                    self.assertNotIn("8443", str(error.exception))
+
+    def test_refused_upgrade_port_is_never_dialed(self):
+        redirect = (
+            b"HTTP/1.1 302 Found\r\nLocation: https://origin.example:8443/next\r\n"
+            b"Content-Length: 0\r\n\r\n"
+        )
+        with self.wire(responses=[redirect]) as (sockets, dns, _, _):
+            with self.assertRaises(UrlSecurityError):
+                http.urlopen_retry(
+                    "http://origin.example/start", timeout=2,
+                    extra_handlers=(urllib.request.ProxyHandler({}),),
+                )
+        self.assertEqual(len(sockets), 1)
+        self.assertNotIn(("connect", (PUBLIC_IP, 8443)), sockets[0].events)
+
+    def test_literal_connect_target_keeps_http_connection_label(self):
+        """A literal connect target keeps the original 'HTTP connection' error text."""
+        with self.wire() as (sockets, dns, factory, _):
+            with self.assertRaises(UrlSecurityError) as error:
+                http._ensure_connect_address("10.0.0.8")
+        self.assertEqual(str(error.exception), "unsafe HTTP connection: direct address is private")
+        self.assert_no_wire(sockets, factory)
+
     def test_redirect_rejects_cross_host_downgrade_port_change_and_private_literal(self):
         with self.assertRaises(UrlSecurityError) as cross:
             self.redirect("http://other.example/next")
