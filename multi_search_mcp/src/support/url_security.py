@@ -76,8 +76,9 @@ def _validate_redirect_target(
 ) -> str:
     """Resolve a redirect target and reject a non-public destination.
 
-    The injected resolver exists only for the HTTP redirect handler, which also
-    pins the exact answers it validated; it is not part of any public API.
+    Production redirects no longer resolve locally (ticket 01); this private
+    entry keeps the injected-resolver form only for tests of the bounded DNS
+    layer that ticket 04 removes.
     """
     candidate = str(url or "").strip()
     host, direct_ip = _check_format(
