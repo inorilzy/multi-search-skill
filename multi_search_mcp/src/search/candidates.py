@@ -26,6 +26,7 @@ from .candidate import SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_result
 from .capabilities import retention_policy_for_sources
 from .query_plan import build_query_plan
 from .query_policy import QueryFusionPolicy
+from .rerank import RerankPolicy, apply_rerank, build_reranker
 from .resolve import (
     SearchPlanRequest,
     resolve_active_sources,
@@ -57,6 +58,7 @@ def run_search_candidates(
     query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,
     prefetched_bodies: dict[str, str] | None = None,
     persist_bodies: bool = True,
+    reranker=None,
 ) -> dict:
     """Return compact SearchHits and optionally fill the selected-body map."""
     if isinstance(request, dict):
@@ -180,11 +182,36 @@ def run_search_candidates(
     )
     query_failure_rows = query_failures(query_runs)
     response_id = f"resp_{uuid.uuid4().hex}"
-    limit = SEARCH_RESULT_LIMIT
+    rerank_policy = RerankPolicy.from_config(resolved_config, request.ranking)
+    limit = (
+        max(rerank_policy.candidate_limit, SEARCH_RESULT_LIMIT)
+        if rerank_policy.enabled
+        else SEARCH_RESULT_LIMIT
+    )
     hits = fuse_search_results(
         query_runs, response_id=response_id, limit=limit,
         primary_query=query_plan.primary_query, query_policy=query_policy,
     )
+    # Optional model rerank sits between fusion and the fetch stage so the
+    # body budget is spent on the reranked order, not the RRF order.
+    if rerank_policy.enabled:
+        # Core owns adapter construction from the *merged* policy (config file
+        # + request override), so every surface — CLI, MCP, desktop-written
+        # config — reranks without having to build anything.  An injected
+        # reranker (tests, offline replay) takes precedence.
+        if reranker is None:
+            reranker = build_reranker(rerank_policy)
+        hits, rerank_meta = apply_rerank(
+            hits, request.query, reranker, policy=rerank_policy,
+            deadline=time.monotonic() + rerank_policy.rerank_timeout,
+        )
+        hits = hits[:SEARCH_RESULT_LIMIT]
+    else:
+        for hit in hits:
+            hit["relevance_score"] = None
+        rerank_meta = {
+            "mode_requested": "rrf", "mode_used": "rrf", "fallback_reason": None,
+        }
     primary_rows = query_results[query_plan.primary_query]
     primary_has_candidates = bool(fuse_search_results(
         [(query_plan.primary_query, primary_rows)], response_id=response_id, limit=1,
@@ -254,6 +281,7 @@ def run_search_candidates(
         "provider_status": provider_status,
         "key_status_summary": summarize_key_status(key_manager.status_rows()),
         "errors": failures,
+        **rerank_meta,
         "diagnostics": {
             "raw_result_count": len(rows),
             "candidate_count": len(hits),

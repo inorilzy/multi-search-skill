@@ -25,6 +25,7 @@ def run_search_web(
     state_store: StateStore | None = None,
     query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,
     scraper=None,
+    reranker=None,
     scrape_chars: int | None = None,
     scrape_timeout: int | None = None,
     scrape_concurrency: int | None = None,
@@ -57,6 +58,7 @@ def run_search_web(
         config=resolved_config,
         state_store=store, query_runs_observer=query_runs_observer,
         prefetched_bodies=prefetched, persist_bodies=not request.no_fetch,
+        reranker=reranker,
     )
     if request.no_fetch:
         # Candidate-only mode: the response keeps the ranked hits and provider

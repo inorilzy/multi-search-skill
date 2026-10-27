@@ -455,6 +455,20 @@ async fn scrape_settings_save(
     .await
 }
 
+/// 写入或清空 `~/.search-keys.json` 的 System One 密钥；值从不进入设置数据库或返回值。
+#[tauri::command]
+async fn rerank_key_save(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    key: String,
+) -> Result<crate::settings::SettingsView, String> {
+    let manager = manager.inner().clone();
+    offload(
+        move || crate::settings::save_systemone_key(&manager.environment, &key),
+        "rerank_key_save_failed",
+    )
+    .await
+}
+
 /// 只读站点抓取记忆；state.sqlite 缺失或损坏时返回 available=false 的视图。
 #[tauri::command]
 async fn scrape_memory_view(
@@ -659,6 +673,7 @@ pub fn run() {
             settings_view,
             settings_save,
             scrape_settings_save,
+            rerank_key_save,
             provider_list,
             scrape_memory_view,
             scrape_memory_pin,

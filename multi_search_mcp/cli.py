@@ -27,7 +27,7 @@ from .src.state.operations import (
     site_scraper_stats,
 )
 from .src.support.backends import KNOWN_BACKENDS
-from .src.support.format import format_scrapes
+from .src.support.format import format_scrapes, ranking_mode_label
 from .src.support.secrets import scrub_secrets
 
 
@@ -99,6 +99,24 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument(
         "--no-fetch", action="store_true",
         help="candidates only: fuse ranked hits but never fetch page bodies or write the body cache",
+    )
+    search_parser.add_argument(
+        "--rerank", action="store_true",
+        help=(
+            "reorder the fused RRF candidates with a System One scoring model "
+            "before the body-fetch stage (ranking.mode=rrf_model); on any "
+            "model failure the complete RRF order is kept and the response "
+            "reports mode_used/fallback_reason. The key is read from "
+            "SYSTEMONE_API_KEY or the 'systemone' entry of ~/.search-keys.json"
+        ),
+    )
+    search_parser.add_argument(
+        "--rerank-base-url", metavar="URL",
+        help="System One base URL for --rerank (ranking.base_url), e.g. http://127.0.0.1:3425/v1",
+    )
+    search_parser.add_argument(
+        "--rerank-model", metavar="MODEL",
+        help="System One model for --rerank (ranking.model)",
     )
     search_parser.add_argument(
         "--no-state", action="store_true",
@@ -285,19 +303,44 @@ def entrypoint() -> None:
     raise SystemExit(main())
 
 
+def _ranking_override(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Map --rerank/--rerank-base-url/--rerank-model onto the ``ranking`` override.
+
+    ``None`` (no flags) preserves today's behavior exactly: the config decides
+    and pure RRF remains the default. A base URL or model without
+    ``--rerank`` is a usage error — it would otherwise look like it did
+    something while the request stayed in pure-RRF mode. Missing values fall
+    back to the config; core rejects an enabled rerank with neither.
+    """
+    base_url = getattr(args, "rerank_base_url", None)
+    model = getattr(args, "rerank_model", None)
+    if not getattr(args, "rerank", False):
+        if base_url is not None or model is not None:
+            raise CLIUsageError("--rerank-base-url/--rerank-model require --rerank")
+        return None
+    ranking: dict[str, Any] = {"mode": "rrf_model"}
+    if base_url is not None:
+        ranking["base_url"] = base_url.strip()
+    if model is not None:
+        ranking["model"] = model.strip()
+    return ranking
+
+
 def _handle_search(args: argparse.Namespace) -> dict[str, Any]:
-    payload = run_search_web(
-        SearchWebRequest(
-            query=args.query,
-            route=args.route,
-            count=args.count,
-            sources=list(args.sources or []),
-            timeout=args.timeout,
-            expand=None if args.expand is None else list(args.expand),
-            no_fetch=bool(args.no_fetch),
-            use_state=not args.no_state,
-        )
+    ranking = _ranking_override(args)
+    request = SearchWebRequest(
+        query=args.query,
+        route=args.route,
+        count=args.count,
+        sources=list(args.sources or []),
+        timeout=args.timeout,
+        expand=None if args.expand is None else list(args.expand),
+        no_fetch=bool(args.no_fetch),
+        use_state=not args.no_state,
+        ranking=ranking,
     )
+    # Core builds the reranker from the merged config + override policy.
+    payload = run_search_web(request)
     # The core owns the business outcome; the CLI only maps it to an exit code.
     # Derive it here only for a payload that predates the core field.
     if "outcome" not in payload:
@@ -492,6 +535,23 @@ def _render_markdown(payload: Any) -> str:
     return "\n".join(lines)
 
 
+def _relevance_suffix(item: Any) -> str:
+    """Render ``relevance_score`` only when the model actually scored the row.
+
+    ``None`` (unscored or a pure-RRF response) renders as nothing — a ``0``
+    would pretend the model judged the row irrelevant.
+    """
+    if not isinstance(item, dict):
+        return ""
+    score = item.get("relevance_score")
+    if score is None:
+        return ""
+    try:
+        return f" (relevance: {float(score):.3f})"
+    except (TypeError, ValueError):
+        return ""
+
+
 def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
     if isinstance(payload.get("markdown"), str):
         return payload["markdown"]
@@ -500,6 +560,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
     results = payload.get("display_results") or payload.get("results") or []
     bodies = format_scrapes(payload.get("scrapes") or [], max_chars=20_000)
     errors = payload.get("errors") or []
+    ranking_line = f"ranking: {ranking_mode_label(payload)}"
     failures = ""
     if errors:
         lines = ["", "## Errors" if markdown else "errors:"]
@@ -514,6 +575,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
             lines.append(f"- outcome: {payload['outcome']}")
         if route:
             lines.append(f"- route: {route}")
+        lines.append(f"- {ranking_line}")
         lines.append("")
         if not results:
             lines.append("_No results_")
@@ -525,7 +587,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
             snippet = str(
                 item.get("content") or item.get("snippet") or item.get("description") or ""
             ).strip()
-            lines.append(f"- {title} [{source}]")
+            lines.append(f"- {title} [{source}]{_relevance_suffix(item)}")
             if url:
                 lines.append(f"  {url}")
             if snippet:
@@ -537,6 +599,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
         lines.append(f"outcome: {payload['outcome']}")
     if route:
         lines.append(f"route: {route}")
+    lines.append(ranking_line)
     if not results:
         lines.append("results: none")
         return "\n".join(lines) + bodies + failures
@@ -548,7 +611,7 @@ def _render_search(payload: dict[str, Any], *, markdown: bool) -> str:
         snippet = str(
             item.get("content") or item.get("snippet") or item.get("description") or ""
         ).strip()
-        lines.append(f"- [{source}] {title}")
+        lines.append(f"- [{source}] {title}{_relevance_suffix(item)}")
         if url:
             lines.append(f"  {url}")
         if snippet:

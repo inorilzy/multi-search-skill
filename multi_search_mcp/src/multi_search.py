@@ -24,8 +24,13 @@ from .support.requests import MultiSearchRequest, SearchWebRequest
 OUTPUT_MODES = ("json", "markdown", "both")
 
 
-def run_multi_search(request: MultiSearchRequest | dict) -> dict:
-    """Compatibility presentation of the shared RRF search-and-fetch flow."""
+def run_multi_search(request: MultiSearchRequest | dict, *, reranker=None) -> dict:
+    """Compatibility presentation of the shared RRF search-and-fetch flow.
+
+    ``reranker`` is forwarded to the candidate stage so an ``rrf_model``
+    request can actually rerank; leaving it ``None`` keeps pure RRF and makes
+    the core report ``unavailable`` if the request asked for a model.
+    """
     if isinstance(request, dict):
         request = MultiSearchRequest(**request)
     if request.output not in OUTPUT_MODES:
@@ -52,9 +57,11 @@ def run_multi_search(request: MultiSearchRequest | dict) -> dict:
             query=request.query, route=request.route, count=request.count,
             sources=request.sources, timeout=request.timeout, expand=request.expand,
             config_path=request.config_path, use_state=request.use_state,
+            ranking=request.ranking,
         ),
         config=config,
         query_runs_observer=query_runs.extend,
+        reranker=reranker,
         scrape_chars=request.scrape_chars, scrape_timeout=request.scrape_timeout,
         scrape_concurrency=request.scrape_concurrency,
     )

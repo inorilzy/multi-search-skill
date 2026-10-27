@@ -90,6 +90,9 @@ export const schemas = {
     keyed: 'b', search: 'b', cookie: 'b', aliases: 'sa',
   }),
   RouteConfig: schema({ label: 's', sources: 'sa', timeout: 'nn' }),
+  RankingInput: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
+  RankingState: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
+  RerankKeyStatus: schema({ source: 's', keys_file: 'sn', env_var: 's' }),
   ScrapeBackendOption: schema({ name: 's', label: 's' }),
   ScrapeMemoryRow: schema({
     site: 's', scraper: 's', success_count: 'n', failure_count: 'n',
@@ -101,7 +104,7 @@ export const schemas = {
   ScrapeMemoryView: schema({ available: 'b', path: 'sn', reason: 's', rows: 'ScrapeMemoryRow[]' }),
   SettingsInput: schema({
     route: 's', timeout: 'nn', disabled_sources: 'sa', routes: 'RouteMapN',
-    twitter_cookies_path: 'sn', scrape_backends: 'san',
+    twitter_cookies_path: 'sn', scrape_backends: 'san', ranking: 'RankingInputN',
   }),
   SettingsView: schema({
     config_path: 'sn', path_source: 's', file_present: 'b', read_source: 's',
@@ -112,7 +115,11 @@ export const schemas = {
     twitter_cookies_path: 'sn', scrape_backends: 'sa',
     scrape_backends_invalid: 'b',
     builtin_scrape_backends: 'sa', scrape_backend_options: 'ScrapeBackendOption[]',
-    active_sources: 'sa', status: 's', message: 's',
+    active_sources: 'sa', ranking: 'RankingState', ranking_invalid: 'b',
+    ranking_candidate_limit_min: 'n', ranking_candidate_limit_max: 'n',
+    ranking_batch_size_min: 'n', ranking_batch_size_max: 'n',
+    ranking_rerank_timeout_min: 'n', ranking_rerank_timeout_max: 'n',
+    rerank_key: 'RerankKeyStatus', status: 's', message: 's',
   }),
 };
 
@@ -137,6 +144,7 @@ function typeOk(tag, value) {
   if (tag === 'NumMap') return isRecord(value) && Object.values(value).every(v => typeof v === 'number' && Number.isFinite(v));
   if (tag === 'RouteMap') return isRecord(value) && Object.values(value).every(v => checkShape(schemas.RouteConfig.fields, v) === null);
   if (tag === 'RouteMapN') return value === null || typeOk('RouteMap', value);
+  if (tag === 'RankingInputN') return value === null || checkShape(schemas.RankingInput.fields, value) === null;
   if (tag.endsWith('[]')) {
     const inner = tag.slice(0, -2);
     if (!Array.isArray(value)) return false;
