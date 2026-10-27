@@ -1,15 +1,11 @@
-import email.message
 import functools
 import io
 import socket
-import subprocess
-import sys
 import threading
 import time
 import unittest
 import urllib.error
 import urllib.request
-import urllib.response
 from unittest import mock
 
 from multi_search_mcp.src import service
@@ -33,60 +29,6 @@ def _no_local_dns(test):
     return functools.wraps(test)(wrapper)
 
 class DnsDeadlineTests(unittest.TestCase):
-    def setUp(self):
-        # Slow resolvers block on this event instead of sleeping, so "late"
-        # means "after the caller has already returned", not "after N ms".
-        self.release = threading.Event()
-        self.addCleanup(self.release.set)
-
-    def _slow_resolver(self, finished: threading.Event, result=None):
-        def resolve(_host):
-            try:
-                self.release.wait(timeout=5)
-                return list(result or [PUBLIC_IP])
-            finally:
-                finished.set()
-
-        return resolve
-
-    def _finish_late_resolution(self, finished: threading.Event):
-        self.release.set()
-        self.assertTrue(finished.wait(timeout=5))
-
-    @staticmethod
-    def _redirect_response(url: str, location: str):
-        headers = email.message.Message()
-        headers["Location"] = location
-        response = urllib.response.addinfourl(io.BytesIO(b""), headers, url, 302)
-        response.msg = "Found"
-        return response
-
-    def test_http_dns_timeout_returns_before_late_resolution_can_connect(self):
-        finished = threading.Event()
-
-        def delayed_dns(_host, port, *args, **kwargs):
-            try:
-                self.release.wait(timeout=5)
-                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIC_IP, port))]
-            finally:
-                finished.set()
-
-        start = time.monotonic()
-        with mock.patch("socket.getaddrinfo", side_effect=delayed_dns), mock.patch(
-            "socket.socket.connect", side_effect=AssertionError("TCP must not start after DNS deadline"),
-        ):
-            with self.assertRaises((TimeoutError, urllib.error.URLError)) as error:
-                http.urlopen_retry(
-                    "http://slow.example/path",
-                    timeout=0.1,
-                    extra_handlers=(urllib.request.ProxyHandler({}),),
-                )
-        elapsed = time.monotonic() - start
-
-        self.assertLess(elapsed, 1.0)
-        self.assertIn("DNS", str(error.exception))
-        self._finish_late_resolution(finished)
-
     @_no_local_dns
     def test_scrape_core_does_not_resolve_delegated_urls_locally(self):
         # A delegated backend fetches the URL from the provider's network, so a
@@ -292,59 +234,12 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertEqual(result["via"], "reddit")
         self.assertEqual(result["markdown"], "post body")
 
-    def test_http_hostname_uses_resolved_address_for_normal_connection(self):
-        class SocketProbe:
-            def __init__(self):
-                self.addresses = []
-                self.timeout = None
-                self.closed = False
-
-            def settimeout(self, value):
-                self.timeout = value
-
-            def setsockopt(self, *args):
-                pass
-
-            def bind(self, address):
-                pass
-
-            def connect(self, address):
-                self.addresses.append(address)
-
-            def sendall(self, data):
-                pass
-
-            def makefile(self, mode):
-                return io.BufferedReader(io.BytesIO(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
-                ))
-
-            def close(self):
-                self.closed = True
-
-        sock = SocketProbe()
-        with mock.patch.object(url_security.socket, "getaddrinfo", return_value=[(
-            socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIC_IP, 80),
-        )]) as resolved, mock.patch.object(http.socket, "socket", return_value=sock):
-            with http.urlopen_retry(
-                "http://normal.example/path",
-                timeout=1,
-                extra_handlers=(urllib.request.ProxyHandler({}),),
-            ) as response:
-                self.assertEqual(response.read(), b"ok")
-
-        resolved.assert_called_once_with(
-            "normal.example", 80, type=socket.SOCK_STREAM,
-        )
-        self.assertEqual(sock.addresses, [(PUBLIC_IP, 80)])
-        self.assertTrue(sock.closed)
-
-    def test_http_dns_failure_is_explicit_without_connection_attempt(self):
+    def test_http_dns_failure_surfaces_as_a_url_error(self):
         with mock.patch.object(
-            url_security.socket,
-            "getaddrinfo",
+            socket,
+            "create_connection",
             side_effect=socket.gaierror(-2, "name not known"),
-        ), mock.patch.object(http.socket, "socket") as socket_factory:
+        ):
             with self.assertRaises(urllib.error.URLError) as error:
                 http.urlopen_retry(
                     "http://missing.example/path",
@@ -353,7 +248,6 @@ class DnsDeadlineTests(unittest.TestCase):
                 )
 
         self.assertIsInstance(error.exception.reason, socket.gaierror)
-        socket_factory.assert_not_called()
 
     @_no_local_dns
     def test_fetch_delegated_backends_bypass_tun_dns_for_urls_and_sources(self):
@@ -579,31 +473,24 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertEqual(result["body"], "ok")
         self.assertEqual(scraper.call_args.kwargs["deadline"], deadline)
 
-    def test_redirect_dns_preflight_uses_original_http_deadline(self):
-        finished = threading.Event()
-        requests_seen = []
+    def test_redirect_keeps_the_deadline_without_a_local_dns_lookup(self):
+        deadline = time.monotonic() + 5
+        request = urllib.request.Request("http://origin.example/start")
+        request._multi_search_deadline = deadline
 
-        class RedirectHandler(urllib.request.BaseHandler):
-            def default_open(self, request):
-                requests_seen.append(request.full_url)
-                return DnsDeadlineTests._redirect_response(
-                    request.full_url, "https://slow.example/next",
-                )
-
-        start = time.monotonic()
-        with self.assertRaises(UrlSecurityError) as error:
-            http.urlopen_retry(
-                "http://" + PUBLIC_IP + "/start",
-                timeout=0.1,
-                redirect_resolver=self._slow_resolver(finished),
-                extra_handlers=(RedirectHandler(),),
+        with mock.patch(
+            "socket.getaddrinfo",
+            side_effect=AssertionError("redirect targets must not be resolved"),
+        ) as dns:
+            redirected = http._SafeHTTPRedirectHandler().redirect_request(
+                request, io.BytesIO(), 302, "Found", {},
+                "https://origin.example/next",
             )
-        elapsed = time.monotonic() - start
 
-        self.assertLess(elapsed, 1.0)
-        self.assertIn("DNS", str(error.exception))
-        self.assertEqual(requests_seen, ["http://" + PUBLIC_IP + "/start"])
-        self._finish_late_resolution(finished)
+        dns.assert_not_called()
+        self.assertEqual(redirected._multi_search_deadline, deadline)
+        self.assertGreater(redirected.timeout, 0)
+        self.assertLessEqual(redirected.timeout, 5)
 
     def test_timed_out_resolution_frees_its_slot_for_the_next_lookup(self):
         pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-r3-dns-detach")
@@ -695,7 +582,7 @@ class DnsDeadlineTests(unittest.TestCase):
                     self.assertIn("capacity", str(saturated.exception))
 
                 released.set()
-                self._finish_late_resolution(finished)
+                self.assertTrue(finished.wait(timeout=5))
                 self.assertEqual(
                     url_security._validate_redirect_target(
                         "https://reusable.example/path",
@@ -707,35 +594,6 @@ class DnsDeadlineTests(unittest.TestCase):
         finally:
             released.set()
             pool.shutdown(wait=True, cancel_futures=True)
-
-    def test_dns_timeout_worker_does_not_hold_process_exit(self):
-        script = """
-import socket
-import threading
-import urllib.request
-from multi_search_mcp.src.support import http
-
-def slow_dns(*_args, **_kwargs):
-    threading.Event().wait()  # never released: only process exit ends it
-    return []
-
-socket.getaddrinfo = slow_dns
-try:
-    http.urlopen_retry(
-        "http://slow.example/path", timeout=0.01,
-        extra_handlers=(urllib.request.ProxyHandler({}),),
-    )
-except Exception:
-    pass
-"""
-        completed = subprocess.run(
-            [sys.executable, "-B", "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=1,
-            check=False,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
 if __name__ == "__main__":
     unittest.main()

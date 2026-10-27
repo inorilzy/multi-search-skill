@@ -2,7 +2,6 @@
 import io
 import os
 import tempfile
-import threading
 import time
 import unittest
 import urllib.request
@@ -24,27 +23,16 @@ class RemainingBoundariesTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: '1'}):
             with self.assertRaises(url_security.UrlSecurityError):
                 http._ensure_connect_address('198.18.0.1')
-            http._ensure_connect_address('198.18.0.1', resolved=True)
 
-    def test_redirect_resolver_called_once_and_answers_pinned(self):
-        resolver = mock.Mock(side_effect=[['93.184.216.34'], ['127.0.0.1']])
+    def test_redirect_does_not_resolve_or_pin_addresses(self):
         req = urllib.request.Request('https://example.com/a')
         req._multi_search_deadline = time.monotonic() + 1
-        result = http._SafeHTTPRedirectHandler(resolver=resolver).redirect_request(req, io.BytesIO(), 302, 'Found', {}, 'https://example.com/b')
-        resolver.assert_called_once_with('example.com')
-        self.assertEqual(result._multi_search_pinned_addresses[('example.com', 443)][0][4][0], '93.184.216.34')
-
-    def test_slow_redirect_resolver_is_deadline_bounded(self):
-        release = threading.Event()
-        req = urllib.request.Request('https://example.com/a')
-        req._multi_search_deadline = time.monotonic() + .03
-        start = time.monotonic()
-        try:
-            with self.assertRaises(url_security.UrlSecurityError):
-                http._SafeHTTPRedirectHandler(resolver=lambda _: (release.wait(1), ['93.184.216.34'])[1]).redirect_request(req, io.BytesIO(), 302, 'Found', {}, 'https://example.com/b')
-            self.assertLess(time.monotonic() - start, .3)
-        finally:
-            release.set()
+        with mock.patch('socket.getaddrinfo', side_effect=AssertionError('redirect DNS')):
+            result = http._SafeHTTPRedirectHandler().redirect_request(
+                req, io.BytesIO(), 302, 'Found', {}, 'https://example.com/b',
+            )
+        self.assertEqual(result.full_url, 'https://example.com/b')
+        self.assertFalse(hasattr(result, '_multi_search_pinned_addresses'))
 
     def test_dns_remaining_recomputed_after_admission(self):
         future = mock.Mock()

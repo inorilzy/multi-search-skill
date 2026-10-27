@@ -232,9 +232,10 @@ class HttpDeadlineTests(unittest.TestCase):
                 http.urlopen_retry(request, timeout=1, extra_handlers=(
                     urllib.request.ProxyHandler({"https": "http://93.184.216.34:3128"}),
                 ))
-        target_dns.assert_called_once_with("origin.example.test", 443, type=socket.SOCK_STREAM)
+        # The hostname is handed to the proxy; no local target lookup happens.
+        target_dns.assert_not_called()
         self.assertEqual(hostnames, ["origin.example.test"])
-        self.assertIn(b"CONNECT 151.101.1.69:443", b"".join(sent))
+        self.assertIn(b"CONNECT origin.example.test:443", b"".join(sent))
         self.assertIn(b"Proxy-Authorization: Basic SYNTHETIC", b"".join(sent))
         self.assertAlmostEqual(handshake_timeouts[0], 0.5)
         self.assertAlmostEqual(self.clock.now, 1)
@@ -308,9 +309,10 @@ class HttpDeadlineTests(unittest.TestCase):
                 urllib.request.ProxyHandler({"https": "http://93.184.216.34:3128"}),
             )) as response:
                 self.assertEqual(response.read(), b"ok")
-        target_dns.assert_called_once_with("origin.example.test", 443, type=socket.SOCK_STREAM)
+        # The hostname is handed to the proxy; no local target lookup happens.
+        target_dns.assert_not_called()
         self.assertEqual(hostnames, ["origin.example.test"])
-        self.assertIn(b"CONNECT 151.101.1.69:443", sent[0])
+        self.assertIn(b"CONNECT origin.example.test:443", sent[0])
         self.assertIn(b"Proxy-Authorization: Basic SYNTHETIC", sent[0])
         origin_request = b"".join(sent[1:])
         self.assertIn(b"GET /page HTTP/1.1", origin_request)

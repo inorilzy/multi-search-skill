@@ -215,6 +215,7 @@ class RedditTransportTests(unittest.TestCase):
             _reddit_transport.get_post_json("abc123", {}, end)
         kwargs = opened.call_args.kwargs
         self.assertEqual(kwargs["deadline"], end)
+        # Redirects use the shared no-DNS host rules; no resolver is injected.
         self.assertNotIn("redirect_resolver", kwargs)
         # Proxy choice is the shared urllib opener's: HTTP(S)_PROXY / ALL_PROXY / NO_PROXY.
         self.assertNotIn("extra_handlers", kwargs)
