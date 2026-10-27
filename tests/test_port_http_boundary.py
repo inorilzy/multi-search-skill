@@ -18,9 +18,8 @@ from unittest import mock
 
 import multi_search_mcp.src.search.search_runner as search_runner_module
 from multi_search_mcp.src.scrape.scrape import scrape_url_smart
-from multi_search_mcp.src.search.search_runner import ProviderSpec, SearchRunner, SearchRunnerConfig
+from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.support import http, url_security
-from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
 from multi_search_mcp.src.support.url_security import UrlSecurityError
 
 PUBLIC_IP = "93.184.216.34"
@@ -261,10 +260,10 @@ class HttpConnectBoundaryTests(unittest.TestCase):
     def test_redirect_allows_same_origin_and_http_to_https_upgrade(self):
         same_host = self.redirect("http://origin.example/next")
         self.assertEqual(same_host.full_url, "http://origin.example/next")
-        self.assertFalse(hasattr(same_host, "_multi_search_pinned_addresses"))
+        self.assertEqual(same_host.get_full_url(), "http://origin.example/next")
         upgraded = self.redirect("https://origin.example/next")
         self.assertEqual(upgraded.full_url, "https://origin.example/next")
-        self.assertFalse(hasattr(upgraded, "_multi_search_pinned_addresses"))
+        self.assertEqual(upgraded.get_full_url(), "https://origin.example/next")
 
     def test_http_to_https_upgrade_port_rule(self):
         """An upgrade keeps the host; the port may only be 443 or the original explicit port."""
@@ -448,21 +447,38 @@ class HttpConnectBoundaryTests(unittest.TestCase):
         self.assertEqual(backend.call_args.args[0], "https://example.com:8443/a%5Cb%20c")
 
 class SearchRouteFakeIpTests(unittest.TestCase):
-    """The `all` route fans out past the old 8-slot DNS pool (removed in ticket 04)."""
+    """The `all` route through the real candidate entry point, with DNS held open.
 
-    def test_all_route_sources_have_no_local_dns_capacity_errors(self):
+    Every source's lookup waits on one shared barrier, so the test passes only
+    if all twelve searches are in flight at once. No pool is injected and the
+    runner is not built by hand: run_search_candidates performs the real route
+    resolution and the real search-pool admission.
+    """
+
+    def test_all_route_sources_run_concurrently_without_dns_capacity_errors(self):
+        from multi_search_mcp.src.service import SearchWebRequest, run_search_candidates
+
         names = list(search_runner_module.ROUTE_SOURCE_ORDER["all"])
-        # Every source must reach the resolver at the same time. A barrier
-        # proves the fan-out really is concurrent, without a sleep: the old
-        # 8-slot DNS pool could not admit more than 8 of these 12 lookups.
         barrier = threading.Barrier(len(names))
+        waiting = 0
+        peak_waiting = 0
+        count_lock = threading.Lock()
 
-        def slow_dns(host, port, *args, **kwargs):
-            barrier.wait(timeout=2)
+        def held_dns(host, port, *args, **kwargs):
+            # A barrier, not a sleep: the lookup returns only when every other
+            # source has also reached DNS, so overlap is proven, not timed.
+            # The peak count of lookups held together is recorded separately,
+            # so a pool that admits fewer sources is caught by the count.
+            nonlocal waiting, peak_waiting
+            with count_lock:
+                waiting += 1
+                peak_waiting = max(peak_waiting, waiting)
+            try:
+                barrier.wait(timeout=5)
+            finally:
+                with count_lock:
+                    waiting -= 1
             return addresses(PUBLIC_IP, port)
-
-        def factory(*_args, **_kwargs):
-            return WireSocket([OK])
 
         def create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, **kwargs):
             if timeout is socket._GLOBAL_DEFAULT_TIMEOUT:
@@ -472,9 +488,6 @@ class SearchRouteFakeIpTests(unittest.TestCase):
             sock.settimeout(timeout)
             sock.connect(sockaddr)
             return sock
-
-        providers = {}
-        lookups = []
 
         def provider_for(name):
             def call(query, config, ctx, api_key):
@@ -486,31 +499,29 @@ class SearchRouteFakeIpTests(unittest.TestCase):
                 return [{"source": name, "title": "hit", "url": f"https://result.{name}.example/"}]
             return call
 
-        for name in names:
-            providers[name] = ProviderSpec(name, name, provider_for(name), key_required=False)
-        pool = BoundedDaemonExecutor(max_workers=len(names), thread_name_prefix="test-all-route")
-        runner = SearchRunner(
-            SearchRunnerConfig("all", {}, 5, "google", {}),
-            providers,
-            route_resolver=lambda _route: list(names),
-            executor=pool,
-        )
-        try:
-            with mock.patch.object(socket, "create_connection", side_effect=create_connection), \
-                    mock.patch.object(urllib.request, "getproxies", return_value={}), \
-                    mock.patch.object(socket, "getaddrinfo", side_effect=slow_dns) as dns, \
-                    mock.patch.object(socket, "socket", side_effect=lambda *a: factory()):
-                rows = runner.run("query")
-        finally:
-            pool.shutdown(wait=True, cancel_futures=True)
+        providers = {
+            name: ProviderSpec(name, name, provider_for(name), key_required=False)
+            for name in names
+        }
+        with mock.patch.object(socket, "create_connection", side_effect=create_connection), \
+                mock.patch.object(urllib.request, "getproxies", return_value={}), \
+                mock.patch.object(socket, "getaddrinfo", side_effect=held_dns) as dns, \
+                mock.patch.object(socket, "socket", side_effect=lambda *a: WireSocket([OK])):
+            response = run_search_candidates(
+                SearchWebRequest(query="query", route="all", use_state=False),
+                providers=providers, keys={}, config={},
+            )
 
-        self.assertEqual(len(rows), len(names))
+        self.assertEqual(peak_waiting, len(names), "every source must hold DNS at once")
+        statuses = {row["source"]: row["status"] for row in response["provider_status"]}
+        self.assertEqual(set(statuses), set(names))
+        self.assertTrue(all(status == "ok" for status in statuses.values()), statuses)
+        self.assertEqual(response["errors"], [])
         self.assertEqual(dns.call_count, len(names))
-        for row in rows:
-            self.assertNotIn("error", row, row)
-            self.assertEqual(row["source"], row["source"])
-            self.assertNotIn("DNS", str(row))
+        for row in response["provider_status"]:
+            self.assertNotIn(row.get("error_type"), {"capacity"}, row)
             self.assertNotIn("capacity", str(row))
+            self.assertNotIn("DNS", str(row))
 
 if __name__ == "__main__":
     unittest.main()

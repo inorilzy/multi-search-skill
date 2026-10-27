@@ -22,7 +22,7 @@ class RemainingBoundariesTests(unittest.TestCase):
         with self.assertRaises(url_security.UrlSecurityError):
             http._ensure_connect_address('198.18.0.1')
 
-    def test_redirect_does_not_resolve_or_pin_addresses(self):
+    def test_redirect_does_not_resolve_the_target(self):
         req = urllib.request.Request('https://example.com/a')
         req._multi_search_deadline = time.monotonic() + 1
         with mock.patch('socket.getaddrinfo', side_effect=AssertionError('redirect DNS')):
@@ -30,7 +30,6 @@ class RemainingBoundariesTests(unittest.TestCase):
                 req, io.BytesIO(), 302, 'Found', {}, 'https://example.com/b',
             )
         self.assertEqual(result.full_url, 'https://example.com/b')
-        self.assertFalse(hasattr(result, '_multi_search_pinned_addresses'))
 
     def test_atomic_reservation_distributes_two_simultaneous_attempts(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -14,7 +14,7 @@ from unittest import mock
 from multi_search_mcp.src.state.key_state import KeyOutcome, SQLiteKeyManager
 from multi_search_mcp.src.state.site_memory import SiteScraperMemory, ScrapeAttempt
 from multi_search_mcp.src.state.state_store import StateStore
-from multi_search_mcp.src.support import http, url_security
+from multi_search_mcp.src.support import http
 from multi_search_mcp.src.support.concurrency import BoundedDaemonExecutor
 from multi_search_mcp.src.scrape.stage import run_ranked_fetch_stage
 from multi_search_mcp.src.support.url_security import (
@@ -72,9 +72,33 @@ class FakeIpCompatibilityTests(unittest.TestCase):
         with self.assertRaises(UrlSecurityError):
             http._ensure_connect_address(self.FAKE_IP)
 
-    def test_fake_ip_switch_is_gone(self):
-        self.assertFalse(hasattr(url_security, "FAKE_IP_ENV"))
-        self.assertFalse(hasattr(url_security, "allow_fake_ip_default"))
+    def test_fake_ip_domain_connects_without_any_environment_switch(self):
+        """A domain answering with a fake-IP is dialled as-is, with no opt-in variable."""
+        import socket
+        from unittest import mock as _mock
+
+        from multi_search_mcp.src.support import http as http_module
+
+        dialled = []
+
+        def create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, **kwargs):
+            dialled.append(address)
+            raise OSError("synthetic connect stop after the destination was chosen")
+
+        def answer(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (self.FAKE_IP, port))]
+
+        with _mock.patch.object(socket, "getaddrinfo", side_effect=answer), \
+                _mock.patch.object(socket, "create_connection", side_effect=create_connection), \
+                _mock.patch.dict("os.environ", {}, clear=False):
+            # Only the synthetic connect failure may end the call. A UrlSecurityError
+            # means the fake-IP answer was refused before dialling.
+            with self.assertRaises(OSError):
+                http_module.urlopen_retry(
+                    "https://clash.example/page", timeout=2,
+                    extra_handlers=(urllib.request.ProxyHandler({}),),
+                )
+        self.assertEqual(dialled, [("clash.example", 443)])
 
 
 class HttpHardeningTests(unittest.TestCase):
