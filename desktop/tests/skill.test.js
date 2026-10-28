@@ -204,3 +204,94 @@ test('a failed update reports that the previous skill was kept', async () => {
   assert.doesNotMatch(root.textContent, /已更新/);
   window.close();
 });
+
+test('a successful install automatically refreshes the manage panel to the installed state', async () => {
+  let installed = false;
+  const statusCalls = [];
+  const api = {
+    skillPlan: async () => ({ scope: 'global', target: 'C:\\isolated\\skills\\multi-search', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => { installed = true; return { status: 'installed', target: 'C:\\isolated\\skills\\multi-search', reason: 'verified', verified: true }; },
+    skillStatus: async (scope) => {
+      statusCalls.push(scope);
+      return installed
+        ? { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\isolated\\skills\\multi-search', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false, cli_requirements: 'search', compatibility_reason: '' }
+        : { state: 'absent', installed_version: null, release_version: '1', target: 'C:\\isolated\\skills\\multi-search', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false, cli_requirements: 'search', compatibility_reason: '' };
+    },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：未安装/);
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="status"]').textContent, /已安装并校验/);
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：当前版本/);
+  assert.match(root.querySelector('[data-info="managed-target"]').textContent, /C:\\isolated\\skills\\multi-search/);
+  assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, false);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  assert.equal(statusCalls.length, 2);
+  window.close();
+});
+
+test('a failed install re-reads the real state and never reports installed', async () => {
+  const api = {
+    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => ({ status: 'failed', target: 'C:\\x', reason: 'access denied', verified: false }),
+    skillStatus: async () => ({ state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false }),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="status"]').textContent, /未完成安装：access denied/);
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：未安装/);
+  assert.doesNotMatch(root.textContent, /已安装并校验/);
+  window.close();
+});
+
+test('a read failure after a successful install reports completion with unconfirmed state, and a later check recovers', async () => {
+  let reads = 0;
+  const api = {
+    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => ({ status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }),
+    skillStatus: async () => {
+      reads += 1;
+      if (reads === 1) throw new Error('disk busy');
+      return { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false };
+    },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="status"]').textContent, /已安装并校验/);
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：当前版本/);
+  assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '');
+  window.close();
+});
+
+test('an install clears a previously previewed removal so its confirm button cannot fire', async () => {
+  const removed = [];
+  const api = {
+    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => ({ status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }),
+    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => { removed.push(true); return { status: 'removed', deleted: [] }; },
+    skillUpdate: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, false);
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, true);
+  root.querySelector('[data-action="remove"]').click(); await tick();
+  assert.deepEqual(removed, []);
+  window.close();
+});
