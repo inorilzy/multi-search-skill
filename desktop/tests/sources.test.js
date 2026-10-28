@@ -244,6 +244,29 @@ test('row testing sends one request and saving invalidates row success', async (
 
 function flush() { return new Promise(resolve => setTimeout(resolve, 0)); }
 
+test('a failed test shows its full error inside the expanded detail, not only on hover', async () => {
+  const { window, root } = setup();
+  const message = '连接被拒绝：请检查网络代理后重试（synthetic）';
+  await mountSources(root, {
+    settingsView: async () => settings(),
+    credentialStatus: async () => absent,
+    credentialTest: async () => ({ result: 'network', message }),
+  });
+  await pick(root, 'hackernews');
+  const detail = detailOf(root);
+  detail.querySelector('[data-action="test"]').click();
+  await flush(); await flush();
+
+  const result = detail.querySelector('.test-result');
+  assert.equal(result.dataset.kind, 'error', 'a failed test is marked as an error');
+  assert.match(result.textContent, /连接被拒绝：请检查网络代理后重试/, 'the complete message is rendered as visible text in the expanded detail');
+  assert.doesNotMatch(result.textContent, /测试成功/, 'a failure never reads as success');
+
+  const row = root.querySelector('[data-source-row="hackernews"]');
+  assert.match(row.querySelector('[data-row-result]').getAttribute('title') || '', /连接被拒绝/, 'the row hover title still carries the full message');
+  window.close();
+});
+
 test('row test button reports its source, blocks repeat submits while running and recovers', async () => {
   const { window, root } = setup();
   let calls = 0;
