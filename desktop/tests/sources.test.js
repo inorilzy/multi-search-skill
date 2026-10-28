@@ -371,3 +371,61 @@ test('disposal or navigation abort releases the Ctrl K shortcut', async () => {
   assert.notEqual(second.window.document.activeElement, second.root.querySelector('[data-search]'));
   window.close(); second.window.close();
 });
+
+// 03 平台写入限制不误伤生效来源展示和连接测试。
+
+test('env effective source is shown as 环境变量生效 even when the store row is unreadable', async () => {
+  const { window, root } = setup();
+  const broken = { ...absent, effective_source: 'env', env_var: 'TAVILY_API_KEY', store: { state: 'unreadable', saved_at: null, error: 'decrypt failed' }, store_supported: false };
+  await mountSources(root, { settingsView: async () => settings(), credentialStatus: async () => broken });
+  const row = root.querySelector('[data-source-row="tavily"]');
+  assert.equal(row.querySelector('[data-row-status]').textContent, '环境变量生效');
+  assert.equal(row.querySelector('[data-row-status]').dataset.kind, 'configured');
+  // The test button is not disabled by the broken store.
+  assert.equal(row.querySelector('[data-row-test]').disabled, false);
+  window.close();
+});
+
+test('unavailable effective_source still fails closed as 凭据库异常', async () => {
+  const { window, root } = setup();
+  const view = { ...absent, effective_source: 'unavailable', store: { state: 'unavailable', saved_at: null, error: 'unreadable entry' } };
+  await mountSources(root, { settingsView: async () => settings(), credentialStatus: async () => view });
+  assert.equal(root.querySelector('[data-source-row="tavily"] [data-row-status]').textContent, '凭据库异常');
+  assert.equal(root.querySelector('[data-source-row="tavily"] [data-row-status]').dataset.kind, 'error');
+  window.close();
+});
+
+test('file effective_source on an unsupported platform reports 文件 Key 生效 and tests stay enabled', async () => {
+  const { window, root } = setup();
+  const view = { ...absent, effective_source: 'file', file_key_count: 1, store: { state: 'absent', saved_at: null, error: '' }, store_supported: false };
+  let tested = 0;
+  await mountSources(root, {
+    settingsView: async () => settings(),
+    credentialStatus: async () => view,
+    credentialTest: async () => { tested += 1; return { result: 'success', message: '' }; },
+    credentialRead: async () => ({ value: 'masked', snapshot: 's' }),
+  });
+  const row = root.querySelector('[data-source-row="tavily"]');
+  assert.equal(row.querySelector('[data-row-status]').textContent, '文件 Key 生效');
+  row.querySelector('[data-row-test]').click();
+  await flush(); await flush();
+  assert.equal(tested, 1, 'a file-backed source still runs the connection test');
+  assert.equal(row.querySelector('[data-row-result]').dataset.kind, 'success');
+  window.close();
+});
+
+test('unsupported store does not fabricate credential errors for a keyless source test', async () => {
+  const { window, root } = setup();
+  let tested = 0;
+  await mountSources(root, {
+    settingsView: async () => settings(),
+    credentialStatus: async () => absent,
+    credentialTest: async source => { tested += 1; return source === 'hackernews' ? { result: 'success', message: '' } : { result: 'error', message: 'x' }; },
+  });
+  const row = root.querySelector('[data-source-row="hackernews"]');
+  row.querySelector('[data-row-test]').click();
+  await flush(); await flush();
+  assert.equal(tested, 1);
+  assert.equal(row.querySelector('[data-row-result]').dataset.kind, 'success');
+  window.close();
+});
