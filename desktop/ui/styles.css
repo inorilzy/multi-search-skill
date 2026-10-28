@@ -1171,10 +1171,13 @@
       padding: 0;
     }
     .credential-fields form {
-      grid-template-columns: minmax(120px,1fr) auto auto;
+      grid-template-columns: minmax(120px,1fr);
     }
     .credential-fields form>label {
       grid-column: auto;
+    }
+    .credential-fields .draft-controls {
+      flex-wrap: wrap;
     }
     .test-result {
       min-height: 64px;
