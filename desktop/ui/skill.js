@@ -148,13 +148,20 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     if (busy || disposed) return;
     if (!removeReady || !sameTarget()) { setManageError('请先预览移除范围。'); return; }
     setBusy(true);
+    let writeDone = '';
+    let removedOk = false;
     try {
       const result = await api.skillRemove(managedScope, managedProject, true);
-      info('manage-status').textContent = result.status === 'removed'
+      removedOk = result.status === 'removed';
+      info('manage-status').textContent = removedOk
         ? `已移除：${result.deleted.join('、')}。${result.reason}`
         : `未移除：${result.reason}`;
+      if (removedOk) writeDone = '操作已完成';
     } catch (error) { showError(info('manage-error'), error, '移除失败，请重新检查目标。'); }
-    finally { removeReady = false; setBusy(false); if (!disposed) manageButton('check').click(); }
+    finally { removeReady = false; setBusy(false); }
+    // A confirmed removal clears the install-side success line so it cannot read as the current state.
+    if (removedOk && !disposed) root.querySelector('[data-info="status"]').textContent = '';
+    if (!disposed) await refreshManage(writeDone);
   });
   return { dispose() { disposed = true; generation++; } };
 }

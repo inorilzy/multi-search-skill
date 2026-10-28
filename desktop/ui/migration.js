@@ -31,6 +31,9 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
   let plan = null;
   let busy = false;
   let disposed = false;
+  // Each preview owns a generation id. A late or out-of-order response only renders while it is
+  // still the latest generation; anything older can never reactivate its plan or approvals.
+  let generation = 0;
   const previewButton = root.querySelector('[data-action="preview"]');
   // One request at a time: while a preview or apply runs, both buttons are disabled and the
   // running one shows a loading label, so a double click cannot send a second migration.
@@ -54,7 +57,10 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
     const supported = result.store_supported === true;
     const rows = result.items.map(item => {
       const source = sourceOf(item.provider);
-      const label = actionLabels[item.action] || item.action;
+      // Without store support a "migrate" entry only matches the format; it is not executable.
+      const label = !supported && item.action === 'migrate'
+        ? '格式符合，当前平台不可执行'
+        : (actionLabels[item.action] || item.action);
       const preview = item.preview ? `<code data-preview="${esc(source)}">${esc(item.preview)}</code>` : '';
       const detail = item.reason ? `<p class="note">${esc(item.reason)}</p>` : '';
       let control = '';
@@ -67,7 +73,11 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
       }
       return `<li data-item="${esc(source)}"><strong>${esc(source)}</strong> ${esc(label)} ${preview} ${control} ${detail}</li>`;
     }).join('');
-    const summary = `可迁移 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项。`;
+    // Format fit and executability are separate facts. Without store support the summary
+    // reports only how many entries match the format, never that they can be migrated.
+    const summary = supported
+      ? `可迁移 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项。`
+      : `格式符合迁移要求 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项（当前平台不可执行）。`;
     const limitation = supported ? '' : `<p class="note" data-info="capability">预览仅展示旧文件格式分类。加密迁移写入仅支持 Windows 当前用户 DPAPI；当前平台无法执行迁移，旧文件不会被改动。</p>`;
     root.querySelector('[data-plan]').innerHTML = `<p data-info="summary">${esc(summary)}</p>${limitation}
       <ul data-items>${rows}</ul>
@@ -92,14 +102,27 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
 
   async function preview() {
     if (busy || disposed) return;
+    // Starting a new preview immediately invalidates the previous plan and its approvals:
+    // nothing from an earlier preview can be submitted while the query is in flight.
+    generation += 1;
+    const mine = generation;
+    plan = null;
+    root.querySelector('[data-plan]').replaceChildren();
     text('[data-info="error"]', '');
     setBusy(true, 'preview');
     try {
       const result = await api.migrationPlan();
-      if (!disposed) renderPlan(result);
+      if (disposed || mine !== generation) return;
+      renderPlan(result);
     } catch (error) {
-      if (!disposed) showError(root.querySelector('[data-info="error"]'), error, '无法预览旧文件，请检查 CLI 或文件。');
-    } finally { if (!disposed) setBusy(false); }
+      if (disposed || mine !== generation) return;
+      // A failed preview keeps nothing committable and renders no success summary. The error
+      // text comes from the backend code, so an unreadable or invalid file reads differently
+      // from a capability or platform failure, and the preview button stays available.
+      showError(root.querySelector('[data-info="error"]'), error, '无法预览旧文件，请检查 CLI 或文件。');
+    } finally {
+      if (!disposed && mine === generation) setBusy(false);
+    }
   }
 
   async function apply() {

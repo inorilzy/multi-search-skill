@@ -217,7 +217,7 @@ test('unsupported platform keeps masked previews read-only and issues no write p
   await flush();
   // 格式分类与掩码预览照常展示，但没有任何批准/应用路径。
   assert.equal(root.querySelector('[data-preview="tavily"]').textContent, 'sha256:1a2b3c4d');
-  assert.match(root.querySelector('[data-item="tavily"]').textContent, /可迁移/);
+  assert.match(root.querySelector('[data-item="tavily"]').textContent, /格式符合，当前平台不可执行/);
   assert.equal(root.querySelector('[data-approve]'), null, 'no approval checkboxes without write support');
   assert.equal(root.querySelector('[data-choice]'), null, 'no conflict choices without write support');
   assert.match(root.querySelector('[data-info="capability"]').textContent, /Windows 当前用户 DPAPI/);
@@ -247,6 +247,124 @@ test('supported platform keeps the explicit approve-and-apply flow', async () =>
   root.querySelector('[data-action="apply"]').click();
   await flush();
   assert.equal(calls.length, 1);
+  mounted.dispose();
+  window.close();
+});
+
+test('unsupported platform separates format fit from executability in the summary and rows', async () => {
+  const { window, root } = setup();
+  const api = {
+    migrationPlan: async () => ({ ...plan(), store_supported: false, store_unsupported_reason: 'platform_unsupported' }),
+    migrationApply: async () => { throw new Error('must not be called'); },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  const summary = root.querySelector('[data-info="summary"]').textContent;
+  assert.match(summary, /格式符合迁移要求 2 项/);
+  assert.match(summary, /当前平台不可执行/);
+  assert.doesNotMatch(summary, /可迁移/, 'the summary never claims migration is possible on this platform');
+  assert.match(root.querySelector('[data-item="tavily"]').textContent, /格式符合，当前平台不可执行/);
+  assert.doesNotMatch(root.querySelector('[data-item="tavily"]').textContent, /可迁移/);
+  assert.match(root.querySelector('[data-item="brave"]').textContent, /与凭据库中的 Key 冲突/, 'conflict wording kept');
+  assert.equal(root.querySelector('[data-action="apply"]').disabled, true);
+  mounted.dispose();
+  window.close();
+});
+
+test('a failed preview drops the old plan and recovery requires fresh approval', async () => {
+  const { window, root } = setup();
+  let round = 0;
+  const calls = [];
+  const api = {
+    migrationPlan: async () => {
+      round += 1;
+      if (round === 2) throw JSON.stringify({ code: 'migration_plan_failed', message: 'CLI failed' });
+      return { ...plan(), plan_token: `${TOKEN}${round}` };
+    },
+    migrationApply: async (...args) => { calls.push(args); return { written: [], kept: [], unchanged: [], failed: [], not_done: [], complete: true }; },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  root.querySelector('[data-approve="tavily"]').checked = true;
+  // Second preview fails: the earlier plan and its approvals are gone, nothing committable.
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  assert.match(root.querySelector('[data-info="error"]').textContent, /迁移预览失败/);
+  assert.equal(root.querySelector('[data-action="apply"]'), null, 'no apply button after a failed preview');
+  assert.equal(root.querySelector('[data-approve]'), null, 'old approvals are cleared');
+  assert.equal(root.querySelector('[data-info="summary"]'), null, 'no stale success summary');
+  assert.equal(calls.length, 0);
+  // After fixing the file a fresh preview renders the new plan and asks for new approval.
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  assert.equal(root.querySelector('[data-info="error"]').textContent, '');
+  const box = root.querySelector('[data-approve="tavily"]');
+  assert.notEqual(box, null);
+  assert.equal(box.checked, false, 'approval is not carried over');
+  root.querySelector('[data-approve="tavily"]').checked = true;
+  root.querySelector('[data-action="apply"]').click();
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], `${TOKEN}3`, 'the newest plan token is the one submitted');
+  mounted.dispose();
+  window.close();
+});
+
+test('an invalid-file failure shows its own reason and keeps the retry entry', async () => {
+  const { window, root } = setup();
+  const api = {
+    migrationPlan: async () => { throw JSON.stringify({ code: 'legacy_keys_file_missing', message: 'no file' }); },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  assert.match(root.querySelector('[data-info="error"]').textContent, /无法定位旧 key 文件/);
+  assert.equal(root.querySelector('[data-action="preview"]').disabled, false, 'preview can be retried');
+  mounted.dispose();
+  window.close();
+});
+
+test('a preview response resolving after dispose never reactivates a plan', async () => {
+  const { window, root } = setup();
+  let release;
+  const api = { migrationPlan: () => new Promise(resolve => { release = resolve; }) };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  mounted.dispose();
+  release(plan());
+  await flush();
+  assert.equal(root.querySelector('[data-action="apply"]'), null, 'a late response cannot mount an apply path');
+  assert.equal(root.querySelector('[data-info="summary"]'), null);
+  window.close();
+});
+
+test('a completed apply leaves no stale approvals and no second implicit submission', async () => {
+  const { window, root } = setup();
+  const calls = [];
+  const api = {
+    migrationPlan: async () => plan(),
+    migrationApply: async (...args) => { calls.push(args); return { written: ['tavily'], kept: [], unchanged: [], failed: [], not_done: [], complete: true }; },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  root.querySelector('[data-approve="tavily"]').checked = true;
+  root.querySelector('[data-action="apply"]').click();
+  await flush();
+  assert.equal(calls.length, 1);
+  // The plan token is consumed; the apply row is gone from state even if the button lingers.
+  root.querySelector('[data-action="apply"]')?.click();
+  await flush();
+  assert.equal(calls.length, 1, 'a consumed plan cannot be submitted again');
+  // The next preview renders a fresh plan with unselected approvals.
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  const box = root.querySelector('[data-approve="tavily"]');
+  assert.notEqual(box, null);
+  assert.equal(box.checked, false);
+  assert.equal(root.querySelector('[data-info="result"]').textContent, '', 'no leftover apply result text');
   mounted.dispose();
   window.close();
 });
