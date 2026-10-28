@@ -238,9 +238,13 @@ fn unsupported_platform_rejects_the_command_guard_before_any_backend_access() {
         fixture::require_supported().unwrap();
         return;
     }
+    // The guard now returns the serialized {code,message} contract directly:
+    // the code travels with the error, not inside the message wording.
     let error = fixture::require_supported().unwrap_err();
-    assert!(error.contains("DPAPI"), "{error}");
-    assert!(error.starts_with("加密凭据存储仅支持 Windows"), "{error}");
+    assert_eq!(error, fixture::unsupported_rejection(), "{error}");
+    let parsed: serde_json::Value = serde_json::from_str(&error).unwrap();
+    assert_eq!(parsed["code"], "credential_platform_unsupported");
+    assert!(parsed["message"].as_str().unwrap().contains("DPAPI"));
     // A write that bypassed the disabled UI must not touch the store: seed
     // data stays byte-for-byte identical and nothing new is written.
     let backend = Memory::default();
@@ -249,4 +253,102 @@ fn unsupported_platform_rejects_the_command_guard_before_any_backend_access() {
     let before = backend.0.lock().unwrap().clone();
     assert!(fixture::require_supported().is_err());
     assert_eq!(*backend.0.lock().unwrap(), before);
+}
+
+#[test]
+fn command_body_writes_return_the_stable_unsupported_code_and_change_nothing() {
+    // Spec 7: a request that bypassed the disabled UI must reject with the
+    // stable serialized code and leave any existing rows byte-for-byte intact.
+    // The seams run the same guard the Tauri command bodies run, then the real
+    // SQLite path. On a supported build this test only proves the seams work.
+    if fixture::storage_supported() {
+        return;
+    }
+    let expected = fixture::unsupported_rejection();
+    let parsed: serde_json::Value = serde_json::from_str(&expected).unwrap();
+    assert_eq!(parsed["code"], "credential_platform_unsupported");
+    assert!(parsed["message"].as_str().unwrap().contains("DPAPI"));
+
+    let dir = std::env::temp_dir().join(format!("ms-unsupported-guard-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("config.sqlite");
+    let bytes_before = std::fs::read(&db).unwrap_or_default();
+    let db_before_exists = db.exists();
+
+    assert_eq!(fixture::guarded_native_save(&db, "tavily", "synthetic-key", 1.0).unwrap_err(), expected);
+    assert_eq!(fixture::guarded_native_append(&db, "tavily", &["synthetic-key".into()], 1.0).unwrap_err(), expected);
+    assert_eq!(fixture::guarded_native_remove_row(&db, "tavily", 0, "expected-snapshot", 1.0).unwrap_err(), expected);
+
+    // No database row or file may appear as a side effect of a rejected write.
+    assert_eq!(db.exists(), db_before_exists);
+    if db_before_exists { assert_eq!(std::fs::read(&db).unwrap(), bytes_before); }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn migration_apply_is_rejected_before_the_legacy_file_is_touched() {
+    // Spec 7: the apply path runs the same guard the command runs, so a request
+    // that bypassed the disabled UI rejects before the CLI is launched and the
+    // legacy file bytes are byte-for-byte identical afterwards.
+    if fixture::storage_supported() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("ms-unsupported-migrate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let keys_file = dir.join(".search-keys.json");
+    std::fs::write(&keys_file, br#"{"tavily":"synthetic-legacy-key"}"#).unwrap();
+    let bytes_before = std::fs::read(&keys_file).unwrap();
+    let token = "0".repeat(64);
+    let approved = vec!["tavily".to_string()];
+    let choices = std::collections::BTreeMap::new();
+    // The CLI path is unreachable after the guard rejects, so an arbitrary
+    // non-existent path proves the guard ran before the spawn.
+    let cli = dir.join("nonexistent-cli");
+    let environment = multi_search_desktop::RuntimeEnvironment {
+        app_path: vec![],
+        user_path: vec![],
+        variables: std::collections::BTreeMap::new(),
+        cwd: dir.clone(),
+    };
+    let err = fixture::guarded_migration_apply(&environment, &cli, &keys_file, &token, &approved, &choices)
+        .unwrap_err();
+    assert_eq!(err, fixture::unsupported_rejection());
+    assert_eq!(std::fs::read(&keys_file).unwrap(), bytes_before);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn delete_is_cleanup_and_stays_available_without_encryption() {
+    // Spec c: removing a stored entry must not be blocked by the unsupported
+    // platform; it is a cleanup, not a new write, so no encryption is needed.
+    // The command body is not guarded (see window.rs), and the backend delete
+    // does not call crypt, so it succeeds even where writes are rejected.
+    let backend = Memory::default();
+    let vars = ns("ns-delete");
+    fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
+    assert!(fixture::delete(&backend, &vars).is_ok());
+    assert_eq!(fixture::overview(&backend, &vars).store.state, "absent");
+}
+
+#[test]
+fn reveal_reports_unavailable_on_unsupported_platform_not_a_write_code() {
+    // S1 pin: a read path (credential_read / credential_reveal) must not be
+    // promoted to the write-only `credential_platform_unsupported` code; it
+    // surfaces as the ordinary unavailable/read error the UI already maps.
+    struct PlatformBlocked;
+    impl fixture::Backend for PlatformBlocked {
+        fn read(&self, _: &str) -> Result<Option<Vec<u8>>, String> {
+            // Same DPAPI text the native read surfaces on this platform.
+            Err("加密凭据存储仅支持 Windows 当前用户 DPAPI；当前平台不可用，且没有明文回退。".into())
+        }
+        fn write(&self, _: &str, _: &[u8]) -> Result<(), String> { unreachable!() }
+        fn delete(&self, _: &str) -> Result<bool, String> { unreachable!() }
+    }
+    let backend = PlatformBlocked;
+    let vars = ns("ns-reveal");
+    let err = fixture::read_for(&backend, &vars, "tavily").unwrap_err();
+    assert!(!err.contains("credential_platform_unsupported"));
+    assert!(err.contains("DPAPI") || err.contains("无法"), "{err}");
 }

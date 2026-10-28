@@ -79,15 +79,14 @@ pub fn backend(code: &str) -> CommandError {
 /// `{ code, message }` JSON contract. The frontend shows `message` because the code is generic.
 #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
 pub fn finish<T>(result: Result<T, String>) -> Result<T, String> {
-    result.map_err(|message| {
-        // Capability-guard rejections carry a stable code so the frontend can
-        // map them to a clear explanation instead of a generic save failure.
-        if message.starts_with(crate::credential::UNSUPPORTED_WRITE_PREFIX) {
-            CommandError::new("credential_platform_unsupported", message).into()
-        } else {
-            CommandError::new("operation_failed", message).into()
-        }
-    })
+    result.map_err(|message| CommandError::new("operation_failed", message).into())
+}
+
+/// Lift a typed `CommandError` (already carrying its own stable code) into the
+/// command return type. Used where the error source is a typed guard, so the
+/// code never depends on the message wording.
+pub fn typed<T>(result: Result<T, CommandError>) -> Result<T, String> {
+    result.map_err(String::from)
 }
 
 #[cfg(test)]
@@ -139,20 +138,20 @@ mod tests {
     }
 
     #[test]
-    fn capability_rejections_get_the_stable_unsupported_code() {
-        let text = finish::<()>(Err(format!(
-            "{}{}",
-            crate::credential::UNSUPPORTED_WRITE_PREFIX,
-            "当前用户 DPAPI；没有明文回退。"
-        )))
-        .unwrap_err();
+    fn typed_guard_errors_keep_their_code_regardless_of_message_wording() {
+        // The code travels with the typed error, so rewording the message cannot drop it.
+        let text = typed::<()>(Err(CommandError::new("credential_platform_unsupported", "任意中文措辞")))
+            .unwrap_err();
         let (code, message) = payload(text);
         assert_eq!(code, "credential_platform_unsupported");
-        assert!(message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
-        // Other credential errors keep the generic contract.
-        let (code, _) = payload(
-            finish::<()>(Err("凭据已变化，请重新显示。".into())).unwrap_err(),
-        );
+        assert_eq!(message, "任意中文措辞");
+    }
+
+    #[test]
+    fn plain_message_never_selects_the_unsupported_code() {
+        // A string that happens to resemble the unsupported text stays generic.
+        let text = finish::<()>(Err("加密凭据存储仅支持 Windows 当前用户 DPAPI".into())).unwrap_err();
+        let (code, _) = payload(text);
         assert_eq!(code, "operation_failed");
     }
 }
