@@ -206,3 +206,47 @@ fn rust_written_blob_has_contract_bytes() {
         r#"{"key":"synthetic-roundtrip-key-0009","saved_at":1700000001.5,"v":1}"#
     );
 }
+
+#[test]
+fn overview_reports_platform_capability_separately_from_key_presence() {
+    let backend = Memory::default();
+    let vars = ns("ns-cap");
+    let supported = fixture::storage_supported();
+    // "未配置 Key" must never be mistaken for "存储不可用": on a supported
+    // build an absent store still reports write support.
+    let overview = fixture::overview(&backend, &vars);
+    assert_eq!(overview.store.state, "absent");
+    assert_eq!(overview.store_supported, supported);
+    assert_eq!(
+        overview.store_unsupported_reason.as_deref(),
+        if supported { None } else { Some("platform_unsupported") },
+    );
+    // A present row on a supported build reports support; on an unsupported
+    // build the same row cannot be rewritten even though it exists.
+    fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
+    let present = fixture::overview(&backend, &vars);
+    assert_eq!(present.store.state, "present");
+    assert_eq!(present.store_supported, supported);
+}
+
+#[test]
+fn unsupported_platform_rejects_the_command_guard_before_any_backend_access() {
+    // The test binary runs on the host platform: the guard must reject exactly
+    // when the build cannot encrypt. On Windows this test proves the guard is
+    // a no-op for supported writes; elsewhere it proves the stable reason.
+    if fixture::storage_supported() {
+        fixture::require_supported().unwrap();
+        return;
+    }
+    let error = fixture::require_supported().unwrap_err();
+    assert!(error.contains("DPAPI"), "{error}");
+    assert!(error.starts_with("加密凭据存储仅支持 Windows"), "{error}");
+    // A write that bypassed the disabled UI must not touch the store: seed
+    // data stays byte-for-byte identical and nothing new is written.
+    let backend = Memory::default();
+    let vars = ns("ns-guard");
+    fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
+    let before = backend.0.lock().unwrap().clone();
+    assert!(fixture::require_supported().is_err());
+    assert_eq!(*backend.0.lock().unwrap(), before);
+}

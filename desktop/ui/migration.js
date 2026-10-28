@@ -41,7 +41,7 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
     previewButton.setAttribute('aria-busy', String(next && action === 'preview'));
     const applyButton = root.querySelector('[data-action="apply"]');
     if (applyButton) {
-      applyButton.disabled = next || plan === null;
+      applyButton.disabled = next || plan === null || plan.store_supported !== true;
       applyButton.textContent = next && action === 'apply' ? '迁移中…' : '确认并迁移已选项';
       applyButton.setAttribute('aria-busy', String(next && action === 'apply'));
     }
@@ -49,25 +49,29 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
 
   function renderPlan(result) {
     plan = result;
+    // Format compatibility is not executability: the CLI reports the plan, the
+    // backend reports whether the encrypted store can write on this platform.
+    const supported = result.store_supported === true;
     const rows = result.items.map(item => {
       const source = sourceOf(item.provider);
       const label = actionLabels[item.action] || item.action;
       const preview = item.preview ? `<code data-preview="${esc(source)}">${esc(item.preview)}</code>` : '';
       const detail = item.reason ? `<p class="note">${esc(item.reason)}</p>` : '';
       let control = '';
-      if (item.action === 'migrate' || item.action === 'conflict') {
+      if (supported && (item.action === 'migrate' || item.action === 'conflict')) {
         control = `<label><input type="checkbox" data-approve="${esc(source)}"> 确认迁移 ${esc(source)}</label>`;
       }
-      if (item.action === 'conflict') {
+      if (supported && item.action === 'conflict') {
         control += `<label>冲突选择 <select data-choice="${esc(source)}">
           <option value="">请选择</option><option value="keep">保留凭据库中的 Key</option><option value="replace">用旧文件中的 Key 替换</option></select></label>`;
       }
       return `<li data-item="${esc(source)}"><strong>${esc(source)}</strong> ${esc(label)} ${preview} ${control} ${detail}</li>`;
     }).join('');
     const summary = `可迁移 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项。`;
-    root.querySelector('[data-plan]').innerHTML = `<p data-info="summary">${esc(summary)}</p>
+    const limitation = supported ? '' : `<p class="note" data-info="capability">预览仅展示旧文件格式分类。加密迁移写入仅支持 Windows 当前用户 DPAPI；当前平台无法执行迁移，旧文件不会被改动。</p>`;
+    root.querySelector('[data-plan]').innerHTML = `<p data-info="summary">${esc(summary)}</p>${limitation}
       <ul data-items>${rows}</ul>
-      <div class="run-controls"><button type="button" class="primary" data-action="apply">确认并迁移已选项</button></div>
+      <div class="run-controls"><button type="button" class="primary" data-action="apply" ${supported ? '' : 'disabled'}>确认并迁移已选项</button></div>
       <p data-info="result" role="status"></p>`;
     root.querySelector('[data-action="apply"]').addEventListener('click', apply);
   }
@@ -99,7 +103,7 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
   }
 
   async function apply() {
-    if (!plan || busy || disposed) return;
+    if (!plan || busy || disposed || plan.store_supported !== true) return;
     const { approved, choices } = selections();
     const missingChoice = plan.items.find(item => item.action === 'conflict'
       && approved.includes(sourceOf(item.provider)) && !choices[sourceOf(item.provider)]);

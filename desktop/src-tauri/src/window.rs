@@ -270,6 +270,9 @@ async fn credential_save(
     let manager = manager.inner().clone();
     offload(
         move || {
+            // Platform guard before the backend is built: a write that bypasses
+            // the disabled UI rejects without touching the database or files.
+            crate::credential_commands::require_supported()?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs_f64())
@@ -324,6 +327,7 @@ async fn credential_append(
     let variables = manager.inner().environment.variables.clone();
     offload(
         move || {
+            crate::credential_commands::require_supported()?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs_f64())
@@ -347,6 +351,7 @@ async fn credential_remove(
     let variables = manager.inner().environment.variables.clone();
     offload(
         move || {
+            crate::credential_commands::require_supported()?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs_f64())
@@ -412,6 +417,9 @@ async fn migration_apply(
     let manager = manager.inner().clone();
     offload(
         move || {
+            // Backend guard: an apply that bypasses the disabled UI must reject
+            // before the CLI runs or the legacy file/request is touched.
+            crate::credential_commands::require_supported()?;
             let keys_file =
                 crate::credential_commands::keys_file_path(&manager.environment.variables)
                     .ok_or_else(|| "无法定位旧 key 文件".to_string())?;

@@ -34,7 +34,19 @@ env_var?: string,
  * Count of keys Core found in the legacy keys file. Values are never returned. Absent
  * without a Core row.
  */
-file_key_count?: number, key_application_available: boolean, };
+file_key_count?: number, key_application_available: boolean, 
+/**
+ * Whether this build's encrypted credential backend can write on the
+ * current platform (Windows current-user DPAPI only). Reported by the
+ * native backend, independent of whether any Key is saved; the UI keeps
+ * writes disabled until this is `true`.
+ */
+store_supported: boolean, 
+/**
+ * Machine-readable reason when `store_supported` is `false` —
+ * `platform_unsupported` today — absent when the store is supported.
+ */
+store_unsupported_reason?: string, };
 
 export type CredentialStatus = { 
 /**

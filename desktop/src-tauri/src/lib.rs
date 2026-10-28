@@ -320,6 +320,16 @@ pub mod credential_fixture {
         .delete(provider)
         .map_err(|e| e.to_string())
     }
+    /// Same platform guard the `credential_save`/`credential_append`/
+    /// `credential_remove`/`migration_apply` commands run before any backend
+    /// access; lets boundary tests assert the stable unsupported reason.
+    pub fn require_supported() -> Result<(), String> {
+        credential_commands::require_supported()
+    }
+    /// Whether this build can encrypt on the current platform (DPAPI fact).
+    pub fn storage_supported() -> bool {
+        crate::credential::storage_supported()
+    }
     /// Isolated native row-mutation seams: same production path the
     /// `credential_append` / `credential_remove` commands use, on a
     /// caller-supplied disposable database.

@@ -6,7 +6,7 @@ import { mountSources } from '../ui/sources.js';
 const ALL = ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter'];
 const KEYED = ALL.slice(0, 8);
 
-const absent = { source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false };
+const absent = { source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false, store_supported: true };
 const settings = (overrides = {}) => ({ route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null, route_ok: true, ...overrides });
 
 function setup() {

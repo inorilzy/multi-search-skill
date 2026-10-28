@@ -26,6 +26,9 @@ function plan() {
     ],
     migratable: ['tavily', 'brave'],
     skipped: ['jina'],
+    // The desktop backend attaches its platform fact after the CLI reports the
+    // plan: format compatibility is not executability.
+    store_supported: true,
   };
 }
 
@@ -198,6 +201,52 @@ test('apply result warns about plaintext legacy file and wide permissions', asyn
   assert.match(result, /迁移完成/);
   assert.match(result, /旧文件仍含明文 Key：\/home\/synthetic\/\.search-keys\.json/);
   assert.match(result, /readable by other users/);
+  mounted.dispose();
+  window.close();
+});
+
+test('unsupported platform keeps masked previews read-only and issues no write path', async () => {
+  const { window, root } = setup();
+  const calls = [];
+  const api = {
+    migrationPlan: async () => ({ ...plan(), store_supported: false, store_unsupported_reason: 'platform_unsupported' }),
+    migrationApply: async (...args) => { calls.push(args); return { written: [], kept: [], unchanged: [], failed: [], not_done: [], complete: true }; },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  // 格式分类与掩码预览照常展示，但没有任何批准/应用路径。
+  assert.equal(root.querySelector('[data-preview="tavily"]').textContent, 'sha256:1a2b3c4d');
+  assert.match(root.querySelector('[data-item="tavily"]').textContent, /可迁移/);
+  assert.equal(root.querySelector('[data-approve]'), null, 'no approval checkboxes without write support');
+  assert.equal(root.querySelector('[data-choice]'), null, 'no conflict choices without write support');
+  assert.match(root.querySelector('[data-info="capability"]').textContent, /Windows 当前用户 DPAPI/);
+  assert.match(root.querySelector('[data-info="capability"]').textContent, /当前平台无法执行迁移/);
+  const applyButton = root.querySelector('[data-action="apply"]');
+  assert.equal(applyButton.disabled, true);
+  applyButton.click();
+  await flush();
+  assert.equal(calls.length, 0, 'no apply request reaches the backend');
+  mounted.dispose();
+  window.close();
+});
+
+test('supported platform keeps the explicit approve-and-apply flow', async () => {
+  const { window, root } = setup();
+  const calls = [];
+  const api = {
+    migrationPlan: async () => plan(),
+    migrationApply: async (...args) => { calls.push(args); return { written: ['tavily'], kept: [], unchanged: [], failed: [], not_done: [], complete: true }; },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  assert.equal(root.querySelector('[data-info="capability"]'), null);
+  assert.notEqual(root.querySelector('[data-approve="tavily"]'), null);
+  root.querySelector('[data-approve="tavily"]').checked = true;
+  root.querySelector('[data-action="apply"]').click();
+  await flush();
+  assert.equal(calls.length, 1);
   mounted.dispose();
   window.close();
 });
