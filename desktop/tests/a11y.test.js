@@ -122,7 +122,7 @@ test('PATH confirmation supports Esc and cancel with focus restore', async () =>
 
 test('credential row delete confirmation is keyboard operable and drafts are labelled', async () => {
   const { window, root } = setup();
-  const overview = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false };
+  const overview = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false, store_supported: true };
   let removes = 0;
   await mountCredentialBody(root, {
     credentialStatus: async () => overview,
@@ -185,7 +185,7 @@ test('every page eyebrow uses its navigation number', async () => {
     installPlan: async () => ({ status: 'ready' }),
     skillPlan: async () => ({}),
     settingsView: async () => { throw 'offline'; },
-    credentialStatus: async () => ({ store: { state: 'absent' }, effective_source: 'none' }),
+    credentialStatus: async () => ({ store: { state: 'absent' }, effective_source: 'none', store_supported: true }),
   };
   for (const page of pages) {
     const { window, root } = setup();
@@ -202,7 +202,7 @@ test('sources page expands nothing on entry and sends no extra status request', 
   const statusCalls = [];
   const mounted = await mountSources(root, {
     settingsView: async () => ({ route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null }),
-    credentialStatus: async source => { statusCalls.push(source); return { source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false }; },
+    credentialStatus: async source => { statusCalls.push(source); return { source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false, store_supported: true }; },
   });
   await flush();
   assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0);
@@ -217,8 +217,8 @@ test('the credential summary has a real accessible text instead of an aria-label
   const mounted = await mountSources(root, {
     settingsView: async () => ({ route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null }),
     credentialStatus: async source => source === 'brave'
-      ? { source, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false }
-      : { source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false },
+      ? { source, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false, store_supported: true }
+      : { source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false, store_supported: true },
   });
   for (const node of root.querySelectorAll('div[aria-label], span[aria-label]')) {
     assert.ok(node.getAttribute('role'), `${node.className} has aria-label without a role`);
@@ -237,7 +237,7 @@ test('shortcut hint follows the platform', async () => {
   assert.equal(shortcutLabel({ platform: 'Win32' }), 'Ctrl K');
   assert.equal(shortcutLabel({}), 'Ctrl K');
   const { window, root } = setup();
-  const mounted = await mountSources(root, { settingsView: async () => { throw 'offline'; }, credentialStatus: async () => ({ store: { state: 'absent' }, effective_source: 'none' }) });
+  const mounted = await mountSources(root, { settingsView: async () => { throw 'offline'; }, credentialStatus: async () => ({ store: { state: 'absent' }, effective_source: 'none', store_supported: true }) });
   const kbd = root.querySelector('.source-search kbd').textContent;
   assert.equal(kbd, shortcutLabel(window.navigator));
   assert.equal(root.querySelector('[data-search]').getAttribute('aria-keyshortcuts'), kbd === '⌘ K' ? 'Meta+K' : 'Control+K');

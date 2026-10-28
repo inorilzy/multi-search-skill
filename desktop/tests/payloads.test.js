@@ -75,11 +75,21 @@ test('empty schema accepts any object shape (InstallState is a string union)', (
 });
 
 test('optional Core provenance fields may be absent but must have the right kind when present', () => {
-  const base = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false };
+  const base = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false, store_supported: true };
   assert.equal(check('CredentialOverview', base), null);
   assert.equal(check('CredentialOverview', { ...base, effective_source: 'env', env_var: 'TAVILY_API_KEY', env_overrides_store: true, file_key_count: 2 }), null);
   assert.match(check('CredentialOverview', { ...base, env_var: 7 }), /field "env_var" expected so, got number/);
   assert.match(check('CredentialOverview', { ...base, file_key_count: '2' }), /field "file_key_count" expected no, got string/);
+});
+
+test('store capability is required and its reason is optional but typed', () => {
+  const base = { source: 'tavily', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false, store_supported: true };
+  assert.equal(check('CredentialOverview', base), null);
+  assert.equal(check('CredentialOverview', { ...base, store_supported: false, store_unsupported_reason: 'platform_unsupported' }), null);
+  const { store_supported, ...without } = base;
+  assert.match(check('CredentialOverview', without), /field "store_supported" expected b, got undefined/);
+  assert.match(check('CredentialOverview', { ...base, store_supported: 'yes' }), /field "store_supported" expected b, got string/);
+  assert.match(check('CredentialOverview', { ...base, store_supported: false, store_unsupported_reason: 3 }), /field "store_unsupported_reason" expected so, got number/);
 });
 
 test('CliStatus requires the execution row and managed flag the UI enables actions from', () => {
