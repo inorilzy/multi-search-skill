@@ -476,3 +476,106 @@ test('a read failure after a successful update disables stale update actions and
   assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, true);
   window.close();
 });
+
+// 09: a write that succeeded followed by a failed status read. Writes are counted so retries prove they only read.
+function writeThenReadFailure({ write, reads, readFails }) {
+  let readCount = 0;
+  const counts = { install: 0, update: 0, remove: 0, status: 0 };
+  const statusFor = (state) => ({ state, installed_version: state === 'absent' ? null : '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: state === 'outdated' });
+  const current = { state: 'outdated' };
+  const api = {
+    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => { counts.install += 1; current.state = 'current'; return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
+    skillStatus: async () => {
+      counts.status += 1; readCount += 1;
+      if (readFails(readCount)) throw new Error('disk busy');
+      return statusFor(current.state);
+    },
+    skillUpdate: async () => { counts.update += 1; current.state = 'current'; return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => { counts.remove += 1; current.state = 'absent'; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+  };
+  return { api, counts, current, write };
+}
+
+test('install success with a failed read says completed but unconfirmed, and a later check recovers both panels', async () => {
+  const h = writeThenReadFailure({ readFails: n => n === 1 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.equal(h.counts.install, 1);
+  assert.match(root.querySelector('[data-info="status"]').textContent, /已安装并校验/);
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, true);
+  // Recovery: the check re-reads and only reads.
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：有可用更新|状态：当前版本|已装版本/);
+  assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '');
+  assert.equal(h.counts.install, 1, 'retry must not repeat the install');
+  assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, false);
+  window.close();
+});
+
+test('update success with a failed read says completed but unconfirmed, and a later check recovers without repeating the update', async () => {
+  const h = writeThenReadFailure({ readFails: n => n === 2 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.equal(h.counts.update, 1);
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已更新并校验/);
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：当前版本/);
+  assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '');
+  assert.equal(h.counts.update, 1, 'retry must not repeat the update');
+  window.close();
+});
+
+test('removal success with a failed read says completed but unconfirmed, and a later check recovers to not-installed', async () => {
+  const h = writeThenReadFailure({ readFails: n => n === 2 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.equal(h.counts.remove, 1);
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已移除：SKILL\.md/);
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, true);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：未安装/);
+  assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '');
+  assert.equal(h.counts.remove, 1, 'retry must not repeat the removal');
+  window.close();
+});
+
+test('a read that keeps failing shows an understandable error and never repeats a write', async () => {
+  const h = writeThenReadFailure({ readFails: n => n >= 2 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.equal(h.counts.update, 1);
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /检查失败，请重试/);
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, true);
+  window.close();
+});
+
+test('an operation failure is reported differently from a successful write whose read failed', async () => {
+  const h = writeThenReadFailure({ readFails: n => n === 2 });
+  h.api.skillUpdate = async () => ({ status: 'failed', reason: 'Update failed verification; the installed skill was kept.', verified: false, backup: null });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /未完成更新：Update failed verification/);
+  assert.doesNotMatch(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成/);
+  window.close();
+});
