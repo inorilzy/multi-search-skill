@@ -217,7 +217,7 @@ test('unsupported platform keeps masked previews read-only and issues no write p
   await flush();
   // 格式分类与掩码预览照常展示，但没有任何批准/应用路径。
   assert.equal(root.querySelector('[data-preview="tavily"]').textContent, 'sha256:1a2b3c4d');
-  assert.match(root.querySelector('[data-item="tavily"]').textContent, /可迁移/);
+  assert.match(root.querySelector('[data-item="tavily"]').textContent, /格式符合，当前平台不可执行/);
   assert.equal(root.querySelector('[data-approve]'), null, 'no approval checkboxes without write support');
   assert.equal(root.querySelector('[data-choice]'), null, 'no conflict choices without write support');
   assert.match(root.querySelector('[data-info="capability"]').textContent, /Windows 当前用户 DPAPI/);
@@ -247,6 +247,27 @@ test('supported platform keeps the explicit approve-and-apply flow', async () =>
   root.querySelector('[data-action="apply"]').click();
   await flush();
   assert.equal(calls.length, 1);
+  mounted.dispose();
+  window.close();
+});
+
+test('unsupported platform separates format fit from executability in the summary and rows', async () => {
+  const { window, root } = setup();
+  const api = {
+    migrationPlan: async () => ({ ...plan(), store_supported: false, store_unsupported_reason: 'platform_unsupported' }),
+    migrationApply: async () => { throw new Error('must not be called'); },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  const summary = root.querySelector('[data-info="summary"]').textContent;
+  assert.match(summary, /格式符合迁移要求 2 项/);
+  assert.match(summary, /当前平台不可执行/);
+  assert.doesNotMatch(summary, /可迁移/, 'the summary never claims migration is possible on this platform');
+  assert.match(root.querySelector('[data-item="tavily"]').textContent, /格式符合，当前平台不可执行/);
+  assert.doesNotMatch(root.querySelector('[data-item="tavily"]').textContent, /可迁移/);
+  assert.match(root.querySelector('[data-item="brave"]').textContent, /与凭据库中的 Key 冲突/, 'conflict wording kept');
+  assert.equal(root.querySelector('[data-action="apply"]').disabled, true);
   mounted.dispose();
   window.close();
 });
