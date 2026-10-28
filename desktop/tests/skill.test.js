@@ -295,3 +295,89 @@ test('an install clears a previously previewed removal so its confirm button can
   assert.deepEqual(removed, []);
   window.close();
 });
+
+test('cancelling a removal preview issues no removal request and leaves the state untouched', async () => {
+  const removed = [];
+  const { root, window } = setup({
+    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => { removed.push(true); return { status: 'removed', deleted: [] }; },
+  });
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  // Cancel = user never presses the confirm button; navigating the scope back to the same target is not a removal.
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, false);
+  assert.deepEqual(removed, []);
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：当前版本/);
+  window.close();
+});
+
+test('a successful removal clears the stale install success line and refreshes both panels to not-installed', async () => {
+  let removedNow = false;
+  const removed = [];
+  const api = {
+    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => ({ status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }),
+    skillStatus: async () => removedNow
+      ? { state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false }
+      : { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false },
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => { removed.push(true); removedNow = true; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="status"]').textContent, /已安装并校验/);
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.deepEqual(removed, [true]);
+  assert.equal(root.querySelector('[data-info="status"]').textContent, '');
+  assert.doesNotMatch(root.textContent, /已安装并校验/);
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：未安装/);
+  assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已移除：SKILL\.md/);
+  window.close();
+});
+
+test('a failed removal reports the real reason and does not claim the skill was removed', async () => {
+  const { root, window } = setup({
+    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => ({ status: 'failed', deleted: [], reason: 'Cannot delete SKILL.md: access denied' }),
+  });
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /未移除：Cannot delete SKILL\.md/);
+  assert.doesNotMatch(root.querySelector('[data-info="manage-status"]').textContent, /已移除/);
+  window.close();
+});
+
+test('a removal whose refresh read fails reports completion with unconfirmed state, and a later check recovers', async () => {
+  let reads = 0;
+  const api = {
+    skillStatus: async () => {
+      reads += 1;
+      if (reads === 2) throw new Error('disk busy');
+      return reads === 1
+        ? { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }
+        : { state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false };
+    },
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => ({ status: 'removed', deleted: ['SKILL.md'], reason: 'done' }),
+    skillUpdate: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, true);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：未安装/);
+  assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '');
+  window.close();
+});
