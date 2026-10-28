@@ -261,8 +261,7 @@ test('unsupported platform separates format fit from executability in the summar
   root.querySelector('[data-action="preview"]').click();
   await flush();
   const summary = root.querySelector('[data-info="summary"]').textContent;
-  assert.match(summary, /格式符合迁移要求 2 项/);
-  assert.match(summary, /当前平台不可执行/);
+  assert.equal(summary, '当前平台不可执行迁移：格式符合 2 项；跳过 1 项。');
   assert.doesNotMatch(summary, /可迁移/, 'the summary never claims migration is possible on this platform');
   assert.match(root.querySelector('[data-item="tavily"]').textContent, /格式符合，当前平台不可执行/);
   assert.doesNotMatch(root.querySelector('[data-item="tavily"]').textContent, /可迁移/);
@@ -365,6 +364,86 @@ test('a completed apply leaves no stale approvals and no second implicit submiss
   assert.notEqual(box, null);
   assert.equal(box.checked, false);
   assert.equal(root.querySelector('[data-info="result"]').textContent, '', 'no leftover apply result text');
+  mounted.dispose();
+  window.close();
+});
+
+// Same shape the CLI returns for a legacy file that also holds a multi-key list and an unknown
+// provider. Both must stay unselectable and skipped on every platform, with their reasons kept.
+function planWithSkips() {
+  return {
+    ...plan(),
+    items: [
+      ...plan().items,
+      { provider: 'exa', action: 'unsupported', reason: 'multiple keys or a complex entry; left in the legacy file' },
+      { provider: 'mystery-provider', action: 'unsupported', reason: 'not a single-key search provider; left in the legacy file' },
+    ],
+    skipped: ['jina', 'exa', 'mystery-provider'],
+  };
+}
+
+test('supported platform: multi-key and unknown entries have no checkbox, keep reasons, and never reach apply', async () => {
+  const { window, root } = setup();
+  const calls = [];
+  const api = {
+    migrationPlan: async () => planWithSkips(),
+    migrationApply: async (...args) => { calls.push(args); return { written: [], kept: [], unchanged: [], failed: [], not_done: [], complete: true }; },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  assert.match(root.querySelector('[data-info="summary"]').textContent, /可迁移 2 项；跳过 3 项。/);
+  for (const source of ['exa', 'mystery-provider']) {
+    assert.equal(root.querySelector(`[data-approve="${source}"]`), null, `${source} has no approval checkbox`);
+  }
+  assert.equal(root.querySelectorAll('[data-approve]').length, 2, 'only the two single-key entries are selectable');
+  assert.match(root.querySelector('[data-item="exa"]').textContent, /不支持，保留在旧文件中/);
+  assert.match(root.querySelector('[data-item="exa"]').textContent, /multiple keys or a complex entry/);
+  assert.match(root.querySelector('[data-item="mystery-provider"]').textContent, /不支持，保留在旧文件中/);
+  assert.match(root.querySelector('[data-item="mystery-provider"]').textContent, /not a single-key search provider/);
+  root.querySelector('[data-approve="tavily"]').checked = true;
+  root.querySelector('[data-action="apply"]').click();
+  await flush();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0][1], ['tavily'], 'apply carries only the explicitly approved single-key source');
+  mounted.dispose();
+  window.close();
+});
+
+test('unsupported platform: multi-key and unknown entries stay skipped with reasons and no write path', async () => {
+  const { window, root } = setup();
+  const calls = [];
+  const api = {
+    migrationPlan: async () => ({ ...planWithSkips(), store_supported: false, store_unsupported_reason: 'platform_unsupported' }),
+    migrationApply: async (...args) => { calls.push(args); return { written: [], kept: [], unchanged: [], failed: [], not_done: [], complete: true }; },
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  assert.equal(root.querySelectorAll('[data-approve]').length, 0, 'no checkboxes on the unsupported platform');
+  assert.equal(root.querySelectorAll('[data-choice]').length, 0, 'no conflict choices on the unsupported platform');
+  assert.match(root.querySelector('[data-item="exa"]').textContent, /multiple keys or a complex entry/);
+  assert.match(root.querySelector('[data-item="mystery-provider"]').textContent, /not a single-key search provider/);
+  assert.equal(root.querySelector('[data-action="apply"]').disabled, true);
+  root.querySelector('[data-action="apply"]').click();
+  await flush();
+  assert.equal(calls.length, 0, 'no migration request reaches the backend');
+  mounted.dispose();
+  window.close();
+});
+
+test('unsupported platform summary states the platform fact first, with exact wording', async () => {
+  const { window, root } = setup();
+  const api = {
+    migrationPlan: async () => ({ ...plan(), store_supported: false, store_unsupported_reason: 'platform_unsupported' }),
+  };
+  const mounted = await mountMigration(root, api);
+  root.querySelector('[data-action="preview"]').click();
+  await flush();
+  assert.equal(
+    root.querySelector('[data-info="summary"]').textContent,
+    '当前平台不可执行迁移：格式符合 2 项；跳过 1 项。',
+  );
   mounted.dispose();
   window.close();
 });

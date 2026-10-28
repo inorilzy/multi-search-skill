@@ -77,7 +77,7 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
     // reports only how many entries match the format, never that they can be migrated.
     const summary = supported
       ? `可迁移 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项。`
-      : `格式符合迁移要求 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项（当前平台不可执行）。`;
+      : `当前平台不可执行迁移：格式符合 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项。`;
     const limitation = supported ? '' : `<p class="note" data-info="capability">预览仅展示旧文件格式分类。加密迁移写入仅支持 Windows 当前用户 DPAPI；当前平台无法执行迁移，旧文件不会被改动。</p>`;
     root.querySelector('[data-plan]').innerHTML = `<p data-info="summary">${esc(summary)}</p>${limitation}
       <ul data-items>${rows}</ul>
