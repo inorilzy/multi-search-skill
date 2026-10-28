@@ -61,6 +61,9 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
   const manageButton = name => root.querySelector(`[data-action="${name}"]`);
   const confirmOverwrite = root.querySelector('[data-field="confirm-overwrite"]');
   let managedScope = null, managedProject = null, removeReady = false, generation = 0, disposed = false, busy = false;
+  // Set after a verified write whose status read has not yet succeeded. Kept across failed checks so the
+  // write is never presented as failed, and cleared only when a read succeeds.
+  let unconfirmedWrite = '';
   const setBusy = value => {
     busy = value;
     manageButton('check').disabled = value;
@@ -87,12 +90,14 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
   // Reads the real target and rebuilds the manage panel. Obsolete plans are dropped first.
   // `writeDone` is set when a write just returned success; a failed read then must not look like a failed write.
   const refreshManage = async (writeDone = '') => {
+    if (writeDone) unconfirmedWrite = writeDone;
     invalidateManage();
     setManageError('');
     const request = generation, scope = manageScope(), targetProject = manageProject();
     try {
       const status = await api.skillStatus(scope, targetProject);
       if (disposed || request !== generation || scope !== manageScope() || targetProject !== manageProject()) return;
+      unconfirmedWrite = '';
       managedScope = scope; managedProject = targetProject; removeReady = false;
       info('installed').textContent = `状态：${stateLabels[status.state] || `未知状态（${status.state}）`}；已装版本：${status.installed_version ?? '无'}；发布版本：${status.release_version}。${status.reason}`;
       info('managed-target').textContent = `目标目录：${status.target ?? '未确认'}`;
@@ -106,7 +111,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     } catch (error) {
       if (disposed || request !== generation) return;
       const shown = showError(info('manage-error'), error, '检查失败，请重试。');
-      if (writeDone) info('manage-error').textContent = `${writeDone}，当前状态未确认：${shown.message}。请点击“检查已安装版本”重试。`;
+      if (unconfirmedWrite) info('manage-error').textContent = `${unconfirmedWrite}，当前状态未确认：${shown.message}。请点击“检查已安装版本”重试。`;
     }
   };
   manageButton('check').addEventListener('click', async () => {
