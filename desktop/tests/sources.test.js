@@ -244,6 +244,117 @@ test('row testing sends one request and saving invalidates row success', async (
 
 function flush() { return new Promise(resolve => setTimeout(resolve, 0)); }
 
+test('row test button reports its source, blocks repeat submits while running and recovers', async () => {
+  const { window, root } = setup();
+  let calls = 0;
+  let resolveTest;
+  const api = {
+    settingsView: async () => settings(),
+    credentialStatus: async () => absent,
+    credentialTest: () => new Promise(resolve => { calls += 1; resolveTest = resolve; }),
+  };
+  await mountSources(root, api);
+  const row = root.querySelector('[data-source-row="hackernews"]');
+  const button = row.querySelector('[data-row-test]');
+  assert.equal(button.getAttribute('aria-label'), '测试 Hacker News', 'the row test button names its source');
+  assert.equal(button.disabled, false, 'idle button is enabled');
+
+  button.click();
+  await flush(); await flush();
+  assert.equal(row.querySelector('[data-row-result]').dataset.kind, 'running', 'row state enters running');
+  assert.equal(button.disabled, true, 'running keeps the trigger disabled');
+  button.click();
+  await flush();
+  assert.equal(calls, 1, 'a disabled trigger cannot submit a second test');
+
+  resolveTest({ result: 'error', message: '缺少 Key：请先保存。' });
+  await flush(); await flush();
+  assert.equal(row.querySelector('[data-row-result]').dataset.kind, 'error');
+  assert.match(row.querySelector('[data-row-result] strong').textContent, /测试失败/);
+  assert.match(row.querySelector('[data-row-result]').getAttribute('title'), /缺少 Key/, 'the full error text stays readable via the title');
+  assert.doesNotMatch(row.querySelector('[data-row-result]').textContent, /测试成功/, 'a failed test never reports success');
+  assert.equal(button.disabled, false, 'a finished test restores the trigger');
+  window.close();
+});
+
+test('keyless detail test is keyboard reachable, sends one request and restores the button', async () => {
+  const { window, root } = setup();
+  let calls = 0;
+  let resolveTest;
+  await mountSources(root, {
+    settingsView: async () => settings(),
+    credentialStatus: async () => absent,
+    credentialTest: () => new Promise(resolve => { calls += 1; resolveTest = resolve; }),
+  });
+  await pick(root, 'hackernews');
+  const detail = detailOf(root);
+  const button = detail.querySelector('[data-action="test"]');
+  button.focus();
+  assert.equal(window.document.activeElement, button, 'the detail test control takes focus');
+  assert.equal(button.disabled, false);
+
+  button.click();
+  await flush();
+  assert.equal(button.disabled, true, 'running disables the detail control');
+  assert.equal(detail.querySelector('[data-status="test"]').textContent, '正在测试');
+  assert.equal(detail.querySelector('[data-test-result], .test-result').dataset.kind, 'running');
+  button.click();
+  await flush();
+  assert.equal(calls, 1, 'no duplicate request while running');
+
+  resolveTest({ result: 'success', message: 'synthetic' });
+  await flush(); await flush();
+  assert.equal(button.disabled, false, 'completion re-enables the control');
+  assert.match(detail.querySelector('[data-status="test"]').textContent, /测试成功/);
+  window.close();
+});
+
+test('expand and collapse are real buttons with accessible names that flip with state', async () => {
+  const { window, root } = setup();
+  await mountSources(root, {
+    settingsView: async () => settings(),
+    credentialStatus: async () => absent,
+  });
+  const row = root.querySelector('[data-source-row="brave"]');
+  const expand = row.querySelector('[data-expand]');
+  const pick = row.querySelector('[data-pick]');
+  for (const el of [expand, pick]) assert.equal(el.tagName, 'BUTTON', 'expand controls stay keyboard operable');
+  assert.equal(expand.getAttribute('aria-label'), '展开 Brave 搜索');
+  assert.equal(expand.getAttribute('aria-expanded'), 'false');
+  assert.equal(expand.getAttribute('aria-controls'), 'detail-brave');
+
+  expand.click();
+  await flush();
+  assert.equal(row.dataset.expanded, 'true');
+  assert.equal(expand.getAttribute('aria-expanded'), 'true');
+  assert.equal(expand.getAttribute('aria-label'), '收起 Brave 搜索');
+  assert.equal(row.querySelector('[data-source-detail]').hidden, false);
+
+  expand.click();
+  await flush();
+  assert.equal(row.dataset.expanded, 'false');
+  assert.equal(expand.getAttribute('aria-expanded'), 'false');
+  assert.equal(expand.getAttribute('aria-label'), '展开 Brave 搜索');
+  assert.equal(row.querySelector('[data-source-detail]').hidden, true);
+  window.close();
+});
+
+test('every row test and expand control exposes its source in the accessible name', async () => {
+  const { window, root } = setup();
+  const mounted = await mountSources(root, {
+    settingsView: async () => settings(),
+    credentialStatus: async () => absent,
+  });
+  const labels = { baidu: 'Baidu AI 搜索', brave: 'Brave 搜索', parallel: 'Parallel', tavily: 'Tavily', exa: 'Exa', firecrawl: 'Firecrawl', serpapi: 'SerpAPI', github_repos: 'GitHub 仓库', hackernews: 'Hacker News', stackoverflow: 'Stack Overflow', sov2ex: 'V2EX', twitter: 'Twitter / X' };
+  for (const [source, label] of Object.entries(labels)) {
+    const row = root.querySelector(`[data-source-row="${source}"]`);
+    assert.equal(row.querySelector('[data-row-test]').getAttribute('aria-label'), `测试 ${label}`, source);
+    assert.match(row.querySelector('[data-expand]').getAttribute('aria-label'), new RegExp(`^(展开|收起) ${label.replace(/[/.]/g, '\\$&')}`), source);
+  }
+  mounted.dispose();
+  window.close();
+});
+
 test('disposal or navigation abort releases the Ctrl K shortcut', async () => {
   const { window, root } = setup();
   const api = { settingsView: async () => settings(), credentialStatus: async () => absent };
