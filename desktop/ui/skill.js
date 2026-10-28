@@ -22,28 +22,37 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
   const project = root.querySelector('[data-field="project"]');
   const install = root.querySelector('[data-action="install"]');
   let plannedScope = null, plannedProject = null, ready = false;
+  // Each preview gets a request id. A scope or project change bumps it so a slower earlier preview is discarded.
+  let previewGeneration = 0;
   const selectedScope = () => root.querySelector('input[name="scope"]:checked').value;
   const projectValue = () => (selectedScope() === 'project' ? project.value.trim() || null : null);
+  const dropPreview = () => { previewGeneration++; ready = false; install.disabled = true; plannedScope = null; plannedProject = null; };
   root.querySelectorAll('input[name="scope"]').forEach(input => input.addEventListener('change', () => {
     project.disabled = selectedScope() !== 'project';
-    ready = false; install.disabled = true;
+    dropPreview();
     root.querySelector('[data-info="target"]').textContent = ''; root.querySelector('[data-info="status"]').textContent = '';
   }));
+  project.addEventListener('input', () => { dropPreview(); root.querySelector('[data-info="target"]').textContent = ''; root.querySelector('[data-info="status"]').textContent = ''; });
   root.querySelector('[data-action="preview"]').addEventListener('click', async () => {
     root.querySelector('[data-info="error"]').textContent = '';
+    const request = ++previewGeneration;
+    const scope = selectedScope(), targetProject = projectValue();
     try {
-      const plan = await api.skillPlan(selectedScope(), projectValue());
-      plannedScope = plan.scope; plannedProject = projectValue(); ready = plan.can_install;
+      const plan = await api.skillPlan(scope, targetProject);
+      if (request !== previewGeneration || disposed) return;
+      plannedScope = plan.scope; plannedProject = targetProject; ready = plan.can_install;
       root.querySelector('[data-info="target"]').textContent = plan.target ? `目标目录：${plan.target}\n文件：${plan.files.join('、')}` : '';
       root.querySelector('[data-info="status"]').textContent = `${statusText(plan.status)}：${plan.reason}`;
       install.disabled = !ready;
-    } catch (error) { ready = false; install.disabled = true; showError(root.querySelector('[data-info="error"]'), error, '预览失败，请重试。'); }
+    } catch (error) { if (request === previewGeneration && !disposed) { ready = false; install.disabled = true; showError(root.querySelector('[data-info="error"]'), error, '预览失败，请重试。'); } }
   });
   install.addEventListener('click', async () => {
+    if (busy || disposed) return;
     if (!ready || plannedScope !== selectedScope() || plannedProject !== projectValue()) { root.querySelector('[data-info="error"]').textContent = '请先预览目标目录。'; return; }
     install.disabled = true;
     // Blocks manage actions and drops any manage plan made before this write.
     setBusy(true);
+    ready = false;
     let writeNote = '';
     try {
       const result = await api.skillInstall(plannedScope, plannedProject);
