@@ -27,12 +27,14 @@ export function scrapeCredentialProviders() {
 
 const DEFAULT_SOURCE = 'tavily';
 const storeLabels = { present: '已保存', absent: '未保存', unavailable: '数据库不可用', unreadable: '已保存条目无法读取' };
-// Backend-reported capability only: a browser platform string or a failed save never decides this.
+// Backend-reported capability only: a browser platform string or a failed save
+// never decides this. The wire reason is `platform_unsupported`
+// (credential::PLATFORM_UNSUPPORTED_REASON); any unrecognized reason falls back
+// to the same honest text rather than a second near-identical copy.
 const CAPABILITY_TEXT = {
   platform_unsupported: '加密凭据存储仅支持 Windows 当前用户 DPAPI。当前平台不支持该操作：可以查看生效来源并运行允许的连接测试，但无法创建、修改或显示已保存的 Key。',
-  unknown: '正在确认当前平台是否支持加密凭据存储；确认前无法保存或删除 Key。',
 };
-const capabilityText = reason => CAPABILITY_TEXT[reason] || '加密凭据存储仅支持 Windows 当前用户 DPAPI；当前平台不支持其写操作。可以查看生效来源并运行允许的连接测试，但无法创建、修改或显示已保存的 Key。';
+const capabilityText = reason => CAPABILITY_TEXT[reason] || CAPABILITY_TEXT.platform_unsupported;
 // Shown while a capability query is in flight or after it failed: writes stay
 // off and the user gets a retry entry instead of a guessed platform answer.
 const CAPABILITY_PENDING = '正在确认当前平台是否支持加密凭据存储…';
@@ -81,7 +83,7 @@ export async function mountCredentials(root, api, options = {}) {
   root = pageRoot(root);
   const { number = '04', ...pageOptions } = options;
   const entry = sourceEntry(pageOptions.source);
-  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / CREDENTIALS</p><h1 tabindex="-1">凭据</h1><p>Key 默认掩码显示，以当前系统用户的 DPAPI 加密保存在本机 SQLite。旧来源不会自动生效。</p></section>`;
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / CREDENTIALS</p><h1 tabindex="-1">凭据</h1><p>Key 默认掩码显示，以当前系统用户的 DPAPI 加密保存在本机 SQLite。生效来源按 Core 的优先级判定：环境变量 > 凭据库 > 旧 Key 文件。</p></section>`;
   root.querySelector('h1').textContent = `${entry.label} 凭据`;
   const holder = root.ownerDocument.createElement('div'); root.append(holder);
   return mountCredentialBody(holder, api, pageOptions);
@@ -101,7 +103,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <button type="submit" class="primary" data-action="save">提交新增 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
       <span class="credential-note" data-info="application">申请链接待配置</span></div>
     </form>
-    <details class="config-details"><summary>说明</summary><p class="credential-note">Key 仅保存在本机 SQLite，DPAPI 保护范围为当前 Windows 用户/设备。保存不会发起搜索；环境变量与旧文件不会自动生效，也不作为配置来源。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
+    <details class="config-details"><summary>说明</summary><p class="credential-note">Key 仅保存在本机 SQLite，DPAPI 保护范围为当前 Windows 用户/设备。保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > 凭据库 > 旧 Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
     <p data-capability class="credential-note" role="note" hidden></p>
     <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
     <p data-info="error" class="error-message"></p>
@@ -134,9 +136,12 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     q('[data-test-result]').dataset.kind = kind; onTest?.({ kind, title, message });
   }
   function invalidateTest() { generation += 1; reportTest('idle', '尚未测试'); }
-  // Every encrypted mutation requires backend-confirmed support: writes stay off
-  // while capability is unknown and stay off on unsupported platforms.
-  const writesReady = () => readHealthy && capability.supported === true;
+  // Capability-confirmed encrypted operation check, shared by reveals and
+  // mutations so the unsupported judgement lives in one place.
+  const capabilityReady = () => capability.supported === true;
+  // Every encrypted mutation additionally requires a successful row read so
+  // the remove guard has a live snapshot to check.
+  const writesReady = () => readHealthy && capabilityReady();
   function setBusy(value) {
     busy = value;
     root.setAttribute('aria-busy', String(value)); root.classList.toggle('is-busy', value);
@@ -145,7 +150,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     for (const input of root.querySelectorAll('[data-saved-list] input')) input.disabled = value;
     for (const button of root.querySelectorAll('[data-action="copy"]')) button.disabled = value || !revealed.has(Number(button.dataset.rowIndex));
     // Plaintext reveal is an encrypted read; unsupported platforms cannot run it.
-    for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || capability.supported !== true;
+    for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || !capabilityReady();
     q('[data-action="application"]').disabled = value || !current.key_application_available;
     q('[data-action="test"]').disabled = value || !searchTest;
     q('[data-action="test"]').hidden = !searchTest;
@@ -284,7 +289,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     if (!button || busy || disposed) return;
     // Guard the action itself too: a synthesized click on an enabled row must
     // still not issue an encrypted read on an unsupported platform.
-    if (button.dataset.action === 'reveal' && capability.supported !== true) return;
+    if (button.dataset.action === 'reveal' && !capabilityReady()) return;
     const index = Number(button.dataset.rowIndex);
     const row = button.closest('[data-saved-index]');
     const input = row.querySelector('input');
@@ -296,7 +301,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     if (revealed.has(index)) {
       revealed.delete(index); input.value = savedRows[index]; input.type = 'password'; button.textContent = '显示'; setBusy(false); return;
     }
-    if (capability.supported !== true) return;
+    if (!capabilityReady()) return;
     setBusy(true);
     try {
       const value = await api.credentialReveal(source);
