@@ -117,7 +117,7 @@ const chainButton = (root, name, label) => {
 
 function api(overrides = {}) {
   return {
-    credentialStatus: async source => ({ source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: true }),
+    credentialStatus: async source => ({ source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: true, store_supported: true }),
     settingsView: async () => settingsView(),
     scrapeSettingsSave: async input => settingsView({ scrape_backends: input }),
     scrapeMemoryView: async () => memoryView(),

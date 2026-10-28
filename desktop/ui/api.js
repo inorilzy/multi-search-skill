@@ -36,6 +36,7 @@ const ERROR_MESSAGES = {
   credential_remove_failed: '凭据删除失败，已保存的值没有改变。',
   credential_delete_failed: '凭据删除失败，请重试。',
   credential_test_failed: '凭据测试启动失败，请检查 CLI 后重试。',
+  credential_platform_unsupported: '加密凭据存储仅支持 Windows 当前用户 DPAPI，当前平台无法执行该操作；已保存内容未改动。',
   credential_application_failed: '无法打开系统浏览器，请手动访问服务商页面。',
   cookie_status_failed: 'Cookie 托管状态读取失败，请重试。',
   cookie_import_failed: 'Cookie 导入失败，原文件与已有的托管 Cookie 都没有改动。',

@@ -79,7 +79,15 @@ pub fn backend(code: &str) -> CommandError {
 /// `{ code, message }` JSON contract. The frontend shows `message` because the code is generic.
 #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
 pub fn finish<T>(result: Result<T, String>) -> Result<T, String> {
-    result.map_err(|message| CommandError::new("operation_failed", message).into())
+    result.map_err(|message| {
+        // Capability-guard rejections carry a stable code so the frontend can
+        // map them to a clear explanation instead of a generic save failure.
+        if message.starts_with(crate::credential::UNSUPPORTED_WRITE_PREFIX) {
+            CommandError::new("credential_platform_unsupported", message).into()
+        } else {
+            CommandError::new("operation_failed", message).into()
+        }
+    })
 }
 
 #[cfg(test)]
@@ -128,5 +136,23 @@ mod tests {
         let (code, message) = payload(text);
         assert_eq!(code, "operation_failed");
         assert_eq!(message, "现有配置文件不是有效的 JSON 对象");
+    }
+
+    #[test]
+    fn capability_rejections_get_the_stable_unsupported_code() {
+        let text = finish::<()>(Err(format!(
+            "{}{}",
+            crate::credential::UNSUPPORTED_WRITE_PREFIX,
+            "当前用户 DPAPI；没有明文回退。"
+        )))
+        .unwrap_err();
+        let (code, message) = payload(text);
+        assert_eq!(code, "credential_platform_unsupported");
+        assert!(message.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+        // Other credential errors keep the generic contract.
+        let (code, _) = payload(
+            finish::<()>(Err("凭据已变化，请重新显示。".into())).unwrap_err(),
+        );
+        assert_eq!(code, "operation_failed");
     }
 }

@@ -27,6 +27,12 @@ export function scrapeCredentialProviders() {
 
 const DEFAULT_SOURCE = 'tavily';
 const storeLabels = { present: '已保存', absent: '未保存', unavailable: '数据库不可用', unreadable: '已保存条目无法读取' };
+// Backend-reported capability only: a browser platform string or a failed save never decides this.
+const CAPABILITY_TEXT = {
+  platform_unsupported: '加密凭据存储仅支持 Windows 当前用户 DPAPI。当前平台不支持该操作：可以查看生效来源并运行允许的连接测试，但无法创建、修改或显示已保存的 Key。',
+  unknown: '正在确认当前平台是否支持加密凭据存储；确认前无法保存或删除 Key。',
+};
+const capabilityText = reason => CAPABILITY_TEXT[reason] || '加密凭据存储仅支持 Windows 当前用户 DPAPI；当前平台不支持其写操作。可以查看生效来源并运行允许的连接测试，但无法创建、修改或显示已保存的 Key。';
 
 // The effective source after the SQLite/DPAPI merge. Unknown future values stay labelled.
 function sourceText(overview) {
@@ -92,6 +98,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <span class="credential-note" data-info="application">申请链接待配置</span></div>
     </form>
     <details class="config-details"><summary>说明</summary><p class="credential-note">Key 仅保存在本机 SQLite，DPAPI 保护范围为当前 Windows 用户/设备。保存不会发起搜索；环境变量与旧文件不会自动生效，也不作为配置来源。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
+    <p data-capability class="credential-note" role="note" hidden></p>
     <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
     <p data-info="error" class="error-message"></p>
     <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div></div>
@@ -102,6 +109,9 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   const text = (selector, value) => { q(selector).textContent = value; };
   let current = { store: { state: 'absent', error: '' }, effective_source: 'none' };
   let generation = 0, disposed = false, busy = false;
+  // Storage capability is unknown until credentialStatus reports it: all writes stay
+  // disabled rather than presenting an uncertain state as permission to save.
+  let capability = { supported: null, reason: '' };
   /** @type {string[]} rows last confirmed by credentialRead */
   let savedRows = [];
   const revealed = new Map();
@@ -116,19 +126,31 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     q('[data-test-result]').dataset.kind = kind; onTest?.({ kind, title, message });
   }
   function invalidateTest() { generation += 1; reportTest('idle', '尚未测试'); }
+  // Every encrypted mutation requires backend-confirmed support: writes stay off
+  // while capability is unknown and stay off on unsupported platforms.
+  const writesReady = () => readHealthy && capability.supported === true;
   function setBusy(value) {
     busy = value;
     root.setAttribute('aria-busy', String(value)); root.classList.toggle('is-busy', value);
     for (const button of root.querySelectorAll('button')) button.disabled = value;
-    for (const input of root.querySelectorAll('[data-draft-list] input')) input.disabled = value || !readHealthy;
+    for (const input of root.querySelectorAll('[data-draft-list] input')) input.disabled = value || !writesReady();
     for (const input of root.querySelectorAll('[data-saved-list] input')) input.disabled = value;
     for (const button of root.querySelectorAll('[data-action="copy"]')) button.disabled = value || !revealed.has(Number(button.dataset.rowIndex));
+    // Plaintext reveal is an encrypted read; unsupported platforms cannot run it.
+    for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || capability.supported !== true;
     q('[data-action="application"]').disabled = value || !current.key_application_available;
     q('[data-action="test"]').disabled = value || !searchTest;
     q('[data-action="test"]').hidden = !searchTest;
     // Saved-row delete and draft add/submit are mutations; keep them disabled
-    // until a successful read anchors the remove guard.
-    for (const button of root.querySelectorAll('[data-action="remove"], [data-action="remove-draft"], [data-action="add"], [data-action="save"]')) button.disabled = value || !readHealthy;
+    // until a successful read anchors the remove guard AND the backend reports
+    // a supported platform.
+    for (const button of root.querySelectorAll('[data-action="remove"], [data-action="remove-draft"], [data-action="add"], [data-action="save"]')) button.disabled = value || !writesReady();
+  }
+  function renderCapability() {
+    const banner = q('[data-capability]');
+    if (capability.supported === true) { banner.hidden = true; banner.textContent = ''; return; }
+    banner.hidden = false;
+    banner.textContent = capabilityText(capability.reason);
   }
   function renderSaved() {
     const list = q('[data-saved-list]');
@@ -169,6 +191,10 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     if (disposed) return;
     if (provenance(current) !== provenance(view)) invalidateTest();
     current = view; onStatus?.(view);
+    // The backend is authoritative: absent/false means unsupported, not "Key 未配置".
+    capability = { supported: view.store_supported === true, reason: view.store_supported === true ? '' : (view.store_unsupported_reason || 'platform_unsupported') };
+    renderCapability();
+    setBusy(busy);
     text('[data-status="store"]', storeLabels[view.store.state] || view.store.state);
     text('[data-status="source"]', sourceText(view));
     text('[data-info="application"]', view.key_application_available ? '使用系统浏览器打开固定申请链接' : '申请链接待配置');
@@ -192,6 +218,10 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     } catch (error) {
       if (!disposed) {
         readHealthy = false;
+        // Capability is unknown again: writes stay disabled until a status
+        // succeeds, so a failed lookup is never an empty, writable store.
+        capability = { supported: null, reason: '' };
+        renderCapability();
         // Keep the last saved rows visible so the user can still see state; all
         // writes stay disabled until a refresh succeeds again.
         renderSaved();
@@ -209,7 +239,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   });
   q('[data-draft-list]').addEventListener('click', event => {
     const button = event.target.closest('[data-action="remove-draft"]');
-    if (!button || busy || !readHealthy || disposed) return;
+    if (!button || busy || !writesReady() || disposed) return;
     const index = Number(button.closest('[data-draft-index]').dataset.draftIndex);
     if (drafts.length === 1) drafts[0] = ''; else drafts.splice(index, 1);
     renderDrafts();
@@ -217,6 +247,9 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   q('[data-saved-list]').addEventListener('click', async event => {
     const button = event.target.closest('[data-action="reveal"], [data-action="copy"]');
     if (!button || busy || disposed) return;
+    // Guard the action itself too: a synthesized click on an enabled row must
+    // still not issue an encrypted read on an unsupported platform.
+    if (button.dataset.action === 'reveal' && capability.supported !== true) return;
     const index = Number(button.dataset.rowIndex);
     const row = button.closest('[data-saved-index]');
     const input = row.querySelector('input');
@@ -228,6 +261,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     if (revealed.has(index)) {
       revealed.delete(index); input.value = savedRows[index]; input.type = 'password'; button.textContent = '显示'; setBusy(false); return;
     }
+    if (capability.supported !== true) return;
     setBusy(true);
     try {
       const value = await api.credentialReveal(source);
@@ -241,7 +275,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   });
   q('[data-save-form]').addEventListener('submit', async event => {
     event.preventDefault();
-    if (busy || !readHealthy || disposed) return;
+    if (busy || !writesReady() || disposed) return;
     // Collect from the live inputs, not the drafts mirror: programmatic value
     // assignment (and any path that skipped the input event) still submits.
     const keys = [...q('[data-draft-list]').querySelectorAll('input')].map(input => input.value.trim()).filter(value => value !== '');
@@ -269,7 +303,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     finally { if (!disposed) setBusy(false); }
   });
   q('[data-action="add"]').addEventListener('click', () => {
-    if (busy || !readHealthy || disposed) return;
+    if (busy || !writesReady() || disposed) return;
     drafts.push(''); renderDrafts();
     const inputs = q('[data-draft-list]').querySelectorAll('input');
     inputs[inputs.length - 1]?.focus();
@@ -277,7 +311,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   q('[data-saved-list]').addEventListener('click', event => {
     const button = event.target.closest('[data-action="remove"]');
     if (!button) return;
-    if (busy || !readHealthy || disposed) return;
+    if (busy || !writesReady() || disposed) return;
     const index = Number(button.dataset.removeIndex);
     const row = button.closest('[data-saved-index]');
     const slot = row.querySelector('[data-confirm-slot]');
@@ -290,7 +324,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     const release = confirmInline(panel, () => { panel.remove(); release(); }, button);
     panel.querySelector('[data-action="cancel-remove"]').addEventListener('click', () => { panel.remove(); release(); });
     panel.querySelector('[data-action="confirm-remove"]').addEventListener('click', async () => {
-      if (busy || !readHealthy || disposed) return;
+      if (busy || !writesReady() || disposed) return;
       invalidateTest(); setBusy(true);
       try {
         render(await api.credentialRemove(source, index, readSnapshot));

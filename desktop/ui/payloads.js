@@ -81,7 +81,7 @@ export const schemas = {
   CredentialOverview: schema({
     source: 's', store: 'CredentialStatus', effective_source: 's',
     env_overrides_store: 'bo', env_var: 'so', file_key_count: 'no',
-    key_application_available: 'b',
+    key_application_available: 'b', store_supported: 'b', store_unsupported_reason: 'so',
   }),
   CredentialValue: schema({ value: 's', snapshot: 's' }),
   TestOutcome: schema({ result: 's', message: 's' }),

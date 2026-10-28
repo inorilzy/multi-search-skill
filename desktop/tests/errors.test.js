@@ -147,7 +147,7 @@ test('skill page reports check/update IPC failures instead of swallowing them', 
 test('credentials page reports read/append/remove IPC failures and keeps outcomes out of the test area', async () => {
   const { window, root } = setup();
   let statusCalls = 0;
-  const overview = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false };
+  const overview = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false, store_supported: true };
   let appendFails = true;
   await mountCredentials(root, {
     credentialStatus: async () => { statusCalls += 1; return overview; },
@@ -205,7 +205,7 @@ test('sources settings failure shows a retry button that reloads the overview', 
   const view = { route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null };
   const mounted = await mountSources(root, {
     settingsView: async () => { if (fail) throw coded('settings_view_failed', 'Settings view worker failed'); return view; },
-    credentialStatus: async () => ({ source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false }),
+    credentialStatus: async () => ({ source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false, store_supported: true }),
   });
   const error = root.querySelector('[data-list-error]');
   const retry = root.querySelector('[data-action="retry-settings"]');
@@ -228,6 +228,7 @@ test('migration IPC failures show the backend reason and hostile provider names 
   const hostile = 'evil"]';
   const plan = {
     plan_token: 'token',
+    store_supported: true,
     items: [
       { provider: hostile, action: 'conflict', preview: 'x…1' },
       { provider: 'tavily', action: 'migrate', preview: 'x…2' },
