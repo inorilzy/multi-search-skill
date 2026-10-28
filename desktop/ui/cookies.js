@@ -44,7 +44,7 @@ export async function mountCookies(root, api, { number = '07' } = {}) {
     status = view;
     const mode = MODE_TEXT[view.mode] || String(view.mode);
     q('[data-cookie-status]').textContent = `${mode} · ${view.present ? '已有托管 Cookie' : '没有托管 Cookie'}`
-      + (view.supported ? '' : '。此平台不支持加密导入；Linux 仅可显式使用文件兼容模式。');
+      + (view.supported ? '' : '。当前平台不支持加密托管：加密托管仅支持 Windows 当前用户 DPAPI；可显式使用文件兼容模式（file）。');
   }
 
   async function refresh() {
