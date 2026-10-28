@@ -31,6 +31,9 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
   let plan = null;
   let busy = false;
   let disposed = false;
+  // Each preview owns a generation id. A late or out-of-order response only renders while it is
+  // still the latest generation; anything older can never reactivate its plan or approvals.
+  let generation = 0;
   const previewButton = root.querySelector('[data-action="preview"]');
   // One request at a time: while a preview or apply runs, both buttons are disabled and the
   // running one shows a loading label, so a double click cannot send a second migration.
@@ -99,14 +102,27 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
 
   async function preview() {
     if (busy || disposed) return;
+    // Starting a new preview immediately invalidates the previous plan and its approvals:
+    // nothing from an earlier preview can be submitted while the query is in flight.
+    generation += 1;
+    const mine = generation;
+    plan = null;
+    root.querySelector('[data-plan]').replaceChildren();
     text('[data-info="error"]', '');
     setBusy(true, 'preview');
     try {
       const result = await api.migrationPlan();
-      if (!disposed) renderPlan(result);
+      if (disposed || mine !== generation) return;
+      renderPlan(result);
     } catch (error) {
-      if (!disposed) showError(root.querySelector('[data-info="error"]'), error, '无法预览旧文件，请检查 CLI 或文件。');
-    } finally { if (!disposed) setBusy(false); }
+      if (disposed || mine !== generation) return;
+      // A failed preview keeps nothing committable and renders no success summary. The error
+      // text comes from the backend code, so an unreadable or invalid file reads differently
+      // from a capability or platform failure, and the preview button stays available.
+      showError(root.querySelector('[data-info="error"]'), error, '无法预览旧文件，请检查 CLI 或文件。');
+    } finally {
+      if (!disposed && mine === generation) setBusy(false);
+    }
   }
 
   async function apply() {
