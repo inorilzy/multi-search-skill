@@ -381,3 +381,98 @@ test('a removal whose refresh read fails reports completion with unconfirmed sta
   assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '');
   window.close();
 });
+
+test('a successful update re-reads the target so the new version and available actions replace the old ones', async () => {
+  let updated = false;
+  const updates = [];
+  const api = {
+    skillStatus: async () => updated
+      ? { state: 'current', installed_version: '2', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }
+      : { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true },
+    skillUpdate: async (scope, project, confirm) => { updates.push(confirm); updated = true; return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /已装版本：1；发布版本：2/);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, false);
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.deepEqual(updates, [false]);
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /已装版本：2；发布版本：2/);
+  assert.doesNotMatch(root.querySelector('[data-info="installed"]').textContent, /已装版本：1/);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, false);
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已更新并校验/);
+  window.close();
+});
+
+test('updating a modified skill does not carry the overwrite consent into the next state', async () => {
+  let state = 'modified';
+  const confirms = [];
+  const api = {
+    skillStatus: async () => state === 'modified'
+      ? { state: 'modified', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }
+      : { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false },
+    skillUpdate: async (scope, project, confirm) => { confirms.push(confirm); state = 'current'; return { status: 'updated', verified: true, reason: 'verified', backup: 'C:/b' }; },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-field="confirm-overwrite"]').click();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.deepEqual(confirms, [true]);
+  assert.equal(root.querySelector('[data-field="confirm-overwrite"]').checked, false);
+  assert.equal(root.querySelector('[data-info="modified"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  window.close();
+});
+
+test('a failed update shows the real failure and the re-read state still offers the update', async () => {
+  const api = {
+    skillStatus: async () => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async () => ({ status: 'failed', reason: 'Update failed verification; the installed skill was kept.', verified: false, backup: null }),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /未完成更新：Update failed verification/);
+  assert.doesNotMatch(root.textContent, /已更新并校验/);
+  assert.doesNotMatch(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成/);
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /已装版本：1；发布版本：2/);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, false);
+  window.close();
+});
+
+test('an update reported as unverified does not claim completion even if the re-read fails', async () => {
+  let reads = 0;
+  const api = {
+    skillStatus: async () => { reads += 1; if (reads === 2) throw new Error('disk busy'); return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
+    skillUpdate: async () => ({ status: 'updated', verified: false, reason: 'unverified', backup: null }),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.doesNotMatch(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成/);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  window.close();
+});
+
+test('a read failure after a successful update disables stale update actions and does not show the old version', async () => {
+  let reads = 0;
+  const api = {
+    skillStatus: async () => { reads += 1; if (reads === 2) throw new Error('disk busy'); return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
+    skillUpdate: async () => ({ status: 'updated', verified: true, reason: 'verified', backup: null }),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  };
+  const { root, window } = setup(api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, true);
+  window.close();
+});

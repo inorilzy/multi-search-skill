@@ -124,7 +124,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       info('manage-status').textContent = result.status === 'updated' && result.verified === true
         ? `已更新并校验：${result.reason}${result.backup ? `；本地修改已备份到 ${result.backup}` : ''}`
         : `未完成更新：${result.reason}${result.backup ? `；备份位置 ${result.backup}` : ''}`;
-      if (result.status === 'updated') writeDone = '操作已完成';
+      if (result.status === 'updated' && result.verified === true) writeDone = '操作已完成';
     } catch (error) { showError(info('manage-error'), error, '更新失败，原 Skill 未被确认改变，请重新检查。'); }
     finally { setBusy(false); }
     if (!disposed) await refreshManage(writeDone);
