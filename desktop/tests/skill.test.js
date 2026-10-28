@@ -579,3 +579,171 @@ test('an operation failure is reported differently from a successful write whose
   assert.doesNotMatch(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成/);
   window.close();
 });
+
+// 10: races. Each test drives user actions and resolves deferred API responses in a chosen order.
+function deferred() { let resolve, reject; const promise = new Promise((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
+
+test('a double click on install sends exactly one install request', async () => {
+  let installs = 0; const gate = deferred();
+  const { root, window } = setup({
+    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => { installs += 1; await gate.promise; return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
+    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+  });
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  const install = root.querySelector('[data-action="install"]');
+  install.click(); install.click(); install.click(); await tick();
+  assert.equal(installs, 1);
+  gate.resolve(); await tick(); await tick();
+  assert.equal(installs, 1);
+  window.close();
+});
+
+test('a double click on update sends exactly one update request', async () => {
+  let updates = 0; const gate = deferred();
+  const { root, window } = setup({
+    skillStatus: async () => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async () => { updates += 1; await gate.promise; return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  });
+  root.querySelector('[data-action="check"]').click(); await tick();
+  const update = root.querySelector('[data-action="update"]');
+  update.click(); update.click(); update.click(); await tick();
+  assert.equal(updates, 1);
+  gate.resolve(); await tick(); await tick();
+  assert.equal(updates, 1);
+  window.close();
+});
+
+test('a double click on remove confirm sends exactly one removal request', async () => {
+  let removals = 0; const gate = deferred();
+  const { root, window } = setup({
+    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => { removals += 1; await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async () => ({}),
+  });
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  const remove = root.querySelector('[data-action="remove"]');
+  remove.click(); remove.click(); remove.click(); await tick();
+  assert.equal(removals, 1);
+  gate.resolve(); await tick(); await tick();
+  assert.equal(removals, 1);
+  window.close();
+});
+
+test('a slow preview for the old scope cannot enable install after the scope changed', async () => {
+  const gate = deferred();
+  const installs = [];
+  const { root, window } = setup({
+    skillPlan: async (scope) => {
+      if (scope === 'global') { await gate.promise; return { scope: 'global', target: 'C:\\global', files: [], status: 'ready', reason: 'ok', can_install: true }; }
+      return { scope: 'project', target: null, files: [], status: 'invalid_scope', reason: 'Select the project directory', can_install: false };
+    },
+    skillInstall: async (scope) => { installs.push(scope); return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
+    skillStatus: async () => ({ state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false }),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+  });
+  root.querySelector('[data-action="preview"]').click();
+  root.querySelector('input[value="project"]').click();
+  root.querySelector('input[value="project"]').click(); // scope change is the user action
+  gate.resolve(); await tick(); await tick();
+  assert.equal(root.querySelector('[data-action="install"]').disabled, true);
+  assert.doesNotMatch(root.querySelector('[data-info="target"]').textContent, /C:\\global/);
+  root.querySelector('[data-action="install"]').click(); await tick();
+  assert.deepEqual(installs, []);
+  window.close();
+});
+
+test('a late status response for a previous project does not overwrite the newly selected project', async () => {
+  const gates = [];
+  const { root, window } = setup({
+    skillStatus: async (scope, project) => {
+      const gate = deferred(); gates.push({ project, gate });
+      await gate.promise;
+      return { state: project === 'B' ? 'current' : 'outdated', installed_version: project === 'B' ? '2' : '1', release_version: '2', target: 'C:\\' + project, modified_files: [], unknown_entries: [], reason: project, can_update: project !== 'B' };
+    },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+  });
+  const scopeProject = () => root.querySelector('input[value="project"]').click();
+  scopeProject();
+  root.querySelector('[data-field="project"]').value = 'A';
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-field="project"]').value = 'B';
+  root.querySelector('[data-field="project"]').dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  // Resolve B first, then the old A response.
+  gates[1].gate.resolve(); await tick();
+  gates[0].gate.resolve(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：当前版本/);
+  assert.doesNotMatch(root.querySelector('[data-info="installed"]').textContent, /有可用更新/);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  window.close();
+});
+
+test('a late failure for a previous target does not overwrite the new target success', async () => {
+  const gates = [];
+  const { root, window } = setup({
+    skillStatus: async (scope, project) => {
+      const gate = deferred(); gates.push({ project, gate });
+      await gate.promise;
+      if (project === 'A') throw new Error('late failure A');
+      return { state: 'current', installed_version: '2', release_version: '2', target: 'C:\\B', modified_files: [], unknown_entries: [], reason: 'B ok', can_update: false };
+    },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+  });
+  root.querySelector('input[value="project"]').click();
+  root.querySelector('[data-field="project"]').value = 'A';
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-field="project"]').value = 'B';
+  root.querySelector('[data-field="project"]').dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  gates[1].gate.resolve(); await tick(); await tick();
+  gates[0].gate.resolve(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：当前版本/);
+  assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '');
+  window.close();
+});
+
+test('a write that already started is not redirected when the project changes during the request', async () => {
+  const gate = deferred();
+  const removed = [];
+  const { root, window } = setup({
+    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\A', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (scope, project) => { removed.push(project); await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async () => ({}),
+  });
+  root.querySelector('input[value="project"]').click();
+  root.querySelector('[data-field="project"]').value = 'A';
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick();
+  // Target changes mid-write.
+  root.querySelector('[data-field="project"]').value = 'B';
+  root.querySelector('[data-field="project"]').dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  gate.resolve(); await tick(); await tick();
+  assert.deepEqual(removed, ['A']);
+  window.close();
+});
+
+test('a late response after leaving the page does not change the page', async () => {
+  let statusCalls = 0; const gate = deferred();
+  const api = {
+    skillStatus: async () => { statusCalls += 1; await gate.promise; return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+  };
+  const window = new Window();
+  const root = window.document.createElement('main');
+  window.document.body.append(root);
+  const page = await mountSkill(root, api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  page.dispose(); // app.js calls dispose() when the user navigates away
+  gate.resolve(); await tick(); await tick();
+  assert.equal(statusCalls, 1);
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  window.close();
+});
