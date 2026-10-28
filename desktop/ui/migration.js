@@ -54,7 +54,10 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
     const supported = result.store_supported === true;
     const rows = result.items.map(item => {
       const source = sourceOf(item.provider);
-      const label = actionLabels[item.action] || item.action;
+      // Without store support a "migrate" entry only matches the format; it is not executable.
+      const label = !supported && item.action === 'migrate'
+        ? '格式符合，当前平台不可执行'
+        : (actionLabels[item.action] || item.action);
       const preview = item.preview ? `<code data-preview="${esc(source)}">${esc(item.preview)}</code>` : '';
       const detail = item.reason ? `<p class="note">${esc(item.reason)}</p>` : '';
       let control = '';
@@ -67,7 +70,11 @@ export async function mountMigration(root, api, { number = '08' } = {}) {
       }
       return `<li data-item="${esc(source)}"><strong>${esc(source)}</strong> ${esc(label)} ${preview} ${control} ${detail}</li>`;
     }).join('');
-    const summary = `可迁移 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项。`;
+    // Format fit and executability are separate facts. Without store support the summary
+    // reports only how many entries match the format, never that they can be migrated.
+    const summary = supported
+      ? `可迁移 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项。`
+      : `格式符合迁移要求 ${result.migratable.length} 项；跳过 ${result.skipped.length} 项（当前平台不可执行）。`;
     const limitation = supported ? '' : `<p class="note" data-info="capability">预览仅展示旧文件格式分类。加密迁移写入仅支持 Windows 当前用户 DPAPI；当前平台无法执行迁移，旧文件不会被改动。</p>`;
     root.querySelector('[data-plan]').innerHTML = `<p data-info="summary">${esc(summary)}</p>${limitation}
       <ul data-items>${rows}</ul>
