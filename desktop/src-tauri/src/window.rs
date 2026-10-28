@@ -272,7 +272,7 @@ async fn credential_save(
         move || {
             // Platform guard before the backend is built: a write that bypasses
             // the disabled UI rejects without touching the database or files.
-            crate::credential_commands::require_supported()?;
+            crate::errors::typed(crate::credential_commands::require_supported())?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs_f64())
@@ -292,6 +292,10 @@ async fn credential_save(
     )
     .await
 }
+// Deliberately has no platform guard (spec c): removing a stored entry is cleanup.
+// It deletes the encrypted row without decrypting or writing new key material, so
+// it stays available where encryption is unsupported. Pinned by a test in
+// tests/credentials.rs (`delete_is_cleanup_and_stays_available_without_encryption`).
 #[tauri::command]
 async fn credential_delete(
     manager: tauri::State<'_, Arc<DesktopManager>>,
@@ -327,7 +331,7 @@ async fn credential_append(
     let variables = manager.inner().environment.variables.clone();
     offload(
         move || {
-            crate::credential_commands::require_supported()?;
+            crate::errors::typed(crate::credential_commands::require_supported())?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs_f64())
@@ -351,7 +355,7 @@ async fn credential_remove(
     let variables = manager.inner().environment.variables.clone();
     offload(
         move || {
-            crate::credential_commands::require_supported()?;
+            crate::errors::typed(crate::credential_commands::require_supported())?;
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs_f64())
@@ -419,7 +423,7 @@ async fn migration_apply(
         move || {
             // Backend guard: an apply that bypasses the disabled UI must reject
             // before the CLI runs or the legacy file/request is touched.
-            crate::credential_commands::require_supported()?;
+            crate::errors::typed(crate::credential_commands::require_supported())?;
             let keys_file =
                 crate::credential_commands::keys_file_path(&manager.environment.variables)
                     .ok_or_else(|| "无法定位旧 key 文件".to_string())?;

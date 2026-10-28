@@ -184,7 +184,7 @@ pub(crate) fn overview(
         effective_source,
         key_application_available: application_url(entry.source).is_some(),
         store_supported,
-        store_unsupported_reason: (!store_supported).then(|| "platform_unsupported".to_string()),
+        store_unsupported_reason: unsupported_reason(store_supported),
     }
 }
 #[derive(Serialize)]
@@ -299,11 +299,29 @@ pub(crate) fn remove_row(
     .map_err(|e| e.to_string())?;
     Ok(overview(backend, variables, entry))
 }
-/// Guard a command-boundary write: rejects with the stable unsupported reason
-/// before the backend is touched. Read-only flows never call this.
+/// Guard a command-boundary write: rejects with the stable unsupported code
+/// before the backend is touched. Read-only flows never call this. The code is
+/// produced here, at the interception point, never recovered from message text.
 #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-pub(crate) fn require_supported() -> Result<(), String> {
-    credential::require_storage().map_err(|e| e.to_string())
+pub(crate) fn require_supported() -> Result<(), crate::errors::CommandError> {
+    match credential::require_storage() {
+        Ok(()) => Ok(()),
+        Err(credential::CredentialError::PlatformUnsupported) => Err(unsupported_error()),
+        Err(other) => Err(crate::errors::CommandError::new("operation_failed", other.to_string())),
+    }
+}
+
+/// The typed rejection every encrypted write returns on an unsupported platform.
+pub(crate) fn unsupported_error() -> crate::errors::CommandError {
+    crate::errors::CommandError::new(
+        credential::PLATFORM_UNSUPPORTED_CODE,
+        credential::CredentialError::PlatformUnsupported.to_string(),
+    )
+}
+
+/// The reason string both status payloads publish when the store is unsupported.
+pub(crate) fn unsupported_reason(supported: bool) -> Option<String> {
+    (!supported).then(|| credential::PLATFORM_UNSUPPORTED_REASON.to_string())
 }
 
 #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
@@ -607,9 +625,10 @@ pub struct MigrationPlan {
     /// format-compatible items are not executable when the store cannot write.
     #[serde(default)]
     pub store_supported: bool,
-    /// Machine-readable reason when `store_supported` is `false` —
-    /// `platform_unsupported` today — absent when migration writes can run.
-    #[serde(default)]
+    /// Machine-readable reason when `store_supported` is `false` (see
+    /// `credential::PLATFORM_UNSUPPORTED_REASON`); absent when writes can run.
+    /// Omitted from the wire like `CredentialOverview`, never `null`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_unsupported_reason: Option<String>,
 }
 
@@ -730,8 +749,7 @@ pub(crate) fn migration_plan(
     // The CLI reports item formats; the desktop reports whether the encrypted
     // store can write them on this platform. Both reach the page independently.
     plan.store_supported = credential::storage_supported();
-    plan.store_unsupported_reason = (!plan.store_supported)
-        .then(|| "platform_unsupported".to_string());
+    plan.store_unsupported_reason = unsupported_reason(plan.store_supported);
     Ok(plan)
 }
 

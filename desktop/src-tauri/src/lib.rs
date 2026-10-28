@@ -322,13 +322,55 @@ pub mod credential_fixture {
     }
     /// Same platform guard the `credential_save`/`credential_append`/
     /// `credential_remove`/`migration_apply` commands run before any backend
-    /// access; lets boundary tests assert the stable unsupported reason.
+    /// access; lets boundary tests assert the stable unsupported code.
     pub fn require_supported() -> Result<(), String> {
-        credential_commands::require_supported()
+        credential_commands::require_supported().map_err(String::from)
     }
     /// Whether this build can encrypt on the current platform (DPAPI fact).
     pub fn storage_supported() -> bool {
         crate::credential::storage_supported()
+    }
+    /// Serialized `{code,message}` the unsupported-path writes must produce,
+    /// so tests compare the exact wire result, not a reconstructed string.
+    pub fn unsupported_rejection() -> String {
+        String::from(credential_commands::unsupported_error())
+    }
+    /// Full `migration_apply` command body: platform guard first, then the
+    /// same request build + CLI path the Tauri handler runs. A rejection must
+    /// arrive before the CLI runs and before any file/request file is touched.
+    /// The legacy `keys_file` is read-only input, never modified here.
+    pub fn guarded_migration_apply(
+        environment: &crate::RuntimeEnvironment,
+        cli: &std::path::Path,
+        keys_file: &std::path::Path,
+        plan_token: &str,
+        approved: &[String],
+        choices: &std::collections::BTreeMap<String, String>,
+    ) -> Result<credential_commands::MigrationResult, String> {
+        // Same guard the Tauri `migration_apply` runs before anything else.
+        credential_commands::require_supported().map_err(String::from)?;
+        let request = crate::errors::finish(
+            credential_commands::migration_request(plan_token, approved, choices),
+        )?;
+        credential_commands::migration_apply(environment, cli, keys_file, &request)
+    }
+    /// Command-body write seam: runs the same platform guard as the
+    /// `credential_save` / `credential_append` / `credential_remove` commands,
+    /// then the production SQLite path, against a caller-supplied database.
+    /// Returns the serialized `{code,message}` rejection on unsupported platforms.
+    pub fn guarded_native_save(path: &std::path::Path, provider: &str, key: &str, now: f64) -> Result<(), String> {
+        credential_commands::require_supported().map_err(String::from)?;
+        crate::credential::save(&crate::credential::SqliteCredentialBackend { path: path.to_path_buf() }, "", provider, key, now)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    pub fn guarded_native_append(path: &std::path::Path, provider: &str, keys: &[String], now: f64) -> Result<(), String> {
+        credential_commands::require_supported().map_err(String::from)?;
+        native_append(path, provider, keys, now)
+    }
+    pub fn guarded_native_remove_row(path: &std::path::Path, provider: &str, index: usize, expected: &str, now: f64) -> Result<(), String> {
+        credential_commands::require_supported().map_err(String::from)?;
+        native_remove_row(path, provider, index, expected, now)
     }
     /// Isolated native row-mutation seams: same production path the
     /// `credential_append` / `credential_remove` commands use, on a
