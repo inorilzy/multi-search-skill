@@ -33,6 +33,10 @@ const CAPABILITY_TEXT = {
   unknown: '正在确认当前平台是否支持加密凭据存储；确认前无法保存或删除 Key。',
 };
 const capabilityText = reason => CAPABILITY_TEXT[reason] || '加密凭据存储仅支持 Windows 当前用户 DPAPI；当前平台不支持其写操作。可以查看生效来源并运行允许的连接测试，但无法创建、修改或显示已保存的 Key。';
+// Shown while a capability query is in flight or after it failed: writes stay
+// off and the user gets a retry entry instead of a guessed platform answer.
+const CAPABILITY_PENDING = '正在确认当前平台是否支持加密凭据存储…';
+const CAPABILITY_FAILED = '无法确认当前平台是否支持加密凭据存储。可以查看生效来源，但保存、删除和显示 Key 不可用；请点击"刷新已保存值"重试。';
 
 // The effective source after the SQLite/DPAPI merge. Unknown future values stay labelled.
 function sourceText(overview) {
@@ -111,7 +115,11 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   let generation = 0, disposed = false, busy = false;
   // Storage capability is unknown until credentialStatus reports it: all writes stay
   // disabled rather than presenting an uncertain state as permission to save.
-  let capability = { supported: null, reason: '' };
+  // `capability.phase`: 'pending' (first/re-query in flight) | 'ok' | 'failed'.
+  let capability = { supported: null, reason: '', phase: 'pending' };
+  // Monotonic refresh guard: only the latest refresh may publish capability or
+  // rows. A slower older response must never overwrite a newer outcome.
+  let refreshGeneration = 0;
   /** @type {string[]} rows last confirmed by credentialRead */
   let savedRows = [];
   const revealed = new Map();
@@ -150,7 +158,9 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     const banner = q('[data-capability]');
     if (capability.supported === true) { banner.hidden = true; banner.textContent = ''; return; }
     banner.hidden = false;
-    banner.textContent = capabilityText(capability.reason);
+    banner.textContent = capability.phase === 'pending' ? CAPABILITY_PENDING
+      : capability.phase === 'failed' ? CAPABILITY_FAILED
+      : capabilityText(capability.reason);
   }
   function renderSaved() {
     const list = q('[data-saved-list]');
@@ -192,7 +202,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     if (provenance(current) !== provenance(view)) invalidateTest();
     current = view; onStatus?.(view);
     // The backend is authoritative: absent/false means unsupported, not "Key 未配置".
-    capability = { supported: view.store_supported === true, reason: view.store_supported === true ? '' : (view.store_unsupported_reason || 'platform_unsupported') };
+    capability = { supported: view.store_supported === true, reason: view.store_supported === true ? '' : (view.store_unsupported_reason || 'platform_unsupported'), phase: 'ok' };
     renderCapability();
     setBusy(busy);
     text('[data-status="store"]', storeLabels[view.store.state] || view.store.state);
@@ -200,9 +210,12 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     text('[data-info="application"]', view.key_application_available ? '使用系统浏览器打开固定申请链接' : '申请链接待配置');
     q('[data-action="application"]').disabled = busy || !view.key_application_available;
   }
-  async function readBack() {
+  // `requestId` ties a read-back to its owning refresh; non-refresh callers
+  // (reveal snapshot re-check, post-save/post-remove read-back) pass the
+  // current generation so they always apply.
+  async function readBack(requestId = refreshGeneration) {
     const saved = await api.credentialRead(source);
-    if (disposed) return;
+    if (disposed || requestId !== refreshGeneration) return;
     readSnapshot = saved.snapshot;
     revealed.clear();
     savedRows = saved.value.split('\n').filter(line => line.trim() !== '');
@@ -210,25 +223,47 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     renderSaved();
   }
   async function refresh() {
+    // A newer refresh supersedes this one: only it may publish capability or
+    // rows, so a slower older response cannot overwrite a newer outcome.
+    const requestId = ++refreshGeneration;
+    capability = { supported: null, reason: '', phase: 'pending' };
+    renderCapability();
     setBusy(true);
     try {
-      render(await api.credentialStatus(source));
-      await readBack();
-      if (readHealthy && !disposed) text('[data-info="error"]', current.store.error || '');
+      const view = await api.credentialStatus(source);
+      if (disposed || requestId !== refreshGeneration) return;
+      render(view);
+      // Capability is known now (even if it is "unsupported"); only the row
+      // read can still fail below. Keep that distinct so a read failure is not
+      // misreported as "capability unconfirmed".
+      try {
+        await readBack(requestId);
+        if (disposed || requestId !== refreshGeneration) return;
+        if (readHealthy) text('[data-info="error"]', current.store.error || '');
+      } catch (readError) {
+        if (!disposed && requestId === refreshGeneration) {
+          readHealthy = false;
+          // Rows could not be read but capability already arrived; the banner
+          // keeps its status-based message and the error slot gets the read
+          // reason. Writes stay off until a refresh read succeeds again.
+          renderSaved();
+          showError(q('[data-info="error"]'), readError, '无法读取已保存凭据，请重试。');
+        }
+      }
     } catch (error) {
-      if (!disposed) {
+      if (!disposed && requestId === refreshGeneration) {
         readHealthy = false;
         // Capability is unknown again: writes stay disabled until a status
         // succeeds, so a failed lookup is never an empty, writable store.
-        capability = { supported: null, reason: '' };
+        capability = { supported: null, reason: '', phase: 'failed' };
         renderCapability();
         // Keep the last saved rows visible so the user can still see state; all
         // writes stay disabled until a refresh succeeds again.
         renderSaved();
-        showError(q('[data-info="error"]'), error, '无法读取已保存凭据，请重试。');
+        showError(q('[data-info="error"]'), error, '无法确认凭据能力，请重试。');
       }
     }
-    finally { if (!disposed) setBusy(false); }
+    finally { if (!disposed && requestId === refreshGeneration) setBusy(false); }
   }
   q('[data-draft-list]').addEventListener('input', event => {
     const input = event.target.closest('input'); if (!input) return;

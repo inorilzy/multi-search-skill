@@ -560,3 +560,120 @@ test('a coded unsupported write rejection maps to a Chinese capability message',
   assert.doesNotMatch(error.textContent, /DPAPI write refused/);
   ctx.window.close();
 });
+
+// 02 能力查询的加载、失败与重试恢复：可控制完成顺序的响应。
+
+test('capability query shows pending state and writes stay disabled while loading', async () => {
+  const ctx = setup();
+  let resolveStatus;
+  const pending = new Promise(resolve => { resolveStatus = resolve; });
+  const mounted = mountCredentials(ctx.root, api({
+    credentialStatus: () => pending,
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+  }));
+  await flush();
+  const banner = ctx.root.querySelector('[data-capability]');
+  assert.equal(banner.hidden, false, 'capability indicator visible while loading');
+  assert.match(banner.textContent, /正在确认/);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true, 'no brief writable window');
+  assert.equal(draftInputs(ctx.root)[0].disabled, true);
+  resolveStatus(status(true));
+  await mounted; await flush2();
+  assert.equal(banner.hidden, true, 'banner cleared once support is confirmed');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  ctx.window.close();
+});
+
+test('capability failure shows retry guidance, not a guessed unsupported or empty store', async () => {
+  const ctx = setup(); let attempts = 0;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => { attempts += 1; throw '连接失败'; },
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+  }));
+  const banner = ctx.root.querySelector('[data-capability]');
+  assert.equal(banner.hidden, false);
+  assert.match(banner.textContent, /无法确认/);
+  assert.match(banner.textContent, /刷新已保存值/);
+  assert.doesNotMatch(banner.textContent, /Windows 当前用户 DPAPI/, 'a failure is not presented as platform-unsupported');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true);
+  // Store status is not fabricated as absent/present.
+  assert.equal(ctx.root.querySelector('[data-status="store"]').textContent, '');
+  ctx.window.close();
+});
+
+test('retry after failure recovers to supported; old error does not linger', async () => {
+  const ctx = setup(); let fail = true;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => { if (fail) throw '暂时失败'; return status(true); },
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+  }));
+  assert.match(ctx.root.querySelector('[data-capability]').textContent, /无法确认/);
+  draftInputs(ctx.root)[0].value = KEY;
+  fail = false;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  assert.equal(ctx.root.querySelector('[data-capability]').hidden, true, 'resolved capability clears the banner');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  assert.equal(draftInputs(ctx.root)[0].value, KEY, 'drafts survive the failed attempt and the retry');
+  ctx.window.close();
+});
+
+test('retry after failure recovers to unsupported with the platform explanation', async () => {
+  const ctx = setup(); let fail = true;
+  const unsupported = status(false, { store_supported: false, store_unsupported_reason: 'platform_unsupported' });
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => { if (fail) throw '暂时失败'; return unsupported; },
+    credentialRead: async () => { throw '不可读'; },
+  }));
+  assert.match(ctx.root.querySelector('[data-capability]').textContent, /无法确认/);
+  fail = false;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  assert.match(ctx.root.querySelector('[data-capability]').textContent, /Windows 当前用户 DPAPI/, 'unsupported outcome replaces the failure message');
+  assert.doesNotMatch(ctx.root.querySelector('[data-capability]').textContent, /无法确认/);
+  ctx.window.close();
+});
+
+test('a slower older refresh cannot overwrite a newer outcome', async () => {
+  const ctx = setup(); const resolvers = [];
+  const mounted = mountCredentials(ctx.root, api({
+    credentialStatus: () => new Promise(resolve => resolvers.push(resolve)),
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+  }));
+  // Mount fires the first status request; resolve it so the page finishes loading.
+  await flush();
+  resolvers[0](status(true));
+  await mounted; await flush2();
+  // Trigger a refresh, then a second synthesized click while the first is in
+  // flight (the button is disabled, but a queued request proves ordering).
+  ctx.root.querySelector('[data-action="refresh"]').click();
+  await flush();
+  ctx.root.querySelector('[data-action="refresh"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  await flush();
+  const newer = resolvers[resolvers.length - 1], older = resolvers[1];
+  newer(status(true, { effective_source: 'env', env_var: 'NEW_VAR' }));
+  await flush2();
+  older(status(false, { store_supported: false, store_unsupported_reason: 'platform_unsupported', effective_source: 'none' }));
+  await flush2();
+  assert.equal(ctx.root.querySelector('[data-status="source"]').textContent, '环境变量 NEW_VAR', 'newer outcome stays');
+  assert.equal(ctx.root.querySelector('[data-capability]').hidden, true, 'stale unsupported cannot regress a supported state');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  ctx.window.close();
+});
+
+test('no write request is issued during loading, failure or stale-resolution windows', async () => {
+  const ctx = setup(); const writes = [];
+  let fail = true;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => { if (fail) throw 'x'; return status(true); },
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+    credentialAppend: async () => { writes.push('append'); return status(true); },
+  }));
+  draftInputs(ctx.root)[0].value = KEY;
+  submit(ctx); await flush2();
+  assert.equal(writes.length, 0, 'no append while capability is unconfirmed');
+  fail = false;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  draftInputs(ctx.root)[0].value = KEY;
+  submit(ctx); await flush2();
+  assert.equal(writes.length, 1, 'write allowed once support confirmed');
+  ctx.window.close();
+});
