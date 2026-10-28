@@ -103,7 +103,27 @@ test('unsupported platform disables encrypted mutations but explains explicit fi
   const ctx = await setup(t, { cookieStatus: async () => view({ supported: false }) });
   assert.equal(ctx.q('[data-cookie-import]').disabled, true);
   assert.equal(ctx.q('[data-cookie-delete]').disabled, true);
-  assert.match(ctx.q('[data-cookie-status]').textContent, /Linux.*文件兼容/);
+  const text = ctx.q('[data-cookie-status]').textContent;
+  assert.match(text, /当前平台不支持加密托管/);
+  assert.match(text, /仅支持 Windows 当前用户 DPAPI/);
+  assert.match(text, /文件兼容模式（file）/);
+  assert.doesNotMatch(text, /Linux/, 'non-Windows platforms are not described as Linux');
+  assert.equal(ctx.q('[data-cookie-refresh]').disabled, false, 'status refresh stays usable');
+});
+
+test('unsupported platform keeps every managed/file mode combination without switching or reading content', async t => {
+  for (const mode of ['managed', 'file']) {
+    for (const present of [true, false]) {
+      const ctx = await setup(t, { cookieStatus: async () => view({ supported: false, mode, present }) });
+      const text = ctx.q('[data-cookie-status]').textContent;
+      assert.match(text, new RegExp(`${mode === 'managed' ? '加密托管' : '文件兼容'}（${mode}）`));
+      assert.match(text, /仅支持 Windows 当前用户 DPAPI/);
+      assert.equal(ctx.q('[data-cookie-import]').disabled, true, `${mode}/${present}: import stays disabled`);
+      assert.equal(ctx.q('[data-cookie-delete]').disabled, true, `${mode}/${present}: delete stays disabled`);
+      assert.equal(ctx.q('[data-cookie-path]').disabled, true, `${mode}/${present}: path input stays disabled`);
+      assert.deepEqual(ctx.calls, [], `${mode}/${present}: no import or delete was sent`);
+    }
+  }
 });
 
 test('status failure fails closed and refresh can recover', async t => {
