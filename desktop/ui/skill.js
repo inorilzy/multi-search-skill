@@ -42,13 +42,19 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
   install.addEventListener('click', async () => {
     if (!ready || plannedScope !== selectedScope() || plannedProject !== projectValue()) { root.querySelector('[data-info="error"]').textContent = '请先预览目标目录。'; return; }
     install.disabled = true;
+    // Blocks manage actions and drops any manage plan made before this write.
+    setBusy(true);
+    let writeNote = '';
     try {
       const result = await api.skillInstall(plannedScope, plannedProject);
       root.querySelector('[data-info="target"]').textContent = result.target ? `目标目录：${result.target}` : '';
       root.querySelector('[data-info="status"]').textContent = result.status === 'installed' ? `已安装并校验：${result.reason}` : `未完成安装：${result.reason}`;
+      if (result.status === 'installed') writeNote = '操作已完成';
       ready = false;
     } catch (error) { showError(root.querySelector('[data-info="error"]'), error, '安装失败，未确认写入结果，请重新预览。'); ready = false; }
     finally { install.disabled = true; }
+    // Re-read the real target so the manage panel shows what is on disk, not the expected result.
+    try { await refreshManage(writeNote); } finally { if (!disposed) setBusy(false); }
   });
   // Manage panel: status, update, and removal. Each destructive step needs its own explicit confirmation.
   const info = name => root.querySelector(`[data-info="${name}"]`);
@@ -78,10 +84,11 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
   const manageProject = () => projectValue();
   const sameTarget = () => managedScope === manageScope() && managedProject === manageProject();
   const setManageError = text => { info('manage-error').textContent = text; };
-  manageButton('check').addEventListener('click', async () => {
-    if (busy || disposed) return;
-    setManageError('');
+  // Reads the real target and rebuilds the manage panel. Obsolete plans are dropped first.
+  // `writeDone` is set when a write just returned success; a failed read then must not look like a failed write.
+  const refreshManage = async (writeDone = '') => {
     invalidateManage();
+    setManageError('');
     const request = generation, scope = manageScope(), targetProject = manageProject();
     try {
       const status = await api.skillStatus(scope, targetProject);
@@ -96,20 +103,31 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       manageButton('remove-plan').disabled = !['outdated', 'modified', 'current'].includes(status.state);
       manageButton('remove').disabled = true;
       confirmOverwrite.checked = false;
-    } catch (error) { showError(info('manage-error'), error, '检查失败，请重试。'); }
+    } catch (error) {
+      if (disposed || request !== generation) return;
+      const shown = showError(info('manage-error'), error, '检查失败，请重试。');
+      if (writeDone) info('manage-error').textContent = `${writeDone}，当前状态未确认：${shown.message}。请点击“检查已安装版本”重试。`;
+    }
+  };
+  manageButton('check').addEventListener('click', async () => {
+    if (busy || disposed) return;
+    await refreshManage();
   });
   manageButton('update').addEventListener('click', async () => {
     if (!sameTarget()) { setManageError('请先检查当前目标。'); return; }
     setManageError('');
     if (busy || disposed) return;
     setBusy(true);
+    let writeDone = '';
     try {
       const result = await api.skillUpdate(managedScope, managedProject, confirmOverwrite.checked);
       info('manage-status').textContent = result.status === 'updated' && result.verified === true
         ? `已更新并校验：${result.reason}${result.backup ? `；本地修改已备份到 ${result.backup}` : ''}`
         : `未完成更新：${result.reason}${result.backup ? `；备份位置 ${result.backup}` : ''}`;
+      if (result.status === 'updated') writeDone = '操作已完成';
     } catch (error) { showError(info('manage-error'), error, '更新失败，原 Skill 未被确认改变，请重新检查。'); }
-    finally { setBusy(false); if (!disposed) manageButton('check').click(); }
+    finally { setBusy(false); }
+    if (!disposed) await refreshManage(writeDone);
   });
   manageButton('remove-plan').addEventListener('click', async () => {
     if (!sameTarget()) { setManageError('请先检查当前目标。'); return; }
