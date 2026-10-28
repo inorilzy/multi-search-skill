@@ -20,6 +20,16 @@
 
 **站点抓取记忆（Site memory）**：按站点键记录各抓取后端的成功、失败、冷却和手动偏好。手动固定的后端排到该站点最前，失败冷却只让该后端靠后；它在抓取链的顺序上做调整，不按历史成功率自动重排。可按单个站点或全部站点重置。
 
+## 排序
+
+**重排（Rerank）**：在两级 RRF 融合之后、正文抓取之前，用可选的外部模型给候选打相关性分数（`relevance_score`，[0,1]）并重新排序；默认关闭，排序完全由 RRF 决定且不产生任何模型调用。
+
+**重排端点（Rerank endpoint）**：打分模型所在的 System One 服务，由 `ranking.base_url` 与 `ranking.model` 指定，请求发往 `{base_url}/systemone`；开启重排时两者都必填。API 密钥不属于设置，保存在 `~/.search-keys.json` 的 `systemone` 条目，环境变量 `SYSTEMONE_API_KEY` 优先。
+
+**重排回退（Rerank fallback）**：模型阶段出现任何失败（缺 key、超时、限流、鉴权或响应非法）时整体放弃重排，保留完整 RRF 顺序，响应标记 `mode_used="rrf"` 与无凭据的 `fallback_reason`，所有 `relevance_score` 为 `null`。
+
+**相关性分数（Relevance score）**：重排模型对单条候选的归一化评分，只在模型实际打分成功时出现；未打分或纯 RRF 响应中恒为 `null`，不渲染为 0。
+
 ## 桌面端
 
 **受管 CLI（Managed CLI）**：由桌面端从应用资源内的受控 bundle 安装，每个平台用自己的根目录和产物名：

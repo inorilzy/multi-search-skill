@@ -10,7 +10,6 @@ from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.content_store import ContentStore
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 class FetchUrlCacheTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -27,7 +26,7 @@ class FetchUrlCacheTests(unittest.TestCase):
         keys = kwargs.pop("keys", {})
         return service.run_fetch_source(
             service.FetchSourceRequest(url=self.url, **kwargs), state_store=self.store,
-            scraper=self.scrape, keys=keys, config={}, url_resolver=lambda _: ["93.184.216.34"],
+            scraper=self.scrape, keys=keys, config={},
         )
 
     def test_direct_urls_reuse_body_with_new_source_ids_and_original_expiry(self):
@@ -77,7 +76,7 @@ class FetchUrlCacheTests(unittest.TestCase):
             return service.run_search_web(
                 service.SearchWebRequest(query="evidence", sources=["brave"], count=1),
                 providers={"brave": provider}, state_store=self.store, scraper=self.scrape,
-                keys={}, config={}, url_resolver=lambda _: ["93.184.216.34"],
+                keys={}, config={},
             )
         first, second = search(), search()
         self.assertEqual(len(self.calls), 1)
@@ -89,7 +88,6 @@ class FetchUrlCacheTests(unittest.TestCase):
             third = search()
         self.assertEqual(len(self.calls), 2)
         self.assertIsNone(ContentStore(self.store).get(third["results"][0]["source_id"]))
-
 
 if __name__ == "__main__":
     unittest.main()

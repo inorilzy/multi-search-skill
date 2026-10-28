@@ -39,6 +39,7 @@
     "allow-settings-view",
     "allow-settings-save",
     "allow-scrape-settings-save",
+    "allow-rerank-key-save",
     "allow-provider-list",
     "allow-scrape-memory-view",
     "allow-scrape-memory-pin",

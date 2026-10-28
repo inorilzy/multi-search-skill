@@ -34,7 +34,19 @@ env_var?: string,
  * Count of keys Core found in the legacy keys file. Values are never returned. Absent
  * without a Core row.
  */
-file_key_count?: number, key_application_available: boolean, };
+file_key_count?: number, key_application_available: boolean, 
+/**
+ * Whether this build's encrypted credential backend can write on the
+ * current platform (Windows current-user DPAPI only). Reported by the
+ * native backend, independent of whether any Key is saved; the UI keeps
+ * writes disabled until this is `true`.
+ */
+store_supported: boolean, 
+/**
+ * Machine-readable reason when `store_supported` is `false` —
+ * `platform_unsupported` today — absent when the store is supported.
+ */
+store_unsupported_reason?: string, };
 
 export type CredentialStatus = { 
 /**
@@ -122,6 +134,26 @@ export type ProviderInfo = { source: string, cliSource: string, provider: string
  */
 search: boolean, cookie: boolean, aliases: Array<string>, };
 
+/**
+ * 保存时提交的 `ranking` 块；字段名与 core 的配置键严格一致。
+ * 密钥不在这里：它单独写进 `~/.search-keys.json`（见 `save_systemone_key`）。
+ */
+export type RankingInput = { 
+/**
+ * 只允许 "rrf" / "rrf_model"。
+ */
+mode: string, 
+/**
+ * System One 的 Base URL，例如 `http://127.0.0.1:3425/v1`；请求发往 `{base_url}/systemone`。
+ */
+base_url: string, model: string, candidate_limit: number, batch_size: number, rerank_timeout: number, };
+
+/**
+ * `SettingsView` 回传的当前生效 `ranking`；非法存储值被回退成出厂默认并伴随
+ * `ranking_invalid` 标志。
+ */
+export type RankingState = { mode: string, base_url: string, model: string, candidate_limit: number, batch_size: number, rerank_timeout: number, };
+
 export type RemoveOutcome = { 
 /**
  * removed | blocked | failed, or a new value added later; UI must fall back to a raw string.
@@ -141,6 +173,19 @@ will_delete: Array<string>,
  * Entries kept because we did not create them.
  */
 will_keep: Array<string>, can_remove: boolean, };
+
+/**
+ * System One 密钥的来源（只报来源，绝不回传值）。
+ */
+export type RerankKeyStatus = { 
+/**
+ * env | keys_file | none | unreadable, or a new value added later; UI must fall back to a raw string.
+ */
+source: string, 
+/**
+ * 密钥文件路径（非密钥），供 UI 说明保存位置。
+ */
+keys_file: string | null, env_var: string, };
 
 export type RouteConfig = { label: string, sources: Array<string>, timeout: number | null, };
 
@@ -173,7 +218,12 @@ timeout: number | null, disabled_sources: Array<string>, routes: { [key in strin
 /**
  * `None` 表示本次保存不动该键；`Some(vec)` 才写入。
  */
-scrape_backends: Array<string> | null, };
+scrape_backends: Array<string> | null, 
+/**
+ * `None` 表示本次保存整块 `ranking` 都不动；`Some` 时按块内已知键合并，
+ * 块里不认识的同级键原样保留。
+ */
+ranking: RankingInput | null, };
 
 export type SettingsView = { config_path: string | null, path_source: string, file_present: boolean, read_source: string, route: string, timeout: number, timeout_configured: boolean, 
 /**
@@ -198,6 +248,23 @@ scrape_backends: Array<string>,
  * 此时 `scrape_backends` 是回退值，CLI 会报配置错误，UI 必须提示。
  */
 scrape_backends_invalid: boolean, builtin_scrape_backends: Array<string>, scrape_backend_options: Array<ScrapeBackendOption>, active_sources: Array<string>, 
+/**
+ * 当前生效的 `ranking` 块（缺失/非法时回退出厂默认）。
+ */
+ranking: RankingState, 
+/**
+ * 已保存的 `ranking` 块非法（非对象、未知 mode、Base URL/模型名非法、开启却未配置端点、数值越界）；
+ * 此时 `ranking` 是回退值，UI 必须提示而不是假装有效。
+ */
+ranking_invalid: boolean, 
+/**
+ * `ranking` 数值键的可编辑上下界；越界的已存值仍以原样展示并保留。
+ */
+ranking_candidate_limit_min: number, ranking_candidate_limit_max: number, ranking_batch_size_min: number, ranking_batch_size_max: number, ranking_rerank_timeout_min: number, ranking_rerank_timeout_max: number, 
+/**
+ * System One 密钥的来源；值本身永不进入 SettingsView。
+ */
+rerank_key: RerankKeyStatus, 
 /**
  * ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
  */

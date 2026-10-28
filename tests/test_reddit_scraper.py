@@ -13,11 +13,7 @@ from multi_search_mcp.src.scrape.scrapers import _reddit_transport, reddit
 from multi_search_mcp.src.service import FetchSourceRequest, run_fetch_source
 from multi_search_mcp.src.state.state_store import StateStore
 
-
 URL = "https://www.reddit.com/r/python/comments/abc123/example/"
-PUBLIC = lambda host: ["151.101.1.140"]
-
-
 def response_data():
     return [
         {"data": {"children": [{"kind": "t3", "data": {
@@ -33,11 +29,10 @@ def response_data():
         ]}},
     ]
 
-
 class RedditRoutingTests(unittest.TestCase):
     def test_unknown_backend_is_still_rejected_for_reddit(self):
         with mock.patch.object(reddit, "get_post_json") as fetch:
-            result = scrape_url_smart(URL, backends=("typo",), url_resolver=PUBLIC)
+            result = scrape_url_smart(URL, backends=("typo",))
         self.assertEqual(result["error"], "unknown scrape backend: typo")
         fetch.assert_not_called()
 
@@ -45,7 +40,7 @@ class RedditRoutingTests(unittest.TestCase):
         with mock.patch.object(reddit, "get_post_json", return_value=response_data()), \
              mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina") as jina, \
              mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_exa") as exa:
-            result = scrape_url_smart(URL, backends=("exa", "jina"), url_resolver=PUBLIC)
+            result = scrape_url_smart(URL, backends=("exa", "jina"))
         self.assertEqual(result["via"], "reddit")
         self.assertIn("Nested comment", result["markdown"])
         jina.assert_not_called()
@@ -56,7 +51,7 @@ class RedditRoutingTests(unittest.TestCase):
             with self.subTest(host=host), \
                  mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_reddit") as dedicated, \
                  mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", return_value={"markdown": "ordinary page"}) as generic:
-                result = scrape_url_smart(f"https://{host}/", backends=("jina",), url_resolver=PUBLIC)
+                result = scrape_url_smart(f"https://{host}/", backends=("jina",))
                 self.assertEqual(result["markdown"], "ordinary page")
                 dedicated.assert_not_called()
                 generic.assert_called_once()
@@ -64,18 +59,27 @@ class RedditRoutingTests(unittest.TestCase):
     def test_reddit_failure_is_not_hidden_by_generic_backend(self):
         with mock.patch.object(reddit, "get_post_json", side_effect=_reddit_transport.RedditError("Reddit returned HTTP 403")), \
              mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina") as generic:
-            result = scrape_url_smart(URL, url_resolver=PUBLIC)
+            result = scrape_url_smart(URL)
         self.assertIn("403", result["error"])
         self.assertEqual(result["markdown"], "")
         self.assertEqual(result["via"], "reddit")
         generic.assert_not_called()
 
-    def test_private_resolution_and_credentials_are_rejected_before_auth(self):
-        for url, resolver in ((URL, lambda host: ["127.0.0.1"]),
-                              (URL.replace("https://", "https://user:password@"), PUBLIC)):
-            with self.subTest(url=url), mock.patch.object(reddit, "get_post_json") as fetch:
-                self.assertIn("error", scrape_url_smart(url, url_resolver=resolver))
-                fetch.assert_not_called()
+    def test_credentials_are_rejected_before_auth(self):
+        with mock.patch.object(reddit, "get_post_json") as fetch:
+            result = scrape_url_smart(
+                URL.replace("https://", "https://user:password@"),
+            )
+        self.assertIn("must not include credentials", result["error"])
+        fetch.assert_not_called()
+
+    def test_reddit_preflight_does_not_use_local_dns(self):
+        with mock.patch.object(reddit, "get_post_json", return_value=response_data()) as fetch, \
+             mock.patch("socket.getaddrinfo", side_effect=AssertionError("preflight used DNS")):
+            result = scrape_url_smart(URL)
+        self.assertEqual(result["via"], "reddit")
+        self.assertIn("Nested comment", result["markdown"])
+        fetch.assert_called_once()
 
     def test_supported_permalink_variants_and_comment_focus(self):
         urls = [URL, URL.replace("www.", "old."), URL.replace("www.", "new."),
@@ -92,22 +96,21 @@ class RedditRoutingTests(unittest.TestCase):
     def test_unsupported_urls_do_not_send_auth(self):
         for path in ("/r/python/", "/r/python/s/sharetoken", "/wiki/api", "/login", "/comments/../"):
             with self.subTest(path=path), mock.patch.object(reddit, "get_post_json") as fetch:
-                result = scrape_url_smart("https://www.reddit.com" + path, url_resolver=PUBLIC)
+                result = scrape_url_smart("https://www.reddit.com" + path)
                 self.assertIn("Unsupported Reddit URL", result["error"])
                 fetch.assert_not_called()
 
     def test_expired_deadline_never_fetches(self):
         with mock.patch.object(reddit, "get_post_json") as fetch:
-            result = scrape_url_smart(URL, deadline=time.monotonic()-1, url_resolver=PUBLIC)
+            result = scrape_url_smart(URL, deadline=time.monotonic()-1)
         self.assertIn("deadline", result["error"])
         fetch.assert_not_called()
 
     def test_transport_error_never_exposes_credentials(self):
         with mock.patch.object(reddit, "get_post_json", side_effect=RuntimeError("secret-proxy-password")):
-            result = scrape_url_smart(URL, url_resolver=PUBLIC)
+            result = scrape_url_smart(URL)
         self.assertIn("RuntimeError", result["error"])
         self.assertNotIn("secret-proxy-password", result["error"])
-
 
 class RedditContentTests(unittest.TestCase):
     def test_body_nested_comments_and_partial_marker_preserve_markdown(self):
@@ -146,16 +149,15 @@ class RedditContentTests(unittest.TestCase):
             store = StateStore(Path(temp)/"state.sqlite")
             with mock.patch.object(reddit, "get_post_json", return_value=response_data()) as fetch:
                 short = run_fetch_source(FetchSourceRequest(url=URL, max_chars=30),
-                                         state_store=store, keys={}, config={}, url_resolver=PUBLIC)
+                                         state_store=store, keys={}, config={})
                 full = run_fetch_source(FetchSourceRequest(source_id=short["source_id"], max_chars=2000),
-                                        state_store=store, keys={}, config={}, url_resolver=PUBLIC)
+                                        state_store=store, keys={}, config={})
             self.assertEqual(short["backend"], "reddit")
             self.assertEqual(len(short["body"]), 30)
             self.assertTrue(short["truncated"])
             self.assertIn("Nested comment", full["body"])
             self.assertTrue(full["cache_hit"])
             fetch.assert_called_once()
-
 
 class FakeResponse:
     def __init__(self, body, content_type="application/json"):
@@ -173,14 +175,13 @@ class FakeResponse:
     def __exit__(self, *exc):
         return False
 
-
 class RedditTransportTests(unittest.TestCase):
     def _get(self, response=None, side_effect=None):
         with mock.patch.object(_reddit_transport, "urlopen_retry",
                                return_value=response, side_effect=side_effect) as opened:
             try:
                 data = _reddit_transport.get_post_json(
-                    "abc123", {"raw_json": 1, "limit": 100}, time.monotonic() + 10, resolver=PUBLIC,
+                    "abc123", {"raw_json": 1, "limit": 100}, time.monotonic() + 10,
                 )
             except Exception as exc:  # returned for assertions below
                 data = exc
@@ -207,14 +208,15 @@ class RedditTransportTests(unittest.TestCase):
                           "curl_cffi", 'environ.get("PROXY")'):
             self.assertNotIn(forbidden, source)
 
-    def test_uses_the_shared_transport_deadline_and_redirect_validation(self):
+    def test_uses_the_shared_transport_deadline(self):
         end = time.monotonic() + 10
         with mock.patch.object(_reddit_transport, "urlopen_retry",
                                return_value=FakeResponse(response_data())) as opened:
-            _reddit_transport.get_post_json("abc123", {}, end, resolver=PUBLIC)
+            _reddit_transport.get_post_json("abc123", {}, end)
         kwargs = opened.call_args.kwargs
         self.assertEqual(kwargs["deadline"], end)
-        self.assertIs(kwargs["redirect_resolver"], PUBLIC)
+        # Redirects use the shared no-DNS host rules; no resolver is injected.
+        self.assertNotIn("redirect_resolver", kwargs)
         # Proxy choice is the shared urllib opener's: HTTP(S)_PROXY / ALL_PROXY / NO_PROXY.
         self.assertNotIn("extra_handlers", kwargs)
 
@@ -245,14 +247,19 @@ class RedditTransportTests(unittest.TestCase):
         self.assertIsInstance(error, _reddit_transport.RedditError)
         self.assertEqual(response.read_sizes, [_reddit_transport.MAX_RESPONSE_BYTES + 1])
 
-    def test_private_destination_is_rejected_before_any_request(self):
-        with mock.patch.object(_reddit_transport, "urlopen_retry") as opened:
-            with self.assertRaises(Exception):
-                _reddit_transport.get_post_json(
-                    "abc123", {}, time.monotonic() + 10, resolver=lambda host: ["127.0.0.1"],
-                )
-        opened.assert_not_called()
-
+    def test_fixed_reddit_api_host_is_not_resolved_locally(self):
+        with mock.patch.object(_reddit_transport, "urlopen_retry",
+                               return_value=FakeResponse(response_data())) as opened, \
+             mock.patch("socket.getaddrinfo", side_effect=AssertionError("fixed API host used DNS")):
+            data = _reddit_transport.get_post_json(
+                "abc123", {}, time.monotonic() + 10,
+            )
+        self.assertEqual(data[0]["data"]["children"][0]["data"]["id"], "abc123")
+        opened.assert_called_once()
+        self.assertEqual(
+            opened.call_args.args[0].full_url,
+            "https://www.reddit.com/comments/abc123.json",
+        )
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,12 +10,10 @@ from multi_search_mcp.src import service
 from multi_search_mcp.src.scrape import scrape
 from tests.scrape_ctx import context
 
-
 URL = "https://example.com/post"
 MARKER = "UNIQUE_SCRAPED_PASSAGE"
 BODY = MARKER + " actual source text" * 20
 FIELDS = {"url", "title", "markdown", "length", "via", "truncated"}
-
 
 def candidates(count=1):
     return {
@@ -28,7 +26,6 @@ def candidates(count=1):
         } for i in range(count)],
         "errors": [], "diagnostics": {},
     }
-
 
 class SingleMarkdownResponseTests(unittest.TestCase):
     def setUp(self):
@@ -107,7 +104,6 @@ class SingleMarkdownResponseTests(unittest.TestCase):
         self.assertEqual(result["diagnostics"]["body_success_count"], 0)
         self.assertEqual(len(result["diagnostics"]["body_failures"]), 1)
 
-
 class ScraperContractTests(unittest.TestCase):
     def _scrape(self, backend, payload):
         url = "https://www.reddit.com/r/test/comments/abc123/post/" if backend == "reddit" else URL
@@ -115,7 +111,7 @@ class ScraperContractTests(unittest.TestCase):
             return scrape.scrape_url_smart(
                 url, backends=None if backend == "reddit" else [backend],
                 exa_keys=["fixture-key"], tavily_keys=["fixture-key"],
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
 
     def test_context_entrypoint_preserves_the_same_contract(self):
@@ -168,7 +164,6 @@ class ScraperContractTests(unittest.TestCase):
         self.assertEqual(result["markdown"], BODY[:8])
         self.assertEqual(result["length"], len(BODY))
         self.assertTrue(result["truncated"])
-
 
 if __name__ == "__main__":
     unittest.main()

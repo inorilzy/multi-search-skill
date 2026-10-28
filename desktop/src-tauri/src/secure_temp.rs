@@ -48,9 +48,27 @@ fn name(prefix: &str, suffix: &str) -> String {
 /// Create a new file `<dir>/<prefix><token><suffix>` that did not exist before, write `contents`
 /// and flush it to disk. On a write failure the partial file is removed.
 pub(crate) fn create_file(dir: &Path, prefix: &str, suffix: &str, contents: &[u8]) -> io::Result<PathBuf> {
+    create_file_with(dir, prefix, suffix, contents, false)
+}
+
+fn open_new(path: &Path, owner_only: bool) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    if owner_only {
+        use std::os::unix::fs::OpenOptionsExt;
+        // Owner-only from the first byte: never briefly world-readable.
+        options.mode(0o600);
+    }
+    #[cfg(not(unix))]
+    let _ = owner_only;
+    options.open(path)
+}
+
+fn create_file_with(dir: &Path, prefix: &str, suffix: &str, contents: &[u8], owner_only: bool) -> io::Result<PathBuf> {
     for _ in 0..ATTEMPTS {
         let path = dir.join(name(prefix, suffix));
-        let mut file = match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        let mut file = match open_new(&path, owner_only) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
@@ -82,11 +100,21 @@ pub(crate) fn create_dir(parent: &Path, prefix: &str) -> io::Result<PathBuf> {
 /// Atomically replace `target` with `contents`: write a fresh, exclusively created sibling temp
 /// file, then rename it over the target. The temp file is removed if anything fails.
 pub(crate) fn replace_file(target: &Path, contents: &[u8]) -> io::Result<()> {
+    replace_file_with(target, contents, false)
+}
+
+/// [`replace_file`] for secrets: on Unix the file is 0600 from creation, so the replaced target
+/// is owner-only regardless of the umask or of the previous file's mode.
+pub(crate) fn replace_private_file(target: &Path, contents: &[u8]) -> io::Result<()> {
+    replace_file_with(target, contents, true)
+}
+
+fn replace_file_with(target: &Path, contents: &[u8], owner_only: bool) -> io::Result<()> {
     let dir = target
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "target has no parent directory"))?;
     let base = target.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-    let temp = create_file(dir, &format!(".{base}.tmp-"), "", contents)?;
+    let temp = create_file_with(dir, &format!(".{base}.tmp-"), "", contents, owner_only)?;
     fs::rename(&temp, target).inspect_err(|_| {
         let _ = fs::remove_file(&temp);
     })

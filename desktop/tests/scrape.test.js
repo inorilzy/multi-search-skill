@@ -59,6 +59,15 @@ function settingsView(overrides = {}) {
     builtin_scrape_backends: [...BUILTIN],
     scrape_backend_options: OPTIONS.map(option => ({ ...option })),
     active_sources: ['brave'],
+    ranking: { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10 },
+    ranking_invalid: false,
+    ranking_candidate_limit_min: 10,
+    ranking_candidate_limit_max: 200,
+    ranking_batch_size_min: 1,
+    ranking_batch_size_max: 50,
+    ranking_rerank_timeout_min: 1,
+    ranking_rerank_timeout_max: 60,
+    rerank_key: { source: 'none', keys_file: null, env_var: 'SYSTEMONE_API_KEY' },
     status: 'ok',
     message: '',
     ...overrides,
@@ -108,7 +117,7 @@ const chainButton = (root, name, label) => {
 
 function api(overrides = {}) {
   return {
-    credentialStatus: async source => ({ source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: true }),
+    credentialStatus: async source => ({ source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: true, store_supported: true }),
     settingsView: async () => settingsView(),
     scrapeSettingsSave: async input => settingsView({ scrape_backends: input }),
     scrapeMemoryView: async () => memoryView(),

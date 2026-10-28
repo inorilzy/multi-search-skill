@@ -847,6 +847,7 @@
     font-size: 12px;
     padding: 9px 10px;
     background: white;
+    white-space: nowrap;
   }
   .source-test-button svg {
     width: 14px;
@@ -1120,7 +1121,7 @@
       gap: 16px;
     }
     .source-line {
-      grid-template-columns: 34px minmax(135px,1fr) 102px 105px 67px 22px;
+      grid-template-columns: 34px minmax(135px,1fr) 102px 105px 76px 22px;
       gap: 10px;
     }
     .source-key {
@@ -1170,10 +1171,13 @@
       padding: 0;
     }
     .credential-fields form {
-      grid-template-columns: minmax(120px,1fr) auto auto;
+      grid-template-columns: minmax(120px,1fr);
     }
     .credential-fields form>label {
       grid-column: auto;
+    }
+    .credential-fields .draft-controls {
+      flex-wrap: wrap;
     }
     .test-result {
       min-height: 64px;

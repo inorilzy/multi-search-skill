@@ -27,15 +27,12 @@ MATRIX = [
     ("twitter", "search_twitter"),
 ]
 
-
 def _requires_key(name: str) -> bool:
     return bool(get_capability(name).operation.requires_api_key)
-
 
 def _key_pool_name(name: str) -> str | None:
     operation = get_capability(name).operation
     return operation.key_name if operation.uses_api_key_pool else None
-
 
 def _fake_row(name: str) -> dict:
     return {
@@ -46,26 +43,17 @@ def _fake_row(name: str) -> dict:
         "content_kind": "snippet",
     }
 
-
-def _resolver(_host: str) -> list[str]:
-    """Resolve fixture URLs to a public literal so the fetch stage never uses DNS."""
-
-    return ["93.184.216.34"]
-
-
 def _scraper(url: str, **_kwargs) -> dict:
     """Return a synthetic body for the fetch stage without touching the network."""
 
     return {"url": url, "markdown": "fixture body", "via": "fixture"}
 
-
 def _search(request: dict, keys: dict) -> dict:
     from multi_search_mcp.src.service import run_search_web
 
     return run_search_web(
-        request, keys=keys, config={}, url_resolver=_resolver, scraper=_scraper,
+        request, keys=keys, config={}, scraper=_scraper,
     )
-
 
 class SearchSourceMatrixTests(unittest.TestCase):
     def test_matrix_covers_every_searchable_source(self):
@@ -138,7 +126,6 @@ class SearchSourceMatrixTests(unittest.TestCase):
                         {},
                     )
                 self.assertEqual(calls, [], "a key-required source with no key must not reach its searcher")
-
 
 if __name__ == "__main__":
     unittest.main()

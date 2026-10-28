@@ -86,6 +86,16 @@ pub struct CredentialOverview {
     #[cfg_attr(feature = "ts", ts(optional))]
     pub file_key_count: Option<usize>,
     pub key_application_available: bool,
+    /// Whether this build's encrypted credential backend can write on the
+    /// current platform (Windows current-user DPAPI only). Reported by the
+    /// native backend, independent of whether any Key is saved; the UI keeps
+    /// writes disabled until this is `true`.
+    pub store_supported: bool,
+    /// Machine-readable reason when `store_supported` is `false` —
+    /// `platform_unsupported` today — absent when the store is supported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub store_unsupported_reason: Option<String>,
 }
 
 /// One row of Core's `doctor --format json` -> `key_sources` report.
@@ -162,6 +172,9 @@ pub(crate) fn overview(
     // Locally only the store is known. Env precedence and the legacy file count are Core's
     // answer (`apply_core_source`); the desktop never re-derives them, so they start empty.
     let effective_source = local_effective_source(&store.state).to_string();
+    // The backend's platform fact is a shared compile-time check, kept separate
+    // from data presence: "未配置 Key" does not mean "存储不可用".
+    let store_supported = credential::storage_supported();
     CredentialOverview {
         source: entry.source.into(),
         env_overrides_store: None,
@@ -170,6 +183,8 @@ pub(crate) fn overview(
         store,
         effective_source,
         key_application_available: application_url(entry.source).is_some(),
+        store_supported,
+        store_unsupported_reason: unsupported_reason(store_supported),
     }
 }
 #[derive(Serialize)]
@@ -284,6 +299,31 @@ pub(crate) fn remove_row(
     .map_err(|e| e.to_string())?;
     Ok(overview(backend, variables, entry))
 }
+/// Guard a command-boundary write: rejects with the stable unsupported code
+/// before the backend is touched. Read-only flows never call this. The code is
+/// produced here, at the interception point, never recovered from message text.
+#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
+pub(crate) fn require_supported() -> Result<(), crate::errors::CommandError> {
+    match credential::require_storage() {
+        Ok(()) => Ok(()),
+        Err(credential::CredentialError::PlatformUnsupported) => Err(unsupported_error()),
+        Err(other) => Err(crate::errors::CommandError::new("operation_failed", other.to_string())),
+    }
+}
+
+/// The typed rejection every encrypted write returns on an unsupported platform.
+pub(crate) fn unsupported_error() -> crate::errors::CommandError {
+    crate::errors::CommandError::new(
+        credential::PLATFORM_UNSUPPORTED_CODE,
+        credential::CredentialError::PlatformUnsupported.to_string(),
+    )
+}
+
+/// The reason string both status payloads publish when the store is unsupported.
+pub(crate) fn unsupported_reason(supported: bool) -> Option<String> {
+    (!supported).then(|| credential::PLATFORM_UNSUPPORTED_REASON.to_string())
+}
+
 #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
 pub(crate) fn with_native<T>(
     variables: &BTreeMap<String, String>,
@@ -580,6 +620,16 @@ pub struct MigrationPlan {
     pub items: Vec<MigrationItem>,
     pub migratable: Vec<String>,
     pub skipped: Vec<String>,
+    /// Same backend platform fact as `CredentialOverview.store_supported`,
+    /// attached by the command boundary after the CLI returns its masked plan:
+    /// format-compatible items are not executable when the store cannot write.
+    #[serde(default)]
+    pub store_supported: bool,
+    /// Machine-readable reason when `store_supported` is `false` (see
+    /// `credential::PLATFORM_UNSUPPORTED_REASON`); absent when writes can run.
+    /// Omitted from the wire like `CredentialOverview`, never `null`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_unsupported_reason: Option<String>,
 }
 
 /// Provider names only. The CLI never returns values.
@@ -694,8 +744,13 @@ pub(crate) fn migration_plan(
         "json".into(),
     ];
     let output = run_migration_cli(environment, cli, &args)?;
-    serde_json::from_str::<MigrationPlan>(&output.stdout)
-        .map_err(|_| "无法解析迁移预览".to_string())
+    let mut plan = serde_json::from_str::<MigrationPlan>(&output.stdout)
+        .map_err(|_| "无法解析迁移预览".to_string())?;
+    // The CLI reports item formats; the desktop reports whether the encrypted
+    // store can write them on this platform. Both reach the page independently.
+    plan.store_supported = credential::storage_supported();
+    plan.store_unsupported_reason = unsupported_reason(plan.store_supported);
+    Ok(plan)
 }
 
 /// Apply an approved request via the CLI, which re-checks the file and store itself.

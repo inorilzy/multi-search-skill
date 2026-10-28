@@ -23,6 +23,9 @@ class MultiSearchRequest:
     config_path: str | None = None
     expand: list[str] | None = None
     use_state: bool = True
+    # Optional per-request ranking override ("ranking" config keys); None uses
+    # the config value (default: pure RRF, no model rerank).
+    ranking: dict | None = None
 
 
 @dataclass
@@ -45,6 +48,7 @@ class SearchWebRequest:
     config_path: str | None = None
     expand: list[str] | None = None
     use_state: bool = True
+    ranking: dict | None = None
     # Candidate-only mode: fuse ranked search hits and stop. No page body is
     # fetched and no body cache entry is written, so a caller that only needs
     # provider status (the desktop's "test key") spends exactly one search budget.

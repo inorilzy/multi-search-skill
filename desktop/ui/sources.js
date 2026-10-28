@@ -149,7 +149,11 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     const provenance = JSON.stringify([view.effective_source, view.store?.state, view.store?.saved_at]);
     if (rec.provenance && rec.provenance !== provenance) updateTest(rec, IDLE);
     rec.provenance = provenance;
-    if (view.effective_source === 'unavailable' || ['unavailable', 'unreadable'].includes(view.store?.state)) return setRow(rec, 'error', '凭据库异常');
+    // Core's effective_source is the truth for how the CLI authenticates: env
+    // wins over a broken store entry, and "unavailable" means fail-closed, not
+    // a generic error. A store that cannot decrypt never masks a working env
+    // or file source as "凭据库异常".
+    if (view.effective_source === 'unavailable') return setRow(rec, 'error', '凭据库异常');
     if (view.effective_source === 'none') return setRow(rec, 'absent', '未配置');
     // Effective sources after the SQLite/DPAPI merge; unknown values stay readable.
     const labels = { sqlite: '已配置', env: '环境变量生效', credential_store: '已配置', file: '文件 Key 生效' };

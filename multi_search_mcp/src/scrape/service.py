@@ -40,7 +40,6 @@ def run_scrape(
     scraper=None,
     keys: dict | None = None,
     config: dict | None = None,
-    url_resolver=None,
 ) -> dict:
     if isinstance(request, dict):
         request = ScrapeRequest(**request)
@@ -50,7 +49,7 @@ def run_scrape(
         )
     result, updates, scrape_chars = run_scrape_raw(
         request, state_store=state_store, scraper=scraper, keys=keys,
-        config=config, url_resolver=url_resolver,
+        config=config,
     )
     response = {
         "url": request.url,
@@ -70,7 +69,6 @@ def run_scrape_raw(
     scraper=None,
     keys: dict | None = None,
     config: dict | None = None,
-    url_resolver=None,
     deadline: float | None = None,
     runtime_timeout: float | None = None,
 ) -> tuple[dict, list[dict], int]:
@@ -123,7 +121,6 @@ def run_scrape_raw(
         site_memory=site_memory,
         key_manager=key_manager,
         scrape_chars=scrape_chars,
-        url_resolver=url_resolver,
         **({"twitter_cookies": (
             runtime_keys.get("twitter_cookies_path")
             or runtime_keys.get("twitter")

@@ -1,8 +1,6 @@
 """Synthetic regressions for deadline, authorization and managed-cookie boundaries."""
 import io
-import os
 import tempfile
-import threading
 import time
 import unittest
 import urllib.request
@@ -20,43 +18,18 @@ from multi_search_mcp.src.state.state_store import StateStore
 
 
 class RemainingBoundariesTests(unittest.TestCase):
-    def test_literal_fake_ip_rejected_even_with_opt_in(self):
-        with mock.patch.dict(os.environ, {url_security.FAKE_IP_ENV: '1'}):
-            with self.assertRaises(url_security.UrlSecurityError):
-                http._ensure_connect_address('198.18.0.1')
-            http._ensure_connect_address('198.18.0.1', resolved=True)
+    def test_literal_fake_ip_rejected(self):
+        with self.assertRaises(url_security.UrlSecurityError):
+            http._ensure_connect_address('198.18.0.1')
 
-    def test_redirect_resolver_called_once_and_answers_pinned(self):
-        resolver = mock.Mock(side_effect=[['93.184.216.34'], ['127.0.0.1']])
+    def test_redirect_does_not_resolve_the_target(self):
         req = urllib.request.Request('https://example.com/a')
         req._multi_search_deadline = time.monotonic() + 1
-        result = http._SafeHTTPRedirectHandler(resolver=resolver).redirect_request(req, io.BytesIO(), 302, 'Found', {}, 'https://example.com/b')
-        resolver.assert_called_once_with('example.com')
-        self.assertEqual(result._multi_search_pinned_addresses[('example.com', 443)][0][4][0], '93.184.216.34')
-
-    def test_slow_redirect_resolver_is_deadline_bounded(self):
-        release = threading.Event()
-        req = urllib.request.Request('https://example.com/a')
-        req._multi_search_deadline = time.monotonic() + .03
-        start = time.monotonic()
-        try:
-            with self.assertRaises(url_security.UrlSecurityError):
-                http._SafeHTTPRedirectHandler(resolver=lambda _: (release.wait(1), ['93.184.216.34'])[1]).redirect_request(req, io.BytesIO(), 302, 'Found', {}, 'https://example.com/b')
-            self.assertLess(time.monotonic() - start, .3)
-        finally:
-            release.set()
-
-    def test_dns_remaining_recomputed_after_admission(self):
-        future = mock.Mock()
-        pool = mock.Mock()
-        clock = [10.0]
-        def submit(*args):
-            clock[0] = 10.8
-            return future
-        pool.submit_nowait.side_effect = submit
-        with mock.patch.object(url_security, '_DNS_POOL', pool), mock.patch.object(url_security.time, 'monotonic', side_effect=lambda: clock[0]):
-            url_security._run_bounded_dns(lambda: [], deadline=11.0)
-        self.assertAlmostEqual(future.result.call_args.kwargs['timeout'], .2)
+        with mock.patch('socket.getaddrinfo', side_effect=AssertionError('redirect DNS')):
+            result = http._SafeHTTPRedirectHandler().redirect_request(
+                req, io.BytesIO(), 302, 'Found', {}, 'https://example.com/b',
+            )
+        self.assertEqual(result.full_url, 'https://example.com/b')
 
     def test_atomic_reservation_distributes_two_simultaneous_attempts(self):
         with tempfile.TemporaryDirectory() as temp:

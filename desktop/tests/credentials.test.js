@@ -6,7 +6,9 @@ import { managementApi } from '../ui/api.js';
 const KEY = 'synthetic-ui-key-0001';
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const flush2 = async () => { await flush(); await flush(); };
-const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'sqlite' : 'none', key_application_available: false, ...extra });
+// The backend contract reports capability unconditionally (required field); a stub that
+// omits it is contract-invalid, so supported is the default and tests override it.
+const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'sqlite' : 'none', key_application_available: false, store_supported: true, ...extra });
 function setup() { const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root); return { window, root }; }
 const submit = ({ window, root }) => root.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
 function api(overrides = {}) { return { credentialStatus: async () => status(), credentialRead: async () => ({ value: '' }), credentialAppend: async () => status(true), credentialRemove: async () => status(), ...overrides }; }
@@ -466,4 +468,212 @@ test('Core-reported provenance is labelled; the optional fields may be absent', 
     assert.equal(ctx.root.querySelector('[data-status="source"]').textContent, label);
     ctx.window.close();
   }
+});
+
+// 平台能力分支：后端报告的能力控制编辑器，UI 不从平台字符串或失败推断。
+
+test('unsupported platform explains the DPAPI limit before input and disables every encrypted operation', async () => {
+  const ctx = setup(); const calls = [];
+  const unsupported = status(false, { store_supported: false, store_unsupported_reason: 'platform_unsupported', effective_source: 'env', env_var: 'TAVILY_API_KEY' });
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => unsupported,
+    credentialRead: async () => { throw '读取失败'; },
+    credentialAppend: async () => { calls.push('append'); return unsupported; },
+    credentialRemove: async () => { calls.push('remove'); return unsupported; },
+    credentialReveal: async () => { calls.push('reveal'); return { value: KEY, snapshot: 's' }; },
+    credentialTest: async () => { calls.push('test'); return { result: 'success', message: 'ok' }; },
+  }));
+  const banner = ctx.root.querySelector('[data-capability]');
+  assert.equal(banner.hidden, false);
+  assert.match(banner.textContent, /Windows 当前用户 DPAPI/);
+  assert.match(banner.textContent, /当前平台不支持/);
+  for (const action of ['save', 'add', 'remove-draft']) {
+    assert.equal(ctx.root.querySelector(`[data-action="${action}"]`).disabled, true, action);
+  }
+  assert.equal(draftInputs(ctx.root)[0].disabled, true);
+  // Attempted UI submission issues no write.
+  draftInputs(ctx.root)[0].value = KEY;
+  submit(ctx); await flush2();
+  assert.equal(calls.length, 0);
+  // 未配置 Key ≠ 平台不支持：生效来源与允许的连接测试继续可用。
+  assert.equal(ctx.root.querySelector('[data-status="source"]').textContent, '环境变量 TAVILY_API_KEY');
+  assert.equal(ctx.root.querySelector('[data-action="test"]').disabled, false);
+  ctx.root.querySelector('[data-action="test"]').click(); await flush();
+  assert.deepEqual(calls, ['test']);
+  ctx.window.close();
+});
+
+test('unsupported platform keeps saved rows visible but disables reveal and delete', async () => {
+  const ctx = setup(); const calls = [];
+  const unsupported = status(true, { store_supported: false, store_unsupported_reason: 'platform_unsupported' });
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => unsupported,
+    credentialRead: async () => ({ value: '••••0001\n••••0002', snapshot: 'r1' }),
+    credentialReveal: async () => { calls.push('reveal'); return { value: KEY, snapshot: 'r1' }; },
+    credentialRemove: async () => { calls.push('remove'); return unsupported; },
+  }));
+  assert.deepEqual(savedInputs(ctx.root), ['••••0001', '••••0002'], 'masked rows still render read-only');
+  for (const button of ctx.root.querySelectorAll('[data-action="reveal"], [data-action="remove"]')) {
+    assert.equal(button.disabled, true);
+    button.click();
+  }
+  await flush2();
+  assert.deepEqual(calls, [], 'disabled controls issue no encrypted read or delete');
+  ctx.window.close();
+});
+
+test('capability failure keeps writes disabled until a status refresh reports support', async () => {
+  const ctx = setup(); let failStatus = true;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => { if (failStatus) throw '状态读取失败'; return status(true); },
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+  }));
+  const banner = ctx.root.querySelector('[data-capability]');
+  assert.equal(banner.hidden, false);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true);
+  assert.equal(draftInputs(ctx.root)[0].disabled, true);
+  failStatus = false;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  assert.equal(banner.hidden, true);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  ctx.window.close();
+});
+
+test('a supported response reporting missing Key is not confused with unsupported storage', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { store_supported: true }) }));
+  assert.equal(ctx.root.querySelector('[data-capability]').hidden, true);
+  assert.equal(ctx.root.querySelector('[data-status="store"]').textContent, '未保存');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  ctx.window.close();
+});
+
+test('a coded unsupported write rejection maps to a Chinese capability message', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({
+    credentialAppend: async () => { throw coded('credential_platform_unsupported', 'DPAPI write refused'); },
+  }));
+  draftInputs(ctx.root)[0].value = KEY;
+  submit(ctx); await flush2();
+  const error = ctx.root.querySelector('[data-info="error"]');
+  assert.match(error.textContent, /Windows 当前用户 DPAPI/);
+  assert.doesNotMatch(error.textContent, /DPAPI write refused/);
+  ctx.window.close();
+});
+
+// 02 能力查询的加载、失败与重试恢复：可控制完成顺序的响应。
+
+test('capability query shows pending state and writes stay disabled while loading', async () => {
+  const ctx = setup();
+  let resolveStatus;
+  const pending = new Promise(resolve => { resolveStatus = resolve; });
+  const mounted = mountCredentials(ctx.root, api({
+    credentialStatus: () => pending,
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+  }));
+  await flush();
+  const banner = ctx.root.querySelector('[data-capability]');
+  assert.equal(banner.hidden, false, 'capability indicator visible while loading');
+  assert.match(banner.textContent, /正在确认/);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true, 'no brief writable window');
+  assert.equal(draftInputs(ctx.root)[0].disabled, true);
+  resolveStatus(status(true));
+  await mounted; await flush2();
+  assert.equal(banner.hidden, true, 'banner cleared once support is confirmed');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  ctx.window.close();
+});
+
+test('capability failure shows retry guidance, not a guessed unsupported or empty store', async () => {
+  const ctx = setup(); let attempts = 0;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => { attempts += 1; throw '连接失败'; },
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+  }));
+  const banner = ctx.root.querySelector('[data-capability]');
+  assert.equal(banner.hidden, false);
+  assert.match(banner.textContent, /无法确认/);
+  assert.match(banner.textContent, /刷新已保存值/);
+  assert.doesNotMatch(banner.textContent, /Windows 当前用户 DPAPI/, 'a failure is not presented as platform-unsupported');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true);
+  // Store status is not fabricated as absent/present.
+  assert.equal(ctx.root.querySelector('[data-status="store"]').textContent, '');
+  ctx.window.close();
+});
+
+test('retry after failure recovers to supported; old error does not linger', async () => {
+  const ctx = setup(); let fail = true;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => { if (fail) throw '暂时失败'; return status(true); },
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+  }));
+  assert.match(ctx.root.querySelector('[data-capability]').textContent, /无法确认/);
+  draftInputs(ctx.root)[0].value = KEY;
+  fail = false;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  assert.equal(ctx.root.querySelector('[data-capability]').hidden, true, 'resolved capability clears the banner');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  assert.equal(draftInputs(ctx.root)[0].value, KEY, 'drafts survive the failed attempt and the retry');
+  ctx.window.close();
+});
+
+test('retry after failure recovers to unsupported with the platform explanation', async () => {
+  const ctx = setup(); let fail = true;
+  const unsupported = status(false, { store_supported: false, store_unsupported_reason: 'platform_unsupported' });
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => { if (fail) throw '暂时失败'; return unsupported; },
+    credentialRead: async () => { throw '不可读'; },
+  }));
+  assert.match(ctx.root.querySelector('[data-capability]').textContent, /无法确认/);
+  fail = false;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  assert.match(ctx.root.querySelector('[data-capability]').textContent, /Windows 当前用户 DPAPI/, 'unsupported outcome replaces the failure message');
+  assert.doesNotMatch(ctx.root.querySelector('[data-capability]').textContent, /无法确认/);
+  ctx.window.close();
+});
+
+test('a slower older refresh cannot overwrite a newer outcome', async () => {
+  const ctx = setup(); const resolvers = [];
+  const mounted = mountCredentials(ctx.root, api({
+    credentialStatus: () => new Promise(resolve => resolvers.push(resolve)),
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+  }));
+  // Mount fires the first status request; resolve it so the page finishes loading.
+  await flush();
+  resolvers[0](status(true));
+  await mounted; await flush2();
+  // Trigger a refresh, then a second synthesized click while the first is in
+  // flight (the button is disabled, but a queued request proves ordering).
+  ctx.root.querySelector('[data-action="refresh"]').click();
+  await flush();
+  ctx.root.querySelector('[data-action="refresh"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  await flush();
+  const newer = resolvers[resolvers.length - 1], older = resolvers[1];
+  newer(status(true, { effective_source: 'env', env_var: 'NEW_VAR' }));
+  await flush2();
+  older(status(false, { store_supported: false, store_unsupported_reason: 'platform_unsupported', effective_source: 'none' }));
+  await flush2();
+  assert.equal(ctx.root.querySelector('[data-status="source"]').textContent, '环境变量 NEW_VAR', 'newer outcome stays');
+  assert.equal(ctx.root.querySelector('[data-capability]').hidden, true, 'stale unsupported cannot regress a supported state');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  ctx.window.close();
+});
+
+test('no write request is issued during loading, failure or stale-resolution windows', async () => {
+  const ctx = setup(); const writes = [];
+  let fail = true;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => { if (fail) throw 'x'; return status(true); },
+    credentialRead: async () => ({ value: KEY, snapshot: 's' }),
+    credentialAppend: async () => { writes.push('append'); return status(true); },
+  }));
+  draftInputs(ctx.root)[0].value = KEY;
+  submit(ctx); await flush2();
+  assert.equal(writes.length, 0, 'no append while capability is unconfirmed');
+  fail = false;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  draftInputs(ctx.root)[0].value = KEY;
+  submit(ctx); await flush2();
+  assert.equal(writes.length, 1, 'write allowed once support confirmed');
+  ctx.window.close();
 });

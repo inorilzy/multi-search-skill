@@ -45,8 +45,9 @@ def validate_twitter_url(url: str) -> str:
     """Validate a post identifier URL, never an arbitrary HTTP destination.
 
     XKit receives only the numeric post ID and contacts its fixed X endpoints.
-    Input URL DNS checks would reject TUN fake-IP routing without protecting
-    another connection: the supplied URL itself is never fetched.
+    No DNS lookup is needed because the supplied URL itself is never fetched.
+    This check runs inside ``scrape_url_twitter`` too, so direct callers are
+    covered; the dispatcher's earlier call only avoids starting the fetch.
     """
     candidate = str(url or "").strip()
     if any(ord(char) < 32 or ord(char) == 127 for char in candidate):
@@ -75,7 +76,7 @@ def _text(tweet) -> str:
 
 
 def scrape_url_twitter(url: str, cookies: dict | str = "", timeout: float = 60, *,
-                       deadline: float | None = None, url_resolver=None) -> dict:
+                       deadline: float | None = None) -> dict:
     end = time.monotonic() + max(0.0, timeout)
     if deadline is not None:
         end = min(end, deadline)

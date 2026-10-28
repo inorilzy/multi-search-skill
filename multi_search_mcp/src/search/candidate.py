@@ -219,6 +219,9 @@ def _public_hit(
         "body_available": body_available,
         "content_ref": source_id,
         "untrusted_content": True,
+        # Always present so an unscored hit is explicitly null, never absent or
+        # zero; the rerank stage fills it in.
+        "relevance_score": None,
     }
     if query_ranks is not None:
         hit["query_ranks"] = query_ranks

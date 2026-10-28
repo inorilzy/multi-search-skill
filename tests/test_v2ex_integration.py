@@ -29,7 +29,6 @@ from multi_search_mcp.src.state.content_store import ContentStore
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support.config import ConfigError
 
-
 def topic(topic_id, body, *, score=1):
     return {
         "_id": str(topic_id),
@@ -46,10 +45,8 @@ def topic(topic_id, body, *, score=1):
         "highlight": {"content": ["<em>Python</em> excerpt"]},
     }
 
-
 def api_response(hits):
     return io.BytesIO(json.dumps({"took": 7, "total": len(hits), "hits": hits}).encode())
-
 
 class SOV2EXSourceNameTests(unittest.TestCase):
     def test_only_sov2ex_is_advertised_as_a_search_source(self):
@@ -92,7 +89,6 @@ class SOV2EXSourceNameTests(unittest.TestCase):
         ):
             with self.subTest(config=config), self.assertRaisesRegex(ConfigError, key):
                 build_counts(config)
-
 
 class SOV2EXIntegrationTests(unittest.TestCase):
     def test_sov2ex_uses_an_independent_count_and_no_firecrawl_key(self):
@@ -182,7 +178,7 @@ class SOV2EXIntegrationTests(unittest.TestCase):
             response = run_search_web(
                 SearchWebRequest(query="python", sources=["sov2ex"], count=20),
                 keys={}, config={}, state_store=store, scraper=scraper,
-                url_resolver=lambda _host: ["93.184.216.34"], scrape_chars=12,
+                scrape_chars=12,
             )
             self.assertEqual(response["errors"], [])
             self.assertEqual(response["diagnostics"]["active_sources"], ["sov2ex"])
@@ -204,7 +200,7 @@ class SOV2EXIntegrationTests(unittest.TestCase):
             fetched = run_fetch_source(
                 FetchSourceRequest(source_id=rows[0]["source_id"]),
                 state_store=store, scraper=scraper, keys={}, config={},
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
             self.assertTrue(fetched["cache_hit"])
             self.assertEqual(fetched["body"], fetched_bodies[expected_urls[0]])
@@ -234,7 +230,7 @@ class SOV2EXIntegrationTests(unittest.TestCase):
             result = run_search_web(
                 SearchWebRequest(query="python", sources=["v2ex"], use_state=False),
                 keys={}, config={}, scraper=scraper,
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
         self.assertEqual(result["errors"], [])
         self.assertEqual(result["results"][0]["source"], "sov2ex")
@@ -253,7 +249,7 @@ class SOV2EXIntegrationTests(unittest.TestCase):
             result = run_search_web(
                 SearchWebRequest(query="python", sources=["sov2ex"], use_state=False),
                 keys={}, config={}, scraper=scraper,
-                url_resolver=lambda _host: ["93.184.216.34"],
+
             )
         self.assertEqual(result["errors"], [])
         self.assertEqual(result["results"][0]["content"], "Python excerpt")
@@ -261,7 +257,6 @@ class SOV2EXIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(result["results"][0]["rrf_score"], 1 / 41)
         scraper.assert_called_once()
         self.assertEqual(scraper.call_args.args[0], "https://www.v2ex.com/t/104")
-
 
 if __name__ == "__main__":
     unittest.main()

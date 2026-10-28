@@ -22,7 +22,7 @@ from ..support.auth import is_key_retryable_error
 from ..support.models import normalize_scrape_result
 from ..support.url_security import (
     UrlSecurityError,
-    _ensure_public_ip,
+    check_host_is_not_local,
     validate_scrape_url,
 )
 from .scrapers import _DEFAULT_SCRAPE_TIMEOUT_SECONDS
@@ -181,7 +181,6 @@ class ScrapeContext:
     deadline: float | None = None
     site_memory: Any = None
     key_manager: Any = None
-    url_resolver: Any = None
     scrape_chars: int | None = None
     timeout: float = _DEFAULT_SCRAPE_TIMEOUT_SECONDS
     jina_prefer_keyed: bool = False
@@ -318,13 +317,11 @@ def _validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise UrlSecurityError(f"{label} deadline exceeded")
     host = _normalize_delegated_host(hostname, label=label)
-    if host == "localhost" or host.endswith(".localhost"):
-        raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
     literal = _literal_ip(host, label=label)
+    if literal is not None and getattr(literal, "scope_id", None):
+        raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
+    check_host_is_not_local(host, label=label)
     if literal is not None:
-        if getattr(literal, "scope_id", None):
-            raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
-        _ensure_public_ip(literal, label=label, resolved=False)
         # Forward the address exactly as validated, never its alternate spelling.
         host = f"[{literal.compressed}]" if literal.version == 6 else str(literal)
     netloc = host if port is None else f"{host}:{port}"
@@ -463,7 +460,7 @@ def uses_delegated_backends(url: str, backends, *, scraper=None) -> bool:
 
     A custom fetch callback is an unknown/local trust boundary regardless of
     backend names. Platform dispatch also wins over any generic backend list.
-    Unknown or mixed chains keep the local URL preflight (fail closed).
+    Unknown or mixed chains use the local format-only URL preflight.
     """
     if scraper is not None and scraper is not scrape_url_smart:
         return False
@@ -475,19 +472,6 @@ def uses_delegated_backends(url: str, backends, *, scraper=None) -> bool:
 def validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
     """Public entry for the delegated-backend URL policy (no DNS, fail-closed)."""
     return _validate_delegated_url(url, deadline=deadline)
-
-
-def _prepare_scrape_target(
-    url: str, *, resolver=None, deadline: float | None = None,
-) -> tuple[str, str]:
-    """Validate a generic (delegated) scrape target without local DNS.
-
-    ``resolver`` is accepted for signature compatibility but intentionally
-    unused: only locally fetched paths (Reddit, direct HTTP) resolve the host.
-    """
-    del resolver
-    safe_url = _validate_delegated_url(url, deadline=deadline)
-    return safe_url, safe_url
 
 
 # ---------------------------------------------------------------------------
@@ -616,7 +600,7 @@ _SCRAPE_DISPATCH: dict[str, Callable[[str, ScrapeContext, dict], dict | None]] =
 
 _LEGACY_OPTION_KEYS = frozenset({
     "timeout", "primary", "backends", "deadline", "site_memory", "key_manager",
-    "scrape_chars", "jina_prefer_keyed", "twitter_cookies", "url_resolver",
+    "scrape_chars", "jina_prefer_keyed", "twitter_cookies",
     "jina_key", "jina_keys", "exa_key", "exa_keys", "firecrawl_key",
     "firecrawl_keys", "tavily_key", "tavily_keys", "strict_backends",
 })
@@ -648,7 +632,6 @@ def _legacy_context(options: dict) -> ScrapeContext:
         deadline=options.get("deadline"),
         site_memory=options.get("site_memory"),
         key_manager=options.get("key_manager"),
-        url_resolver=options.get("url_resolver"),
         scrape_chars=options.get("scrape_chars"),
         timeout=options.get("timeout", _DEFAULT_SCRAPE_TIMEOUT_SECONDS),
         jina_prefer_keyed=bool(options.get("jina_prefer_keyed", False)),
@@ -664,7 +647,7 @@ def _legacy_context(options: dict) -> ScrapeContext:
 def scrape_url_smart(url: str, ctx: ScrapeContext | None = None, **options) -> dict:
     """Dispatch platform URLs to their scrapers; use generic backends otherwise.
 
-    ``ctx`` carries keys, deadline, site memory, resolver and per-call options;
+    ``ctx`` carries keys, deadline, site memory and per-call options;
     omitted means the historical keyword arguments are used to build one.
     """
     if ctx is None:
@@ -694,7 +677,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                 # to fixed Reddit endpoints. The shared URL policy still runs so
                 # credentials and non-public destinations are rejected.
                 safe_url = validate_scrape_url(
-                    url, resolver=ctx.url_resolver, deadline=ctx.deadline,
+                    url, deadline=ctx.deadline,
                 )
         except ValueError as exc:
             return normalize_scrape_result({"error": str(exc)}, url=url, via=backend)
@@ -702,12 +685,11 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
         if backend == "twitter":
             result = scrape_url_twitter(
                 safe_url, cookies=ctx.twitter_cookies, timeout=ctx.timeout,
-                deadline=ctx.deadline, url_resolver=ctx.url_resolver,
+                deadline=ctx.deadline,
             )
         else:
             result = scrape_url_reddit(
                 safe_url, timeout=ctx.timeout, deadline=ctx.deadline,
-                url_resolver=ctx.url_resolver,
             )
         result = normalize_scrape_result(result, url=safe_url, via=backend)
         if ctx.site_memory is not None:
@@ -734,9 +716,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
         # Generic backends delegate the fetch to a third-party service, which
         # resolves the URL from its own network. Only literal local
         # destinations are meaningful here; see _validate_delegated_url.
-        safe_url, scrape_target = _prepare_scrape_target(
-            url, resolver=ctx.url_resolver, deadline=ctx.deadline,
-        )
+        safe_url = _validate_delegated_url(url, deadline=ctx.deadline)
     except UrlSecurityError as exc:
         return normalize_scrape_result({"error": str(exc)}, url=url)
 
@@ -759,7 +739,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
         dispatch = _SCRAPE_DISPATCH.get(backend)
         if dispatch is None:
             continue
-        result = dispatch(scrape_target, ctx, policy)
+        result = dispatch(safe_url, ctx, policy)
         if result is None:
             continue
         result = normalize_scrape_result(result, url=safe_url, via=backend)

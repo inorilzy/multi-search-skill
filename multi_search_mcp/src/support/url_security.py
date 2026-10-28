@@ -1,112 +1,69 @@
-"""Strict URL safety checks for outbound scraping/fetching."""
+"""Strict URL safety checks for outbound scraping/fetching.
+
+Trust model: outbound destinations are provider addresses fixed in code, and
+external URLs are only handed to those providers as parameters or reduced to
+an identifier. So these checks never resolve a name and never inspect resolved
+addresses; a fake-IP/TUN answer is just a provider's routing. What stays is
+every check that needs no DNS: scheme, host, credentials, ``localhost``, and
+non-public IP literals in all numeric spellings.
+
+Code that connects from this machine to an externally supplied URL must add
+resolved-address checks before it dials. Nothing does so today.
+"""
 
 from __future__ import annotations
 
-import concurrent.futures
 import ipaddress
-import os
 import re
-import socket
 import time
 import unicodedata
 import urllib.parse
-from collections.abc import Callable, Iterable
-
-from .concurrency import BoundedDaemonExecutor
 
 
-Resolver = Callable[[str], Iterable[str]]
 _CGNAT_V4_NETWORK = ipaddress.ip_network("100.64.0.0/10")
-_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
-FAKE_IP_ENV = "MULTI_SEARCH_ALLOW_FAKE_IP"
 _NAT64_WKP = ipaddress.ip_network("64:ff9b::/96")
 _6TO4 = ipaddress.ip_network("2002::/16")
-_DNS_MAX_WORKERS = 8
-_DNS_POOL = BoundedDaemonExecutor(
-    max_workers=_DNS_MAX_WORKERS,
-    thread_name_prefix="multi-search-dns",
-)
 
 
 class UrlSecurityError(ValueError):
     """Raised when a URL is not safe for outbound fetching."""
 
 
-class DnsResolutionError(OSError):
-    """Raised when bounded DNS work cannot complete for a request."""
+def validate_public_http_url(url: str, *, deadline: float | None = None) -> str:
+    """Validate a URL that this process never dials itself (format checks only)."""
+    return _validate_format(url, label="URL", deadline=deadline)
 
 
-def validate_public_http_url(
-    url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
-    allow_fake_ip: bool | None = None,
-) -> str:
-    return _validate_url(
-        url, label="URL", resolver=resolver, deadline=deadline,
-        allow_fake_ip=allow_fake_ip,
-    )
+def validate_scrape_url(url: str, *, deadline: float | None = None) -> str:
+    """Validate a scrape target (format checks only, no DNS)."""
+    return _validate_format(url, label="scrape URL", deadline=deadline)
 
 
-def validate_scrape_url(
-    url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
-    allow_fake_ip: bool | None = None,
-) -> str:
-    return _validate_url(
-        url, label="scrape URL", resolver=resolver, deadline=deadline,
-        allow_fake_ip=allow_fake_ip,
-    )
-
-
-def validate_redirect_target(
-    url: str, *, resolver: Resolver | None = None, deadline: float | None = None,
-    allow_fake_ip: bool | None = None,
-) -> str:
-    return _validate_url(
-        url, label="redirect target", resolver=resolver, deadline=deadline,
-        allow_fake_ip=allow_fake_ip,
-    )
-
-
-def allow_fake_ip_default() -> bool:
-    """Accept resolved TUN benchmark addresses only after an explicit opt-in."""
-    return os.environ.get(FAKE_IP_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _validate_url(
-    url: str, *, label: str, resolver: Resolver | None, deadline: float | None,
-    allow_fake_ip: bool | None = None,
-) -> str:
+def _validate_format(url: str, *, label: str, deadline: float | None) -> str:
     candidate = str(url or "").strip()
     _parts, host, _port = http_target(candidate, label=label)
-    direct_ip = numeric_host(host)
-    if direct_ip is not None:
-        _ensure_deadline(deadline, label)
-        _ensure_public_ip(direct_ip, label=label, resolved=False)
-        return candidate
-    accept_fake_ip = allow_fake_ip_default() if allow_fake_ip is None else bool(allow_fake_ip)
-    resolve = resolver or _resolve_host_ips
-    try:
-        if deadline is None:
-            answers = list(resolve(host))
-        else:
-            answers = _run_bounded_dns(
-                lambda: list(resolve(host)), deadline=deadline,
-            )
-    except DnsResolutionError as exc:
-        raise UrlSecurityError(f"{label} {exc}") from exc
-    if not answers:
-        raise UrlSecurityError(f"{label} host did not resolve to any IP")
-    for answer in answers:
-        ip = _parse_ip(answer)
-        if ip is None:
-            raise UrlSecurityError(f"{label} host resolved to a non-IP value")
-        _ensure_public_ip(
-            ip, label=label, resolved=True, allow_fake_ip=accept_fake_ip,
-        )
+    _ensure_deadline(deadline, label)
+    check_host_is_not_local(host, label=label)
     return candidate
 
 
+def check_host_is_not_local(host: str, *, label: str) -> None:
+    """Reject ``localhost`` and non-public IP literals, without any DNS lookup.
+
+    Every host-level check that needs no DNS goes through here: the URL
+    format check, the HTTP connect/redirect hop, and the delegated scrape
+    policy. ``host`` may be any spelling; it is normalised first.
+    """
+    normalized = normalize_http_host(host)
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
+    literal = numeric_host(normalized)
+    if literal is not None:
+        _ensure_public_ip(literal, label=label)
+
+
 def normalize_http_host(host: str) -> str:
-    """Normalize local-transport hosts before distinguishing DNS from literals."""
+    """Normalize hosts before telling literal addresses from names."""
     try:
         decoded = urllib.parse.unquote(str(host).strip("[]"), errors="strict")
         if any(ord(char) < 32 or ord(char) == 127 for char in decoded):
@@ -150,7 +107,7 @@ def http_target(url: str, *, label: str = "URL") -> tuple:
 
 
 def numeric_host(host: str):
-    """Classify literal/alternate numeric addresses before any DNS exemption."""
+    """Classify literal and alternate numeric addresses (no DNS)."""
     host = normalize_http_host(host)
     literal = _parse_ip(host)
     if literal is not None:
@@ -175,85 +132,6 @@ def numeric_host(host: str):
     return ipaddress.IPv4Address(number)
 
 
-def resolve_validated_addresses(
-    host: str, port: int, *, deadline: float | None = None,
-    allow_fake_ip: bool | None = None,
-) -> list[tuple]:
-    """Resolve once and validate exactly the addresses that will be dialed."""
-    _ensure_deadline(deadline, "HTTP connection")
-    host = normalize_http_host(host)
-    literal = numeric_host(host)
-    if literal is not None:
-        _ensure_public_ip(literal, label="HTTP connection", resolved=False)
-        family = socket.AF_INET6 if literal.version == 6 else socket.AF_INET
-        sockaddr = (str(literal), port, 0, 0) if literal.version == 6 else (str(literal), port)
-        return [(family, socket.SOCK_STREAM, 6, "", sockaddr)]
-    addresses = resolve_host_addresses(host, port, deadline=deadline)
-    accept_fake_ip = allow_fake_ip_default() if allow_fake_ip is None else bool(allow_fake_ip)
-    for family, _socktype, _proto, _canonname, sockaddr in addresses:
-        if family not in {socket.AF_INET, socket.AF_INET6}:
-            continue
-        ip = _parse_ip(str(sockaddr[0]))
-        if ip is None:
-            raise UrlSecurityError("HTTP DNS resolution returned a non-IP address")
-        ensure_public_ip(
-            str(ip), label="HTTP connection", resolved=True,
-            allow_fake_ip=accept_fake_ip,
-        )
-    return addresses
-
-
-def _resolve_host_ips(host: str) -> list[str]:
-    try:
-        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise UrlSecurityError(f"host DNS resolution failed: {exc.strerror or exc}") from exc
-    answers: list[str] = []
-    seen: set[str] = set()
-    for family, _socktype, _proto, _canonname, sockaddr in infos:
-        if family not in {socket.AF_INET, socket.AF_INET6}:
-            continue
-        addr = sockaddr[0]
-        if addr not in seen:
-            seen.add(addr)
-            answers.append(addr)
-    return answers
-
-
-def resolve_host_addresses(
-    host: str, port: int, *, deadline: float | None = None,
-) -> list[tuple]:
-    """Resolve a socket destination through the same bounded DNS boundary."""
-    def resolve() -> list[tuple]:
-        return list(socket.getaddrinfo(host, port, type=socket.SOCK_STREAM))
-
-    if deadline is None:
-        return resolve()
-    return _run_bounded_dns(resolve, deadline=deadline, label="HTTP DNS resolution")
-
-
-def _run_bounded_dns(fn: Callable[[], Iterable], *, deadline: float, label: str = "DNS resolution"):
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise DnsResolutionError(f"{label} deadline exceeded")
-    future = _DNS_POOL.submit_nowait(fn)
-    if future is None:
-        raise DnsResolutionError(f"{label} capacity exhausted")
-    try:
-        # Admission can consume budget; never wait for the original full window.
-        result = future.result(timeout=max(0.0, deadline - time.monotonic()))
-    except concurrent.futures.TimeoutError as exc:
-        # A running resolver cannot be cancelled safely.  Abandoning it frees
-        # its admission slot while BoundedDaemonExecutor still bounds the
-        # number of detached resolver threads; past that bound the slot stays
-        # held and new lookups fail fast with "capacity exhausted".
-        _DNS_POOL.abandon(future)
-        raise DnsResolutionError(f"{label} deadline exceeded") from exc
-    if deadline - time.monotonic() <= 0:
-        raise DnsResolutionError(f"{label} deadline exceeded")
-    return result
-
-
 def _ensure_deadline(deadline: float | None, label: str) -> None:
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise UrlSecurityError(f"{label} deadline exceeded")
@@ -267,33 +145,20 @@ def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | Non
 
 
 def _ensure_public_ip(
-    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
-    *,
-    label: str,
-    resolved: bool,
-    allow_fake_ip: bool = False,
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address, *, label: str,
 ) -> None:
-    if allow_fake_ip and resolved and ip in _FAKE_IP_NETWORK:
-        # Opt-in covers only a resolved TUN benchmark answer, never a literal.
-        return
     reason = _unsafe_reason(ip)
     if reason is None:
         return
-    address_kind = "resolved address" if resolved else "direct address"
-    raise UrlSecurityError(f"unsafe {label}: {address_kind} is {reason}")
+    raise UrlSecurityError(f"unsafe {label}: direct address is {reason}")
 
 
-def ensure_public_ip(
-    value: str, *, label: str = "connection", resolved: bool = True,
-    allow_fake_ip: bool = False,
-) -> None:
-    """Raise when an address is not internet-routable."""
+def ensure_public_ip(value: str, *, label: str = "connection") -> None:
+    """Raise when an address literal is not internet-routable."""
     ip = _parse_ip(str(value))
     if ip is None:
         raise UrlSecurityError(f"unsafe {label}: address is not an IP")
-    _ensure_public_ip(
-        ip, label=label, resolved=resolved, allow_fake_ip=allow_fake_ip,
-    )
+    _ensure_public_ip(ip, label=label)
 
 
 def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:

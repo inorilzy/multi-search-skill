@@ -31,6 +31,40 @@ _HTML_RE = re.compile(r"<[^>]+>")
 _IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 
 
+def ranking_mode_label(payload: dict) -> str:
+    """Map response ranking metadata to the fixed one-line display.
+
+    ``mode_used`` is what the backend actually applied. A ``fallback_reason``
+    means the model path was requested but failed, so the response kept the
+    complete RRF order — that case renders as 「模型暂不可用，已使用 RRF」
+    instead of a bare 「RRF 排序」. Payloads that predate the ranking fields
+    render as plain RRF. Never derives a mode from result fields: the fused
+    order the service produced is the only order this formatter may show.
+    """
+    if not isinstance(payload, dict):
+        return "RRF 排序"
+    if payload.get("mode_used") == "rrf_model":
+        return "模型重排"
+    if payload.get("fallback_reason"):
+        return "模型暂不可用，已使用 RRF"
+    return "RRF 排序"
+
+
+def _relevance_suffix(item: dict) -> str:
+    """Render ``relevance_score`` only when the reranker actually scored it.
+
+    ``None`` (unscored, or a pure-RRF response) renders as nothing — never as
+    a ``0`` that would pretend the model judged the row irrelevant.
+    """
+    score = item.get("relevance_score")
+    if score is None:
+        return ""
+    try:
+        return f" rel={float(score):.3f}"
+    except (TypeError, ValueError):
+        return ""
+
+
 def body_preview_start(body: str, title: str, max_chars: int, snippet: str = "") -> int:
     """Locate an exact H1 or quoted snippet without rewriting acquired text.
 
@@ -160,7 +194,8 @@ def format_scrapes(scrapes: list, max_chars: int = 1200) -> str:
 
 def format_results(results: list, query: str, raw_counts: dict | None = None,
                    show_answer: bool = False, show_snippet: bool = True,
-                   degradation: dict | None = None) -> str:
+                   degradation: dict | None = None,
+                   ranking: dict | None = None) -> str:
     """Format aggregated results for display."""
     results = as_dicts(results)
     lines = [f"## multi-search Results: `{query}`\n"]
@@ -215,6 +250,19 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
         f"{SOURCE_ICONS.get(s, '•')} **{s}**: {n}" for s, n in source_counts.items()
     ]
     lines.append("**Sources (raw hits):** " + (" | ".join(summary_parts) if summary_parts else "none"))
+    # Report the ranking mode the backend actually used (never re-derived
+    # here): plain RRF, a successful model rerank, or a fallback to RRF.
+    # ``ranking`` carries the response's mode fields; when a legacy caller
+    # omits it, a non-None ``relevance_score`` on any row is the only row-level
+    # evidence of an applied model rerank.
+    if ranking is None:
+        scored = any(
+            item.get("relevance_score") is not None
+            for item in results
+            if isinstance(item, dict) and "error" not in item
+        )
+        ranking = {"mode_used": "rrf_model" if scored else "rrf"}
+    lines.append(f"**排序：** {ranking_mode_label(ranking)}")
 
     if source_counts or error_by_source:
         lines.append("\n### Source Status\n")
@@ -319,7 +367,7 @@ def format_results(results: list, query: str, raw_counts: dict | None = None,
         else:
             weight_prefix = "【 1 】 "
         also_str = f"  _from: {src}" + (f", {', '.join(also)}" if also else "") + "_"
-        lines.append(f"{i}. {weight_prefix}{icon} **{_md_link(title, url)}**{stars_str}{also_str}")
+        lines.append(f"{i}. {weight_prefix}{icon} **{_md_link(title, url)}**{stars_str}{_relevance_suffix(item)}{also_str}")
         if src == "twitter" and url:
             lines.append(f"   链接: {url}")
         # Keep compact social/community signals; snippets follow the route policy.

@@ -36,11 +36,13 @@ const ERROR_MESSAGES = {
   credential_remove_failed: '凭据删除失败，已保存的值没有改变。',
   credential_delete_failed: '凭据删除失败，请重试。',
   credential_test_failed: '凭据测试启动失败，请检查 CLI 后重试。',
+  credential_platform_unsupported: '加密凭据存储仅支持 Windows 当前用户 DPAPI，当前平台无法执行该操作；已保存内容未改动。',
   credential_application_failed: '无法打开系统浏览器，请手动访问服务商页面。',
   cookie_status_failed: 'Cookie 托管状态读取失败，请重试。',
   cookie_import_failed: 'Cookie 导入失败，原文件与已有的托管 Cookie 都没有改动。',
   cookie_delete_failed: 'Cookie 删除失败，仍保持托管模式，不会回退到旧文件。',
   scrape_settings_save_failed: '抓取设置保存失败，原配置未改变。',
+  rerank_key_save_failed: '重排 API 密钥保存失败，原密钥文件未改变。',
   scrape_memory_view_failed: '站点抓取记忆读取失败，请重试。',
   scrape_memory_pin_failed: '固定的抓取后端没有保存，请重试。',
   scrape_memory_reset_failed: '站点抓取记忆清除失败，请重试。',
@@ -218,6 +220,10 @@ export function managementApi(invoke) {
         throw new ApiError(new TypeError('scrape backends require a non-empty string array'), 'INVALID_ARGUMENT');
       }
       return call('scrape_settings_save', { backends }, 'SettingsView');
+    },
+    rerankKeySave: async key => {
+      if (typeof key !== 'string') throw new ApiError(new TypeError('rerank key must be a string'), 'INVALID_ARGUMENT');
+      return call('rerank_key_save', { key }, 'SettingsView');
     },
     scrapeMemoryView: site => call('scrape_memory_view', { site }, 'ScrapeMemoryView'),
     scrapeMemoryPin: (site, scraper) => call('scrape_memory_pin', { site, scraper }, 'ScrapeMemoryView'),

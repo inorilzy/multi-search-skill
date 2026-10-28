@@ -16,10 +16,8 @@ from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES
 from multi_search_mcp.src.service import run_search_web
 from multi_search_mcp.src.support.config import load_config
 
-
 DEFAULT_ROUTE_SOURCES = {"baidu", "brave", "exa", "firecrawl", "parallel", "serpapi", "tavily"}
 SYNTHETIC_KEYS = {"baidu": "synthetic-baidu-0601", "brave": "synthetic-brave-0602"}
-
 
 def _row(name):
     return {
@@ -30,18 +28,10 @@ def _row(name):
         "content_kind": "snippet",
     }
 
-
-def _resolver(_host):
-    """Fixture URLs resolve to a public literal, so the fetch stage never uses DNS."""
-
-    return ["93.184.216.34"]
-
-
 def _scraper(url, **_kwargs):
     """Synthetic body so the fetch stage never contacts a real backend."""
 
     return {"url": url, "markdown": "fixture body", "via": "fixture"}
-
 
 class DisabledSourcesConfigTests(unittest.TestCase):
     def setUp(self):
@@ -73,7 +63,7 @@ class DisabledSourcesConfigTests(unittest.TestCase):
             request["sources"] = sources
         return run_search_web(
             request, keys=dict(SYNTHETIC_KEYS), config=config,
-            url_resolver=_resolver, scraper=_scraper,
+            scraper=_scraper,
         )
 
     def test_body_stage_stays_injected_and_never_resolves_dns(self):
@@ -129,7 +119,6 @@ class DisabledSourcesConfigTests(unittest.TestCase):
             self.search(config)
         self.assertIn("all selected sources are disabled: twitter", str(ctx.exception))
         self.assertEqual(self.calls, [])
-
 
 if __name__ == "__main__":
     unittest.main()

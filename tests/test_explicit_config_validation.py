@@ -14,14 +14,12 @@ from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support import config
 
-
 BAD_CONFIGS = (
     ("timeout", "typo"),
     ("scrape_timeout", []),
     ("scrape_concurrency", "oops"),
     ("counts", "bad"),
 )
-
 
 class ExplicitConfigValidationTests(unittest.TestCase):
     def setUp(self):
@@ -205,7 +203,7 @@ class ExplicitConfigValidationTests(unittest.TestCase):
             response = service.run_search_web(
                 {"query": "test", "sources": ["hackernews"]}, config=defaults,
                 scrape_timeout=3, scrape_chars=100, scrape_concurrency=2,
-                scraper=scraper, url_resolver=lambda _host: ["93.184.216.34"],
+                scraper=scraper,
             )
         self.assertEqual((stage.call_args.kwargs["timeout"], stage.call_args.kwargs["concurrency"]), (3, 2))
         self.assertNotIn("error", response)
@@ -240,7 +238,6 @@ class ExplicitConfigValidationTests(unittest.TestCase):
         self.assertNotIn("error", tools.search_web_tool("test", sources=["hackernews"]))
         self.assertNotIn("error", tools.multi_search_tool("test", sources=["hackernews"]))
         self.assertEqual(tools.doctor_tool(include_keys=False)["config_status"], "ok")
-
 
 if __name__ == "__main__":
     unittest.main()

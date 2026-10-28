@@ -25,7 +25,7 @@ def run_search_web(
     state_store: StateStore | None = None,
     query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,
     scraper=None,
-    url_resolver=None,
+    reranker=None,
     scrape_chars: int | None = None,
     scrape_timeout: int | None = None,
     scrape_concurrency: int | None = None,
@@ -58,6 +58,7 @@ def run_search_web(
         config=resolved_config,
         state_store=store, query_runs_observer=query_runs_observer,
         prefetched_bodies=prefetched, persist_bodies=not request.no_fetch,
+        reranker=reranker,
     )
     if request.no_fetch:
         # Candidate-only mode: the response keeps the ranked hits and provider
@@ -86,7 +87,7 @@ def run_search_web(
                     use_state=request.use_state,
                 ),
                 state_store=store, scraper=scraper, keys=runtime_keys,
-                config=resolved_config, url_resolver=url_resolver, source_record=hit,
+                config=resolved_config, source_record=hit,
                 prefetched_body=prefetched.get(hit["canonical_url"]),
                 deadline=body_deadline,
                 runtime_timeout=remaining,

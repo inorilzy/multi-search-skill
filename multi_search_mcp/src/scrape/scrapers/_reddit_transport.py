@@ -52,16 +52,16 @@ def _decode(resp) -> object:
         raise RedditError("Reddit returned invalid JSON") from None
 
 
-def get_post_json(post_id: str, params: dict, deadline: float, *, resolver=None):
+def get_post_json(post_id: str, params: dict, deadline: float):
     url = post_json_url(post_id, params)
-    validate_public_http_url(url, resolver=resolver, deadline=deadline)
+    validate_public_http_url(url, deadline=deadline)
     request = urllib.request.Request(
         url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
     try:
         with urlopen_retry(
             request, timeout=remaining(deadline), retries=0,
-            deadline=deadline, redirect_resolver=resolver,
+            deadline=deadline,
         ) as resp:
             return _decode(resp)
     except urllib.error.HTTPError as exc:
