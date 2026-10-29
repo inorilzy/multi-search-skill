@@ -269,3 +269,80 @@ test('a detection payload without an execution row never enables search', async 
   assert.equal(root.querySelector('[data-action="search"]').disabled, true);
   window.close();
 });
+
+test('a cancel click while start is pending gives feedback and cancels the returned execution first', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let resolveStart;
+  const calls = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => new Promise(resolve => { resolveStart = resolve; }),
+    poll: async id => { calls.push(['poll', id]); return { status: 'running' }; },
+    cancel: async id => { calls.push(['cancel', id]); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'deferred start';
+  root.querySelector('[data-action="search"]').click();
+  const cancel = root.querySelector('[data-action="cancel"]');
+  assert.equal(cancel.disabled, false);
+  cancel.click(); cancel.click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待启动完成后取消');
+  assert.equal(cancel.disabled, true);
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true);
+  assert.deepEqual(calls, [], 'no cancel is sent before an execution id exists');
+  resolveStart(77);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(calls, [['cancel', 77]], 'the single pending click cancels only the returned id, with no poll before it');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  assert.equal(cancel.disabled, true);
+  page.dispose(); window.close();
+});
+
+test('a start failure after a cancel click shows the real start error and sends no cancel', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let rejectStart;
+  const cancelled = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => new Promise((_, reject) => { rejectStart = reject; }),
+    cancel: async id => { cancelled.push(id); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api);
+  root.querySelector('[data-field="query"]').value = 'fails to start';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  root.querySelector('[data-action="cancel"]').click();
+  rejectStart('spawn failed');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(cancelled, [], 'no cancel without an execution id');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '执行失败');
+  assert.notEqual(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  assert.match(root.querySelector('[data-execution-error]').textContent, /启动失败/);
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false, 'retry is possible');
+  page.dispose(); window.close();
+});
+
+test('a pending cancel that fails after the id arrives resets the run and allows a new search', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let resolveStart; let starts = 0;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => { starts += 1; return new Promise(resolve => { resolveStart = resolve; }); },
+    cancel: async () => { throw 'IPC unavailable'; },
+  };
+  const page = await mountDiagnostics(root, api);
+  root.querySelector('[data-field="query"]').value = 'cancel fails';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  root.querySelector('[data-action="cancel"]').click();
+  resolveStart(5);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.match(root.querySelector('[data-execution-error]').textContent, /取消失败，无法取消本次执行。 状态已复位/);
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(starts, 2, 'a new test search starts after the failed pending cancel');
+  page.dispose(); window.close();
+});

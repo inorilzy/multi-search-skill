@@ -19,7 +19,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       <div class="search-options"><label>路由<select data-field="route">${routeOptions}</select></label><label>搜索源<select data-field="sources">${sourceOptions}</select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="90" value="15"></label></div>
       <div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
       <p data-execution-error role="alert"></p><div data-results class="search-results" tabindex="0" role="region" aria-label="搜索结果"><p class="search-results-empty">结果会显示在这里。</p></div></section>`;
-  let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false;
+  let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false, cancelIntent = false;
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');
   const executionError = root.querySelector('[data-execution-error]');
@@ -127,10 +127,23 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       }
     }
   }
-  async function requestCancel() {
-    if (disposed || activeId === null || cancelling) return;
-    const id = activeId;
+  // A cancel click while `start` is still pending is recorded, not dropped. The execution id is
+  // unknown until start returns, so the submit handler cancels that id as soon as it arrives.
+  function requestCancel() {
+    if (disposed || cancelling) return;
+    if (activeId === null) {
+      if (!starting || cancelIntent) return;
+      cancelIntent = true;
+      cancel.disabled = true;
+      search.disabled = true;
+      root.querySelector('[data-status="execution"]').textContent = '等待启动完成后取消';
+      return;
+    }
+    void sendCancel(activeId);
+  }
+  async function sendCancel(id) {
     cancelling = true;
+    root.querySelector('[data-status="execution"]').textContent = '正在取消';
     clearTimeout(timer);
     cancel.disabled = true;
     search.disabled = true;
@@ -155,17 +168,26 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   }
   root.querySelector('[data-search-form]').addEventListener('submit', async event => {
     event.preventDefault(); if (!appReady || activeId !== null || starting || cancelling) return;
-    starting = true; controls(true); root.querySelector('[data-results]').textContent = '';
+    starting = true; cancelIntent = false; controls(true); root.querySelector('[data-results]').textContent = '';
     renderExecution({ status: 'running' });
     try {
       const id = await api.start({ query: root.querySelector('[data-field="query"]').value, route: root.querySelector('[data-field="route"]').value, sources: root.querySelector('[data-field="sources"]').value.split(',').filter(Boolean), timeout: Number(root.querySelector('[data-field="timeout"]').value) });
       if (disposed) { await Promise.resolve(api.cancel(id)).catch(() => {}); return; }
-      activeId = id; await poll();
+      activeId = id;
+      if (cancelIntent) {
+        // The user already clicked cancel: cancel this execution before showing it as running.
+        cancelIntent = false;
+        starting = false;
+        await sendCancel(id);
+        return;
+      }
+      await poll();
     } catch (error) {
       if (disposed) return;
       activeId = null;
+      cancelIntent = false;
       renderExecution({ status: 'failed', error: `${showError(executionError, error, '启动失败，请检查 CLI 与搜索参数后重试。').message}` });
-    } finally { starting = false; }
+    } finally { starting = false; cancelIntent = false; }
   });
   cancel.addEventListener('click', () => { void requestCancel(); });
   async function detect() {
