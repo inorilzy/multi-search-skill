@@ -839,3 +839,130 @@ test('an unrecognized Core source stays unconfirmed instead of using the store e
   assert.equal(root.querySelector('[data-action="save"]').disabled, false);
   window.close();
 });
+
+// 31 凭据来源未知或查询失败可刷新恢复：未知不等于已配置，也不等于永久无效。
+const backendState = (root, name) => root.querySelector(`[data-chain-row="${name}"] .scrape-backend-state`);
+
+test('a failed query or a payload missing its source fields stays unconfirmed', async () => {
+  const responses = [
+    ['rejected query', () => { throw new Error('offline'); }],
+    ['empty payload', () => ({})],
+    ['missing store', () => ({ effective_source: null, store: undefined })],
+    ['missing store state', () => ({ store: {} })],
+    ['unreadable store payload', () => ({ store: null })],
+    ['unknown store state', () => ({ store: { state: 'mystery' } })],
+  ];
+  for (const [label, respond] of responses) {
+    const { window, root } = setup();
+    await mountScrape(root, api({
+      settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+      credentialStatus: async () => respond(),
+    }));
+    assert.equal(backendState(root, 'exa').textContent, '状态待确认', label);
+    assert.doesNotMatch(root.textContent, /Key 已配置|整条链无法运行/, label);
+    assert.equal(root.querySelector('[data-action="save"]').disabled, false, label);
+    window.close();
+  }
+});
+
+test('refreshing an unconfirmed credential recovers the real configured or missing result', async () => {
+  const { window, root } = setup();
+  let mode = 'fail';
+  let secretReads = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+    credentialStatus: async source => {
+      if (mode === 'fail') throw new Error('offline');
+      if (mode === 'present') return { source, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'credential_store', key_application_available: true, store_supported: true };
+      return { source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: true, store_supported: true };
+    },
+    credentialRead: async () => { secretReads += 1; return { value: 'secret' }; },
+  }));
+  // 初始未知：既不显示已配置，也不宣布整条链永久无效。
+  assert.equal(backendState(root, 'exa').textContent, '状态待确认');
+  assert.match(root.querySelector('[data-info="chain-warning"]').textContent, /暂时无法确认/);
+  assert.doesNotMatch(root.querySelector('[data-info="chain-warning"]').textContent, /整条链无法运行/);
+
+  // 刷新恢复到已配置的真实结果。
+  mode = 'present';
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(backendState(root, 'exa').textContent, 'Key 已配置');
+  assert.equal(root.querySelector('[data-info="chain-warning"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+
+  // 再刷新恢复到真正的未配置，而不是继续停在待确认。
+  mode = 'absent';
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(backendState(root, 'exa').textContent, '待配置 Key');
+  assert.match(root.querySelector('[data-info="saved-chain-warning"]').textContent, /整条链无法运行/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+
+  // 查询再次失败时退回待确认，不自称已配置。
+  mode = 'fail';
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(backendState(root, 'exa').textContent, '状态待确认');
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  assert.equal(secretReads, 0);
+  window.close();
+});
+
+test('a failed refresh keeps the unsaved draft and its unsaved state', async () => {
+  const { window, root } = setup();
+  let fail = false;
+  await mountScrape(root, api({
+    settingsView: async () => { if (fail) throw new Error('offline view'); return settingsView({ scrape_backends: BUILTIN }); },
+    credentialStatus: async () => { throw new Error('offline status'); },
+  }));
+  chainButton(root, 'tavily', '上移').click();
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl']);
+  fail = true;
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  root.querySelector('[data-action="confirm-refresh-chain"]').click();
+  await flush(); await flush();
+  // 刷新失败时草稿顺序和“未保存”状态都要保留，不能被失败的请求清掉。
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl']);
+  assert.equal(root.querySelector('[data-dirty]').hidden, false);
+  assert.doesNotMatch(root.querySelector('[data-status="draft"]').textContent, /当前显示已保存设置/);
+  assert.match(root.querySelector('[data-info="error"]').textContent, /刷新失败/);
+  // 草稿仍存在，下一次刷新必须先询问，不能静默丢弃。
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.match(root.querySelector('[data-restore-confirm]').textContent, /丢弃未保存/);
+  window.close();
+});
+
+test('an unconfirmed credential keeps the busy and read-only save limits', async () => {
+  const { window, root } = setup();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let calls = 0;
+  await mountScrape(root, api({
+    settingsView: async () => { calls += 1; if (calls > 1) await gate; return settingsView({ scrape_backends: ['exa', 'jina'] }); },
+    credentialStatus: async () => { throw new Error('offline'); },
+  }));
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  // 刷新进行中：保存和刷新不可用，未知状态不能绕过忙碌限制，移动也不生效。
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="refresh-chain"]').disabled, true);
+  chainButton(root, 'jina', '下移').click();
+  assert.deepEqual(chainNames(root), ['exa', 'jina']);
+  release();
+  await flush(); await flush();
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  window.close();
+
+  // 配置不可读时仍然只读，未知状态不解除只读限制。
+  const second = setup();
+  await mountScrape(second.root, api({
+    settingsView: async () => settingsView({ status: 'config_unreadable', message: 'bad config' }),
+    credentialStatus: async () => { throw new Error('offline'); },
+  }));
+  assert.equal(second.root.querySelector('[data-action="save"]').disabled, true);
+  assert.equal(second.root.querySelector('[data-chain-row="exa"] .scrape-drag-handle').disabled, true);
+  second.window.close();
+});
