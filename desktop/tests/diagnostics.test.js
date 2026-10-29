@@ -386,6 +386,45 @@ test('a pending cancel that fails after the id arrives reports it unconfirmed an
   page.dispose(); window.close();
 });
 
+test('a retry after a start failure does not inherit the earlier cancel intent', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const starts = [];
+  const calls = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => new Promise((resolve, reject) => { starts.push({ resolve, reject }); }),
+    poll: async id => { calls.push(['poll', id]); return { status: 'running' }; },
+    cancel: async id => { calls.push(['cancel', id]); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  const query = root.querySelector('[data-field="query"]');
+  const search = root.querySelector('[data-action="search"]');
+  const cancel = root.querySelector('[data-action="cancel"]');
+  query.value = 'first attempt';
+  search.click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  cancel.click();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待启动完成后取消');
+  starts[0].reject('spawn failed');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(calls, [], 'a failed start sends no cancel and no poll');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '执行失败');
+  assert.equal(search.disabled, false, 'retry is enabled after the failure');
+  assert.equal(cancel.disabled, true);
+
+  query.value = 'second attempt';
+  search.click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在执行', 'the new run is not shown as waiting to cancel');
+  assert.equal(cancel.disabled, false, 'the new run is cancellable through the normal path');
+  assert.equal(starts.length, 2);
+  starts[1].resolve(88);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(calls, [['poll', 88]], 'the second run polls its own id and is not cancelled automatically');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在执行');
+  page.dispose(); window.close();
+});
+
 for (const [status, label, payload, error] of [
   ['success', '搜索成功', { results: [{ title: 'Finished result', url: 'https://example.com/a' }] }, ''],
   ['empty', '没有结果', { results: [], errors: [] }, ''],
