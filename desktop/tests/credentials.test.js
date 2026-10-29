@@ -333,7 +333,7 @@ test('a successful retry keeps an unrelated error message that arrived meanwhile
   const button = ctx.root.querySelector('[data-action="application"]');
   const slot = ctx.root.querySelector('[data-info="error"]');
   button.click(); await flush2();
-  assert.equal(slot.textContent, '无法打开系统浏览器，请手动复制下方固定申请链接。');
+  assert.equal(slot.textContent, '无法打开系统浏览器，请重试或手动复制固定申请链接。');
   assert.equal(ctx.root.querySelector('[data-application-fallback]').hidden, false);
   ctx.root.querySelector('[data-action="test"]').click(); await flush2();
   assert.match(slot.textContent, /凭据测试启动失败/);

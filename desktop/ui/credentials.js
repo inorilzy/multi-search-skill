@@ -466,7 +466,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     } catch (error) {
       if (!disposed) {
         openFailed = true;
-        openFailureText = showError(q('[data-info="error"]'), error, '无法打开系统浏览器，请手动复制下方固定申请链接。').message;
+        openFailureText = showError(q('[data-info="error"]'), error, '无法打开系统浏览器，请重试或手动复制固定申请链接。').message;
       }
     } finally {
       opening = false;
