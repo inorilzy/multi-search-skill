@@ -692,6 +692,80 @@ test('file source with no Core row and empty store stays blocked, and failed sta
   window.close();
 });
 
+const envView = (source, state, extra = {}) => ({
+  source,
+  store: { state, saved_at: state === 'present' ? 1 : null, error: state === 'unreadable' ? 'do not expose decrypt failure' : '' },
+  effective_source: 'env', env_var: source === 'exa' ? 'EXA_API_KEY' : 'TAVILY_API_KEY', env_overrides_store: state !== 'absent',
+  key_application_available: true, store_supported: true, ...extra,
+});
+
+test('effective env source is usable when the lower-priority store is empty', async () => {
+  for (const state of ['absent', 'unreadable']) {
+    const { window, root } = setup();
+    let saves = 0;
+    await mountScrape(root, api({
+      settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+      credentialStatus: async source => envView(source, state),
+      credentialRead: async () => { assert.fail('must never read secret values'); },
+      scrapeSettingsSave: async input => { saves++; return settingsView({ scrape_backends: input }); },
+    }));
+    assert.equal(root.querySelector('[data-info="chain-warning"]').textContent, '', `store ${state}`);
+    assert.doesNotMatch(root.textContent, /待配置 Key|整条链无法运行/, `store ${state}`);
+    assert.doesNotMatch(root.textContent, /do not expose decrypt failure/, 'raw store error must stay hidden');
+    assert.equal(root.querySelector('[data-action="save"]').disabled, false, `store ${state}`);
+    root.querySelector('[data-action="save"]').click();
+    await flush();
+    assert.equal(saves, 1, `store ${state}`);
+    window.close();
+  }
+});
+
+test('env-sourced chain saves only the backend list and reads back after refresh', async () => {
+  const { window, root } = setup();
+  const calls = [];
+  let view = settingsView();
+  await mountScrape(root, api({
+    settingsView: async () => view,
+    credentialStatus: async source => envView(source, 'absent'),
+    scrapeSettingsSave: async input => { calls.push(input); view = settingsView({ scrape_backends: input }); return view; },
+  }));
+  chainButton(root, 'jina', '停用').click();
+  chainButton(root, 'firecrawl', '停用').click();
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.deepEqual(calls, [['exa', 'tavily']], 'only the chain is submitted');
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.deepEqual(chainNames(root), ['exa', 'tavily']);
+  assert.equal(root.querySelector('[data-info="saved-chain-warning"]').textContent, '');
+  window.close();
+});
+
+test('a single env-sourced required backend unblocks that member only', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    credentialStatus: async source => source === 'exa' ? envView(source, 'unreadable') : { source, store: { state: 'absent' }, effective_source: 'none', key_application_available: true, store_supported: true },
+  }));
+  const warning = root.querySelector('[data-info="chain-warning"]').textContent;
+  assert.match(warning, /Tavily 缺少可用 Key/);
+  assert.doesNotMatch(warning, /Exa/);
+  assert.doesNotMatch(warning, /整条链无法运行/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  window.close();
+});
+
+test('unselected env source is not reported as a store write success', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+    credentialStatus: async source => envView(source, 'absent'),
+  }));
+  assert.match(root.querySelectorAll('[data-chain-row="exa"]')[0].textContent, /Key 已配置/);
+  assert.doesNotMatch(root.textContent, /已保存到凭据库|凭据库已保存|保存在凭据库/);
+  window.close();
+});
+
 const coreStatus = (source, effective_source, store) => ({
   source,
   store: { state: store, saved_at: store === 'present' ? 1 : null, error: '' },

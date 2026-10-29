@@ -241,13 +241,16 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     validateChain();
   }
 
-  // Core's effective_source decides whether a key authenticates. `env` (Core's highest priority)
-  // keeps the store-state answer until its own rule lands, and payloads without the field keep the
-  // legacy local answer. An unavailable source stays unavailable (fail-closed), and a source this
-  // page does not recognize stays unconfirmed instead of being reported as configured.
+  // Core's effective_source decides whether a key authenticates: `env` is Core's highest
+  // priority, so a set variable counts as usable even when the store is empty, unsupported
+  // or unreadable. Payloads without the field keep the legacy local answer. An unavailable
+  // source stays unavailable (fail-closed), and a source this page does not recognize stays
+  // unconfirmed instead of being reported as configured.
   function credentialStateOf(view) {
     switch (view.effective_source) {
-      // Configured: the credential store entry, the legacy file, or the local-only `sqlite` answer.
+      // Configured: Core's environment variable, the credential store entry, the legacy
+      // file, or the local-only `sqlite` answer.
+      case 'env':
       case 'credential_store':
       case 'file':
       case 'sqlite':
