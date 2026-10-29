@@ -1035,3 +1035,116 @@ test('07: a read-only transition during a drag ends it and the next drag resumes
   assert.equal(mounted.dirty, true);
   window.close();
 });
+
+// --- Ticket 08: mouse, keyboard and row buttons share one saved result. ---
+// 所有输入都走页面公开边界：DOM 顺序、编号、脏标记、保存请求与读回。
+
+test('08 (D31): a row button pressed during an uncommitted keyboard drag moves the row the user pointed at', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  handle(root, 'tavily').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'ArrowUp');
+  pressFocused(window, 'ArrowUp');
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'exa', 'firecrawl'], 'preview before the button press');
+
+  // 渲染时 tavily 的下标是 2；按钮必须按名字解析，不能沿用旧下标。
+  rowButton(root, 'tavily', 'down').click();
+
+  // 拖动预览里 tavily 在第 1 位；结束拖动后草稿是 jina,exa,tavily,firecrawl，下移使 tavily 到第 4 位。
+  assert.deepEqual(chainNames(root), ['jina', 'exa', 'firecrawl', 'tavily'], 'down moves tavily one slot from the committed draft');
+  assert.equal(root.querySelectorAll('[aria-pressed="true"]').length, 0, 'the in-flight drag is ended, not left pressed');
+  assert.equal(mounted.dirty, true);
+  window.close();
+});
+
+test('08 (D31): after a button press ends the drag, arrow keys and Enter do nothing and no stale save happens', async () => {
+  const { window, root, fake } = await mountStateful();
+  handle(root, 'tavily').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'ArrowUp');
+  rowButton(root, 'tavily', 'down').click();
+  const afterButton = chainNames(root);
+
+  // 旧拖动已结束：焦点已不在旧手柄上，键盘事件不得再移动任何行。
+  for (const node of [...root.querySelectorAll('.scrape-drag-handle')]) {
+    press(window, node, 'ArrowDown');
+    press(window, node, 'Enter');
+  }
+  assert.deepEqual(chainNames(root), afterButton, 'no leftover drag reorders rows');
+  assert.equal(fake.state.saves, 0);
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, afterButton, 'save writes exactly the visible draft order');
+  assert.deepEqual(chainNames(root), fake.state.current.scrape_backends, 'readback matches the visible order');
+  window.close();
+});
+
+test('08: mouse drop, then keyboard cancel, then a row button move keep one consistent draft', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  // 1) 鼠标有效拖放 firecrawl 到 exa 之前。
+  root.ownerDocument.elementFromPoint = () => chainRow(root, 'exa');
+  pointer(window, handle(root, 'firecrawl'), 'pointerdown', 10, 10);
+  pointer(window, handle(root, 'firecrawl'), 'pointermove', 10, 40);
+  pointer(window, handle(root, 'firecrawl'), 'pointerup', 10, 40);
+  assert.deepEqual(chainNames(root), ['jina', 'firecrawl', 'exa', 'tavily']);
+  assert.equal(mounted.dirty, true);
+
+  // 2) 键盘拿起 jina 向下移动后按 Escape：应回到鼠标放下后的草稿，而不是初始顺序。
+  handle(root, 'jina').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'ArrowDown');
+  pressFocused(window, 'Escape');
+  assert.deepEqual(chainNames(root), ['jina', 'firecrawl', 'exa', 'tavily'], 'keyboard cancel restores the mouse-dropped draft');
+
+  // 3) 按钮下移 tavily 之外的 exa：只作用于 exa。
+  clickRowButton(window, root, 'exa', 'up');
+  assert.deepEqual(chainNames(root), ['jina', 'exa', 'firecrawl', 'tavily'], 'button moves exa, the selected backend');
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04']);
+
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, ['jina', 'exa', 'firecrawl', 'tavily'], 'one save with the final visible order');
+  assert.deepEqual(chainNames(root), fake.state.current.scrape_backends, 'readback matches');
+  window.close();
+});
+
+test('08: a pointer cancel and a drag that leaves the list never commit to the draft', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  root.ownerDocument.elementFromPoint = () => null;
+  pointer(window, handle(root, 'jina'), 'pointerdown', 10, 10);
+  pointer(window, handle(root, 'jina'), 'pointermove', 10, 300);
+  pointer(window, handle(root, 'jina'), 'pointercancel', 10, 300);
+  assert.deepEqual(chainNames(root), BUILTIN, 'pointercancel leaves the order untouched');
+  assert.equal(mounted.dirty, false);
+
+  pointer(window, handle(root, 'exa'), 'pointerdown', 10, 10);
+  pointer(window, handle(root, 'exa'), 'pointerup', 10, 300);
+  assert.deepEqual(chainNames(root), BUILTIN, 'dropping outside the list is a no-op');
+  assert.equal(mounted.dirty, false);
+  assert.equal(fake.state.saves, 0);
+  window.close();
+});
+
+test('08: keyboard drag then mouse drag then button move, with focus and numbering kept in step', async () => {
+  const { window, root, fake } = await mountStateful();
+  handle(root, 'exa').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'End');
+  pressFocused(window, 'Enter');
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl', 'exa']);
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04']);
+
+  root.ownerDocument.elementFromPoint = () => chainRow(root, 'jina');
+  pointer(window, handle(root, 'tavily'), 'pointerdown', 10, 10);
+  pointer(window, handle(root, 'tavily'), 'pointermove', 10, 2);
+  pointer(window, handle(root, 'tavily'), 'pointerup', 10, 2);
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'firecrawl', 'exa']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'tavily'), 'focus stays on the mouse-dragged row');
+
+  clickRowButton(window, root, 'firecrawl', 'down');
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'exa', 'firecrawl']);
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04']);
+  assert.equal(root.querySelectorAll('[aria-pressed="true"]').length, 0);
+  assert.equal(fake.state.saves, 0, 'nothing saved until the user saves');
+  window.close();
+});
