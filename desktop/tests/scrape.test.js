@@ -1286,3 +1286,98 @@ test('overlapping save clicks issue exactly one presave check and one write', as
   assert.equal(saves, 1, 'exactly one write');
   window.close();
 });
+
+// 工单 35：草稿警告对应草稿，已保存警告对应实际保存链；保存只提交抓取链。
+const warnView = (state) => ({
+  store: { state, saved_at: state === 'present' ? 1 : null, error: '' },
+  effective_source: { present: 'credential_store', absent: 'none', unreadable: 'unavailable' }[state],
+  key_application_available: true, store_supported: true,
+});
+const warnings = root => ({
+  draft: root.querySelector('[data-info="chain-warning"]'),
+  saved: root.querySelector('[data-info="saved-chain-warning"]'),
+});
+const visibleText = node => (!node.hidden && node.textContent ? node.textContent : '');
+
+test('warning state: draft differs from saved — draft warning is about the draft, saved warning about the saved chain', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['jina', 'firecrawl'] }),
+    credentialStatus: async source => warnView(source === 'exa' ? 'present' : 'absent'),
+  }));
+  // 已保存链为匿名链：没有警告。草稿加入 Exa 后仍有 Tavily 缺失以外的变化，这里只加入 Tavily（确认缺失）。
+  assert.equal(visibleText(warnings(root).saved), '');
+  root.querySelector('[data-add-backend="tavily"]').click();
+  const { draft, saved } = warnings(root);
+  assert.match(visibleText(draft), /Tavily 缺少可用 Key/);
+  assert.equal(visibleText(saved), '', 'saved chain is anonymous; its warning stays empty');
+  window.close();
+});
+
+test('warning state: draft equals saved — one warning shown, never two contradictory copies', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    credentialStatus: async () => warnView('absent'),
+  }));
+  const { draft, saved } = warnings(root);
+  assert.match(visibleText(saved), /整条链无法运行/);
+  assert.equal(visibleText(draft), '', 'identical draft does not repeat the warning');
+  window.close();
+});
+
+test('warning state: failed save keeps the old saved warning and the current draft, without rewriting them', async () => {
+  const { window, root } = setup();
+  let saves = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['jina', 'firecrawl'] }),
+    credentialStatus: async source => warnView(source === 'exa' ? 'present' : 'absent'),
+    scrapeSettingsSave: async () => { saves++; throw new Error('disk full'); },
+  }));
+  root.querySelector('[data-add-backend="exa"]').click();
+  const draftBefore = chainNames(root);
+  const savedBefore = visibleText(warnings(root).saved);
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.equal(saves, 1);
+  assert.deepEqual(chainNames(root), draftBefore, 'draft kept after the failed write');
+  assert.equal(visibleText(warnings(root).saved), savedBefore, 'saved warning unchanged by a failed write');
+  assert.doesNotMatch(root.textContent, /已保存。/);
+  window.close();
+});
+
+test('warning state: successful save rereads the public result and warnings follow the saved chain', async () => {
+  const { window, root } = setup();
+  let view = settingsView({ scrape_backends: ['jina', 'firecrawl'] });
+  const submitted = [];
+  await mountScrape(root, api({
+    settingsView: async () => view,
+    credentialStatus: async source => warnView(source === 'exa' ? 'present' : 'absent'),
+    scrapeSettingsSave: async input => { submitted.push([...input]); view = settingsView({ ...view, scrape_backends: input }); return view; },
+  }));
+  root.querySelector('[data-add-backend="tavily"]').click();
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.equal(submitted.length, 1);
+  assert.deepEqual(submitted[0], ['jina', 'firecrawl', 'tavily'], 'submits only the chain');
+  // 保存后的已保存链包含确认缺失的 Tavily：已保存警告必须对应该链，草稿与其相同时不重复。
+  const { draft, saved } = warnings(root);
+  assert.match(visibleText(saved), /Tavily 缺少可用 Key/);
+  assert.equal(visibleText(draft), '', 'draft equals saved, so the draft warning is hidden');
+  window.close();
+});
+
+test('saving only writes the chain: other settings are not part of the submitted payload', async () => {
+  const { window, root } = setup();
+  const calls = [];
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['jina', 'firecrawl'], timeout: 77, routes: { default: { label: '默认', sources: ['brave'], timeout: 9 } } }),
+    credentialStatus: async () => warnView('absent'),
+    scrapeSettingsSave: async input => { calls.push(input); return settingsView(); },
+  }));
+  root.querySelector('[data-add-backend="exa"]').click();
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.deepEqual(calls, [['jina', 'firecrawl', 'exa']], 'payload is the backend array alone');
+  window.close();
+});
