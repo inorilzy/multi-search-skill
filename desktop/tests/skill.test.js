@@ -830,6 +830,57 @@ test('a slow update that finishes after the project changed does not write its r
   window.close();
 });
 
+// 11: a write that succeeded but whose read-back failed keeps the unconfirmed note only for its own target.
+// The follow-up reads on the new target fail on purpose, so a leaked note would show up in the error line.
+test('an unconfirmed install note does not carry to a new scope, even when the new target read also fails', async () => {
+  const h = writeThenReadFailure({ readFails: n => n <= 2 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  root.querySelector('input[value="project"]').click(); await tick();
+  root.querySelector('[data-action="check"]').click(); await tick();
+  const text = root.querySelector('[data-info="manage-error"]').textContent;
+  assert.match(text, /检查失败，请重试/);
+  assert.doesNotMatch(text, /操作已完成/);
+  assert.equal(h.counts.install, 1);
+  window.close();
+});
+
+test('an unconfirmed update note does not carry to a new project, even when the new target read also fails', async () => {
+  const h = writeThenReadFailure({ readFails: n => n === 2 || n === 3 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  root.querySelector('input[value="project"]').click(); await tick();
+  root.querySelector('[data-field="project"]').value = 'B';
+  root.querySelector('[data-field="project"]').dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  const text = root.querySelector('[data-info="manage-error"]').textContent;
+  assert.match(text, /检查失败，请重试/);
+  assert.doesNotMatch(text, /操作已完成/);
+  assert.equal(h.counts.update, 1, 'the new target must not trigger another update');
+  window.close();
+});
+
+test('an unconfirmed removal note does not carry back to global, even when the read there also fails', async () => {
+  const h = writeThenReadFailure({ readFails: n => n === 2 || n === 3 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  root.querySelector('input[value="project"]').click(); await tick();
+  root.querySelector('input[value="global"]').click(); await tick();
+  root.querySelector('[data-action="check"]').click(); await tick();
+  const text = root.querySelector('[data-info="manage-error"]').textContent;
+  assert.match(text, /检查失败，请重试/);
+  assert.doesNotMatch(text, /操作已完成/);
+  assert.equal(h.counts.remove, 1, 'retry must not repeat the removal');
+  window.close();
+});
+
 // 10: editing the project directory invalidates the previous project's shown state at once, before any check or submit.
 function typeProject(root, value) {
   const field = root.querySelector('[data-field="project"]');
@@ -928,5 +979,106 @@ test('a valid empty-to-new directory is re-checked and shows the real result for
   root.querySelector('[data-action="check"]').click(); await tick();
   assert.match(root.querySelector('[data-info="installed"]').textContent, /dir C/);
   assert.match(root.querySelector('[data-info="managed-target"]').textContent, /C:\\C/);
+  window.close();
+});
+
+// 12: a removal preview or overwrite approval given for one target never authorizes a return to it.
+function typeProjectValue(root, value) {
+  const field = root.querySelector('[data-field="project"]');
+  field.value = value;
+  field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+}
+
+test('A to B and back to A does not revive a removal preview or its confirm button, and a bypassed confirm writes nothing', async () => {
+  const removed = [];
+  const { root, window } = setup({
+    skillStatus: async (scope, project) => ({ state: 'current', installed_version: '1', release_version: '1', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async (scope, project) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: `plan ${project}` }),
+    skillRemove: async (scope, project) => { removed.push(project); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async () => ({}),
+  });
+  root.querySelector('input[value="project"]').click();
+  typeProjectValue(root, 'A');
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, false);
+
+  typeProjectValue(root, 'B');
+  typeProjectValue(root, 'A');
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, true);
+  assert.doesNotMatch(root.textContent, /plan A/);
+  // Bypass the disabled button and fire the old confirm handler directly.
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.deepEqual(removed, []);
+
+  // Fresh check and preview, then the explicit confirm, writes for A only.
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, true);
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.deepEqual(removed, ['A']);
+  window.close();
+});
+
+test('switching scope global to project and back drops a removal approval and its preview', async () => {
+  const removed = [];
+  const { root, window } = setup({
+    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\g', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'global plan' }),
+    skillRemove: async (scope) => { removed.push(scope); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async () => ({}),
+  });
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('input[value="project"]').click(); await tick();
+  root.querySelector('input[value="global"]').click(); await tick();
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, true);
+  assert.doesNotMatch(root.querySelector('[data-info="manage-plan"]').textContent, /global plan/);
+  root.querySelector('[data-action="remove"]').click(); await tick();
+  assert.deepEqual(removed, []);
+  window.close();
+});
+
+test('overwrite consent given for A is cleared on A to B to A, and an update then needs a fresh consent', async () => {
+  const confirms = [];
+  const { root, window } = setup({
+    skillStatus: async (scope, project) => ({ state: 'modified', installed_version: '1', release_version: '2', target: `C:\\${project}`, modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
+    skillUpdate: async (scope, project, confirm) => { confirms.push([project, confirm]); return { status: 'updated', verified: true, reason: 'verified', backup: 'C:\\bk' }; },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  });
+  root.querySelector('input[value="project"]').click();
+  typeProjectValue(root, 'A');
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-field="confirm-overwrite"]').click();
+  assert.equal(root.querySelector('[data-field="confirm-overwrite"]').checked, true);
+
+  typeProjectValue(root, 'B');
+  typeProjectValue(root, 'A');
+  assert.equal(root.querySelector('[data-field="confirm-overwrite"]').checked, false);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  root.querySelector('[data-action="update"]').click(); await tick();
+  assert.deepEqual(confirms, []);
+
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.deepEqual(confirms, [['A', false]], 'without fresh consent the backend is told not to overwrite');
+  window.close();
+});
+
+test('global to project and back also drops overwrite consent', async () => {
+  const confirms = [];
+  const { root, window } = setup({
+    skillStatus: async () => ({ state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\g', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
+    skillUpdate: async (scope, project, confirm) => { confirms.push(confirm); return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  });
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-field="confirm-overwrite"]').click();
+  root.querySelector('input[value="project"]').click(); await tick();
+  root.querySelector('input[value="global"]').click(); await tick();
+  assert.equal(root.querySelector('[data-field="confirm-overwrite"]').checked, false);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.deepEqual(confirms, [false]);
   window.close();
 });
