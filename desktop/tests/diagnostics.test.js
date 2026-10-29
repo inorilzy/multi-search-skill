@@ -735,3 +735,127 @@ test('a run already polling cannot be re-started by submit or repeated clicks, a
   assert.equal(starts.length, 1);
   window.close();
 });
+
+test('leaving the page while start is pending cancels the returned execution once and renders nothing', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let resolveStart; const cancels = []; const polls = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => new Promise(resolve => { resolveStart = resolve; }),
+    poll: async id => { polls.push(id); return { status: 'running' }; },
+    cancel: async id => { cancels.push(id); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'leave-pending';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  page.dispose();
+  const before = root.innerHTML;
+  resolveStart(91);
+  await tick();
+  assert.deepEqual(cancels, [91], 'the execution id returned after leaving is cancelled exactly once');
+  assert.deepEqual(polls, [], 'a page that left never polls');
+  assert.equal(root.innerHTML, before, 'the left page does not render');
+  window.close();
+});
+
+test('leaving the page during an in-flight user cancel does not send a second cancel', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const cancels = []; let resolveCancel;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => 92,
+    poll: async () => ({ status: 'running' }),
+    cancel: id => { cancels.push(id); return new Promise(resolve => { resolveCancel = resolve; }); },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'leave-cancelling';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  root.querySelector('[data-action="cancel"]').click();
+  await tick();
+  page.dispose();
+  resolveCancel({ status: 'cancelled' });
+  await tick();
+  assert.deepEqual(cancels, [92], 'the user cancel is the only cancel for this execution');
+  window.close();
+});
+
+test('leaving the page after a confirmed user cancel sends no further cancel', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const cancels = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => 93,
+    poll: async () => ({ status: 'running' }),
+    cancel: async id => { cancels.push(id); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'leave-after-cancel';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  root.querySelector('[data-action="cancel"]').click();
+  await tick();
+  page.dispose();
+  await tick();
+  assert.deepEqual(cancels, [93]);
+  window.close();
+});
+
+test('a click to cancel while start is pending, then leaving, cancels the returned id once', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let resolveStart; const cancels = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => new Promise(resolve => { resolveStart = resolve; }),
+    poll: async () => ({ status: 'running' }),
+    cancel: async id => { cancels.push(id); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'cancel-then-leave';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  root.querySelector('[data-action="cancel"]').click();
+  page.dispose();
+  resolveStart(94);
+  await tick();
+  assert.deepEqual(cancels, [94], 'one cancel for the returned id, not two');
+  window.close();
+});
+
+test('a page that was left does not block a new page, and only the new page cancels its own execution', async () => {
+  const window = new Window();
+  const rootA = window.document.createElement('main'); window.document.body.append(rootA);
+  const rootB = window.document.createElement('main'); window.document.body.append(rootB);
+  let resolveStartA; const cancels = []; const starts = [];
+  const apiA = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => { starts.push('A'); return new Promise(resolve => { resolveStartA = resolve; }); },
+    poll: async () => ({ status: 'running' }),
+    cancel: async id => { cancels.push(['A', id]); return { status: 'cancelled' }; },
+  };
+  const apiB = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => { starts.push('B'); return 200; },
+    poll: async () => ({ status: 'running' }),
+    cancel: async id => { cancels.push(['B', id]); return { status: 'cancelled' }; },
+  };
+  const pageA = await mountDiagnostics(rootA, apiA, { pollInterval: 10000 });
+  rootA.querySelector('[data-field="query"]').value = 'old';
+  rootA.querySelector('[data-action="search"]').click();
+  await tick();
+  pageA.dispose();
+  const pageB = await mountDiagnostics(rootB, apiB, { pollInterval: 10000 });
+  rootB.querySelector('[data-field="query"]').value = 'new';
+  rootB.querySelector('[data-action="search"]').click();
+  await tick();
+  assert.equal(rootB.querySelector('[data-action="search"]').disabled, true, 'the new page is running its own round');
+  resolveStartA(201);
+  await tick();
+  assert.deepEqual(cancels, [['A', 201]], 'only the left page cancels its own returned id');
+  rootB.querySelector('[data-action="cancel"]').click();
+  await tick();
+  assert.deepEqual(cancels, [['A', 201], ['B', 200]], 'the new page cancels only its own id');
+  assert.equal(rootB.querySelector('[data-action="search"]').disabled, false, 'the new page is not blocked');
+  pageB.dispose(); window.close();
+});
