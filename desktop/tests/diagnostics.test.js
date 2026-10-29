@@ -592,7 +592,6 @@ test('a scheduled poll for a finished execution is not requested while a new sta
   page.dispose(); window.close();
 });
 
-const tick = (ms = 5) => new Promise(resolve => setTimeout(resolve, ms));
 
 test('repeated clicks and direct form submits while start is pending issue exactly one start', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
