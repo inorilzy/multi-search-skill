@@ -20,6 +20,10 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       <div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
       <p data-execution-error role="alert"></p><div data-results class="search-results" tabindex="0" role="region" aria-label="搜索结果"><p class="search-results-empty">结果会显示在这里。</p></div></section>`;
   let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false, cancelIntent = false;
+  // Cancel failures keep the execution id and mark the cancel as unconfirmed until a real terminal state arrives.
+  // pollSeq invalidates polls that were already in flight when a cancel started.
+  let cancelUnconfirmed = false, pollSeq = 0;
+  const UNCONFIRMED_NOTE = '执行可能仍在运行，可再次取消或等待状态更新；未重新开始搜索。';
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');
   const executionError = root.querySelector('[data-execution-error]');
@@ -107,21 +111,23 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   }
   function renderExecution(status) {
     const labels = { running: '正在执行', success: '搜索成功', empty: '没有结果', partial: '部分来源失败', failed: '执行失败', cancelled: '已取消', timed_out: '执行超时' };
-    root.querySelector('[data-status="execution"]').textContent = statusLabel(labels, status.status);
-    setExecutionError(status.error || '');
+    if (status.status !== 'running') cancelUnconfirmed = false;
+    root.querySelector('[data-status="execution"]').textContent = cancelUnconfirmed ? '取消未确认' : statusLabel(labels, status.status);
+    setExecutionError(cancelUnconfirmed ? `取消未确认，${UNCONFIRMED_NOTE}` : (status.error || ''));
     if (status.payload) renderResults(status.payload);
     controls(status.status === 'running');
   }
   async function poll() {
     if (disposed || activeId === null) return;
     const id = activeId;
+    const seq = pollSeq;
     try {
       const state = await api.poll(id);
-      if (disposed || activeId !== id) return;
+      if (disposed || activeId !== id || seq !== pollSeq) return;
       renderExecution(state);
       if (state.status === 'running') timer = setTimeout(poll, pollInterval); else activeId = null;
     } catch (error) {
-      if (!disposed && activeId === id) {
+      if (!disposed && activeId === id && seq === pollSeq) {
         showError(executionError, error, '无法读取执行状态，请稍后重试或取消本次执行。');
         cancel.disabled = false;
       }
@@ -143,6 +149,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   }
   async function sendCancel(id) {
     cancelling = true;
+    pollSeq += 1;
     root.querySelector('[data-status="execution"]').textContent = '正在取消';
     clearTimeout(timer);
     cancel.disabled = true;
@@ -156,19 +163,24 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       renderExecution(state);
     } catch (error) {
       if (disposed) return;
-      activeId = null;
-      root.querySelector('[data-status="execution"]').textContent = '等待测试';
-      setExecutionError(`${showError(executionError, error, '取消失败，无法取消本次执行。').message} 状态已复位，可重新发起测试搜索。`);
+      // The backend may still run this execution, so keep its id: search stays blocked, cancel can be
+      // retried, and polling resumes to pick up the real terminal state.
+      if (activeId !== id) return;
+      cancelUnconfirmed = true;
+      const reason = showError(executionError, error, '取消请求失败。').message;
+      root.querySelector('[data-status="execution"]').textContent = '取消未确认';
+      setExecutionError(`取消未确认：${reason}。${UNCONFIRMED_NOTE}`);
+      timer = setTimeout(poll, pollInterval);
     } finally {
       if (!disposed) {
         cancelling = false;
-        controls(false);
+        controls(activeId !== null);
       }
     }
   }
   root.querySelector('[data-search-form]').addEventListener('submit', async event => {
     event.preventDefault(); if (!appReady || activeId !== null || starting || cancelling) return;
-    starting = true; cancelIntent = false; controls(true); root.querySelector('[data-results]').textContent = '';
+    starting = true; cancelIntent = false; cancelUnconfirmed = false; controls(true); root.querySelector('[data-results]').textContent = '';
     renderExecution({ status: 'running' });
     try {
       const id = await api.start({ query: root.querySelector('[data-field="query"]').value, route: root.querySelector('[data-field="route"]').value, sources: root.querySelector('[data-field="sources"]').value.split(',').filter(Boolean), timeout: Number(root.querySelector('[data-field="timeout"]').value) });
