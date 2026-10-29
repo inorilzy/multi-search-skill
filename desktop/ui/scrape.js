@@ -238,14 +238,28 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     validateChain();
   }
 
+  // 契约内的有效来源：由 Core 判定，页面只读取，不自行重排优先级。
+  // 其他取值、字段缺失和查询异常都保持“待确认”，可由刷新恢复。
+  const CONTRACT_SOURCES = ['env', 'credential_store', 'file', 'sqlite', 'none', 'unavailable'];
+  const STORE_STATES = ['present', 'absent', 'unreadable'];
+
   // Core's effective_source decides whether a legacy file key authenticates. An empty or
   // unsupported local store must not override it; other sources keep the store state.
+  // An unrecognized source or a payload without a usable state is unconfirmed: a store
+  // row must never be read as a confirmed effective source for it.
+  function credentialStateOf(view) {
+    if (!view || typeof view !== 'object') return 'unknown';
+    const source = view.effective_source;
+    if (source != null && !CONTRACT_SOURCES.includes(source)) return 'unknown';
+    if (source === 'file') return 'present';
+    const storeState = view.store && typeof view.store === 'object' ? view.store.state : undefined;
+    return STORE_STATES.includes(storeState) ? storeState : 'unknown';
+  }
+
   async function readCredentialStates() {
     return new Map(await Promise.all(REQUIRED_KEY_BACKENDS.map(async name => {
       try {
-        const view = await api.credentialStatus(name);
-        if (view.effective_source === 'file') return /** @type {[string, string]} */ ([name, 'present']);
-        return /** @type {[string, string]} */ ([name, view.store.state]);
+        return /** @type {[string, string]} */ ([name, credentialStateOf(await api.credentialStatus(name))]);
       } catch {
         return /** @type {[string, string]} */ ([name, 'unknown']);
       }
@@ -366,9 +380,9 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     if (saving) { text('[data-info="error"]', '正在保存设置，完成后再刷新。'); return; }
     if (refreshing) return;
     sorter?.cancel('刷新前已取消未放下的拖动');
-    // 用户确认丢弃后清掉草稿标记，迟到的响应也不会被草稿挡回。
-    if (force) dirty = false;
-    if (dirty) {
+    // 用户确认丢弃后由 force 跳过确认；草稿标记只在成功读回新设置后清除，
+    // 刷新失败时草稿仍是未保存状态。
+    if (dirty && !force) {
       const holder = q('[data-restore-confirm]');
       holder.replaceChildren();
       const panel = doc.createElement('div');
