@@ -24,6 +24,19 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   // pollSeq invalidates polls that were already in flight when a cancel started.
   // cancelSeq does the same for cancel replies, so an older attempt cannot confirm or unlock a newer one.
   let cancelUnconfirmed = false, pollSeq = 0, cancelSeq = 0;
+  // One search round at a time owns `starting` and `cancelIntent`. Each submit numbers itself, and a
+  // round that ends releases those flags. runSeq only moves on when the next round starts, so the
+  // cleanup of an older round can never run against a newer one and hand it back a stale flag.
+  let runSeq = 0, ownerRun = null;
+  function startRound() { runSeq += 1; ownerRun = runSeq; return runSeq; }
+  // Retiring the current round releases the flags it held. finishRound is refused once a newer round
+  // has been numbered; a late reply of the old round is also dropped by the activeId / pollSeq /
+  // cancelSeq checks above.
+  function finishRound(run) {
+    if (run !== runSeq) return false;
+    ownerRun = null; starting = false; cancelIntent = false;
+    return true;
+  }
   const UNCONFIRMED_NOTE = '执行可能仍在运行，可再次取消或等待状态更新；未重新开始搜索。';
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');
@@ -118,14 +131,14 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
     if (status.payload) renderResults(status.payload);
     controls(status.status === 'running');
   }
-  async function poll(id = activeId) {
+  async function poll(id = activeId, run = ownerRun) {
     if (disposed || id === null || id !== activeId) return;
     const seq = pollSeq;
     try {
       const state = await api.poll(id);
       if (disposed || activeId !== id || seq !== pollSeq) return;
       renderExecution(state);
-      if (state.status === 'running') timer = setTimeout(() => void poll(id), pollInterval); else activeId = null;
+      if (state.status === 'running') timer = setTimeout(() => void poll(id, run), pollInterval); else activeId = null;
     } catch (error) {
       if (!disposed && activeId === id && seq === pollSeq) {
         showError(executionError, error, '无法读取执行状态，请稍后重试或取消本次执行。');
@@ -145,9 +158,9 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       root.querySelector('[data-status="execution"]').textContent = '等待启动完成后取消';
       return;
     }
-    void sendCancel(activeId);
+    void sendCancel(activeId, ownerRun);
   }
-  async function sendCancel(id) {
+  async function sendCancel(id, run = ownerRun) {
     cancelling = true;
     pollSeq += 1;
     const seq = cancelSeq += 1;
@@ -161,6 +174,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       // A late response belongs to the execution the user just left behind.
       if (activeId !== id) return;
       activeId = null;
+      finishRound(run);
       renderExecution(state);
     } catch (error) {
       if (disposed || seq !== cancelSeq) return;
@@ -171,7 +185,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       const reason = showError(executionError, error, '取消请求失败。').message;
       root.querySelector('[data-status="execution"]').textContent = '取消未确认';
       setExecutionError(`取消未确认：${reason}。${UNCONFIRMED_NOTE}`);
-      timer = setTimeout(() => void poll(id), pollInterval);
+      timer = setTimeout(() => void poll(id, run), pollInterval);
     } finally {
       if (!disposed && seq === cancelSeq) {
         cancelling = false;
@@ -181,6 +195,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   }
   root.querySelector('[data-search-form]').addEventListener('submit', async event => {
     event.preventDefault(); if (!appReady || activeId !== null || starting || cancelling) return;
+    const run = startRound();
     starting = true; cancelIntent = false; cancelUnconfirmed = false; controls(true); root.querySelector('[data-results]').textContent = '';
     renderExecution({ status: 'running' });
     try {
@@ -191,16 +206,15 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
         // The user already clicked cancel: cancel this execution before showing it as running.
         cancelIntent = false;
         starting = false;
-        await sendCancel(id);
+        await sendCancel(id, run);
         return;
       }
-      await poll();
+      await poll(id, run);
     } catch (error) {
       if (disposed) return;
       activeId = null;
-      cancelIntent = false;
       renderExecution({ status: 'failed', error: `${showError(executionError, error, '启动失败，请检查 CLI 与搜索参数后重试。').message}` });
-    } finally { starting = false; cancelIntent = false; }
+    } finally { if (run === runSeq) { starting = false; cancelIntent = false; } }
   });
   cancel.addEventListener('click', () => { void requestCancel(); });
   async function detect() {
