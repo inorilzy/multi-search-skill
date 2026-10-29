@@ -859,3 +859,188 @@ test('a page that was left does not block a new page, and only the new page canc
   assert.equal(rootB.querySelector('[data-action="search"]').disabled, false, 'the new page is not blocked');
   pageB.dispose(); window.close();
 });
+
+// Ticket 27: after a cancel (normal or during startup) or a failure recovery, the next search must
+// run on its own identity. These tests control the completion order of the old and the new
+// execution explicitly; nothing here reads private flags or relies on random delays.
+test('a cancel confirmed during startup leaves the next search its own id, buttons and result', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const polls = []; const cancels = []; let resolveStart1;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => (cancels.length ? Promise.resolve(82) : new Promise(resolve => { resolveStart1 = resolve; })),
+    poll: id => new Promise(resolve => { polls.push({ id, resolve }); }),
+    cancel: id => new Promise(resolve => { cancels.push({ id, resolve }); return id === 82 ? undefined : undefined; }),
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  const search = root.querySelector('[data-action="search"]');
+  const cancelButton = root.querySelector('[data-action="cancel"]');
+  root.querySelector('[data-field="query"]').value = 'round one';
+  search.click();
+  await tick();
+  cancelButton.click();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待启动完成后取消');
+  resolveStart1(81);
+  await tick();
+  assert.deepEqual(cancels.map(entry => entry.id), [81], 'only the startup execution is cancelled');
+  cancels[0].resolve({ id: 81, status: 'cancelled' });
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  assert.equal(search.disabled, false, 'start is available for the next round');
+
+  search.click();                                   // second round starts right after the cancel
+  await tick();
+  assert.equal(polls.length, 1, 'the new round polls its own execution');
+  assert.equal(polls[0].id, 82);
+  assert.equal(cancelButton.disabled, false, 'the new round offers cancel');
+  polls[0].resolve({ status: 'running' });
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在执行');
+
+  cancelButton.click();                             // normal running-phase cancel still works
+  await tick();
+  assert.deepEqual(cancels.map(entry => entry.id), [81, 82], 'the second cancel targets the new id only');
+  cancels[1].resolve({ id: 82, status: 'cancelled' });
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  assert.equal(search.disabled, false);
+  page.dispose(); window.close();
+});
+
+test('a late reply of the previous execution cannot overwrite or cancel the running new search', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const polls = []; let resolveCancel1;
+  let nextStart = 91;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => nextStart++,
+    poll: id => new Promise(resolve => { polls.push({ id, resolve }); }),
+    cancel: () => new Promise(resolve => { resolveCancel1 = resolve; }),
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'stale round';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  assert.equal(polls[0].id, 91);
+  root.querySelector('[data-action="cancel"]').click();
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在取消');
+  resolveCancel1({ id: 91, status: 'cancelled' });   // cancel confirmed, old poll #1 still in flight
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+
+  root.querySelector('[data-action="search"]').click();  // new round begins before the old reply lands
+  await tick();
+  assert.equal(polls[1].id, 92);
+  polls[0].resolve({ id: 91, status: 'running' });      // stale poll of the old execution arrives
+  await tick(20);
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在执行', 'the old poll cannot rewrite the new round');
+  assert.equal(root.querySelector('[data-execution-error]').textContent, '');
+  const cancelsBefore = polls.length;
+  root.querySelector('[data-action="cancel"]').click();
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在取消');
+  assert.equal(cancelsBefore, 2, 'no extra poll was issued for the old id');
+  page.dispose(); window.close();
+});
+
+test('a start failure followed by a retry does not cancel the new execution', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let attempts = 0; const cancels = []; const polled = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => { attempts += 1; if (attempts === 1) throw 'A test search is already running'; return 100 + attempts; },
+    poll: async id => { polled.push(id); return { status: 'running' }; },
+    cancel: async id => { cancels.push(id); return { id, status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  const search = root.querySelector('[data-action="search"]');
+  root.querySelector('[data-field="query"]').value = 'start fails first';
+  search.click();
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '执行失败');
+  search.click();                                     // retry immediately
+  root.querySelector('[data-action="cancel"]').click(); // intent recorded while the retry is starting
+  await tick(20);
+  assert.deepEqual(cancels, [102], 'the retry cancels only its own execution');
+  assert.deepEqual(polled, [], 'the pending cancel goes straight to cancel, without polling first');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  assert.equal(search.disabled, false);
+  page.dispose(); window.close();
+});
+
+test('after a failed cancel the next round still runs on its own identity once the old run ends', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let cancelAttempts = 0; let finished = false; const starts = []; const polled = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => { starts.push(1); return 200 + starts.length; },
+    poll: async id => { polled.push(id); return finished ? { status: 'empty', payload: { results: [], errors: [] } } : { status: 'running' }; },
+    cancel: async () => { cancelAttempts += 1; if (cancelAttempts === 1) throw 'IPC unavailable'; return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 5 });
+  const search = root.querySelector('[data-action="search"]');
+  root.querySelector('[data-field="query"]').value = 'unconfirmed then finished';
+  search.click();
+  await tick();
+  root.querySelector('[data-action="cancel"]').click();
+  await tick(10);
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '取消未确认');
+  assert.equal(search.disabled, true, 'a new search is blocked while the old run may still exist');
+  search.click();
+  await tick(10);
+  assert.equal(starts.length, 1, 'no second execution is started during an unconfirmed cancel');
+  finished = true;
+  await tick(30);
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '没有结果', 'the real terminal state restores the page');
+  assert.equal(search.disabled, false);
+  finished = false;                                   // the next round is still running
+  search.click();
+  await tick(10);
+  assert.equal(starts.length, 2, 'the next round starts');
+  assert.equal(polled.at(-1), 202, 'the new round polls its own id');
+  assert.ok(polled.every(id => id === 201 || id === 202), 'only the two known execution ids are ever polled');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在执行');
+  assert.equal(root.querySelector('[data-execution-error]').textContent, '', 'the old cancel note does not leak into the new round');
+  page.dispose(); window.close();
+});
+
+test('the finishing reply of a previous round cannot clear the next round start or cancel intent', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const polls = []; const cancels = []; let resolveStart2;
+  let starts = 0;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => { starts += 1; return starts === 1 ? Promise.resolve(501) : new Promise(resolve => { resolveStart2 = resolve; }); },
+    poll: id => new Promise(resolve => { polls.push({ id, resolve }); }),
+    cancel: id => new Promise(resolve => { cancels.push({ id, resolve }); }),
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  const search = root.querySelector('[data-action="search"]');
+  const cancelButton = root.querySelector('[data-action="cancel"]');
+  root.querySelector('[data-field="query"]').value = 'handover';
+  search.click();
+  await tick();
+  assert.equal(polls.at(-1).id, 501);
+  cancelButton.click();                              // round 1 is cancelled while its poll is in flight
+  await tick();
+  cancels[0].resolve({ id: 501, status: 'cancelled' });
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+
+  search.click();                                    // round 2 starts; its start request is pending
+  await tick();
+  assert.equal(starts, 2);
+  polls.at(-1).resolve({ id: 501, status: 'running' }); // round 1's in-flight poll now completes late
+  await tick();
+  cancelButton.click();                              // intent belongs to round 2's pending start
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待启动完成后取消',
+    'the new round still owns the lifecycle: the pending cancel is accepted');
+  resolveStart2(502);
+  await tick(20);
+  assert.deepEqual(cancels.map(entry => entry.id), [501, 502], 'only the new round id is cancelled');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在取消');
+  assert.equal(starts, 2, 'the late reply did not allow a third concurrent start');
+  page.dispose(); window.close();
+});
