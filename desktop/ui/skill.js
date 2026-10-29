@@ -28,15 +28,26 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
   // Preview token: each preview takes a new value. A scope or project change bumps it, so a slower
   // earlier preview result is discarded.
   let previewToken = 0;
-  const selectedScope = () => root.querySelector('input[name="scope"]:checked').value;
+  // Reads the checked property rather than a :checked selector, which can return a stale match in some DOM engines.
+  const selectedScope = () => [...root.querySelectorAll('input[name="scope"]')].find(input => input.checked).value;
   const projectValue = () => (selectedScope() === 'project' ? project.value.trim() || null : null);
+  const targetKey = () => JSON.stringify([selectedScope(), projectValue()]);
   const dropPreview = () => { previewToken++; ready = false; install.disabled = true; plannedScope = null; plannedProject = null; };
+  // The key of the target the visible results describe. Only a real change of scope or project clears
+  // those results; a same-target refresh or a repeated keystroke with the same effective target keeps them.
+  let lastTargetKey = targetKey();
+  const onTargetChange = () => {
+    dropPreview();
+    const key = targetKey();
+    if (key === lastTargetKey) return;
+    lastTargetKey = key;
+    clearTargetResults();
+  };
   root.querySelectorAll('input[name="scope"]').forEach(input => input.addEventListener('change', () => {
     project.disabled = selectedScope() !== 'project';
-    dropPreview();
-    root.querySelector('[data-info="target"]').textContent = ''; root.querySelector('[data-info="status"]').textContent = '';
+    onTargetChange();
   }));
-  project.addEventListener('input', () => { dropPreview(); root.querySelector('[data-info="target"]').textContent = ''; root.querySelector('[data-info="status"]').textContent = ''; });
+  project.addEventListener('input', onTargetChange);
   root.querySelector('[data-action="preview"]').addEventListener('click', async () => {
     root.querySelector('[data-info="error"]').textContent = '';
     const request = ++previewToken;
@@ -57,17 +68,28 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     // Blocks manage actions and drops any manage plan made before this write.
     setBusy(true);
     ready = false;
+    const key = targetKey();
     let writeSucceeded = false;
+    let stale = false;
     try {
       const result = await api.skillInstall(plannedScope, plannedProject);
-      root.querySelector('[data-info="target"]').textContent = result.target ? `目标目录：${result.target}` : '';
-      root.querySelector('[data-info="status"]').textContent = result.status === 'installed' ? `已安装并校验：${result.reason}` : `未完成安装：${result.reason}`;
-      writeSucceeded = result.status === 'installed';
+      // The write already happened on its own target. If the user moved on, its result must not appear on the new target.
+      stale = targetKey() !== key;
+      if (!stale) {
+        root.querySelector('[data-info="target"]').textContent = result.target ? `目标目录：${result.target}` : '';
+        root.querySelector('[data-info="status"]').textContent = result.status === 'installed' ? `已安装并校验：${result.reason}` : `未完成安装：${result.reason}`;
+        writeSucceeded = result.status === 'installed';
+      }
       ready = false;
-    } catch (error) { showError(root.querySelector('[data-info="error"]'), error, '安装失败，未确认写入结果，请重新预览。'); ready = false; }
+    } catch (error) {
+      stale = targetKey() !== key;
+      if (!stale) showError(root.querySelector('[data-info="error"]'), error, '安装失败，未确认写入结果，请重新预览。');
+      ready = false;
+    }
     finally { install.disabled = true; }
     // Re-read the real target so the manage panel shows what is on disk, not the expected result.
-    try { await refreshManage(writeSucceeded); } finally { if (!disposed) setBusy(false); }
+    // A stale write leaves the new target unread until the user checks it.
+    try { if (!stale) await refreshManage(writeSucceeded); } finally { if (!disposed) setBusy(false); }
   });
   // Manage panel: status, update, and removal. Each destructive step needs its own explicit confirmation.
   const info = name => root.querySelector(`[data-info="${name}"]`);
@@ -94,8 +116,14 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     ['update', 'remove-plan', 'remove'].forEach(name => { manageButton(name).disabled = true; });
     ['installed', 'managed-target', 'compatibility', 'modified', 'manage-plan'].forEach(name => { info(name).textContent = ''; });
   };
-  root.querySelectorAll('input[name="scope"]').forEach(input => input.addEventListener('change', invalidateManage));
-  project.addEventListener('input', invalidateManage);
+  // Every result shown for the previous target goes, including the write outcome and unconfirmed-state flag.
+  const clearTargetResults = () => {
+    dropPreview();
+    invalidateManage();
+    unconfirmedWrite = false;
+    ['target', 'status', 'error'].forEach(name => { root.querySelector(`[data-info="${name}"]`).textContent = ''; });
+    ['manage-status', 'manage-error'].forEach(name => { info(name).textContent = ''; });
+  };
   const manageScope = () => selectedScope();
   const manageProject = () => projectValue();
   const sameTarget = () => managedScope === manageScope() && managedProject === manageProject();
@@ -139,15 +167,24 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     if (busy || disposed) return;
     setBusy(true);
     let writeSucceeded = false;
+    const key = targetKey();
+    let stale = false;
     try {
       const result = await api.skillUpdate(managedScope, managedProject, confirmOverwrite.checked);
-      info('manage-status').textContent = result.status === 'updated' && result.verified === true
-        ? `已更新并校验：${result.reason}${result.backup ? `；本地修改已备份到 ${result.backup}` : ''}`
-        : `未完成更新：${result.reason}${result.backup ? `；备份位置 ${result.backup}` : ''}`;
-      writeSucceeded = result.status === 'updated' && result.verified === true;
-    } catch (error) { showError(info('manage-error'), error, '更新失败，原 Skill 未被确认改变，请重新检查。'); }
+      stale = targetKey() !== key;
+      if (!stale) {
+        info('manage-status').textContent = result.status === 'updated' && result.verified === true
+          ? `已更新并校验：${result.reason}${result.backup ? `；本地修改已备份到 ${result.backup}` : ''}`
+          : `未完成更新：${result.reason}${result.backup ? `；备份位置 ${result.backup}` : ''}`;
+        writeSucceeded = result.status === 'updated' && result.verified === true;
+      }
+    } catch (error) {
+      stale = targetKey() !== key;
+      if (!stale) showError(info('manage-error'), error, '更新失败，原 Skill 未被确认改变，请重新检查。');
+    }
     finally { setBusy(false); }
-    if (!disposed) await refreshManage(writeSucceeded);
+    // A write on a target the user has left is not shown on the new target; the user must check it first.
+    if (!disposed && !stale) await refreshManage(writeSucceeded);
   });
   manageButton('remove-plan').addEventListener('click', async () => {
     if (!sameTarget()) { setManageError('请先检查当前目标。'); return; }
@@ -170,18 +207,26 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     setBusy(true);
     let writeSucceeded = false;
     let removedOk = false;
+    const key = targetKey();
+    let stale = false;
     try {
       const result = await api.skillRemove(managedScope, managedProject, true);
+      stale = targetKey() !== key;
       removedOk = result.status === 'removed';
-      info('manage-status').textContent = removedOk
-        ? `已移除：${result.deleted.join('、')}。${result.reason}`
-        : `未移除：${result.reason}`;
+      if (!stale) {
+        info('manage-status').textContent = removedOk
+          ? `已移除：${result.deleted.join('、')}。${result.reason}`
+          : `未移除：${result.reason}`;
+      }
       writeSucceeded = removedOk;
-    } catch (error) { showError(info('manage-error'), error, '移除失败，请重新检查目标。'); }
+    } catch (error) {
+      stale = targetKey() !== key;
+      if (!stale) showError(info('manage-error'), error, '移除失败，请重新检查目标。');
+    }
     finally { removeReady = false; setBusy(false); }
     // A confirmed removal clears the install-side success line so it cannot read as the current state.
-    if (removedOk && !disposed) root.querySelector('[data-info="status"]').textContent = '';
-    if (!disposed) await refreshManage(writeSucceeded);
+    if (removedOk && !stale && !disposed) root.querySelector('[data-info="status"]').textContent = '';
+    if (!disposed && !stale) await refreshManage(writeSucceeded);
   });
   return { dispose() { disposed = true; manageToken++; } };
 }
