@@ -271,7 +271,8 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
     const id = activeId;
     activeId = null;
     signal?.removeEventListener('abort', dispose);
-    if (id !== null) {
+    // A user cancel already in flight for this id owns the cancel: sending another would duplicate it.
+    if (id !== null && !cancelling) {
       try { Promise.resolve(api.cancel(id)).catch(() => {}); } catch { /* page is already gone */ }
     }
   }

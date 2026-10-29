@@ -101,7 +101,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <div data-draft-list class="key-draft-list"></div>
       <div class="run-controls draft-controls"><button type="button" data-action="add" aria-label="新增一行 Key 输入">＋</button>
       <button type="submit" class="primary" data-action="save">提交新增 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
-      <span class="credential-note" data-info="application">申请链接待配置</span></div>
+      <span class="credential-note" data-info="application">正在确认申请链接与打开能力…</span></div>
     </form>
     <details class="config-details"><summary>说明</summary><p class="credential-note">Key 仅保存在本机 SQLite，DPAPI 保护范围为当前 Windows 用户/设备。保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > 凭据库 > 旧 Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
     <p data-capability class="credential-note" role="note" hidden></p>
@@ -114,6 +114,32 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   const q = selector => /** @type {any} */ (root.querySelector(selector));
   const text = (selector, value) => { q(selector).textContent = value; };
   let current = { store: { state: 'absent', error: '' }, effective_source: 'none' };
+  // Application entry state machine. 'pending' = the metadata query is in flight (the
+  // button stays disabled, so an unconfirmed entry never flashes as usable); 'failed' =
+  // that query itself failed (distinct from "no fixed link" and from "this platform
+  // cannot open", which only an answer may claim); 'ok' = the backend answered with the
+  // fixed link and the browser-open capability. Only the latest refresh publishes this
+  // state, so a slower older response cannot revive a stale entry.
+  let application = { phase: 'pending' };
+  const appOpens = state =>
+    state.phase === 'ok'
+    && state.key_application_available === true
+    && state.key_application_open_supported !== false;
+  const appNote = state => {
+    if (state.phase === 'pending') return '正在确认申请链接与打开能力…';
+    if (state.phase === 'failed') return '无法确认申请链接与打开能力，请点击“刷新已保存值”重试。';
+    if (state.key_application_available !== true) return '该搜索源暂无固定申请链接，无法打开申请页。';
+    if (state.key_application_open_supported === false) {
+      return state.key_application_url
+        ? `当前平台无法直接打开系统浏览器，请手动复制固定申请链接：${state.key_application_url}`
+        : '当前平台无法直接打开系统浏览器，且暂无可复制的固定申请链接。';
+    }
+    return '使用系统浏览器打开固定申请链接';
+  };
+  function renderApplication() {
+    text('[data-info="application"]', appNote(application));
+    q('[data-action="application"]').disabled = busy || !appOpens(application);
+  }
   let generation = 0, disposed = false, busy = false;
   // Storage capability is unknown until credentialStatus reports it: all writes stay
   // disabled rather than presenting an uncertain state as permission to save.
@@ -151,7 +177,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     for (const button of root.querySelectorAll('[data-action="copy"]')) button.disabled = value || !revealed.has(Number(button.dataset.rowIndex));
     // Plaintext reveal is an encrypted read; unsupported platforms cannot run it.
     for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || !capabilityReady();
-    q('[data-action="application"]').disabled = value || !current.key_application_available;
+    renderApplication();
     q('[data-action="test"]').disabled = value || !searchTest;
     q('[data-action="test"]').hidden = !searchTest;
     // Saved-row delete and draft add/submit are mutations; keep them disabled
@@ -212,8 +238,14 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     setBusy(busy);
     text('[data-status="store"]', storeLabels[view.store.state] || view.store.state);
     text('[data-status="source"]', sourceText(view));
-    text('[data-info="application"]', view.key_application_available ? '使用系统浏览器打开固定申请链接' : '申请链接待配置');
-    q('[data-action="application"]').disabled = busy || !view.key_application_available;
+    // A confirmed answer, which may legitimately be "no mapping" or "platform cannot open".
+    application = {
+      phase: 'ok',
+      key_application_available: view.key_application_available,
+      key_application_open_supported: view.key_application_open_supported,
+      key_application_url: view.key_application_url,
+    };
+    renderApplication();
   }
   // `requestId` ties a read-back to its owning refresh; non-refresh callers
   // (reveal snapshot re-check, post-save/post-remove read-back) pass the
@@ -232,7 +264,11 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     // rows, so a slower older response cannot overwrite a newer outcome.
     const requestId = ++refreshGeneration;
     capability = { supported: null, reason: '', phase: 'pending' };
+    // Same for the application entry: an in-flight query is not yet an answer, so
+    // the button must stay disabled until this request (or a newer one) resolves.
+    application = { phase: 'pending' };
     renderCapability();
+    renderApplication();
     setBusy(true);
     try {
       const view = await api.credentialStatus(source);
@@ -261,7 +297,11 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
         // Capability is unknown again: writes stay disabled until a status
         // succeeds, so a failed lookup is never an empty, writable store.
         capability = { supported: null, reason: '', phase: 'failed' };
+        // The application metadata came from the same failed query: report it as
+        // unconfirmed with the existing retry entry, never as "no link"/"unsupported".
+        application = { phase: 'failed' };
         renderCapability();
+        renderApplication();
         // Keep the last saved rows visible so the user can still see state; all
         // writes stay disabled until a refresh succeeds again.
         renderSaved();
@@ -389,6 +429,9 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     });
   });
   q('[data-action="application"]').addEventListener('click', async () => {
+    // Guard the action itself too: a synthesized click on a disabled entry must not
+    // open anything before the metadata query has confirmed the link and capability.
+    if (busy || disposed || !appOpens(application)) return;
     try { await api.credentialApplicationOpen(source); }
     catch (error) { if (!disposed) showError(q('[data-info="error"]'), error, '无法打开系统浏览器。'); }
   });

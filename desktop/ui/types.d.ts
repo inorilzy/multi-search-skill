@@ -36,6 +36,19 @@ env_var?: string,
  */
 file_key_count?: number, key_application_available: boolean, 
 /**
+ * Whether this build can hand the fixed HTTPS link to the system browser:
+ * Windows (`ShellExecuteW`) and macOS (`/usr/bin/open`) implement it, other
+ * platforms do not. A separate capability from `store_supported`: a platform
+ * that opens pages may still be unable to write DPAPI keys, and vice versa.
+ */
+key_application_open_supported: boolean, 
+/**
+ * Read-only copy of the single trusted mapping so the page can offer manual
+ * copying when direct opening is unavailable. Absent when the source has no
+ * configured link; opening still accepts only the source name, never this URL.
+ */
+key_application_url?: string, 
+/**
  * Whether this build's encrypted credential backend can write on the
  * current platform (Windows current-user DPAPI only). Reported by the
  * native backend, independent of whether any Key is saved; the UI keeps

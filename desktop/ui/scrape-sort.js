@@ -56,19 +56,21 @@ export function createChainSorter({ list, doc, isEnabled, onCommit, announce = (
     });
   }
 
-  // 键盘模式把行真实移回原位；指针模式从未动过 DOM。
+  // 键盘模式按拿起时记录的完整行顺序重新排列；指针模式从未动过 DOM。
+  // 不能只把行插回原下标：上移、下移后原下标处的节点已不是拿起前的节点。
   function revertKeyboard() {
     if (!drag || drag.mode !== 'keyboard') return;
-    const target = rows()[drag.from];
-    if (target && target !== drag.row) list.insertBefore(drag.row, target);
-    else if (!target) list.append(drag.row);
+    for (const row of drag.origin) list.append(row);
     renumberRows();
   }
 
   function cancel(message = '已取消拖动，顺序未变化') {
     if (!drag) return;
+    const { mode, handle } = drag;
     revertKeyboard();
     cleanup();
+    // 恢复 DOM 顺序会让浏览器丢掉手柄焦点；键盘拖动回到同一手柄。
+    if (mode === 'keyboard') handle?.focus?.();
     announce(message);
   }
 
@@ -110,7 +112,7 @@ export function createChainSorter({ list, doc, isEnabled, onCommit, announce = (
     if (drag || !isEnabled() || handle.disabled) return false;
     const from = indexOf(row);
     if (from < 0) return false;
-    drag = { mode, pointerId, row, handle, from };
+    drag = { mode, pointerId, row, handle, from, origin: rows() };
     row.classList.add('is-dragging');
     handle.setAttribute('aria-pressed', 'true');
     return true;

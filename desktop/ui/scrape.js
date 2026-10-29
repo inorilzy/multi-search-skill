@@ -238,28 +238,40 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     validateChain();
   }
 
-  // 契约内的有效来源：由 Core 判定，页面只读取，不自行重排优先级。
-  // 其他取值、字段缺失和查询异常都保持“待确认”，可由刷新恢复。
-  const CONTRACT_SOURCES = ['env', 'credential_store', 'file', 'sqlite', 'none', 'unavailable'];
-  const STORE_STATES = ['present', 'absent', 'unreadable'];
-
-  // Core's effective_source decides whether a legacy file key authenticates. An empty or
-  // unsupported local store must not override it; other sources keep the store state.
-  // An unrecognized source or a payload without a usable state is unconfirmed: a store
-  // row must never be read as a confirmed effective source for it.
+  // Core's effective_source decides whether a key authenticates: `env` is Core's highest
+  // priority, so a set variable counts as usable even when the store is empty, unsupported
+  // or unreadable. Payloads without the field keep the legacy local answer. An unavailable
+  // source stays unavailable (fail-closed), and a source this page does not recognize stays
+  // unconfirmed instead of being reported as configured.
   function credentialStateOf(view) {
-    if (!view || typeof view !== 'object') return 'unknown';
-    const source = view.effective_source;
-    if (source != null && !CONTRACT_SOURCES.includes(source)) return 'unknown';
-    if (source === 'file') return 'present';
-    const storeState = view.store && typeof view.store === 'object' ? view.store.state : undefined;
-    return STORE_STATES.includes(storeState) ? storeState : 'unknown';
+    switch (view.effective_source) {
+      // Configured: Core's environment variable, the credential store entry, the legacy
+      // file, or the local-only `sqlite` answer.
+      case 'env':
+      case 'credential_store':
+      case 'file':
+      case 'sqlite':
+        return 'present';
+      // Core found no key from any source.
+      case 'none':
+        return 'absent';
+      // Core selected a source that cannot be used. An existing store entry does not make it usable.
+      case 'unavailable':
+        return 'unreadable';
+      case undefined:
+      case null:
+      case '':
+        return view.store.state;
+      default:
+        return 'unknown';
+    }
   }
 
   async function readCredentialStates() {
     return new Map(await Promise.all(REQUIRED_KEY_BACKENDS.map(async name => {
       try {
-        return /** @type {[string, string]} */ ([name, credentialStateOf(await api.credentialStatus(name))]);
+        const view = await api.credentialStatus(name);
+        return /** @type {[string, string]} */ ([name, credentialStateOf(view)]);
       } catch {
         return /** @type {[string, string]} */ ([name, 'unknown']);
       }
