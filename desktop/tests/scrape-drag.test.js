@@ -755,3 +755,78 @@ test('Home/End mixed with arrows and Enter save the exact visible order', async 
   assert.deepEqual(chainNames(root), visible);
   window.close();
 });
+
+// --- Ticket 05: cancelling a drag restores the pre-pick-up draft, not the saved config. ---
+
+test('05: cancelling a move keeps a draft made by a button move and saves only that draft', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  clickRowButton(window, root, 'jina', 'down');
+  assert.deepEqual(chainNames(root), ['exa', 'jina', 'tavily', 'firecrawl']);
+  assert.equal(mounted.dirty, true);
+  const drafted = chainNames(root);
+  const draftText = draftCopy(root);
+
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp']);
+  assert.deepEqual(chainNames(root), ['exa', 'tavily', 'jina', 'firecrawl'], 'preview moves only the picked row');
+  pressFocused(window, 'Escape');
+
+  assert.deepEqual(chainNames(root), drafted, 'cancel restores the draft order, not the saved config');
+  assert.deepEqual(chainNames(root), ['exa', 'jina', 'tavily', 'firecrawl']);
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04'], 'numbers follow the restored draft');
+  assert.equal(mounted.dirty, true, 'the earlier change is still unsaved');
+  assert.equal(dirtyBadge(root).hidden, false, 'unsaved badge stays visible');
+  assert.equal(draftCopy(root), draftText, 'draft message is preserved');
+  assert.match(statusNode(root).textContent, /取消/);
+  assert.equal(focusedRowName(window), 'tavily', 'focus stays on the released handle');
+  assert.equal(handle(root, 'tavily').getAttribute('aria-pressed'), 'false');
+  assert.equal(fake.state.saves, 0, 'cancel never writes');
+
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, drafted, 'save submits the pre-pick-up draft');
+  assert.notDeepEqual(fake.state.submitted, BUILTIN, 'the cancelled move does not replace earlier edits');
+  assert.equal(mounted.dirty, false);
+  assert.deepEqual(chainNames(root), drafted, 'readback equals the restored draft');
+  window.close();
+});
+
+test('05: a draft made by disabling a backend survives a cancelled drag', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  rowButton(root, 'exa', 'disable').click();
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl']);
+  assert.equal(mounted.dirty, true);
+  assert.match(draftCopy(root), /停用/);
+  const drafted = chainNames(root);
+
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp']);
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'firecrawl'], 'preview keeps the disabled backend out');
+  pressFocused(window, 'Escape');
+
+  assert.deepEqual(chainNames(root), drafted, 'cancel returns to the draft order');
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03'], 'numbers match the three remaining rows');
+  assert.equal(mounted.dirty, true, 'the disable is still unsaved');
+  assert.equal(dirtyBadge(root).hidden, false);
+  assert.match(draftCopy(root), /停用/, 'the disable message is not replaced by a clean-draft message');
+  assert.equal(fake.state.saves, 0);
+
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, drafted, 'save submits the three-backend draft');
+  assert.deepEqual(chainNames(root), drafted);
+  window.close();
+});
+
+test('05: cancelling on a clean start never invents a draft', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  assert.equal(mounted.dirty, false);
+  handle(root, 'exa').focus();
+  dragKeys(window, [' ', 'ArrowUp', 'Escape']);
+  assert.deepEqual(chainNames(root), BUILTIN);
+  assert.equal(mounted.dirty, false, 'cancel never sets a dirty draft');
+  assert.equal(dirtyBadge(root).hidden, true);
+  assert.match(draftCopy(root), /已保存设置/);
+  assert.equal(fake.state.saves, 0);
+  window.close();
+});
