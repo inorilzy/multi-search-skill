@@ -830,6 +830,57 @@ test('a slow update that finishes after the project changed does not write its r
   window.close();
 });
 
+// 11: a write that succeeded but whose read-back failed keeps the unconfirmed note only for its own target.
+// The follow-up reads on the new target fail on purpose, so a leaked note would show up in the error line.
+test('an unconfirmed install note does not carry to a new scope, even when the new target read also fails', async () => {
+  const h = writeThenReadFailure({ readFails: n => n <= 2 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  root.querySelector('input[value="project"]').click(); await tick();
+  root.querySelector('[data-action="check"]').click(); await tick();
+  const text = root.querySelector('[data-info="manage-error"]').textContent;
+  assert.match(text, /检查失败，请重试/);
+  assert.doesNotMatch(text, /操作已完成/);
+  assert.equal(h.counts.install, 1);
+  window.close();
+});
+
+test('an unconfirmed update note does not carry to a new project, even when the new target read also fails', async () => {
+  const h = writeThenReadFailure({ readFails: n => n === 2 || n === 3 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  root.querySelector('input[value="project"]').click(); await tick();
+  root.querySelector('[data-field="project"]').value = 'B';
+  root.querySelector('[data-field="project"]').dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  const text = root.querySelector('[data-info="manage-error"]').textContent;
+  assert.match(text, /检查失败，请重试/);
+  assert.doesNotMatch(text, /操作已完成/);
+  assert.equal(h.counts.update, 1, 'the new target must not trigger another update');
+  window.close();
+});
+
+test('an unconfirmed removal note does not carry back to global, even when the read there also fails', async () => {
+  const h = writeThenReadFailure({ readFails: n => n === 2 || n === 3 });
+  const { root, window } = setup(h.api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-error"]').textContent, /操作已完成，当前状态未确认/);
+  root.querySelector('input[value="project"]').click(); await tick();
+  root.querySelector('input[value="global"]').click(); await tick();
+  root.querySelector('[data-action="check"]').click(); await tick();
+  const text = root.querySelector('[data-info="manage-error"]').textContent;
+  assert.match(text, /检查失败，请重试/);
+  assert.doesNotMatch(text, /操作已完成/);
+  assert.equal(h.counts.remove, 1, 'retry must not repeat the removal');
+  window.close();
+});
+
 // 10: editing the project directory invalidates the previous project's shown state at once, before any check or submit.
 function typeProject(root, value) {
   const field = root.querySelector('[data-field="project"]');
