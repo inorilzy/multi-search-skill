@@ -334,3 +334,75 @@ test('Enter drops directly and the saved readback matches the visible order', as
   assert.deepEqual(chainNames(root), ['jina', 'firecrawl', 'exa', 'tavily']);
   window.close();
 });
+
+// --- Ticket 04: Escape restores the pre-pick-up order after forward and backward moves. ---
+
+function focusedRowName(window) {
+  return window.document.activeElement?.closest?.('[data-chain-row]')?.getAttribute('data-chain-row') ?? null;
+}
+
+function orderNumbers(root) {
+  return [...root.querySelectorAll('[data-chain-row]')].map(row => row.querySelector('.scrape-order').textContent);
+}
+
+const CASES = [
+  { label: 'backward', direction: 'ArrowUp', name: 'tavily', preview: ['jina', 'tavily', 'exa', 'firecrawl'] },
+  { label: 'forward', direction: 'ArrowDown', name: 'jina', preview: ['exa', 'jina', 'tavily', 'firecrawl'] },
+];
+
+for (const testCase of CASES) {
+  test(`Escape restores order, numbers, focus and hint after a single ${testCase.label} move`, async () => {
+    const { window, root } = setup();
+    try {
+      let saves = 0;
+      const mounted = await mountScrape(root, api({
+        scrapeSettingsSave: async input => { saves += 1; return settingsView({ scrape_backends: input }); },
+      }));
+      handle(root, testCase.name).focus();
+      pressFocused(window, ' ');
+      pressFocused(window, testCase.direction);
+      assert.deepEqual(chainNames(root), testCase.preview, `${testCase.label} move shows the preview order`);
+
+      pressFocused(window, 'Escape');
+
+      assert.deepEqual(chainNames(root), BUILTIN, 'Escape restores the pre-pick-up order');
+      assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04'], 'row numbers match actual positions');
+      assert.equal(saves, 0, 'cancel never calls save');
+      assert.equal(mounted.dirty, false, 'clean draft stays clean after cancel');
+      assert.equal(root.querySelector('[data-dirty]').hidden, true, 'no unsaved badge after cancel');
+      assert.match(root.querySelector('[data-status="draft"]').textContent, /当前显示已保存设置/);
+      assert.match(statusNode(root).textContent, /取消/);
+      assert.equal(chainRow(root, testCase.name).classList.contains('is-dragging'), false, 'pick-up state cleared');
+      assert.equal(handle(root, testCase.name).getAttribute('aria-pressed'), 'false', 'handle released');
+      assert.equal(focusedRowName(window), testCase.name, 'focus stays on the same handle');
+    } finally {
+      window.close();
+    }
+  });
+}
+
+test('a keyboard move after Escape still acts on the same backend', async () => {
+  const { window, root } = setup();
+  try {
+    let saves = 0;
+    await mountScrape(root, api({
+      scrapeSettingsSave: async input => { saves += 1; return settingsView({ scrape_backends: input }); },
+    }));
+    handle(root, 'tavily').focus();
+    pressFocused(window, ' ');
+    pressFocused(window, 'ArrowUp');
+    pressFocused(window, 'Escape');
+    assert.deepEqual(chainNames(root), BUILTIN);
+    assert.equal(saves, 0);
+
+    pressFocused(window, ' ');
+    pressFocused(window, 'ArrowUp');
+    assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl'], 'second pick-up moves tavily again');
+    pressFocused(window, 'Enter');
+    assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl'], 'drop commits the right row');
+    assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04']);
+    assert.equal(saves, 0, 'dropping only edits the draft');
+  } finally {
+    window.close();
+  }
+});
