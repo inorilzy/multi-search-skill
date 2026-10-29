@@ -1160,3 +1160,129 @@ test('an empty chain blocks the button and a direct submit without calling the b
   assert.equal(saves, 0);
   window.close();
 });
+
+// 工单 34：保存前重新核对来源。编辑后来源变化，保存只依据最新判定，失败保留草稿。
+const presaveStatus = (state, storeState) => ({
+  store: { state: storeState ?? state, saved_at: (storeState ?? state) === 'present' ? 1 : null, error: '' },
+  effective_source: { present: 'credential_store', absent: 'none', unreadable: 'unavailable', unknown: 'some-future-source' }[state],
+  key_application_available: true, store_supported: true,
+});
+
+test('presave recheck refuses a chain whose confirmed backends all became missing and keeps the draft', async () => {
+  const { window, root } = setup();
+  let exaState = 'present';
+  let saves = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    credentialStatus: async source => presaveStatus(source === 'exa' ? exaState : 'absent'),
+    scrapeSettingsSave: async input => { saves++; return settingsView({ scrape_backends: input }); },
+  }));
+  // 编辑草稿：把 Tavily 上移，形成与已保存链不同的草稿。
+  chainButton(root, 'tavily', '上移').click();
+  assert.deepEqual(chainNames(root), ['tavily', 'exa']);
+  // 编辑期间 Exa 的 Key 被移除。
+  exaState = 'absent';
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.equal(saves, 0, 'no write when every confirmed member is missing now');
+  assert.match(root.querySelector('[data-info="error"]').textContent, /整条链无法运行/);
+  assert.deepEqual(chainNames(root), ['tavily', 'exa'], 'draft order retained');
+  assert.match(root.querySelector('[data-status="draft"]').textContent, /草稿|未保存|修改/);
+  window.close();
+});
+
+test('presave recheck accepts a chain again after the source is restored and retry saves the draft', async () => {
+  const { window, root } = setup();
+  let exaState = 'present';
+  const saved = [];
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    credentialStatus: async source => presaveStatus(source === 'exa' ? exaState : 'absent'),
+    scrapeSettingsSave: async input => { saved.push([...input]); return settingsView({ scrape_backends: input }); },
+  }));
+  // Exa 在编辑期间变为缺失，但页面草稿上的按钮仍基于挂载时的状态可用：保存应在写入前被拒绝。
+  chainButton(root, 'tavily', '上移').click();
+  assert.deepEqual(chainNames(root), ['tavily', 'exa']);
+  exaState = 'absent';
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.deepEqual(saved, [], 'refused before writing while every member is missing now');
+  assert.deepEqual(chainNames(root), ['tavily', 'exa'], 'draft kept after the refusal');
+  // 拒绝后保存按钮保持禁用（缓存的判定仍为缺失），直到用户刷新重新判定。
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true, 'refused verdict keeps save disabled until refresh');
+  // 来源恢复后刷新：刷新会先询问是否丢弃未保存草稿；确认后重新判定并写入。
+  exaState = 'present';
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  root.querySelector('[data-action="confirm-refresh-chain"]').click();
+  await flush();
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false, 'enabled again after restore and refresh');
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.deepEqual(saved, [['exa', 'tavily']], 'after confirmed refresh the saved order is what gets written');
+  window.close();
+});
+
+test('a failed presave status read follows the existing unknown policy: no fabricated result, draft kept on write failure', async () => {
+  const { window, root } = setup();
+  let armed = false;
+  let saves = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    // 挂载时读取正常；保存前的复核读取失败，结果未知。按既有未知策略（工单 31），未知不等于永久无效，允许保存；
+    // 但本测试不能把未知写成“已配置/已连接”，写入失败时草稿必须保留。
+    credentialStatus: async source => { if (armed) throw new Error('offline'); return presaveStatus('present'); },
+    scrapeSettingsSave: async input => { saves++; throw new Error('write rejected'); },
+  }));
+  chainButton(root, 'tavily', '上移').click();
+  const draft = chainNames(root);
+  armed = true;
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.equal(saves, 1, 'unknown is not a permanent refusal, so the write is attempted');
+  assert.doesNotMatch(root.textContent, /已保存。/, 'failed write never shows success');
+  assert.deepEqual(chainNames(root), draft, 'draft kept after the failed write');
+  window.close();
+});
+
+test('a write failure after a clean presave keeps the draft and never shows success', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    credentialStatus: async () => presaveStatus('present'),
+    scrapeSettingsSave: async () => { throw new Error('disk full'); },
+  }));
+  chainButton(root, 'tavily', '上移').click();
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.doesNotMatch(root.textContent, /已保存。/);
+  assert.match(root.querySelector('[data-info="error"]').textContent, /保存失败|原配置未改变/);
+  assert.deepEqual(chainNames(root), ['tavily', 'exa'], 'draft kept after write failure');
+  window.close();
+});
+
+test('overlapping save clicks issue exactly one presave check and one write', async () => {
+  const { window, root } = setup();
+  let checks = 0;
+  let saves = 0;
+  let mounted = false;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+    credentialStatus: async () => { if (mounted) { checks++; await gate; } return presaveStatus('present'); },
+    scrapeSettingsSave: async input => { saves++; return settingsView({ scrape_backends: input }); },
+  }));
+  mounted = true;
+  const checksBeforeClick = checks;
+  const button = root.querySelector('[data-action="save"]');
+  button.click();
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  button.click();
+  release();
+  await flush();
+  // 一次复核 = 每个必需后端各读一次状态（exa、tavily）；重复点击与提交不再增加复核次数。
+  assert.equal(checks - checksBeforeClick, 2, 'exactly one presave pass (one read per required backend)');
+  assert.equal(saves, 1, 'exactly one write');
+  window.close();
+});
