@@ -192,7 +192,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
       upText.className = 'sr-only'; upText.textContent = '上移';
       up.append(upIcon, upText);
       up.disabled = disabled || index === 0;
-      up.addEventListener('click', () => move(index, -1));
+      up.addEventListener('click', () => move(name, -1));
       const down = doc.createElement('button');
       down.type = 'button'; down.setAttribute('data-chain-action', 'down');
       down.setAttribute('aria-label', `下移 ${label}`);
@@ -202,7 +202,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
       downText.className = 'sr-only'; downText.textContent = '下移';
       down.append(downIcon, downText);
       down.disabled = disabled || index === chain.length - 1;
-      down.addEventListener('click', () => move(index, 1));
+      down.addEventListener('click', () => move(name, 1));
       const off = doc.createElement('button');
       off.type = 'button'; off.textContent = '停用'; off.setAttribute('data-chain-action', 'disable');
       off.setAttribute('aria-label', `停用 ${label}`);
@@ -319,10 +319,14 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     return !empty && !availability.blocked;
   }
 
-  function move(index, delta) {
+  // 按后端名解析当前下标：渲染时捕获的下标在拖动预览或上次移动后可能已过期。
+  // 先结束未放下的拖动，让按钮只作用于已提交的草稿顺序。
+  function move(name, delta) {
     if (chainDisabled()) return;
+    sorter?.cancel('已结束未完成的拖动，按钮已按草稿顺序移动');
+    const index = chain.indexOf(name);
     const target = index + delta;
-    if (target < 0 || target >= chain.length) return;
+    if (index < 0 || target < 0 || target >= chain.length) return;
     [chain[index], chain[target]] = [chain[target], chain[index]];
     setDirty('抓取顺序已在草稿中调整');
     renderChain();
