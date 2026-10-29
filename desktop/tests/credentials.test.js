@@ -887,3 +887,50 @@ test('no write request is issued during loading, failure or stale-resolution win
   assert.equal(writes.length, 1, 'write allowed once support confirmed');
   ctx.window.close();
 });
+
+test('a slow launch that resolves after the editor is disposed cannot write into the next target', async () => {
+  const ctx = setup(); let release, rejectOpen;
+  const mounted = await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialApplicationOpen: () => new Promise((resolve, reject) => { release = resolve; rejectOpen = reject; }),
+  }), { source: 'tavily' });
+  const errorSlot = ctx.root.querySelector('[data-info="error"]');
+  ctx.root.querySelector('[data-action="application"]').click(); await flush();
+  // Switch the card away: the old editor is disposed while its launch is still pending.
+  mounted.dispose();
+  // The next target mounts into the same container and shows its own (empty) slots.
+  ctx.root.innerHTML = '';
+  const next = await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://dashboard.exa.ai/api-keys' }),
+  }), { source: 'exa' });
+  rejectOpen(coded('credential_application_failed', 'stale failure from tavily'));
+  await flush2();
+  const nextSlot = ctx.root.querySelector('[data-info="error"]');
+  assert.equal(nextSlot.textContent, '', 'the old launch failure must not reach the new target');
+  assert.equal(ctx.root.querySelector('[data-application-fallback]').hidden, true, 'the old fallback must not appear on the new target');
+  assert.equal(ctx.root.querySelector('[data-application-url]').value, '', 'no old link is written into the new target');
+  assert.doesNotMatch(ctx.root.textContent, /stale failure from tavily|app\.tavily\.com/);
+  next.dispose();
+  ctx.window.close();
+});
+
+test('a new editor for another source starts with no in-flight lock or fallback from the old one', async () => {
+  const ctx = setup(); const opened = []; let release;
+  const first = await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialApplicationOpen: source => { opened.push(source); return new Promise(resolve => { release = resolve; }); },
+  }), { source: 'tavily' });
+  ctx.root.querySelector('[data-action="application"]').click(); await flush();
+  first.dispose();
+  ctx.root.replaceChildren();
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://dashboard.exa.ai/api-keys' }),
+    credentialApplicationOpen: async source => { opened.push(source); },
+  }), { source: 'exa' });
+  const button = ctx.root.querySelector('[data-action="application"]');
+  assert.equal(button.disabled, false, 'the old in-flight launch does not lock the new target');
+  button.click(); await flush2();
+  assert.deepEqual(opened, ['tavily', 'exa']);
+  release();
+  ctx.window.close();
+});
