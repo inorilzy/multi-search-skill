@@ -86,6 +86,17 @@ pub struct CredentialOverview {
     #[cfg_attr(feature = "ts", ts(optional))]
     pub file_key_count: Option<usize>,
     pub key_application_available: bool,
+    /// Whether this build can hand the fixed HTTPS link to the system browser:
+    /// Windows (`ShellExecuteW`) and macOS (`/usr/bin/open`) implement it, other
+    /// platforms do not. A separate capability from `store_supported`: a platform
+    /// that opens pages may still be unable to write DPAPI keys, and vice versa.
+    pub key_application_open_supported: bool,
+    /// Read-only copy of the single trusted mapping so the page can offer manual
+    /// copying when direct opening is unavailable. Absent when the source has no
+    /// configured link; opening still accepts only the source name, never this URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub key_application_url: Option<String>,
     /// Whether this build's encrypted credential backend can write on the
     /// current platform (Windows current-user DPAPI only). Reported by the
     /// native backend, independent of whether any Key is saved; the UI keeps
@@ -175,6 +186,9 @@ pub(crate) fn overview(
     // The backend's platform fact is a shared compile-time check, kept separate
     // from data presence: "未配置 Key" does not mean "存储不可用".
     let store_supported = credential::storage_supported();
+    // Availability, the manual-copy link and the direct-open capability all come
+    // from the same fixed mapping / platform facts, never from the WebView.
+    let application = application_url(entry.source);
     CredentialOverview {
         source: entry.source.into(),
         env_overrides_store: None,
@@ -182,7 +196,9 @@ pub(crate) fn overview(
         file_key_count: None,
         store,
         effective_source,
-        key_application_available: application_url(entry.source).is_some(),
+        key_application_available: application.is_some(),
+        key_application_open_supported: browser_open_supported(),
+        key_application_url: application.map(str::to_string),
         store_supported,
         store_unsupported_reason: unsupported_reason(store_supported),
     }
@@ -375,6 +391,13 @@ fn application_url(source: &str) -> Option<&'static str> {
         .iter()
         .find(|(s, _)| *s == source)
         .and_then(|(_, u)| *u)
+}
+/// Platform fact: whether this build can hand a validated HTTPS application link
+/// to the system browser (`ShellExecuteW` on Windows, `/usr/bin/open` on macOS).
+/// Other platforms fall back to manual copying, and the page disables the open
+/// button up front from this same flag instead of failing only after a click.
+pub(crate) fn browser_open_supported() -> bool {
+    cfg!(any(windows, target_os = "macos"))
 }
 pub(crate) fn open_application_with(
     source: &str,
@@ -876,5 +899,46 @@ mod tests {
         )
         .unwrap();
         assert_eq!(opened, expected);
+    }
+
+    #[test]
+    fn overview_application_metadata_comes_from_the_fixed_mapping() {
+        struct Empty;
+        impl CredentialBackend for Empty {
+            fn read(&self, _: &str) -> Result<Option<Vec<u8>>, credential::CredentialError> {
+                Ok(None)
+            }
+            fn write(&self, _: &str, _: &[u8]) -> Result<(), credential::CredentialError> {
+                unreachable!()
+            }
+            fn delete(&self, _: &str) -> Result<bool, credential::CredentialError> {
+                unreachable!()
+            }
+        }
+        for name in [
+            "baidu",
+            "jina",
+            "brave",
+            "parallel",
+            "tavily",
+            "exa",
+            "firecrawl",
+            "serpapi",
+            "github-repos",
+        ] {
+            let entry = resolve_source(name).expect("mapped source is keyed");
+            let view = overview(&Empty, &BTreeMap::new(), &entry);
+            assert!(view.key_application_available, "{name} has a configured link");
+            assert_eq!(view.key_application_url.as_deref(), application_url(entry.source));
+            assert!(view
+                .key_application_url
+                .as_deref()
+                .is_some_and(|u| u.starts_with("https://")));
+        }
+        // The direct-open capability is a platform fact reported independently of
+        // the encrypted store and of whether a link exists: macOS opens pages even
+        // while DPAPI writes stay unavailable.
+        let view = overview(&Empty, &BTreeMap::new(), &resolve_source("tavily").unwrap());
+        assert_eq!(view.key_application_open_supported, browser_open_supported());
     }
 }

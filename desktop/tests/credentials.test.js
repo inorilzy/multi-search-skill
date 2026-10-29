@@ -8,7 +8,7 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const flush2 = async () => { await flush(); await flush(); };
 // The backend contract reports capability unconditionally (required field); a stub that
 // omits it is contract-invalid, so supported is the default and tests override it.
-const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'sqlite' : 'none', key_application_available: false, store_supported: true, ...extra });
+const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'sqlite' : 'none', key_application_available: false, key_application_open_supported: true, store_supported: true, ...extra });
 function setup() { const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root); return { window, root }; }
 const submit = ({ window, root }) => root.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
 function api(overrides = {}) { return { credentialStatus: async () => status(), credentialRead: async () => ({ value: '' }), credentialAppend: async () => status(true), credentialRemove: async () => status(), ...overrides }; }
@@ -221,8 +221,49 @@ test('application link stays disabled without mapping, configured entry passes s
     const ctx = setup(), opened = [];
     await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: available }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'github_repos' });
     const button = ctx.root.querySelector('[data-action="application"]'); assert.equal(button.disabled, !available); button.click(); await flush(); assert.deepEqual(opened, available ? ['github_repos'] : []);
-    if (!available) assert.match(ctx.root.textContent, /申请链接待配置/); ctx.window.close();
+    if (!available) assert.match(ctx.root.textContent, /该搜索源暂无固定申请链接，无法打开申请页。/); ctx.window.close();
   }
+});
+
+test('missing application mapping disables opening without guessing or echoing a link', async () => {
+  const ctx = setup(), opened = [];
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: false, key_application_open_supported: false, key_application_url: undefined }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'serpapi' });
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  assert.equal(button.disabled, true);
+  assert.match(note.textContent, /暂无固定申请链接/);
+  // The explanation must not fabricate an address for the missing mapping.
+  assert.doesNotMatch(note.textContent, /https?:/);
+  button.click(); await flush();
+  assert.deepEqual(opened, []);
+  ctx.window.close();
+});
+
+test('unsupported platform pre-disables opening and offers the fixed link for manual copy', async () => {
+  const ctx = setup(), opened = [];
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: false, key_application_url: 'https://api.search.brave.com/app/keys' }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'brave' });
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  assert.equal(button.disabled, true, 'disabled before any click, not failing after');
+  assert.match(note.textContent, /无法直接打开系统浏览器/);
+  assert.match(note.textContent, /https:\/\/api\.search\.brave\.com\/app\/keys/);
+  button.click(); await flush();
+  assert.deepEqual(opened, []);
+  ctx.window.close();
+});
+
+test('browser capability is independent of the encrypted store capability', async () => {
+  const ctx = setup(), opened = [];
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/', store_supported: false, store_unsupported_reason: 'platform_unsupported' }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'tavily' });
+  const app = ctx.root.querySelector('[data-action="application"]');
+  // macOS-style combination: opening works even while DPAPI writes do not.
+  assert.equal(app.disabled, false);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true);
+  assert.equal(ctx.root.querySelector('[data-action="add"]').disabled, true);
+  assert.match(ctx.root.querySelector('[data-capability]').textContent, /加密凭据存储仅支持 Windows 当前用户 DPAPI/);
+  app.click(); await flush();
+  assert.deepEqual(opened, ['tavily']);
+  ctx.window.close();
 });
 
 test('test outcomes retain provider error messages and external request warning', async () => {
