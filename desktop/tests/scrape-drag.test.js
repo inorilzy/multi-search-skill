@@ -924,3 +924,114 @@ test('05: cancelling on a clean start never invents a draft', async () => {
   assert.equal(fake.state.saves, 0);
   window.close();
 });
+
+// 07：刷新、离页与只读切换必须安全结束拖动，之后的新拖动不能被旧状态挡住。
+const confirmButton = (root, action) => root.querySelector(`[data-action="${action}"]`);
+const anyDragging = root => root.querySelectorAll('.is-dragging').length > 0;
+
+test('07: a button move during a keyboard drag ends the drag and a new drag works', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  handle(root, 'exa').focus();
+  dragKeys(window, [' ', 'ArrowDown']);
+  assert.ok(anyDragging(root));
+  rowButton(root, 'jina', 'down').click();
+  assert.equal(anyDragging(root), false, 'the button move ends the keyboard drag');
+  assert.deepEqual(chainNames(root), ['exa', 'jina', 'tavily', 'firecrawl'], 'chain follows the button move only');
+  assert.equal(mounted.dirty, true);
+  assert.equal(fake.state.saves, 0);
+
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp', 'Enter']);
+  assert.deepEqual(chainNames(root), ['exa', 'tavily', 'jina', 'firecrawl'], 'a new keyboard drag is not blocked');
+  window.close();
+});
+
+test('07: a disable click during a pointer drag ends it, and late pointer events change nothing', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  stubHit(root, 'firecrawl');
+  const jina = handle(root, 'jina');
+  pointer(window, jina, 'pointerdown', 10, 10);
+  pointer(window, jina, 'pointermove', 10, 90);
+  rowButton(root, 'exa', 'disable').click();
+  assert.equal(anyDragging(root), false);
+  const drafted = chainNames(root);
+  assert.deepEqual(drafted, ['jina', 'tavily', 'firecrawl']);
+  pointer(window, jina, 'pointerup', 10, 90);
+  assert.deepEqual(chainNames(root), drafted, 'late pointerup does not reorder');
+  assert.equal(fake.state.saves, 0);
+  assert.equal(mounted.dirty, true);
+  window.close();
+});
+
+test('07: page disposal during a pointer drag ignores later pointer events', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  stubHit(root, 'firecrawl');
+  const jina = handle(root, 'jina');
+  pointer(window, jina, 'pointerdown', 10, 10);
+  pointer(window, jina, 'pointermove', 10, 90);
+  mounted.dispose();
+  pointer(window, jina, 'pointerup', 10, 90);
+  assert.deepEqual(chainNames(root), BUILTIN);
+  assert.equal(fake.state.saves, 0);
+  assert.equal(mounted.dirty, false);
+  window.close();
+});
+
+test('07: refresh confirm cancelled mid-drag keeps the draft and the drag is gone', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  rowButton(root, 'exa', 'disable').click();
+  const drafted = chainNames(root);
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp']);
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(anyDragging(root), false, 'refresh ends the drag before asking');
+  assert.ok(confirmButton(root, 'confirm-refresh-chain'), 'discard confirmation is shown');
+  confirmButton(root, 'cancel-refresh-chain').click();
+  assert.deepEqual(chainNames(root), drafted, 'draft survives the cancelled refresh');
+  assert.equal(mounted.dirty, true);
+  assert.equal(dirtyBadge(root).hidden, false);
+  assert.equal(fake.state.saves, 0);
+  window.close();
+});
+
+test('07: confirmed discard mid-drag rereads saved values and never shows the preview', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  rowButton(root, 'exa', 'disable').click();
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp']);
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  confirmButton(root, 'confirm-refresh-chain').click();
+  await flush();
+  assert.deepEqual(chainNames(root), BUILTIN, 'saved order is reread, not the dragged preview');
+  assert.equal(anyDragging(root), false);
+  assert.equal(mounted.dirty, false);
+  assert.equal(dirtyBadge(root).hidden, true);
+  assert.equal(fake.state.saves, 0);
+  window.close();
+});
+
+test('07: a read-only transition during a drag ends it and the next drag resumes after editing is restored', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  handle(root, 'exa').focus();
+  dragKeys(window, [' ', 'ArrowDown']);
+  fake.state.current = settingsView({ status: 'config_unreadable', message: '坏配置' });
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(anyDragging(root), false, 'read-only refresh ends the drag');
+  assert.deepEqual(chainNames(root), BUILTIN, 'no preview order survives read-only');
+  assert.equal(handle(root, 'jina').disabled, true);
+  press(window, handle(root, 'jina'), 'Enter');
+  assert.equal(anyDragging(root), false, 'read-only blocks a new pick-up');
+
+  fake.state.current = settingsView();
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  handle(root, 'exa').focus();
+  dragKeys(window, [' ', 'ArrowDown', 'Enter']);
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl'], 'new drag after editing returns');
+  assert.equal(fake.state.saves, 0);
+  assert.equal(mounted.dirty, true);
+  window.close();
+});

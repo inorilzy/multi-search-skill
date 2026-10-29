@@ -122,6 +122,9 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   }
 
   function renderChain() {
+    // 链被重建时（按钮移动、停用、恢复、加入、只读切换）未放下的拖动已失效：
+    // 结束它并丢弃预览 DOM，之后的指针/键盘事件不再作用于旧行。
+    sorter?.cancel('列表已更新，未完成的拖动已结束');
     const list = q('[data-chain-list]');
     list.replaceChildren();
     const disabled = chainDisabled();
