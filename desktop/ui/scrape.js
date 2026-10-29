@@ -238,13 +238,15 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     validateChain();
   }
 
-  // Core's effective_source decides whether a legacy file key authenticates. An empty or
-  // unsupported local store must not override it; other sources keep the store state.
+  // Core's effective_source decides whether a key authenticates: an env or legacy file
+  // source wins over an empty, unsupported or unreadable store. The frontend never
+  // re-ranks sources; other values keep the store state (unavailable fails closed).
+  const CORE_CONFIRMED_SOURCES = ['env', 'file'];
   async function readCredentialStates() {
     return new Map(await Promise.all(REQUIRED_KEY_BACKENDS.map(async name => {
       try {
         const view = await api.credentialStatus(name);
-        if (view.effective_source === 'file') return /** @type {[string, string]} */ ([name, 'present']);
+        if (CORE_CONFIRMED_SOURCES.includes(view.effective_source)) return /** @type {[string, string]} */ ([name, 'present']);
         return /** @type {[string, string]} */ ([name, view.store.state]);
       } catch {
         return /** @type {[string, string]} */ ([name, 'unknown']);
