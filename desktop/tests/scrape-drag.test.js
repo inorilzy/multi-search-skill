@@ -755,3 +755,396 @@ test('Home/End mixed with arrows and Enter save the exact visible order', async 
   assert.deepEqual(chainNames(root), visible);
   window.close();
 });
+
+// --- Ticket 06: cancelling a long move keeps later buttons on the right backend. ---
+// 起点覆盖首行、中间行、末行；操作覆盖连续方向键、Home、End 与混用。
+// 只走页面公开边界：DOM 顺序/编号、行按钮、脏标记与保存读回。
+
+const LONG_MOVE_CASES = [
+  { label: 'middle row, three rows down', name: 'tavily', keys: ['ArrowDown', 'ArrowDown', 'ArrowDown'], preview: ['jina', 'exa', 'firecrawl', 'tavily'] },
+  { label: 'first row, two rows down then up', name: 'jina', keys: ['ArrowDown', 'ArrowDown', 'ArrowUp'], preview: ['exa', 'jina', 'tavily', 'firecrawl'] },
+  { label: 'last row Home then End excursion', name: 'firecrawl', keys: ['Home', 'End'], preview: ['jina', 'exa', 'tavily', 'firecrawl'] },
+  { label: 'middle row End then Home', name: 'exa', keys: ['End', 'Home'], preview: ['exa', 'jina', 'tavily', 'firecrawl'] },
+  { label: 'long mixed excursion', name: 'tavily', keys: ['ArrowUp', 'End', 'ArrowUp', 'Home', 'ArrowDown'], preview: ['jina', 'tavily', 'exa', 'firecrawl'] },
+];
+
+for (const testCase of LONG_MOVE_CASES) {
+  test(`06: Escape after a long move (${testCase.label}) restores full order and numbering`, async () => {
+    const { window, root, mounted, fake } = await mountStateful();
+    handle(root, testCase.name).focus();
+    pressFocused(window, ' ');
+    dragKeys(window, testCase.keys);
+    assert.deepEqual(chainNames(root), testCase.preview, 'the excursion shows the moved order');
+    assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04'], 'numbers track the excursion');
+
+    pressFocused(window, 'Escape');
+
+    assert.deepEqual(chainNames(root), BUILTIN, 'Escape restores the whole pre-pick-up order');
+    assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04'], 'restored numbers match positions');
+    assert.equal(new Set(chainNames(root)).size, 4, 'no row lost or duplicated');
+    assert.equal(focusedRowName(window), testCase.name, 'focus returns to the same backend handle');
+    assert.equal(mounted.dirty, false, 'cancel leaves a clean draft');
+    assert.equal(fake.state.saves, 0, 'cancel never saves');
+    window.close();
+  });
+}
+
+test('06: after cancelling a long move the up and down buttons act on the selected backend', async () => {
+  const { window, root, fake } = await mountStateful();
+  handle(root, 'tavily').focus();
+  pressFocused(window, ' ');
+  dragKeys(window, ['ArrowUp', 'ArrowUp', 'End', 'ArrowUp']);
+  pressFocused(window, 'Escape');
+  assert.deepEqual(chainNames(root), BUILTIN);
+
+  clickRowButton(window, root, 'tavily', 'down');
+  assert.deepEqual(chainNames(root), ['jina', 'exa', 'firecrawl', 'tavily'], 'down moved tavily itself, not the leftover slot');
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04']);
+
+  clickRowButton(window, root, 'tavily', 'up');
+  assert.deepEqual(chainNames(root), ['jina', 'exa', 'tavily', 'firecrawl'], 'up returns tavily to its own slot');
+  assert.deepEqual(new Set(chainNames(root)), new Set(BUILTIN), 'still four distinct backends');
+  assert.equal(fake.state.saves, 0, 'button sorting only edits the draft');
+  window.close();
+});
+
+test('06: disable and save after a cancelled Home/End excursion keep the right backends', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  handle(root, 'jina').focus();
+  pressFocused(window, ' ');
+  dragKeys(window, ['End', 'Home', 'ArrowDown', 'ArrowDown']);
+  pressFocused(window, 'Escape');
+  assert.deepEqual(chainNames(root), BUILTIN);
+
+  rowButton(root, 'exa', 'disable').click();
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl'], 'disable removed exa, the row the user pressed');
+  assert.equal(mounted.dirty, true);
+
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, ['jina', 'tavily', 'firecrawl'], 'save payload carries the visible order');
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl'], 'readback matches what was saved');
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03'], 'readback numbering is in range');
+  window.close();
+});
+
+test('06: cancelling a long move then a second drag and drop commits the intended backend', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  handle(root, 'firecrawl').focus();
+  pressFocused(window, ' ');
+  dragKeys(window, ['Home', 'ArrowDown', 'ArrowDown', 'ArrowDown']);
+  pressFocused(window, 'Escape');
+  assert.deepEqual(chainNames(root), BUILTIN);
+
+  handle(root, 'firecrawl').focus();
+  pressFocused(window, 'Enter');
+  pressFocused(window, 'ArrowUp');
+  pressFocused(window, 'Enter');
+  assert.deepEqual(chainNames(root), ['jina', 'exa', 'firecrawl', 'tavily'], 'second drag moved firecrawl, not a stale row');
+  assert.equal(mounted.dirty, true);
+
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, ['jina', 'exa', 'firecrawl', 'tavily']);
+  assert.deepEqual(chainNames(root), fake.state.current.scrape_backends, 'no duplicate, lost or swapped backend after readback');
+  window.close();
+});
+
+// --- Ticket 05: cancelling a drag restores the pre-pick-up draft, not the saved config. ---
+
+test('05: cancelling a move keeps a draft made by a button move and saves only that draft', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  clickRowButton(window, root, 'jina', 'down');
+  assert.deepEqual(chainNames(root), ['exa', 'jina', 'tavily', 'firecrawl']);
+  assert.equal(mounted.dirty, true);
+  const drafted = chainNames(root);
+  const draftText = draftCopy(root);
+
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp']);
+  assert.deepEqual(chainNames(root), ['exa', 'tavily', 'jina', 'firecrawl'], 'preview moves only the picked row');
+  pressFocused(window, 'Escape');
+
+  assert.deepEqual(chainNames(root), drafted, 'cancel restores the draft order, not the saved config');
+  assert.deepEqual(chainNames(root), ['exa', 'jina', 'tavily', 'firecrawl']);
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04'], 'numbers follow the restored draft');
+  assert.equal(mounted.dirty, true, 'the earlier change is still unsaved');
+  assert.equal(dirtyBadge(root).hidden, false, 'unsaved badge stays visible');
+  assert.equal(draftCopy(root), draftText, 'draft message is preserved');
+  assert.match(statusNode(root).textContent, /取消/);
+  assert.equal(focusedRowName(window), 'tavily', 'focus stays on the released handle');
+  assert.equal(handle(root, 'tavily').getAttribute('aria-pressed'), 'false');
+  assert.equal(fake.state.saves, 0, 'cancel never writes');
+
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, drafted, 'save submits the pre-pick-up draft');
+  assert.notDeepEqual(fake.state.submitted, BUILTIN, 'the cancelled move does not replace earlier edits');
+  assert.equal(mounted.dirty, false);
+  assert.deepEqual(chainNames(root), drafted, 'readback equals the restored draft');
+  window.close();
+});
+
+test('05: a draft made by disabling a backend survives a cancelled drag', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  rowButton(root, 'exa', 'disable').click();
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl']);
+  assert.equal(mounted.dirty, true);
+  assert.match(draftCopy(root), /停用/);
+  const drafted = chainNames(root);
+
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp']);
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'firecrawl'], 'preview keeps the disabled backend out');
+  pressFocused(window, 'Escape');
+
+  assert.deepEqual(chainNames(root), drafted, 'cancel returns to the draft order');
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03'], 'numbers match the three remaining rows');
+  assert.equal(mounted.dirty, true, 'the disable is still unsaved');
+  assert.equal(dirtyBadge(root).hidden, false);
+  assert.match(draftCopy(root), /停用/, 'the disable message is not replaced by a clean-draft message');
+  assert.equal(fake.state.saves, 0);
+
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, drafted, 'save submits the three-backend draft');
+  assert.deepEqual(chainNames(root), drafted);
+  window.close();
+});
+
+test('05: cancelling on a clean start never invents a draft', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  assert.equal(mounted.dirty, false);
+  handle(root, 'exa').focus();
+  dragKeys(window, [' ', 'ArrowUp', 'Escape']);
+  assert.deepEqual(chainNames(root), BUILTIN);
+  assert.equal(mounted.dirty, false, 'cancel never sets a dirty draft');
+  assert.equal(dirtyBadge(root).hidden, true);
+  assert.match(draftCopy(root), /已保存设置/);
+  assert.equal(fake.state.saves, 0);
+  window.close();
+});
+
+// 07：刷新、离页与只读切换必须安全结束拖动，之后的新拖动不能被旧状态挡住。
+const confirmButton = (root, action) => root.querySelector(`[data-action="${action}"]`);
+const anyDragging = root => root.querySelectorAll('.is-dragging').length > 0;
+
+test('07: a button move during a keyboard drag ends the drag and a new drag works', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  handle(root, 'exa').focus();
+  dragKeys(window, [' ', 'ArrowDown']);
+  assert.ok(anyDragging(root));
+  rowButton(root, 'jina', 'down').click();
+  assert.equal(anyDragging(root), false, 'the button move ends the keyboard drag');
+  assert.deepEqual(chainNames(root), ['exa', 'jina', 'tavily', 'firecrawl'], 'chain follows the button move only');
+  assert.equal(mounted.dirty, true);
+  assert.equal(fake.state.saves, 0);
+
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp', 'Enter']);
+  assert.deepEqual(chainNames(root), ['exa', 'tavily', 'jina', 'firecrawl'], 'a new keyboard drag is not blocked');
+  window.close();
+});
+
+test('07: a disable click during a pointer drag ends it, and late pointer events change nothing', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  stubHit(root, 'firecrawl');
+  const jina = handle(root, 'jina');
+  pointer(window, jina, 'pointerdown', 10, 10);
+  pointer(window, jina, 'pointermove', 10, 90);
+  rowButton(root, 'exa', 'disable').click();
+  assert.equal(anyDragging(root), false);
+  const drafted = chainNames(root);
+  assert.deepEqual(drafted, ['jina', 'tavily', 'firecrawl']);
+  pointer(window, jina, 'pointerup', 10, 90);
+  assert.deepEqual(chainNames(root), drafted, 'late pointerup does not reorder');
+  assert.equal(fake.state.saves, 0);
+  assert.equal(mounted.dirty, true);
+  window.close();
+});
+
+test('07: page disposal during a pointer drag ignores later pointer events', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  stubHit(root, 'firecrawl');
+  const jina = handle(root, 'jina');
+  pointer(window, jina, 'pointerdown', 10, 10);
+  pointer(window, jina, 'pointermove', 10, 90);
+  mounted.dispose();
+  pointer(window, jina, 'pointerup', 10, 90);
+  assert.deepEqual(chainNames(root), BUILTIN);
+  assert.equal(fake.state.saves, 0);
+  assert.equal(mounted.dirty, false);
+  window.close();
+});
+
+test('07: refresh confirm cancelled mid-drag keeps the draft and the drag is gone', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  rowButton(root, 'exa', 'disable').click();
+  const drafted = chainNames(root);
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp']);
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(anyDragging(root), false, 'refresh ends the drag before asking');
+  assert.ok(confirmButton(root, 'confirm-refresh-chain'), 'discard confirmation is shown');
+  confirmButton(root, 'cancel-refresh-chain').click();
+  assert.deepEqual(chainNames(root), drafted, 'draft survives the cancelled refresh');
+  assert.equal(mounted.dirty, true);
+  assert.equal(dirtyBadge(root).hidden, false);
+  assert.equal(fake.state.saves, 0);
+  window.close();
+});
+
+test('07: confirmed discard mid-drag rereads saved values and never shows the preview', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  rowButton(root, 'exa', 'disable').click();
+  handle(root, 'tavily').focus();
+  dragKeys(window, [' ', 'ArrowUp']);
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  confirmButton(root, 'confirm-refresh-chain').click();
+  await flush();
+  assert.deepEqual(chainNames(root), BUILTIN, 'saved order is reread, not the dragged preview');
+  assert.equal(anyDragging(root), false);
+  assert.equal(mounted.dirty, false);
+  assert.equal(dirtyBadge(root).hidden, true);
+  assert.equal(fake.state.saves, 0);
+  window.close();
+});
+
+test('07: a read-only transition during a drag ends it and the next drag resumes after editing is restored', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  handle(root, 'exa').focus();
+  dragKeys(window, [' ', 'ArrowDown']);
+  fake.state.current = settingsView({ status: 'config_unreadable', message: '坏配置' });
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(anyDragging(root), false, 'read-only refresh ends the drag');
+  assert.deepEqual(chainNames(root), BUILTIN, 'no preview order survives read-only');
+  assert.equal(handle(root, 'jina').disabled, true);
+  press(window, handle(root, 'jina'), 'Enter');
+  assert.equal(anyDragging(root), false, 'read-only blocks a new pick-up');
+
+  fake.state.current = settingsView();
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  handle(root, 'exa').focus();
+  dragKeys(window, [' ', 'ArrowDown', 'Enter']);
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl'], 'new drag after editing returns');
+  assert.equal(fake.state.saves, 0);
+  assert.equal(mounted.dirty, true);
+  window.close();
+});
+
+// --- Ticket 08: mouse, keyboard and row buttons share one saved result. ---
+// 所有输入都走页面公开边界：DOM 顺序、编号、脏标记、保存请求与读回。
+
+test('08 (D31): a row button pressed during an uncommitted keyboard drag moves the row the user pointed at', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  handle(root, 'tavily').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'ArrowUp');
+  pressFocused(window, 'ArrowUp');
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'exa', 'firecrawl'], 'preview before the button press');
+
+  // 渲染时 tavily 的下标是 2；按钮必须按名字解析，不能沿用旧下标。
+  rowButton(root, 'tavily', 'down').click();
+
+  // 拖动预览里 tavily 在第 1 位；结束拖动后草稿是 jina,exa,tavily,firecrawl，下移使 tavily 到第 4 位。
+  assert.deepEqual(chainNames(root), ['jina', 'exa', 'firecrawl', 'tavily'], 'down moves tavily one slot from the committed draft');
+  assert.equal(root.querySelectorAll('[aria-pressed="true"]').length, 0, 'the in-flight drag is ended, not left pressed');
+  assert.equal(mounted.dirty, true);
+  window.close();
+});
+
+test('08 (D31): after a button press ends the drag, arrow keys and Enter do nothing and no stale save happens', async () => {
+  const { window, root, fake } = await mountStateful();
+  handle(root, 'tavily').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'ArrowUp');
+  rowButton(root, 'tavily', 'down').click();
+  const afterButton = chainNames(root);
+
+  // 旧拖动已结束：焦点已不在旧手柄上，键盘事件不得再移动任何行。
+  for (const node of [...root.querySelectorAll('.scrape-drag-handle')]) {
+    press(window, node, 'ArrowDown');
+    press(window, node, 'Enter');
+  }
+  assert.deepEqual(chainNames(root), afterButton, 'no leftover drag reorders rows');
+  assert.equal(fake.state.saves, 0);
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, afterButton, 'save writes exactly the visible draft order');
+  assert.deepEqual(chainNames(root), fake.state.current.scrape_backends, 'readback matches the visible order');
+  window.close();
+});
+
+test('08: mouse drop, then keyboard cancel, then a row button move keep one consistent draft', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  // 1) 鼠标有效拖放 firecrawl 到 exa 之前。
+  root.ownerDocument.elementFromPoint = () => chainRow(root, 'exa');
+  pointer(window, handle(root, 'firecrawl'), 'pointerdown', 10, 10);
+  pointer(window, handle(root, 'firecrawl'), 'pointermove', 10, 40);
+  pointer(window, handle(root, 'firecrawl'), 'pointerup', 10, 40);
+  assert.deepEqual(chainNames(root), ['jina', 'firecrawl', 'exa', 'tavily']);
+  assert.equal(mounted.dirty, true);
+
+  // 2) 键盘拿起 jina 向下移动后按 Escape：应回到鼠标放下后的草稿，而不是初始顺序。
+  handle(root, 'jina').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'ArrowDown');
+  pressFocused(window, 'Escape');
+  assert.deepEqual(chainNames(root), ['jina', 'firecrawl', 'exa', 'tavily'], 'keyboard cancel restores the mouse-dropped draft');
+
+  // 3) 按钮下移 tavily 之外的 exa：只作用于 exa。
+  clickRowButton(window, root, 'exa', 'up');
+  assert.deepEqual(chainNames(root), ['jina', 'exa', 'firecrawl', 'tavily'], 'button moves exa, the selected backend');
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04']);
+
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(fake.state.submitted, ['jina', 'exa', 'firecrawl', 'tavily'], 'one save with the final visible order');
+  assert.deepEqual(chainNames(root), fake.state.current.scrape_backends, 'readback matches');
+  window.close();
+});
+
+test('08: a pointer cancel and a drag that leaves the list never commit to the draft', async () => {
+  const { window, root, mounted, fake } = await mountStateful();
+  root.ownerDocument.elementFromPoint = () => null;
+  pointer(window, handle(root, 'jina'), 'pointerdown', 10, 10);
+  pointer(window, handle(root, 'jina'), 'pointermove', 10, 300);
+  pointer(window, handle(root, 'jina'), 'pointercancel', 10, 300);
+  assert.deepEqual(chainNames(root), BUILTIN, 'pointercancel leaves the order untouched');
+  assert.equal(mounted.dirty, false);
+
+  pointer(window, handle(root, 'exa'), 'pointerdown', 10, 10);
+  pointer(window, handle(root, 'exa'), 'pointerup', 10, 300);
+  assert.deepEqual(chainNames(root), BUILTIN, 'dropping outside the list is a no-op');
+  assert.equal(mounted.dirty, false);
+  assert.equal(fake.state.saves, 0);
+  window.close();
+});
+
+test('08: keyboard drag then mouse drag then button move, with focus and numbering kept in step', async () => {
+  const { window, root, fake } = await mountStateful();
+  handle(root, 'exa').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'End');
+  pressFocused(window, 'Enter');
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl', 'exa']);
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04']);
+
+  root.ownerDocument.elementFromPoint = () => chainRow(root, 'jina');
+  pointer(window, handle(root, 'tavily'), 'pointerdown', 10, 10);
+  pointer(window, handle(root, 'tavily'), 'pointermove', 10, 2);
+  pointer(window, handle(root, 'tavily'), 'pointerup', 10, 2);
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'firecrawl', 'exa']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'tavily'), 'focus stays on the mouse-dragged row');
+
+  clickRowButton(window, root, 'firecrawl', 'down');
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'exa', 'firecrawl']);
+  assert.deepEqual(orderNumbers(root), ['01', '02', '03', '04']);
+  assert.equal(root.querySelectorAll('[aria-pressed="true"]').length, 0);
+  assert.equal(fake.state.saves, 0, 'nothing saved until the user saves');
+  window.close();
+});

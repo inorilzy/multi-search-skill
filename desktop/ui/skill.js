@@ -73,8 +73,9 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     let stale = false;
     try {
       const result = await api.skillInstall(plannedScope, plannedProject);
-      // The write already happened on its own target. If the user moved on, its result must not appear on the new target.
-      stale = targetKey() !== key;
+      // The write already happened on its own target. If the user moved on, or left the page, its
+      // result must not appear on the new target nor on a page that is no longer shown.
+      stale = disposed || targetKey() !== key;
       if (!stale) {
         root.querySelector('[data-info="target"]').textContent = result.target ? `目标目录：${result.target}` : '';
         root.querySelector('[data-info="status"]').textContent = result.status === 'installed' ? `已安装并校验：${result.reason}` : `未完成安装：${result.reason}`;
@@ -82,7 +83,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       }
       ready = false;
     } catch (error) {
-      stale = targetKey() !== key;
+      stale = disposed || targetKey() !== key;
       if (!stale) showError(root.querySelector('[data-info="error"]'), error, '安装失败，未确认写入结果，请重新预览。');
       ready = false;
     }
@@ -171,7 +172,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     let stale = false;
     try {
       const result = await api.skillUpdate(managedScope, managedProject, confirmOverwrite.checked);
-      stale = targetKey() !== key;
+      stale = disposed || targetKey() !== key;
       if (!stale) {
         info('manage-status').textContent = result.status === 'updated' && result.verified === true
           ? `已更新并校验：${result.reason}${result.backup ? `；本地修改已备份到 ${result.backup}` : ''}`
@@ -179,10 +180,10 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
         writeSucceeded = result.status === 'updated' && result.verified === true;
       }
     } catch (error) {
-      stale = targetKey() !== key;
+      stale = disposed || targetKey() !== key;
       if (!stale) showError(info('manage-error'), error, '更新失败，原 Skill 未被确认改变，请重新检查。');
     }
-    finally { setBusy(false); }
+    finally { if (!disposed) setBusy(false); }
     // A write on a target the user has left is not shown on the new target; the user must check it first.
     if (!disposed && !stale) await refreshManage(writeSucceeded);
   });
@@ -211,7 +212,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     let stale = false;
     try {
       const result = await api.skillRemove(managedScope, managedProject, true);
-      stale = targetKey() !== key;
+      stale = disposed || targetKey() !== key;
       removedOk = result.status === 'removed';
       if (!stale) {
         info('manage-status').textContent = removedOk
@@ -220,10 +221,10 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
       }
       writeSucceeded = removedOk;
     } catch (error) {
-      stale = targetKey() !== key;
+      stale = disposed || targetKey() !== key;
       if (!stale) showError(info('manage-error'), error, '移除失败，请重新检查目标。');
     }
-    finally { removeReady = false; setBusy(false); }
+    finally { removeReady = false; if (!disposed) setBusy(false); }
     // A confirmed removal clears the install-side success line so it cannot read as the current state.
     if (removedOk && !stale && !disposed) root.querySelector('[data-info="status"]').textContent = '';
     if (!disposed && !stale) await refreshManage(writeSucceeded);

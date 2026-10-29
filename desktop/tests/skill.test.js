@@ -1082,3 +1082,285 @@ test('global to project and back also drops overwrite consent', async () => {
   assert.deepEqual(confirms, [false]);
   window.close();
 });
+
+// 13: a response that arrives after the user left the page or moved to another target must not touch
+// the old page. Each test gates one request, disposes the page, then releases the response.
+test('a late install response after leaving the page does not paint the old page or start a re-read', async () => {
+  const gate = deferred();
+  let statusCalls = 0;
+  const api = {
+    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => { await gate.promise; return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
+    skillStatus: async () => { statusCalls += 1; return { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }; },
+    skillUpdate: async () => ({}), skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  };
+  const window = new Window();
+  const root = window.document.createElement('main');
+  window.document.body.append(root);
+  const page = await mountSkill(root, api);
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick();
+  page.dispose();
+  // What the page showed when it was left is the last word: a late response must not rewrite it.
+  const statusBefore = root.querySelector('[data-info="status"]').textContent;
+  const targetBefore = root.querySelector('[data-info="target"]').textContent;
+  gate.resolve(); await tick(); await tick();
+  assert.equal(root.querySelector('[data-info="status"]').textContent, statusBefore);
+  assert.doesNotMatch(statusBefore, /已安装/);
+  assert.equal(root.querySelector('[data-info="target"]').textContent, targetBefore);
+  assert.equal(statusCalls, 0, 'a disposed page must not re-read the target');
+  window.close();
+});
+
+test('a late update response after leaving the page does not paint the backup line or re-read', async () => {
+  const gate = deferred();
+  let statusCalls = 0;
+  const api = {
+    skillStatus: async () => { statusCalls += 1; return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
+    skillUpdate: async () => { await gate.promise; return { status: 'updated', verified: true, reason: 'verified', backup: 'C:\\x-backup' }; },
+    skillPlan: async () => ({}), skillInstall: async () => ({}), skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  };
+  const window = new Window();
+  const root = window.document.createElement('main');
+  window.document.body.append(root);
+  const page = await mountSkill(root, api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  const before = statusCalls;
+  root.querySelector('[data-action="update"]').click(); await tick();
+  page.dispose();
+  const statusBefore = root.querySelector('[data-info="manage-status"]').textContent;
+  gate.resolve(); await tick(); await tick();
+  assert.equal(root.querySelector('[data-info="manage-status"]').textContent, statusBefore);
+  assert.doesNotMatch(statusBefore, /已更新并校验|备份/);
+  assert.equal(statusCalls, before, 'a disposed page must not re-read the target after the write');
+  window.close();
+});
+
+test('a late removal response after leaving the page does not paint the old page or re-read', async () => {
+  const gate = deferred();
+  let statusCalls = 0;
+  const api = {
+    skillStatus: async () => { statusCalls += 1; return { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }; },
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => { await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillPlan: async () => ({}), skillInstall: async () => ({}), skillUpdate: async () => ({}),
+  };
+  const window = new Window();
+  const root = window.document.createElement('main');
+  window.document.body.append(root);
+  const page = await mountSkill(root, api);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  const before = statusCalls;
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick();
+  page.dispose();
+  const statusBefore = root.querySelector('[data-info="manage-status"]').textContent;
+  gate.resolve(); await tick(); await tick();
+  assert.equal(root.querySelector('[data-info="manage-status"]').textContent, statusBefore);
+  assert.doesNotMatch(statusBefore, /已移除/);
+  assert.equal(statusCalls, before, 'a disposed page must not re-read the target after the removal');
+  window.close();
+});
+
+test('a late failure after leaving the page writes no error onto the old page, for install, update and removal', async () => {
+  const okStatus = { state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true };
+  const run = async (action, infoName, write) => {
+    const gate = deferred();
+    const window = new Window();
+    const root = window.document.createElement('main');
+    window.document.body.append(root);
+    const page = await mountSkill(root, {
+      skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+      skillStatus: async () => okStatus,
+      skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+      skillInstall: async () => { await gate.promise; return { status: 'failed', reason: 'nope' }; },
+      skillUpdate: async () => { await gate.promise; return { status: 'updated', verified: true, reason: 'ok', backup: null }; },
+      skillRemove: async () => { await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+      [write]: async () => { await gate.promise; throw new Error('late backend failure'); },
+    });
+    root.querySelector('[data-action="preview"]').click(); await tick();
+    root.querySelector('[data-action="check"]').click(); await tick();
+    root.querySelector('[data-action="remove-plan"]').click(); await tick();
+    root.querySelector(`[data-action="${action}"]`).click(); await tick();
+    page.dispose();
+    const node = root.querySelector(`[data-info="${infoName}"]`);
+    const before = node.textContent;
+    gate.reject(new Error('late backend failure')); await tick(); await tick();
+    assert.equal(node.textContent, before, `${action} kept its error line`);
+    assert.doesNotMatch(node.textContent, /late backend failure/);
+    window.close();
+  };
+  await run('install', 'error', 'skillInstall');
+  await run('update', 'manage-error', 'skillUpdate');
+  await run('remove', 'manage-error', 'skillRemove');
+});
+
+test('a superseded check that fails late leaves the newer same-target result and buttons untouched', async () => {
+  const gates = [];
+  const api = {
+    skillStatus: async () => {
+      const gate = deferred(); gates.push(gate); await gate.promise;
+      if (gates.length === 1) throw new Error('superseded read failure');
+      return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'second read', can_update: true };
+    },
+    skillPlan: async () => ({}), skillInstall: async () => ({}), skillUpdate: async () => ({}),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  };
+  const window = new Window();
+  const root = window.document.createElement('main');
+  window.document.body.append(root);
+  await mountSkill(root, api);
+  root.querySelector('[data-action="check"]').click();
+  root.querySelector('[data-action="check"]').click(); await tick();
+  gates[1].resolve(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /second read/);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, false);
+  gates[0].reject(new Error('superseded read failure')); await tick(); await tick();
+  assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '', 'a superseded read adds no failure note');
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /second read/);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, false, 'the newer result keeps its actions');
+  window.close();
+});
+
+test('a late removal preview for the previous target cannot re-enable removal on the new target', async () => {
+  const gates = [];
+  const typeProject = value => {
+    const field = root.querySelector('[data-field="project"]');
+    field.value = value;
+    field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  };
+  const api = {
+    skillStatus: async (scope, project) => ({ state: 'current', installed_version: '1', release_version: '1', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: `at ${project}`, can_update: false }),
+    skillRemovePlan: async (scope, project) => {
+      const gate = deferred(); gates.push({ project, gate }); await gate.promise;
+      return { can_remove: true, will_delete: [`C:\\${project}\\SKILL.md`], will_keep: [], reason: `plan ${project}` };
+    },
+    skillPlan: async () => ({}), skillInstall: async () => ({}), skillUpdate: async () => ({}), skillRemove: async () => ({}),
+  };
+  const window = new Window();
+  const root = window.document.createElement('main');
+  window.document.body.append(root);
+  await mountSkill(root, api);
+  root.querySelector('input[value="project"]').click();
+  typeProject('A');
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  typeProject('B');
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /at B/);
+  gates[0].gate.resolve(); await tick(); await tick();
+  assert.equal(root.querySelector('[data-action="remove"]').disabled, true, 'the old plan must not arm removal for the new target');
+  assert.doesNotMatch(root.querySelector('[data-info="manage-plan"]').textContent, /plan A/);
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /at B/);
+  window.close();
+});
+
+test('a late write response after leaving the page keeps the old page locked instead of re-enabling its controls', async () => {
+  const run = async write => {
+    const gate = deferred();
+    const api = {
+      skillStatus: async () => ({ state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
+      skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+      skillPlan: async () => ({}), skillInstall: async () => ({}), skillUpdate: async () => ({}), skillRemove: async () => ({}),
+      [write]: async () => { await gate.promise; return { status: 'updated', verified: true, reason: 'ok', backup: null, deleted: ['SKILL.md'], status2: 'removed' }; },
+    };
+    const window = new Window();
+    const root = window.document.createElement('main');
+    window.document.body.append(root);
+    const page = await mountSkill(root, api);
+    root.querySelector('[data-action="check"]').click(); await tick();
+    if (write === 'skillRemove') root.querySelector('[data-action="remove-plan"]').click();
+    await tick();
+    root.querySelector(`[data-action="${write === 'skillRemove' ? 'remove' : 'update'}"]`).click(); await tick();
+    page.dispose();
+    gate.resolve(); await tick(); await tick();
+    assert.equal(root.querySelector('[data-action="check"]').disabled, true, `${write} left the check control locked`);
+    assert.equal(root.querySelector('input[value="global"]').disabled, true, `${write} left the scope radios locked`);
+    window.close();
+  };
+  await run('skillUpdate');
+  await run('skillRemove');
+});
+
+// 14: after a target switch, each lifecycle operation acts only on the re-confirmed target and keeps managed-file protection.
+function lifecycleApi(calls, { modifiedFor = () => [], unknownFor = () => [] } = {}) {
+  const state = (project) => (project === 'B' ? 'current' : 'modified');
+  return {
+    skillPlan: async (scope, project) => { calls.push(['plan', scope, project]); return { scope, target: `C:\\${scope}-${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
+    skillInstall: async (scope, project) => { calls.push(['install', scope, project]); return { status: 'installed', target: `C:\\${scope}-${project}`, reason: 'verified', verified: true }; },
+    skillStatus: async (scope, project) => { calls.push(['status', scope, project]); return { state: state(project), installed_version: '1', release_version: '2', target: `C:\\${scope}-${project}`, modified_files: modifiedFor(project), unknown_entries: unknownFor(project), reason: `status ${project}`, can_update: state(project) !== 'current' }; },
+    skillUpdate: async (scope, project, confirm) => { calls.push(['update', scope, project, confirm]); return { status: 'updated', verified: true, reason: 'verified', backup: `C:\\bk-${project}` }; },
+    skillRemovePlan: async (scope, project) => { calls.push(['remove-plan', scope, project]); return { can_remove: true, will_delete: ['SKILL.md', '.multi-search-install.json'], will_keep: ['notes.md'], reason: `plan ${project}` }; },
+    skillRemove: async (scope, project, confirmed) => { calls.push(['remove', scope, project, confirmed]); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+  };
+}
+
+test('after a project switch, update uses only the re-checked target and asks for fresh overwrite consent', async () => {
+  const calls = [];
+  const { root, window } = setup(lifecycleApi(calls, { modifiedFor: p => (p === 'A' ? ['SKILL.md'] : []), unknownFor: () => ['notes.md'] }));
+  const field = root.querySelector('[data-field="project"]');
+  root.querySelector('input[value="project"]').click();
+  field.value = 'A'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-field="confirm-overwrite"]').click();
+  field.value = 'B'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.equal(root.querySelector('[data-field="confirm-overwrite"]').checked, false);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true, 'B is current, no update offered');
+  assert.match(root.querySelector('[data-info="manage-plan"]').textContent, /notes\.md/);
+  assert.equal(calls.filter(c => c[0] === 'update').length, 0);
+  window.close();
+});
+
+test('update after a switch sends the overwrite consent only when freshly given for that target, with backup reported', async () => {
+  const calls = [];
+  const { root, window } = setup(lifecycleApi(calls, { modifiedFor: () => ['SKILL.md'], unknownFor: () => ['notes.md'] }));
+  const field = root.querySelector('[data-field="project"]');
+  root.querySelector('input[value="project"]').click();
+  field.value = 'A'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-field="confirm-overwrite"]').click();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.deepEqual(calls.filter(c => c[0] === 'update').at(-1), ['update', 'project', 'A', true]);
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已备份到 C:\\bk-A/);
+  field.value = 'B'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick();
+  assert.equal(calls.filter(c => c[0] === 'update').length, 1, 'no update on B without a fresh check and consent');
+  window.close();
+});
+
+test('install after a scope switch uses only the newly previewed target and never the old one', async () => {
+  const calls = [];
+  const { root, window } = setup(lifecycleApi(calls));
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  root.querySelector('input[value="project"]').click();
+  const field = root.querySelector('[data-field="project"]');
+  field.value = 'B'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  assert.equal(root.querySelector('[data-action="install"]').disabled, true);
+  root.querySelector('[data-action="install"]').click(); await tick();
+  assert.equal(calls.filter(c => c[0] === 'install').length, 1, 'no install on the un-previewed new target');
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.deepEqual(calls.filter(c => c[0] === 'install').at(-1), ['install', 'project', 'B']);
+  window.close();
+});
+
+test('removal after a scope switch previews and confirms the new target; the old plan keeps notes.md protected', async () => {
+  const calls = [];
+  const { root, window } = setup(lifecycleApi(calls, { unknownFor: () => ['notes.md'] }));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="manage-plan"]').textContent, /保留：notes\.md/);
+  root.querySelector('input[value="project"]').click(); await tick();
+  const field = root.querySelector('[data-field="project"]');
+  field.value = 'B'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.deepEqual(calls.filter(c => c[0] === 'remove'), [['remove', 'project', 'B', true]]);
+  assert.match(root.querySelector('[data-info="manage-plan"]').textContent, /notes\.md/);
+  window.close();
+});
