@@ -421,9 +421,23 @@ fn open_browser(url: &str) -> Result<(), String> {
         Ok(())
     }
 }
-#[cfg(not(windows))]
+/// macOS hands the already-validated HTTPS URL to LaunchServices through the absolute
+/// `/usr/bin/open` binary. The URL is one argv entry, never interpreted by a shell.
+#[cfg(target_os = "macos")]
+fn open_browser(url: &str) -> Result<(), String> {
+    let status = std::process::Command::new("/usr/bin/open")
+        .arg(url)
+        .status()
+        .map_err(|_| "无法打开系统浏览器".to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("无法打开系统浏览器".into())
+    }
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 fn open_browser(_: &str) -> Result<(), String> {
-    Err("系统浏览器入口仅支持 Windows".into())
+    Err("系统浏览器入口仅支持 Windows 和 macOS".into())
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -832,6 +846,10 @@ mod tests {
             "https://",
             "https:///bad",
             "https://example.invalid\n",
+            "https://example.invalid/a b",
+            "https://example.invalid/\u{7}bell",
+            "   ",
+            "",
         ] {
             assert!(open_application_with("tavily", |_| Some(url.into()), |_| panic!()).is_err());
         }
