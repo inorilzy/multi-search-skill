@@ -941,4 +941,50 @@ mod tests {
         let view = overview(&Empty, &BTreeMap::new(), &resolve_source("tavily").unwrap());
         assert_eq!(view.key_application_open_supported, browser_open_supported());
     }
+
+    /// A launch the system refuses must come back as an error (never a swallowed success),
+    /// and the address actually handed to the browser stays the one the read-only overview
+    /// publishes — that is the link the page shows for manual copying, so a failure can never
+    /// point the user at a different target than the trusted mapping used.
+    #[test]
+    fn failed_launch_reports_the_same_trusted_link_the_page_can_copy() {
+        struct Empty;
+        impl CredentialBackend for Empty {
+            fn read(&self, _: &str) -> Result<Option<Vec<u8>>, credential::CredentialError> {
+                Ok(None)
+            }
+            fn write(&self, _: &str, _: &[u8]) -> Result<(), credential::CredentialError> {
+                unreachable!()
+            }
+            fn delete(&self, _: &str) -> Result<bool, credential::CredentialError> {
+                unreachable!()
+            }
+        }
+        let mut attempted: Option<String> = None;
+        let failure = open_application_with(
+            "brave",
+            |source| application_url(source).map(str::to_string),
+            |url| {
+                attempted = Some(url.to_string());
+                Err("无法打开系统浏览器".to_string())
+            },
+        );
+        assert!(failure.is_err(), "a refused launch is reported, not swallowed");
+        assert_eq!(failure.unwrap_err(), "无法打开系统浏览器");
+        let view = overview(&Empty, &BTreeMap::new(), &resolve_source("brave").unwrap());
+        assert_eq!(attempted.as_deref(), view.key_application_url.as_deref());
+        assert_eq!(attempted.as_deref(), application_url("brave"));
+        // A source without a mapping fails before anything is launched.
+        let mut launched = 0usize;
+        let missing = open_application_with(
+            "jina",
+            |_| None,
+            |_| {
+                launched += 1;
+                Ok(())
+            },
+        );
+        assert!(missing.is_err());
+        assert_eq!(launched, 0, "no link means no launch and no substitute address");
+    }
 }

@@ -266,6 +266,99 @@ test('browser capability is independent of the encrypted store capability', asyn
   ctx.window.close();
 });
 
+test('browser launch failure shows the trusted fixed link for manual copy and retry clears it', async () => {
+  const ctx = setup(); let attempts = 0;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialApplicationOpen: async () => { attempts += 1; if (attempts === 1) throw coded('credential_application_failed', '申请链接打开失败'); },
+  }));
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const fallback = ctx.root.querySelector('[data-application-fallback]');
+  const link = ctx.root.querySelector('[data-application-url]');
+  assert.equal(fallback.hidden, true, 'no link shown before any failure');
+  button.click(); await flush2();
+  assert.equal(attempts, 1);
+  assert.equal(fallback.hidden, false, 'failure exposes the copyable link');
+  assert.equal(link.value, 'https://app.tavily.com/');
+  assert.equal(link.readOnly, true);
+  assert.doesNotMatch(ctx.root.querySelector('[data-info="error"]').textContent, /已打开/);
+  assert.equal(button.disabled, false, 'retry stays available after a failed launch');
+  button.click(); await flush2();
+  assert.equal(attempts, 2);
+  assert.equal(fallback.hidden, true, 'successful retry clears the failure and the link');
+  assert.equal(ctx.root.querySelector('[data-info="error"]').textContent, '');
+  ctx.window.close();
+});
+
+test('a failed launch without a trusted mapping never creates a link', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true }),
+    credentialApplicationOpen: async () => { throw coded('credential_application_failed', ''); },
+  }));
+  const button = ctx.root.querySelector('[data-action="application"]');
+  button.click(); await flush2();
+  assert.equal(ctx.root.querySelector('[data-application-fallback]').hidden, true);
+  assert.equal(ctx.root.querySelector('[data-application-url]').value, '');
+  // An unknown link must not fall back to some invented or http-prefixed address.
+  assert.doesNotMatch(ctx.root.textContent, /https?:\/\//);
+  ctx.window.close();
+});
+
+test('the fallback link is the mapping URL, never an address carried by the error text', async () => {
+  const ctx = setup(); const opened = [];
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://dashboard.exa.ai/api-keys' }),
+    credentialApplicationOpen: async source => {
+      opened.push(source);
+      throw coded('credential_application_failed', 'https://attacker.example.invalid/?key=leak');
+    },
+  }), { source: 'exa' });
+  ctx.root.querySelector('[data-action="application"]').click(); await flush2();
+  assert.deepEqual(opened, ['exa'], 'the launch request carries only the source identifier');
+  assert.equal(ctx.root.querySelector('[data-application-url]').value, 'https://dashboard.exa.ai/api-keys');
+  assert.doesNotMatch(ctx.root.textContent, /attacker\.example\.invalid/, 'error text never becomes page content');
+  assert.equal(ctx.root.querySelector('a[href*="attacker"]'), null);
+  assert.equal(ctx.root.querySelector('[data-application-fallback] a'), null, 'the fallback is selectable text, never a launcher');
+  ctx.window.close();
+});
+
+test('a successful retry keeps an unrelated error message that arrived meanwhile', async () => {
+  const ctx = setup(); let attempts = 0;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialTest: async () => { throw coded('credential_test_failed', 'Test worker failed'); },
+    credentialApplicationOpen: async () => { attempts += 1; if (attempts === 1) throw coded('credential_application_failed', ''); },
+  }));
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const slot = ctx.root.querySelector('[data-info="error"]');
+  button.click(); await flush2();
+  assert.equal(slot.textContent, '无法打开系统浏览器，请重试或手动复制固定申请链接。');
+  assert.equal(ctx.root.querySelector('[data-application-fallback]').hidden, false);
+  ctx.root.querySelector('[data-action="test"]').click(); await flush2();
+  assert.match(slot.textContent, /凭据测试启动失败/);
+  button.click(); await flush2();
+  assert.equal(attempts, 2);
+  assert.equal(ctx.root.querySelector('[data-application-fallback]').hidden, true);
+  assert.match(slot.textContent, /凭据测试启动失败/, 'only the launch failure is cleared');
+  ctx.window.close();
+});
+
+test('repeated clicks while a launch is in flight start only one browser open', async () => {
+  const ctx = setup(); let opens = 0, release;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialApplicationOpen: () => { opens += 1; return new Promise(resolve => { release = resolve; }); },
+  }));
+  const button = ctx.root.querySelector('[data-action="application"]');
+  button.click(); button.click(); button.click(); await flush();
+  assert.equal(opens, 1);
+  assert.equal(button.disabled, true, 'button is held while the launch is in flight');
+  release(); await flush2();
+  assert.equal(button.disabled, false);
+  ctx.window.close();
+});
+
 test('application entry stays disabled and pending while the metadata query is in flight', async () => {
   const ctx = setup(), opened = [];
   let release;

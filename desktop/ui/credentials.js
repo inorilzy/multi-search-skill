@@ -103,6 +103,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <button type="submit" class="primary" data-action="save">提交新增 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
       <span class="credential-note" data-info="application">正在确认申请链接与打开能力…</span></div>
     </form>
+    <div class="application-fallback" data-application-fallback hidden><label>固定申请链接（可选择并手动复制）<input type="text" readonly data-application-url spellcheck="false" aria-label="固定申请链接"></label></div>
     <details class="config-details"><summary>说明</summary><p class="credential-note">Key 仅保存在本机 SQLite，DPAPI 保护范围为当前 Windows 用户/设备。保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > 凭据库 > 旧 Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
     <p data-capability class="credential-note" role="note" hidden></p>
     <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
@@ -125,6 +126,11 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     state.phase === 'ok'
     && state.key_application_available === true
     && state.key_application_open_supported !== false;
+  // A browser-launch failure keeps the entry usable (retry stays enabled) and shows the
+  // same trusted link from `application` for manual copying. The link never comes from
+  // the failed call, its error text, or the user, so a failure cannot redirect the entry.
+  // `opening` holds the entry for one in-flight launch at a time.
+  let openFailed = false, opening = false, openFailureText = '';
   const appNote = state => {
     if (state.phase === 'pending') return '正在确认申请链接与打开能力…';
     if (state.phase === 'failed') return '无法确认申请链接与打开能力，请点击“刷新已保存值”重试。';
@@ -134,11 +140,22 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
         ? `当前平台无法直接打开系统浏览器，请手动复制固定申请链接：${state.key_application_url}`
         : '当前平台无法直接打开系统浏览器，且暂无可复制的固定申请链接。';
     }
+    // A launch that the backend reported as failed must not keep describing the
+    // browser path as though it had worked.
+    if (openFailed) {
+      return state.key_application_url
+        ? '系统浏览器打开失败，可点击下方固定申请链接手动复制，或重试。'
+        : '系统浏览器打开失败，请重试。';
+    }
     return '使用系统浏览器打开固定申请链接';
   };
   function renderApplication() {
     text('[data-info="application"]', appNote(application));
-    q('[data-action="application"]').disabled = busy || !appOpens(application);
+    q('[data-action="application"]').disabled = busy || opening || !appOpens(application);
+    const fallback = q('[data-application-fallback]');
+    const showFallback = openFailed && application.phase === 'ok' && Boolean(application.key_application_url);
+    fallback.hidden = !showFallback;
+    q('[data-application-url]').value = showFallback ? application.key_application_url : '';
   }
   let generation = 0, disposed = false, busy = false;
   // Storage capability is unknown until credentialStatus reports it: all writes stay
@@ -267,6 +284,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     // Same for the application entry: an in-flight query is not yet an answer, so
     // the button must stay disabled until this request (or a newer one) resolves.
     application = { phase: 'pending' };
+    // A new metadata answer supersedes an earlier browser-launch failure.
+    openFailed = false; openFailureText = '';
     renderCapability();
     renderApplication();
     setBusy(true);
@@ -431,9 +450,28 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   q('[data-action="application"]').addEventListener('click', async () => {
     // Guard the action itself too: a synthesized click on a disabled entry must not
     // open anything before the metadata query has confirmed the link and capability.
-    if (busy || disposed || !appOpens(application)) return;
-    try { await api.credentialApplicationOpen(source); }
-    catch (error) { if (!disposed) showError(q('[data-info="error"]'), error, '无法打开系统浏览器。'); }
+    // `opening` keeps repeated clicks from starting parallel browser launches.
+    if (busy || disposed || opening || !appOpens(application)) return;
+    opening = true; renderApplication();
+    try {
+      await api.credentialApplicationOpen(source);
+      if (disposed) return;
+      // A confirmed launch clears the earlier failure. The error slot is emptied only
+      // while it still carries that failure text, so an unrelated message survives.
+      if (openFailed) {
+        const slot = q('[data-info="error"]');
+        if (openFailureText && slot.textContent === openFailureText) { slot.textContent = ''; slot.title = ''; }
+        openFailed = false; openFailureText = '';
+      }
+    } catch (error) {
+      if (!disposed) {
+        openFailed = true;
+        openFailureText = showError(q('[data-info="error"]'), error, '无法打开系统浏览器，请重试或手动复制固定申请链接。').message;
+      }
+    } finally {
+      opening = false;
+      if (!disposed) renderApplication();
+    }
   });
   q('[data-action="test"]').addEventListener('click', async () => {
     if (!searchTest) return;
