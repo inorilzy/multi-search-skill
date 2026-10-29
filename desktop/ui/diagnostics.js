@@ -22,7 +22,8 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false, cancelIntent = false;
   // Cancel failures keep the execution id and mark the cancel as unconfirmed until a real terminal state arrives.
   // pollSeq invalidates polls that were already in flight when a cancel started.
-  let cancelUnconfirmed = false, pollSeq = 0;
+  // cancelSeq does the same for cancel replies, so an older attempt cannot confirm or unlock a newer one.
+  let cancelUnconfirmed = false, pollSeq = 0, cancelSeq = 0;
   const UNCONFIRMED_NOTE = '执行可能仍在运行，可再次取消或等待状态更新；未重新开始搜索。';
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');
@@ -117,15 +118,14 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
     if (status.payload) renderResults(status.payload);
     controls(status.status === 'running');
   }
-  async function poll() {
-    if (disposed || activeId === null) return;
-    const id = activeId;
+  async function poll(id = activeId) {
+    if (disposed || id === null || id !== activeId) return;
     const seq = pollSeq;
     try {
       const state = await api.poll(id);
       if (disposed || activeId !== id || seq !== pollSeq) return;
       renderExecution(state);
-      if (state.status === 'running') timer = setTimeout(poll, pollInterval); else activeId = null;
+      if (state.status === 'running') timer = setTimeout(() => void poll(id), pollInterval); else activeId = null;
     } catch (error) {
       if (!disposed && activeId === id && seq === pollSeq) {
         showError(executionError, error, '无法读取执行状态，请稍后重试或取消本次执行。');
@@ -150,19 +150,20 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   async function sendCancel(id) {
     cancelling = true;
     pollSeq += 1;
+    const seq = cancelSeq += 1;
     root.querySelector('[data-status="execution"]').textContent = '正在取消';
     clearTimeout(timer);
     cancel.disabled = true;
     search.disabled = true;
     try {
       const state = await api.cancel(id);
-      if (disposed) return;
+      if (disposed || seq !== cancelSeq) return;
       // A late response belongs to the execution the user just left behind.
       if (activeId !== id) return;
       activeId = null;
       renderExecution(state);
     } catch (error) {
-      if (disposed) return;
+      if (disposed || seq !== cancelSeq) return;
       // The backend may still run this execution, so keep its id: search stays blocked, cancel can be
       // retried, and polling resumes to pick up the real terminal state.
       if (activeId !== id) return;
@@ -170,9 +171,9 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       const reason = showError(executionError, error, '取消请求失败。').message;
       root.querySelector('[data-status="execution"]').textContent = '取消未确认';
       setExecutionError(`取消未确认：${reason}。${UNCONFIRMED_NOTE}`);
-      timer = setTimeout(poll, pollInterval);
+      timer = setTimeout(() => void poll(id), pollInterval);
     } finally {
-      if (!disposed) {
+      if (!disposed && seq === cancelSeq) {
         cancelling = false;
         controls(activeId !== null);
       }
