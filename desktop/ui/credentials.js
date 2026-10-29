@@ -114,6 +114,22 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   const q = selector => /** @type {any} */ (root.querySelector(selector));
   const text = (selector, value) => { q(selector).textContent = value; };
   let current = { store: { state: 'absent', error: '' }, effective_source: 'none' };
+  // Browser opening is a capability separate from the encrypted store: macOS can open
+  // the fixed application page even while DPAPI writes are unavailable. The link and
+  // both flags are read-only metadata from the one backend mapping; the page never
+  // guesses, concatenates or forwards an application URL. An absent open flag from an
+  // older backend keeps the previous behaviour instead of disabling optimistically.
+  const appOpens = view =>
+    view.key_application_available === true && view.key_application_open_supported !== false;
+  const appNote = view => {
+    if (view.key_application_available !== true) return '该搜索源暂无固定申请链接，无法打开申请页。';
+    if (view.key_application_open_supported === false) {
+      return view.key_application_url
+        ? `当前平台无法直接打开系统浏览器，请手动复制固定申请链接：${view.key_application_url}`
+        : '当前平台无法直接打开系统浏览器，且暂无可复制的固定申请链接。';
+    }
+    return '使用系统浏览器打开固定申请链接';
+  };
   let generation = 0, disposed = false, busy = false;
   // Storage capability is unknown until credentialStatus reports it: all writes stay
   // disabled rather than presenting an uncertain state as permission to save.
@@ -151,7 +167,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     for (const button of root.querySelectorAll('[data-action="copy"]')) button.disabled = value || !revealed.has(Number(button.dataset.rowIndex));
     // Plaintext reveal is an encrypted read; unsupported platforms cannot run it.
     for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || !capabilityReady();
-    q('[data-action="application"]').disabled = value || !current.key_application_available;
+    q('[data-action="application"]').disabled = value || !appOpens(current);
     q('[data-action="test"]').disabled = value || !searchTest;
     q('[data-action="test"]').hidden = !searchTest;
     // Saved-row delete and draft add/submit are mutations; keep them disabled
@@ -212,8 +228,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     setBusy(busy);
     text('[data-status="store"]', storeLabels[view.store.state] || view.store.state);
     text('[data-status="source"]', sourceText(view));
-    text('[data-info="application"]', view.key_application_available ? '使用系统浏览器打开固定申请链接' : '申请链接待配置');
-    q('[data-action="application"]').disabled = busy || !view.key_application_available;
+    text('[data-info="application"]', appNote(view));
+    q('[data-action="application"]').disabled = busy || !appOpens(view);
   }
   // `requestId` ties a read-back to its owning refresh; non-refresh callers
   // (reveal snapshot re-check, post-save/post-remove read-back) pass the

@@ -238,16 +238,37 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     validateChain();
   }
 
-  // Core's effective_source decides whether a key authenticates: an env or legacy file
-  // source wins over an empty, unsupported or unreadable store. The frontend never
-  // re-ranks sources; other values keep the store state (unavailable fails closed).
-  const CORE_CONFIRMED_SOURCES = ['env', 'file'];
+  // Core's effective_source decides whether a key authenticates. `env` (Core's highest priority)
+  // keeps the store-state answer until its own rule lands, and payloads without the field keep the
+  // legacy local answer. An unavailable source stays unavailable (fail-closed), and a source this
+  // page does not recognize stays unconfirmed instead of being reported as configured.
+  function credentialStateOf(view) {
+    switch (view.effective_source) {
+      // Configured: the credential store entry, the legacy file, or the local-only `sqlite` answer.
+      case 'credential_store':
+      case 'file':
+      case 'sqlite':
+        return 'present';
+      // Core found no key from any source.
+      case 'none':
+        return 'absent';
+      // Core selected a source that cannot be used. An existing store entry does not make it usable.
+      case 'unavailable':
+        return 'unreadable';
+      case undefined:
+      case null:
+      case '':
+        return view.store.state;
+      default:
+        return 'unknown';
+    }
+  }
+
   async function readCredentialStates() {
     return new Map(await Promise.all(REQUIRED_KEY_BACKENDS.map(async name => {
       try {
         const view = await api.credentialStatus(name);
-        if (CORE_CONFIRMED_SOURCES.includes(view.effective_source)) return /** @type {[string, string]} */ ([name, 'present']);
-        return /** @type {[string, string]} */ ([name, view.store.state]);
+        return /** @type {[string, string]} */ ([name, credentialStateOf(view)]);
       } catch {
         return /** @type {[string, string]} */ ([name, 'unknown']);
       }
