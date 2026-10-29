@@ -967,6 +967,106 @@ test('an unconfirmed credential keeps the busy and read-only save limits', async
   second.window.close();
 });
 
+// 33 凭据刷新只采用最新请求结果：一轮刷新 = 一次成对的凭据查询。
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+
+function gatedCredentials(firstRound, rest = []) {
+  const state = { calls: 0, rounds: [] };
+  const api = {
+    settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+    credentialStatus: async source => {
+      const index = Math.floor(state.calls++ / 2);
+      if (index === 0) return { source, ...firstRound };
+      const gate = state.rounds[index - 1] || (state.rounds[index - 1] = deferred());
+      return gate.promise.then(value => ({ source, ...value }));
+    },
+  };
+  return { state, api, rest };
+}
+
+test('a refresh result replaces the previous one, and the next result replaces that', async () => {
+  const { window, root } = setup();
+  const { state, api } = gatedCredentials({ store: { state: 'absent' }, effective_source: 'none' });
+  await mountScrape(root, api);
+  assert.equal(backendState(root, 'exa').textContent, '待配置 Key');
+  const button = root.querySelector('[data-action="refresh-chain"]');
+  // 第一次刷新返回有效来源。
+  button.click();
+  await flush();
+  state.rounds[0].resolve({ store: { state: 'present' }, effective_source: 'credential_store' });
+  await flush(); await flush();
+  assert.equal(backendState(root, 'exa').textContent, 'Key 已配置');
+  assert.equal(root.querySelector('[data-info="chain-warning"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  // 第二次刷新返回 Core 的不可用判定：新判定必须同时改变提示和保存资格。
+  button.click();
+  await flush();
+  state.rounds[1].resolve({ store: { state: 'unreadable' }, effective_source: 'unavailable' });
+  await flush(); await flush();
+  assert.equal(backendState(root, 'exa').textContent, '待配置 Key');
+  assert.match(root.querySelector('[data-info="chain-warning"]').textContent, /缺少可用 Key/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+  assert.equal(state.calls, 6);
+  window.close();
+});
+
+test('an unfinished refresh is not duplicated by a second click', async () => {
+  const { window, root } = setup();
+  const { state, api } = gatedCredentials({ store: { state: 'present' }, effective_source: 'credential_store' });
+  await mountScrape(root, api);
+  assert.equal(state.calls, 2);
+  const button = root.querySelector('[data-action="refresh-chain"]');
+  button.click();
+  await flush();
+  assert.equal(button.disabled, true, 'refresh is locked while a query is in flight');
+  // 忙碌期间重复点击不得复制同一轮查询。
+  button.click();
+  await flush();
+  assert.equal(state.calls, 4, 'one refresh issued one pair of queries');
+  assert.equal(state.rounds.length, 1);
+  state.rounds[0].resolve({ store: { state: 'absent' }, effective_source: 'none' });
+  await flush(); await flush();
+  assert.equal(backendState(root, 'exa').textContent, '待配置 Key');
+  assert.equal(button.disabled, false);
+  window.close();
+});
+
+test('a credential answer that arrives after disposal never publishes', async () => {
+  const { window, root } = setup();
+  const { state, api } = gatedCredentials({ store: { state: 'present' }, effective_source: 'credential_store' });
+  const mounted = await mountScrape(root, api);
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(state.rounds.length, 1, 'a query is in flight before disposal');
+  mounted.dispose();
+  state.rounds[0].resolve({ store: { state: 'absent' }, effective_source: 'none' });
+  await flush(); await flush();
+  assert.equal(backendState(root, 'exa').textContent, 'Key 已配置');
+  assert.doesNotMatch(root.querySelector('[data-info="chain-warning"]').textContent, /缺少可用 Key/);
+  window.close();
+});
+
+test('warnings and save eligibility come from the same newest result', async () => {
+  for (const [outcome, view, expectedState, expectedBlocked] of [
+    ['configured', { store: { state: 'present' }, effective_source: 'credential_store' }, 'Key 已配置', false],
+    ['missing', { store: { state: 'absent' }, effective_source: 'none' }, '待配置 Key', true],
+    ['unavailable', { store: { state: 'unreadable' }, effective_source: 'unavailable' }, '待配置 Key', true],
+    ['unconfirmed', { store: { state: 'present' }, effective_source: 'future_source' }, '状态待确认', false],
+  ]) {
+    const { window, root } = setup();
+    await mountScrape(root, api({
+      settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+      credentialStatus: async source => ({ source, ...view }),
+    }));
+    assert.equal(backendState(root, 'exa').textContent, expectedState, outcome);
+    assert.equal(root.querySelector('[data-action="save"]').disabled, expectedBlocked, outcome);
+    const warning = root.querySelector('[data-info="chain-warning"]').textContent;
+    if (expectedBlocked) assert.match(warning, /缺少可用 Key/, outcome);
+    else if (expectedState === '状态待确认') assert.match(warning, /暂时无法确认/, outcome);
+    else assert.equal(warning, '', outcome);
+    window.close();
+  }
+});
 // T11 交叉矩阵：链内容 × 必需成员来源 → 保存资格与提示（按钮与绕过按钮的直接提交）。
 // 有效来源与凭据库条目状态分开给出：unknown 用未识别来源表示（缺失字段属于另一条规则），
 // 并可搭配任意 store 状态，覆盖"低优先级条目为空/不可读"的组合。
