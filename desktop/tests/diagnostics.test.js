@@ -591,3 +591,147 @@ test('a scheduled poll for a finished execution is not requested while a new sta
   assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
   page.dispose(); window.close();
 });
+
+
+test('repeated clicks and direct form submits while start is pending issue exactly one start', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const starts = []; let resolveStart;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: options => { starts.push(options); return new Promise(resolve => { resolveStart = resolve; }); },
+    poll: async () => ({ status: 'running' }),
+    cancel: async () => ({ status: 'cancelled' }),
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'double';
+  const form = root.querySelector('[data-search-form]');
+  const search = root.querySelector('[data-action="search"]');
+  const query = root.querySelector('[data-field="query"]');
+  search.click(); search.click();
+  assert.equal(search.disabled, true, 'the button is visibly disabled while the start is pending');
+  for (let i = 0; i < 3; i += 1) {
+    query.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    query.dispatchEvent(new window.KeyboardEvent('keyup', { key: 'Enter', bubbles: true, cancelable: true }));
+    form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  }
+  await tick();
+  assert.equal(starts.length, 1, 'only one start request leaves the page');
+  resolveStart(101);
+  await tick();
+  assert.equal(starts.length, 1);
+  page.dispose(); window.close();
+});
+
+test('repeated cancel clicks while cancel is in flight send one cancel, and none after success', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const cancels = []; const starts = []; let resolveCancel;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: options => { starts.push(options); return 55; },
+    poll: async () => ({ status: 'running' }),
+    cancel: id => { cancels.push(id); return new Promise(resolve => { resolveCancel = resolve; }); },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'cancel-once';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  const cancel = root.querySelector('[data-action="cancel"]');
+  const form = root.querySelector('[data-search-form]');
+  cancel.click(); cancel.click();
+  root.querySelector('[data-action="cancel"]').dispatchEvent(new window.Event('click'));
+  form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await tick();
+  assert.deepEqual(cancels, [55], 'in-flight cancel is not repeated');
+  assert.equal(starts.length, 1, 'a pending cancel cannot be raced by a new start');
+  resolveCancel({ status: 'cancelled' });
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  cancel.click(); cancel.click();
+  await tick();
+  assert.deepEqual(cancels, [55], 'no cancel after a successful cancel');
+  assert.equal(starts.length, 1, 'the cancelled round issued exactly one public start request');
+  assert.deepEqual(Object.keys(starts[0]).sort(), ['query', 'route', 'sources', 'timeout'], 'start carries only the documented page fields');
+  assert.equal(starts[0].query, 'cancel-once');
+  assert.equal(typeof starts[0].timeout, 'number', 'timeout is sent as a number, not the raw field text');
+  assert.ok(Array.isArray(starts[0].sources), 'sources are sent as the parsed list');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false, 'a new search is allowed after cancel');
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  assert.equal(starts.length, 2, 'a new round may start after the cancel succeeded');
+  page.dispose(); window.close();
+});
+
+test('a pending start cancelled by repeated clicks sends one cancel for the returned id only', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const cancels = []; let resolveStart; const starts = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => { starts.push(1); return new Promise(resolve => { resolveStart = resolve; }); },
+    poll: async () => ({ status: 'running' }),
+    cancel: async id => { cancels.push(id); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'pending-repeat';
+  root.querySelector('[data-action="search"]').click();
+  const form = root.querySelector('[data-search-form]');
+  form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  const cancel = root.querySelector('[data-action="cancel"]');
+  cancel.click(); cancel.click(); cancel.click();
+  resolveStart(88);
+  await tick();
+  assert.equal(starts.length, 1);
+  assert.deepEqual(cancels, [88]);
+  page.dispose(); window.close();
+});
+
+test('a failed start is retryable and the retry is a separate, single request', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const starts = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async options => { starts.push(options); if (starts.length === 1) throw 'boom'; return 66; },
+    poll: async () => ({ status: 'running' }),
+    cancel: async () => ({ status: 'cancelled' }),
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'retry';
+  const form = root.querySelector('[data-search-form]');
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  assert.equal(starts.length, 1);
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false, 'failed start unlocks search');
+  root.querySelector('[data-action="search"]').click(); form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await tick();
+  assert.equal(starts.length, 2, 'explicit retry starts exactly once');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在执行');
+  page.dispose(); window.close();
+});
+
+test('a run already polling cannot be re-started by submit or repeated clicks, and double dispose cancels once', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const starts = []; const cancels = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: options => { starts.push(options); return 777; },
+    poll: async id => ({ status: 'running' }),
+    cancel: async id => { cancels.push(id); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'once-only';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  const form = root.querySelector('[data-search-form]');
+  assert.equal(starts.length, 1, 'the first click started the round');
+  form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  form.dispatchEvent(new window.Event('submit', { cancelable: true }));
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  assert.equal(starts.length, 1, 'a live execution cannot be started again, even bypassing the disabled button');
+  assert.deepEqual(cancels, [], 'no cancel from a blocked start');
+  page.dispose();
+  page.dispose();
+  await tick();
+  assert.deepEqual(cancels, [777], 'leaving the page cancels the current execution exactly once');
+  assert.equal(starts.length, 1);
+  window.close();
+});
