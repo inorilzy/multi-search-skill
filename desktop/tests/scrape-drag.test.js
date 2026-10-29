@@ -334,3 +334,71 @@ test('Enter drops directly and the saved readback matches the visible order', as
   assert.deepEqual(chainNames(root), ['jina', 'firecrawl', 'exa', 'tavily']);
   window.close();
 });
+
+test('Home from a middle row moves to first and keeps focus on that handle', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api());
+  handle(root, 'tavily').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'Home');
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'exa', 'firecrawl']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'tavily'));
+  assert.equal(chainRow(root, 'tavily').querySelector('.scrape-order').textContent, '01');
+  assert.match(statusNode(root).textContent, /第 1 位/);
+  window.close();
+});
+
+test('End from first row moves to last and keeps focus on that handle', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api());
+  handle(root, 'jina').focus();
+  pressFocused(window, 'Enter');
+  pressFocused(window, 'End');
+  assert.deepEqual(chainNames(root), ['exa', 'tavily', 'firecrawl', 'jina']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'jina'));
+  assert.equal(chainRow(root, 'jina').querySelector('.scrape-order').textContent, '04');
+  assert.match(statusNode(root).textContent, /第 4 位/);
+  window.close();
+});
+
+test('repeated Home or End at a boundary neither drops nor duplicates rows', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api());
+  handle(root, 'exa').focus();
+  pressFocused(window, 'Enter');
+  pressFocused(window, 'Home');
+  pressFocused(window, 'Home');
+  pressFocused(window, 'Home');
+  assert.deepEqual(chainNames(root), ['exa', 'jina', 'tavily', 'firecrawl']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'));
+  pressFocused(window, 'End');
+  pressFocused(window, 'End');
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl', 'exa']);
+  assert.equal(root.querySelectorAll('[data-chain-row]').length, 4);
+  assert.equal(chainRow(root, 'exa').querySelector('.scrape-order').textContent, '04');
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'));
+  window.close();
+});
+
+test('Home/End mixed with arrows and Enter save the exact visible order', async () => {
+  const { window, root } = setup();
+  let sent = null;
+  await mountScrape(root, api({
+    scrapeSettingsSave: async input => { sent = input; return settingsView({ scrape_backends: input }); },
+  }));
+  handle(root, 'tavily').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'End');
+  pressFocused(window, 'ArrowUp');
+  pressFocused(window, 'Home');
+  pressFocused(window, 'ArrowDown');
+  pressFocused(window, 'Enter');
+  const visible = chainNames(root);
+  assert.deepEqual(visible, ['jina', 'tavily', 'exa', 'firecrawl']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'tavily'));
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(sent, visible);
+  assert.deepEqual(chainNames(root), visible);
+  window.close();
+});
