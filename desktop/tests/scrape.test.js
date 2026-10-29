@@ -692,6 +692,80 @@ test('file source with no Core row and empty store stays blocked, and failed sta
   window.close();
 });
 
+const envView = (source, state, extra = {}) => ({
+  source,
+  store: { state, saved_at: state === 'present' ? 1 : null, error: state === 'unreadable' ? 'do not expose decrypt failure' : '' },
+  effective_source: 'env', env_var: source === 'exa' ? 'EXA_API_KEY' : 'TAVILY_API_KEY', env_overrides_store: state !== 'absent',
+  key_application_available: true, store_supported: true, ...extra,
+});
+
+test('effective env source is usable when the lower-priority store is empty', async () => {
+  for (const state of ['absent', 'unreadable']) {
+    const { window, root } = setup();
+    let saves = 0;
+    await mountScrape(root, api({
+      settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+      credentialStatus: async source => envView(source, state),
+      credentialRead: async () => { assert.fail('must never read secret values'); },
+      scrapeSettingsSave: async input => { saves++; return settingsView({ scrape_backends: input }); },
+    }));
+    assert.equal(root.querySelector('[data-info="chain-warning"]').textContent, '', `store ${state}`);
+    assert.doesNotMatch(root.textContent, /待配置 Key|整条链无法运行/, `store ${state}`);
+    assert.doesNotMatch(root.textContent, /do not expose decrypt failure/, 'raw store error must stay hidden');
+    assert.equal(root.querySelector('[data-action="save"]').disabled, false, `store ${state}`);
+    root.querySelector('[data-action="save"]').click();
+    await flush();
+    assert.equal(saves, 1, `store ${state}`);
+    window.close();
+  }
+});
+
+test('env-sourced chain saves only the backend list and reads back after refresh', async () => {
+  const { window, root } = setup();
+  const calls = [];
+  let view = settingsView();
+  await mountScrape(root, api({
+    settingsView: async () => view,
+    credentialStatus: async source => envView(source, 'absent'),
+    scrapeSettingsSave: async input => { calls.push(input); view = settingsView({ scrape_backends: input }); return view; },
+  }));
+  chainButton(root, 'jina', '停用').click();
+  chainButton(root, 'firecrawl', '停用').click();
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.deepEqual(calls, [['exa', 'tavily']], 'only the chain is submitted');
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.deepEqual(chainNames(root), ['exa', 'tavily']);
+  assert.equal(root.querySelector('[data-info="saved-chain-warning"]').textContent, '');
+  window.close();
+});
+
+test('a single env-sourced required backend unblocks that member only', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    credentialStatus: async source => source === 'exa' ? envView(source, 'unreadable') : { source, store: { state: 'absent' }, effective_source: 'none', key_application_available: true, store_supported: true },
+  }));
+  const warning = root.querySelector('[data-info="chain-warning"]').textContent;
+  assert.match(warning, /Tavily 缺少可用 Key/);
+  assert.doesNotMatch(warning, /Exa/);
+  assert.doesNotMatch(warning, /整条链无法运行/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  window.close();
+});
+
+test('unselected env source is not reported as a store write success', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+    credentialStatus: async source => envView(source, 'absent'),
+  }));
+  assert.match(root.querySelectorAll('[data-chain-row="exa"]')[0].textContent, /Key 已配置/);
+  assert.doesNotMatch(root.textContent, /已保存到凭据库|凭据库已保存|保存在凭据库/);
+  window.close();
+});
+
 const coreStatus = (source, effective_source, store) => ({
   source,
   store: { state: store, saved_at: store === 'present' ? 1 : null, error: '' },
@@ -763,5 +837,226 @@ test('an unrecognized Core source stays unconfirmed instead of using the store e
   assert.doesNotMatch(warning, /整条链无法运行/);
   assert.doesNotMatch(root.textContent, /Key 已配置/);
   assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  window.close();
+});
+
+// 31 凭据来源未知或查询失败可刷新恢复：未知不等于已配置，也不等于永久无效。
+const backendState = (root, name) => root.querySelector(`[data-chain-row="${name}"] .scrape-backend-state`);
+
+test('a failed query or a payload missing its source fields stays unconfirmed', async () => {
+  const responses = [
+    ['rejected query', () => { throw new Error('offline'); }],
+    ['empty payload', () => ({})],
+    ['missing store', () => ({ effective_source: null, store: undefined })],
+    ['missing store state', () => ({ store: {} })],
+    ['unreadable store payload', () => ({ store: null })],
+    ['unknown store state', () => ({ store: { state: 'mystery' } })],
+  ];
+  for (const [label, respond] of responses) {
+    const { window, root } = setup();
+    await mountScrape(root, api({
+      settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+      credentialStatus: async () => respond(),
+    }));
+    assert.equal(backendState(root, 'exa').textContent, '状态待确认', label);
+    assert.doesNotMatch(root.textContent, /Key 已配置|整条链无法运行/, label);
+    assert.equal(root.querySelector('[data-action="save"]').disabled, false, label);
+    window.close();
+  }
+});
+
+test('refreshing an unconfirmed credential recovers the real configured or missing result', async () => {
+  const { window, root } = setup();
+  let mode = 'fail';
+  let secretReads = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+    credentialStatus: async source => {
+      if (mode === 'fail') throw new Error('offline');
+      if (mode === 'present') return { source, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'credential_store', key_application_available: true, store_supported: true };
+      return { source, store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: true, store_supported: true };
+    },
+    credentialRead: async () => { secretReads += 1; return { value: 'secret' }; },
+  }));
+  // 初始未知：既不显示已配置，也不宣布整条链永久无效。
+  assert.equal(backendState(root, 'exa').textContent, '状态待确认');
+  assert.match(root.querySelector('[data-info="chain-warning"]').textContent, /暂时无法确认/);
+  assert.doesNotMatch(root.querySelector('[data-info="chain-warning"]').textContent, /整条链无法运行/);
+
+  // 刷新恢复到已配置的真实结果。
+  mode = 'present';
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(backendState(root, 'exa').textContent, 'Key 已配置');
+  assert.equal(root.querySelector('[data-info="chain-warning"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+
+  // 再刷新恢复到真正的未配置，而不是继续停在待确认。
+  mode = 'absent';
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(backendState(root, 'exa').textContent, '待配置 Key');
+  assert.match(root.querySelector('[data-info="saved-chain-warning"]').textContent, /整条链无法运行/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+
+  // 查询再次失败时退回待确认，不自称已配置。
+  mode = 'fail';
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.equal(backendState(root, 'exa').textContent, '状态待确认');
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  assert.equal(secretReads, 0);
+  window.close();
+});
+
+test('a failed refresh keeps the unsaved draft and its unsaved state', async () => {
+  const { window, root } = setup();
+  let fail = false;
+  await mountScrape(root, api({
+    settingsView: async () => { if (fail) throw new Error('offline view'); return settingsView({ scrape_backends: BUILTIN }); },
+    credentialStatus: async () => { throw new Error('offline status'); },
+  }));
+  chainButton(root, 'tavily', '上移').click();
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl']);
+  fail = true;
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  root.querySelector('[data-action="confirm-refresh-chain"]').click();
+  await flush(); await flush();
+  // 刷新失败时草稿顺序和“未保存”状态都要保留，不能被失败的请求清掉。
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl']);
+  assert.equal(root.querySelector('[data-dirty]').hidden, false);
+  assert.doesNotMatch(root.querySelector('[data-status="draft"]').textContent, /当前显示已保存设置/);
+  assert.match(root.querySelector('[data-info="error"]').textContent, /刷新失败/);
+  // 草稿仍存在，下一次刷新必须先询问，不能静默丢弃。
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  assert.match(root.querySelector('[data-restore-confirm]').textContent, /丢弃未保存/);
+  window.close();
+});
+
+test('an unconfirmed credential keeps the busy and read-only save limits', async () => {
+  const { window, root } = setup();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let calls = 0;
+  await mountScrape(root, api({
+    settingsView: async () => { calls += 1; if (calls > 1) await gate; return settingsView({ scrape_backends: ['exa', 'jina'] }); },
+    credentialStatus: async () => { throw new Error('offline'); },
+  }));
+  root.querySelector('[data-action="refresh-chain"]').click();
+  await flush();
+  // 刷新进行中：保存和刷新不可用，未知状态不能绕过忙碌限制，移动也不生效。
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="refresh-chain"]').disabled, true);
+  chainButton(root, 'jina', '下移').click();
+  assert.deepEqual(chainNames(root), ['exa', 'jina']);
+  release();
+  await flush(); await flush();
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  window.close();
+
+  // 配置不可读时仍然只读，未知状态不解除只读限制。
+  const second = setup();
+  await mountScrape(second.root, api({
+    settingsView: async () => settingsView({ status: 'config_unreadable', message: 'bad config' }),
+    credentialStatus: async () => { throw new Error('offline'); },
+  }));
+  assert.equal(second.root.querySelector('[data-action="save"]').disabled, true);
+  assert.equal(second.root.querySelector('[data-chain-row="exa"] .scrape-drag-handle').disabled, true);
+  second.window.close();
+});
+
+// T11 交叉矩阵：链内容 × 必需成员来源 → 保存资格与提示（按钮与绕过按钮的直接提交）。
+// 有效来源与凭据库条目状态分开给出：unknown 用未识别来源表示（缺失字段属于另一条规则），
+// 并可搭配任意 store 状态，覆盖"低优先级条目为空/不可读"的组合。
+const SOURCE_OF = { present: 'credential_store', absent: 'none', unreadable: 'unavailable', unknown: 'some-future-source' };
+const stateView = (state, storeState) => ({
+  store: { state: storeState ?? state, saved_at: (storeState ?? state) === 'present' ? 1 : null, error: '' },
+  effective_source: SOURCE_OF[state] ?? state,
+  key_application_available: true, store_supported: true,
+});
+
+const validityCases = [
+  { chain: ['exa'], states: { exa: 'present' }, blocked: false, wholeChainText: false },
+  { chain: ['exa'], states: { exa: 'absent' }, blocked: true, wholeChainText: true },
+  { chain: ['exa'], states: { exa: 'unreadable' }, blocked: true, wholeChainText: true },
+  { chain: ['tavily'], states: { tavily: 'present' }, blocked: false, wholeChainText: false },
+  { chain: ['tavily'], states: { tavily: 'absent' }, blocked: true, wholeChainText: true },
+  { chain: ['exa', 'tavily'], states: { exa: 'present', tavily: 'absent' }, blocked: false, wholeChainText: false },
+  { chain: ['exa', 'tavily'], states: { exa: 'absent', tavily: 'present' }, blocked: false, wholeChainText: false },
+  { chain: ['exa', 'tavily'], states: { exa: 'absent', tavily: 'absent' }, blocked: true, wholeChainText: true },
+  { chain: ['exa', 'tavily'], states: { exa: 'unreadable', tavily: 'absent' }, blocked: true, wholeChainText: true },
+  { chain: ['exa', 'tavily'], states: { exa: 'unreadable', tavily: 'unreadable' }, blocked: true, wholeChainText: true },
+  { chain: ['exa', 'jina'], states: { exa: 'absent' }, blocked: false, wholeChainText: false },
+  { chain: ['exa', 'tavily', 'jina', 'firecrawl'], states: { exa: 'absent', tavily: 'unreadable' }, blocked: false, wholeChainText: false },
+  { chain: ['jina', 'firecrawl'], states: {}, blocked: false, wholeChainText: false },
+  { chain: ['exa', 'tavily'], states: { exa: 'present', tavily: 'unknown' }, blocked: false, wholeChainText: false },
+  // 既有策略：未知不等于确认缺失，未知本身不触发整链阻止（工单 31）。
+  { chain: ['exa', 'tavily'], states: { exa: 'absent', tavily: 'unknown' }, blocked: false, wholeChainText: false },
+  { chain: ['exa'], states: { exa: 'unknown' }, blocked: false, wholeChainText: false },
+  // 确认有效来源 + 空凭据库条目：仍可用（28/29 的组合回归）。
+  { chain: ['exa', 'tavily'], states: { exa: 'present', tavily: 'present' }, storeStates: { exa: 'absent', tavily: 'unreadable' }, blocked: false, wholeChainText: false },
+];
+
+test('chain validity matrix judges save eligibility by chain members and their sources', async () => {
+  for (const testCase of validityCases) {
+    const label = `${testCase.chain.join('+')} / ${JSON.stringify(testCase.states)}${testCase.storeStates ? ' + store ' + JSON.stringify(testCase.storeStates) : ''}`;
+    const { window, root } = setup();
+    let saves = 0;
+    await mountScrape(root, api({
+      settingsView: async () => settingsView({ scrape_backends: testCase.chain }),
+      credentialStatus: async source => stateView(testCase.states[source] ?? 'present', testCase.storeStates?.[source]),
+      scrapeSettingsSave: async input => { saves++; return settingsView({ scrape_backends: input }); },
+    }));
+    const warning = root.querySelector('[data-info="saved-chain-warning"]').textContent;
+    assert.equal(root.querySelector('[data-action="save"]').disabled, testCase.blocked, `button ${label}`);
+    assert.equal(/整条链无法运行/.test(warning), testCase.wholeChainText, `whole-chain text ${label}`);
+    // 提示必须真的可见；草稿与已保存文案相同时刻意只留一处，所以按可见节点计数。
+    const visible = [root.querySelector('[data-info="chain-warning"]'), root.querySelector('[data-info="saved-chain-warning"]')]
+      .filter(node => !node.hidden && node.textContent);
+    if (testCase.blocked) {
+      assert.ok(visible.some(node => /整条链无法运行/.test(node.textContent)), `whole-chain message visible ${label}`);
+      assert.equal(visible.length, 1, `warning shown exactly once ${label}`);
+    }
+    // 绕过禁用按钮：直接提交表单也不得保存。
+    root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await flush();
+    assert.equal(saves, testCase.blocked ? 0 : 1, `direct submit ${label}`);
+    if (testCase.blocked) assert.match(root.querySelector('[data-info="error"]').textContent, /整条链无法运行|至少保留一个后端/, `visible refusal ${label}`);
+    window.close();
+  }
+});
+
+test('a chain with one confirmed member still names the missing member and never claims anonymity works', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily', 'jina'] }),
+    credentialStatus: async source => source === 'exa' ? stateView('present') : stateView('absent'),
+  }));
+  const warning = root.querySelector('[data-info="saved-chain-warning"]').textContent;
+  assert.match(warning, /Tavily 缺少可用 Key/);
+  assert.doesNotMatch(warning, /Exa/);
+  assert.doesNotMatch(warning, /整条链无法运行|Jina/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  assert.match(root.textContent, /Jina Reader/);
+  assert.match(root.querySelectorAll('[data-chain-row="jina"]')[0].textContent, /可匿名使用/);
+  window.close();
+});
+
+test('an empty chain blocks the button and a direct submit without calling the backend', async () => {
+  const { window, root } = setup();
+  let saves = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    scrapeSettingsSave: async () => { saves++; return settingsView(); },
+  }));
+  chainButton(root, 'exa', '停用').click();
+  chainButton(root, 'tavily', '停用').click();
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+  assert.match(root.querySelector('[data-info="chain-warning"]').textContent, /全部抓取后端都已停用/);
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await flush();
+  assert.equal(saves, 0);
   window.close();
 });

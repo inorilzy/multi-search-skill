@@ -122,6 +122,9 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   }
 
   function renderChain() {
+    // 链被重建时（按钮移动、停用、恢复、加入、只读切换）未放下的拖动已失效：
+    // 结束它并丢弃预览 DOM，之后的指针/键盘事件不再作用于旧行。
+    sorter?.cancel('列表已更新，未完成的拖动已结束');
     const list = q('[data-chain-list]');
     list.replaceChildren();
     const disabled = chainDisabled();
@@ -189,7 +192,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
       upText.className = 'sr-only'; upText.textContent = '上移';
       up.append(upIcon, upText);
       up.disabled = disabled || index === 0;
-      up.addEventListener('click', () => move(index, -1));
+      up.addEventListener('click', () => move(name, -1));
       const down = doc.createElement('button');
       down.type = 'button'; down.setAttribute('data-chain-action', 'down');
       down.setAttribute('aria-label', `下移 ${label}`);
@@ -199,7 +202,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
       downText.className = 'sr-only'; downText.textContent = '下移';
       down.append(downIcon, downText);
       down.disabled = disabled || index === chain.length - 1;
-      down.addEventListener('click', () => move(index, 1));
+      down.addEventListener('click', () => move(name, 1));
       const off = doc.createElement('button');
       off.type = 'button'; off.textContent = '停用'; off.setAttribute('data-chain-action', 'disable');
       off.setAttribute('aria-label', `停用 ${label}`);
@@ -238,13 +241,16 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     validateChain();
   }
 
-  // Core's effective_source decides whether a key authenticates. `env` (Core's highest priority)
-  // keeps the store-state answer until its own rule lands, and payloads without the field keep the
-  // legacy local answer. An unavailable source stays unavailable (fail-closed), and a source this
-  // page does not recognize stays unconfirmed instead of being reported as configured.
+  // Core's effective_source decides whether a key authenticates: `env` is Core's highest
+  // priority, so a set variable counts as usable even when the store is empty, unsupported
+  // or unreadable. Payloads without the field keep the legacy local answer. An unavailable
+  // source stays unavailable (fail-closed), and a source this page does not recognize stays
+  // unconfirmed instead of being reported as configured.
   function credentialStateOf(view) {
     switch (view.effective_source) {
-      // Configured: the credential store entry, the legacy file, or the local-only `sqlite` answer.
+      // Configured: Core's environment variable, the credential store entry, the legacy
+      // file, or the local-only `sqlite` answer.
+      case 'env':
       case 'credential_store':
       case 'file':
       case 'sqlite':
@@ -313,10 +319,14 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     return !empty && !availability.blocked;
   }
 
-  function move(index, delta) {
+  // 按后端名解析当前下标：渲染时捕获的下标在拖动预览或上次移动后可能已过期。
+  // 先结束未放下的拖动，让按钮只作用于已提交的草稿顺序。
+  function move(name, delta) {
     if (chainDisabled()) return;
+    sorter?.cancel('已结束未完成的拖动，按钮已按草稿顺序移动');
+    const index = chain.indexOf(name);
     const target = index + delta;
-    if (target < 0 || target >= chain.length) return;
+    if (index < 0 || target < 0 || target >= chain.length) return;
     [chain[index], chain[target]] = [chain[target], chain[index]];
     setDirty('抓取顺序已在草稿中调整');
     renderChain();
@@ -389,9 +399,9 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     if (saving) { text('[data-info="error"]', '正在保存设置，完成后再刷新。'); return; }
     if (refreshing) return;
     sorter?.cancel('刷新前已取消未放下的拖动');
-    // 用户确认丢弃后清掉草稿标记，迟到的响应也不会被草稿挡回。
-    if (force) dirty = false;
-    if (dirty) {
+    // 用户确认丢弃后由 force 跳过确认；草稿标记只在成功读回新设置后清除，
+    // 刷新失败时草稿仍是未保存状态。
+    if (dirty && !force) {
       const holder = q('[data-restore-confirm]');
       holder.replaceChildren();
       const panel = doc.createElement('div');
