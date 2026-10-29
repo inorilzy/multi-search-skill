@@ -829,3 +829,104 @@ test('a slow update that finishes after the project changed does not write its r
   assert.equal(root.querySelector('[data-action="update"]').disabled, true);
   window.close();
 });
+
+// 10: editing the project directory invalidates the previous project's shown state at once, before any check or submit.
+function typeProject(root, value) {
+  const field = root.querySelector('[data-field="project"]');
+  field.value = value;
+  field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+}
+
+test('editing project A to B clears A results immediately, and a re-check shows only B', async () => {
+  const seen = [];
+  const { root, window } = setup({
+    skillPlan: async (scope, project) => { seen.push(['plan', project]); return { scope, target: `C:\\${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
+    skillInstall: async (scope, project) => { seen.push(['install', project]); return { status: 'installed', target: `C:\\${project}`, reason: 'verified', verified: true }; },
+    skillStatus: async (scope, project) => { seen.push(['status', project]); return { state: project === 'B' ? 'current' : 'outdated', installed_version: '1', release_version: '2', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: `at ${project}`, can_update: project !== 'B' }; },
+    skillUpdate: async () => ({ status: 'updated', verified: true, reason: 'verified', backup: 'C:\\A-backup' }),
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async () => ({ status: 'removed', deleted: ['SKILL.md'], reason: 'done' }),
+  });
+  root.querySelector('input[value="project"]').click();
+  typeProject(root, 'A');
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="status"]').textContent, /已安装并校验/);
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已更新并校验.*C:\\A-backup/);
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /状态：当前版本|有可用更新/);
+
+  typeProject(root, 'B');
+  assert.equal(root.querySelector('[data-info="status"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="target"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="manage-status"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="managed-target"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="install"]').disabled, true);
+
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /at B/);
+  assert.doesNotMatch(root.textContent, /at A|已更新并校验|C:\\A-backup/);
+  assert.equal(seen.filter(c => c[0] === 'status').at(-1)[1], 'B');
+  window.close();
+});
+
+test('clearing the directory or leaving it incomplete never reuses A state or allows acting on A', async () => {
+  const writes = [];
+  const { root, window } = setup({
+    skillPlan: async (scope, project) => ({ scope, target: project ? `C:\\${project}` : null, files: [], status: project ? 'ready' : 'invalid_scope', reason: project ? 'ok' : 'Select the project directory', can_install: !!project }),
+    skillInstall: async (scope, project) => { writes.push(['install', project]); return { status: 'installed', target: 'C:\\A', reason: 'verified', verified: true }; },
+    skillStatus: async (scope, project) => ({ state: 'outdated', installed_version: '1', release_version: '2', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async (scope, project) => { writes.push(['update', project]); return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (scope, project) => { writes.push(['remove', project]); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+  });
+  root.querySelector('input[value="project"]').click();
+  typeProject(root, 'A');
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.equal(root.querySelector('[data-action="install"]').disabled, false);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, false);
+
+  for (const value of ['', '   ', 'C:\\bad\\\\']) {
+    typeProject(root, value);
+    assert.equal(root.querySelector('[data-info="status"]').textContent, '', `status kept for "${value}"`);
+    assert.equal(root.querySelector('[data-info="target"]').textContent, '', `target kept for "${value}"`);
+    assert.equal(root.querySelector('[data-info="installed"]').textContent, '', `installed kept for "${value}"`);
+    assert.equal(root.querySelector('[data-info="manage-status"]').textContent, '');
+    assert.equal(root.querySelector('[data-action="install"]').disabled, true);
+    assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+    assert.equal(root.querySelector('[data-action="remove-plan"]').disabled, true);
+    // Acting without a fresh preview or check is refused and never reaches the backend with A.
+    root.querySelector('[data-action="install"]').click(); await tick();
+    root.querySelector('[data-action="remove"]').click(); await tick();
+    root.querySelector('[data-action="update"]').click(); await tick();
+  }
+  assert.deepEqual(writes, []);
+  window.close();
+});
+
+test('a valid empty-to-new directory is re-checked and shows the real result for that directory only', async () => {
+  const { root, window } = setup({
+    skillPlan: async (scope, project) => ({ scope, target: `C:\\${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => ({ status: 'installed', target: 'C:\\C', reason: 'verified', verified: true }),
+    skillStatus: async (scope, project) => ({ state: 'current', installed_version: '1', release_version: '1', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: `dir ${project}`, can_update: false }),
+    skillUpdate: async () => ({}), skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  });
+  root.querySelector('input[value="project"]').click();
+  typeProject(root, 'A');
+  root.querySelector('[data-action="check"]').click(); await tick();
+  typeProject(root, '');
+  typeProject(root, 'C');
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="target"]').textContent, /C:\\C/);
+  assert.doesNotMatch(root.textContent, /dir A/);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="installed"]').textContent, /dir C/);
+  assert.match(root.querySelector('[data-info="managed-target"]').textContent, /C:\\C/);
+  window.close();
+});
