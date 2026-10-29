@@ -16,6 +16,7 @@ function setup() {
   return { window, root };
 }
 
+const flush2 = async () => { await flush(); await flush(); };
 const pick = async (root, name) => { const button = root.querySelector(`[data-pick="${name}"]`); if (button.getAttribute('aria-expanded') !== 'true') button.click(); await flush(); };
 const detailOf = root => root.querySelector('[data-source-row][data-expanded="true"] [data-source-detail]');
 
@@ -450,5 +451,65 @@ test('unsupported store does not fabricate credential errors for a keyless sourc
   await flush(); await flush();
   assert.equal(tested, 1);
   assert.equal(row.querySelector('[data-row-result]').dataset.kind, 'success');
+  window.close();
+});
+
+test('a launch started on source A that fails after switching to B never writes into B', async () => {
+  const { window, root } = setup();
+  const present = { ...absent, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' };
+  const exaApp = { ...present, key_application_url: 'https://dashboard.exa.ai/api-keys' };
+  const rejects = [];
+  const api = {
+    settingsView: async () => settings(),
+    credentialStatus: async source => (source === 'exa' ? exaApp : present),
+    credentialRead: async () => ({ value: '', snapshot: 's' }),
+    credentialApplicationOpen: () => new Promise((_, reject) => rejects.push(reject)),
+  };
+  await mountSources(root, api);
+  await pick(root, 'tavily');
+  detailOf(root).querySelector('[data-action="application"]').click();
+  await flush();
+  // Switch the card to B while A's launch is still pending.
+  await pick(root, 'exa');
+  const exaSlot = detailOf(root).querySelector('[data-info="error"]');
+  const exaApplication = detailOf(root).querySelector('[data-info="application"]').textContent;
+  // A's launch now fails.
+  rejects[0](Object.assign(new Error('x'), { code: 'credential_application_failed', message: 'stale tavily failure' }));
+  await flush2();
+  assert.equal(detailOf(root).querySelector('[data-info="error"]').textContent, exaSlot.textContent, 'B error slot unchanged');
+  assert.equal(detailOf(root).querySelector('[data-info="error"]').textContent, '', 'no launch failure written into B');
+  assert.equal(detailOf(root).querySelector('[data-application-fallback]').hidden, true, 'A fallback link is not shown on B');
+  assert.equal(detailOf(root).querySelector('[data-application-url]').value, '', 'no A link value on B');
+  assert.equal(detailOf(root).querySelector('[data-info="application"]').textContent, exaApplication, 'B application note untouched');
+  assert.equal(detailOf(root).querySelector('[data-action="application"]').disabled, false, 'B button not disabled by A launch');
+  assert.doesNotMatch(root.textContent, /stale tavily failure/);
+  window.close();
+});
+
+test('collapsing the card with an in-flight launch drops the late result and re-expanding shows no stale feedback', async () => {
+  const { window, root } = setup();
+  const present = { ...absent, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' };
+  const opens = []; const resolves = [];
+  const api = {
+    settingsView: async () => settings(),
+    credentialStatus: async () => present,
+    credentialRead: async () => ({ value: '', snapshot: 's' }),
+    credentialApplicationOpen: () => { opens.push(1); return new Promise((resolve, reject) => resolves.push({ resolve, reject })); },
+  };
+  await mountSources(root, api);
+  await pick(root, 'tavily');
+  detailOf(root).querySelector('[data-action="application"]').click();
+  await flush();
+  // Collapse A with its own expand control (pick() would not collapse an expanded row).
+  root.querySelector('[data-source-row][data-expanded="true"] [data-expand]').click(); await flush();
+  assert.equal(detailOf(root), null, 'A is collapsed');
+  resolves[0].reject(Object.assign(new Error('x'), { code: 'credential_application_failed', message: 'late failure' }));
+  await flush2();
+  // Re-expand A: the earlier launch's failure and fallback must not reappear.
+  await pick(root, 'tavily');
+  assert.equal(detailOf(root).querySelector('[data-info="error"]').textContent, '', 'no stale launch error after re-expand');
+  assert.equal(detailOf(root).querySelector('[data-application-fallback]').hidden, true, 'no stale fallback after re-expand');
+  assert.equal(detailOf(root).querySelector('[data-action="application"]').disabled, false, 'button is usable after re-expand');
+  assert.doesNotMatch(root.textContent, /late failure/);
   window.close();
 });
