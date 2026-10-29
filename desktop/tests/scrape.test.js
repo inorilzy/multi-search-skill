@@ -691,3 +691,77 @@ test('file source with no Core row and empty store stays blocked, and failed sta
   assert.match(root.querySelector('[data-info="saved-chain-warning"]').textContent, /整条链无法运行/);
   window.close();
 });
+
+const coreStatus = (source, effective_source, store) => ({
+  source,
+  store: { state: store, saved_at: store === 'present' ? 1 : null, error: '' },
+  effective_source,
+  key_application_available: true,
+  store_supported: true,
+});
+
+test('a credential_store source counts as configured even when the page reads an absent store', async () => {
+  const { window, root } = setup();
+  let saves = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+    credentialStatus: async source => coreStatus(source, 'credential_store', 'present'),
+    scrapeSettingsSave: async input => { saves++; return settingsView({ scrape_backends: input }); },
+  }));
+  assert.doesNotMatch(root.textContent, /缺少可用 Key|整条链无法运行/);
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.equal(saves, 1);
+  window.close();
+});
+
+test('an unavailable Core source blocks the chain even when the local store entry is present', async () => {
+  const { window, root } = setup();
+  let saves = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['tavily'] }),
+    credentialStatus: async source => coreStatus(source, 'unavailable', 'present'),
+    scrapeSettingsSave: async input => { saves++; return settingsView({ scrape_backends: input }); },
+  }));
+  assert.match(root.querySelector('[data-info="saved-chain-warning"]').textContent, /Tavily 缺少可用 Key.*整条链无法运行/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+  root.querySelector('[data-action="save"]').click();
+  await flush();
+  assert.equal(saves, 0);
+  window.close();
+});
+
+test('an unavailable Core source does not fall back to a file key when the store is absent', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    credentialStatus: async source => coreStatus(source, 'unavailable', 'absent'),
+  }));
+  assert.match(root.querySelector('[data-info="saved-chain-warning"]').textContent, /整条链无法运行/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+  window.close();
+});
+
+test('Core none stays missing even when the page-level store reads present', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+    credentialStatus: async source => coreStatus(source, 'none', 'present'),
+  }));
+  assert.match(root.querySelector('[data-info="saved-chain-warning"]').textContent, /整条链无法运行/);
+  window.close();
+});
+
+test('an unrecognized Core source stays unconfirmed instead of using the store entry', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
+    credentialStatus: async source => coreStatus(source, 'future-source', 'present'),
+  }));
+  const warning = root.querySelector('[data-info="saved-chain-warning"]').textContent;
+  assert.match(warning, /Exa 的凭据状态暂时无法确认/);
+  assert.doesNotMatch(warning, /整条链无法运行/);
+  assert.doesNotMatch(root.textContent, /Key 已配置/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  window.close();
+});
