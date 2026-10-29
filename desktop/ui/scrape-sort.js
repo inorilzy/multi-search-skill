@@ -48,12 +48,21 @@ export function createChainSorter({ list, doc, isEnabled, onCommit, announce = (
     drag = null;
   }
 
+  // 显示的序号与行的 DOM 位置保持一致（键盘拖动中实时更新）。
+  function renumberRows() {
+    rows().forEach((row, index) => {
+      const order = row.querySelector('.scrape-order');
+      if (order) order.textContent = String(index + 1).padStart(2, '0');
+    });
+  }
+
   // 键盘模式把行真实移回原位；指针模式从未动过 DOM。
   function revertKeyboard() {
     if (!drag || drag.mode !== 'keyboard') return;
     const target = rows()[drag.from];
     if (target && target !== drag.row) list.insertBefore(drag.row, target);
     else if (!target) list.append(drag.row);
+    renumberRows();
   }
 
   function cancel(message = '已取消拖动，顺序未变化') {
@@ -160,6 +169,9 @@ export function createChainSorter({ list, doc, isEnabled, onCommit, announce = (
     if (to === at) return;
     if (to < at) list.insertBefore(drag.row, rs[to]);
     else list.insertBefore(drag.row, rs[to].nextSibling);
+    renumberRows();
+    // 移动会让浏览器丢掉该行内的焦点；重新聚焦同一手柄，保证连续按键仍作用于它。
+    drag.handle.focus?.();
     announce(`${labelOf(drag.row)} 移到第 ${to + 1} 位，回车放下，Escape 取消`);
   }
 

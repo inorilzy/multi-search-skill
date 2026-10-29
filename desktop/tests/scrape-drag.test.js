@@ -259,3 +259,78 @@ test('row markup follows the new contract', async () => {
   assert.ok(!jina.classList.contains('route-row'));
   window.close();
 });
+
+// 实际键盘：按键发给当前焦点元素，而不是固定的旧手柄。
+function pressFocused(window, key) {
+  const target = window.document.activeElement;
+  assert.ok(target?.classList?.contains('scrape-drag-handle'), `focus is on a drag handle before ${key}`);
+  press(window, target, key);
+  return target;
+}
+
+test('arrow moves keep real focus on the same handle across three backends', async () => {
+  const { window, root } = setup();
+  const mounted = await mountScrape(root, api());
+  handle(root, 'exa').focus();
+  pressFocused(window, 'Enter');
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'));
+  pressFocused(window, 'ArrowDown');
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'), 'focus follows the moved row after first step');
+  pressFocused(window, 'ArrowDown');
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl', 'exa']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'), 'focus follows the moved row after second step');
+  pressFocused(window, 'ArrowUp');
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'exa', 'firecrawl']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'), 'focus follows after moving back up');
+  // 不再移动的边界键也不应让焦点丢失。
+  pressFocused(window, 'ArrowDown');
+  pressFocused(window, 'ArrowDown');
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'));
+  pressFocused(window, 'Enter');
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl', 'exa']);
+  assert.equal(mounted.dirty, true);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'), 'focus remains on the dropped handle');
+  window.close();
+});
+
+test('arrow moves keep visible order numbers and position hints in step', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api());
+  handle(root, 'jina').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'ArrowDown');
+  assert.equal(chainRow(root, 'jina').querySelector('.scrape-order').textContent, '02');
+  assert.equal(chainRow(root, 'exa').querySelector('.scrape-order').textContent, '01');
+  assert.match(statusNode(root).textContent, /第 2 位/);
+  pressFocused(window, 'ArrowDown');
+  assert.equal(chainRow(root, 'jina').querySelector('.scrape-order').textContent, '03');
+  assert.match(statusNode(root).textContent, /第 3 位/);
+  pressFocused(window, 'Enter');
+  assert.deepEqual(chainNames(root), ['exa', 'tavily', 'jina', 'firecrawl']);
+  assert.equal(chainRow(root, 'jina').querySelector('.scrape-order').textContent, '03');
+  assert.equal(chainRow(root, 'firecrawl').querySelector('.scrape-order').textContent, '04');
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'jina'));
+  window.close();
+});
+
+test('Enter drops directly and the saved readback matches the visible order', async () => {
+  const { window, root } = setup();
+  let sent = null;
+  await mountScrape(root, api({
+    scrapeSettingsSave: async input => { sent = input; return settingsView({ scrape_backends: input }); },
+  }));
+  handle(root, 'firecrawl').focus();
+  pressFocused(window, 'Enter');
+  pressFocused(window, 'ArrowUp');
+  pressFocused(window, 'ArrowUp');
+  pressFocused(window, 'Enter');
+  assert.deepEqual(chainNames(root), ['jina', 'firecrawl', 'exa', 'tavily']);
+  assert.equal(root.querySelector('[data-sort-status]').textContent.includes('顺序未变化'), false);
+  assert.equal(sent, null, 'drop alone does not write the chain');
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(sent, ['jina', 'firecrawl', 'exa', 'tavily']);
+  assert.deepEqual(chainNames(root), ['jina', 'firecrawl', 'exa', 'tavily']);
+  window.close();
+});
