@@ -1281,3 +1281,86 @@ test('a late write response after leaving the page keeps the old page locked ins
   await run('skillUpdate');
   await run('skillRemove');
 });
+
+// 14: after a target switch, each lifecycle operation acts only on the re-confirmed target and keeps managed-file protection.
+function lifecycleApi(calls, { modifiedFor = () => [], unknownFor = () => [] } = {}) {
+  const state = (project) => (project === 'B' ? 'current' : 'modified');
+  return {
+    skillPlan: async (scope, project) => { calls.push(['plan', scope, project]); return { scope, target: `C:\\${scope}-${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
+    skillInstall: async (scope, project) => { calls.push(['install', scope, project]); return { status: 'installed', target: `C:\\${scope}-${project}`, reason: 'verified', verified: true }; },
+    skillStatus: async (scope, project) => { calls.push(['status', scope, project]); return { state: state(project), installed_version: '1', release_version: '2', target: `C:\\${scope}-${project}`, modified_files: modifiedFor(project), unknown_entries: unknownFor(project), reason: `status ${project}`, can_update: state(project) !== 'current' }; },
+    skillUpdate: async (scope, project, confirm) => { calls.push(['update', scope, project, confirm]); return { status: 'updated', verified: true, reason: 'verified', backup: `C:\\bk-${project}` }; },
+    skillRemovePlan: async (scope, project) => { calls.push(['remove-plan', scope, project]); return { can_remove: true, will_delete: ['SKILL.md', '.multi-search-install.json'], will_keep: ['notes.md'], reason: `plan ${project}` }; },
+    skillRemove: async (scope, project, confirmed) => { calls.push(['remove', scope, project, confirmed]); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+  };
+}
+
+test('after a project switch, update uses only the re-checked target and asks for fresh overwrite consent', async () => {
+  const calls = [];
+  const { root, window } = setup(lifecycleApi(calls, { modifiedFor: p => (p === 'A' ? ['SKILL.md'] : []), unknownFor: () => ['notes.md'] }));
+  const field = root.querySelector('[data-field="project"]');
+  root.querySelector('input[value="project"]').click();
+  field.value = 'A'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-field="confirm-overwrite"]').click();
+  field.value = 'B'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.equal(root.querySelector('[data-field="confirm-overwrite"]').checked, false);
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true, 'B is current, no update offered');
+  assert.match(root.querySelector('[data-info="manage-plan"]').textContent, /notes\.md/);
+  assert.equal(calls.filter(c => c[0] === 'update').length, 0);
+  window.close();
+});
+
+test('update after a switch sends the overwrite consent only when freshly given for that target, with backup reported', async () => {
+  const calls = [];
+  const { root, window } = setup(lifecycleApi(calls, { modifiedFor: () => ['SKILL.md'], unknownFor: () => ['notes.md'] }));
+  const field = root.querySelector('[data-field="project"]');
+  root.querySelector('input[value="project"]').click();
+  field.value = 'A'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-field="confirm-overwrite"]').click();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.deepEqual(calls.filter(c => c[0] === 'update').at(-1), ['update', 'project', 'A', true]);
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已备份到 C:\\bk-A/);
+  field.value = 'B'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick();
+  assert.equal(calls.filter(c => c[0] === 'update').length, 1, 'no update on B without a fresh check and consent');
+  window.close();
+});
+
+test('install after a scope switch uses only the newly previewed target and never the old one', async () => {
+  const calls = [];
+  const { root, window } = setup(lifecycleApi(calls));
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  root.querySelector('input[value="project"]').click();
+  const field = root.querySelector('[data-field="project"]');
+  field.value = 'B'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  assert.equal(root.querySelector('[data-action="install"]').disabled, true);
+  root.querySelector('[data-action="install"]').click(); await tick();
+  assert.equal(calls.filter(c => c[0] === 'install').length, 1, 'no install on the un-previewed new target');
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  assert.deepEqual(calls.filter(c => c[0] === 'install').at(-1), ['install', 'project', 'B']);
+  window.close();
+});
+
+test('removal after a scope switch previews and confirms the new target; the old plan keeps notes.md protected', async () => {
+  const calls = [];
+  const { root, window } = setup(lifecycleApi(calls, { unknownFor: () => ['notes.md'] }));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="manage-plan"]').textContent, /保留：notes\.md/);
+  root.querySelector('input[value="project"]').click(); await tick();
+  const field = root.querySelector('[data-field="project"]');
+  field.value = 'B'; field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="remove-plan"]').click(); await tick();
+  root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
+  assert.deepEqual(calls.filter(c => c[0] === 'remove'), [['remove', 'project', 'B', true]]);
+  assert.match(root.querySelector('[data-info="manage-plan"]').textContent, /notes\.md/);
+  window.close();
+});
