@@ -747,3 +747,85 @@ test('a late response after leaving the page does not change the page', async ()
   assert.equal(root.querySelector('[data-action="update"]').disabled, true);
   window.close();
 });
+
+// 09: switching the target clears every result shown for the previous target, in both directions.
+test('switching global to project and back clears install and manage results from the old target', async () => {
+  const { root, window } = setup({
+    skillPlan: async () => ({ scope: 'global', target: 'C:\\global', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async () => ({ status: 'installed', target: 'C:\\global', reason: 'verified', verified: true }),
+    skillStatus: async () => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\global', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async () => ({ status: 'updated', verified: true, reason: 'verified', backup: 'C:\\backup-global' }),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  });
+  root.querySelector('[data-action="preview"]').click(); await tick();
+  root.querySelector('[data-action="install"]').click(); await tick(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="status"]').textContent, /已安装并校验/);
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已更新并校验.*C:\\backup-global/);
+  root.querySelector('input[value="project"]').click(); await tick();
+  assert.equal(root.querySelector('[data-info="status"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="target"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="manage-status"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="install"]').disabled, true);
+  root.querySelector('input[value="global"]').click(); await tick();
+  assert.equal(root.querySelector('[data-info="manage-status"]').textContent, '');
+  window.close();
+});
+
+test('switching project to global clears the old project failure and backup line', async () => {
+  const { root, window } = setup({
+    skillStatus: async () => ({ state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\A', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
+    skillUpdate: async () => ({ status: 'failed', reason: 'Cannot write', verified: false, backup: 'C:\\A-backup' }),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  });
+  root.querySelector('input[value="project"]').click();
+  root.querySelector('[data-field="project"]').value = 'A';
+  root.querySelector('[data-field="project"]').dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /未完成更新：Cannot write.*C:\\A-backup/);
+  root.querySelector('input[value="global"]').click(); await tick();
+  assert.equal(root.querySelector('[data-info="manage-status"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="manage-error"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  window.close();
+});
+
+test('a same-target manage refresh keeps the successful update line', async () => {
+  let reads = 0;
+  const { root, window } = setup({
+    skillStatus: async () => { reads += 1; return { state: reads === 1 ? 'outdated' : 'current', installed_version: reads === 1 ? '1' : '2', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: reads === 1 }; },
+    skillUpdate: async () => ({ status: 'updated', verified: true, reason: 'verified', backup: null }),
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  });
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick(); await tick();
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已更新并校验/);
+  root.querySelector('[data-action="check"]').click(); await tick();
+  assert.match(root.querySelector('[data-info="manage-status"]').textContent, /已更新并校验/);
+  window.close();
+});
+
+test('a slow update that finishes after the project changed does not write its result onto the new project', async () => {
+  const gate = deferred();
+  const { root, window } = setup({
+    skillStatus: async () => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\A', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async () => { await gate.promise; return { status: 'updated', verified: true, reason: 'verified', backup: 'C:\\A-backup' }; },
+    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+  });
+  root.querySelector('input[value="project"]').click();
+  root.querySelector('[data-field="project"]').value = 'A';
+  root.querySelector('[data-field="project"]').dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  root.querySelector('[data-action="check"]').click(); await tick();
+  root.querySelector('[data-action="update"]').click(); await tick();
+  root.querySelector('[data-field="project"]').value = 'B';
+  root.querySelector('[data-field="project"]').dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
+  gate.resolve(); await tick(); await tick();
+  assert.equal(root.querySelector('[data-info="manage-status"]').textContent, '');
+  assert.equal(root.querySelector('[data-info="installed"]').textContent, '');
+  assert.equal(root.querySelector('[data-action="update"]').disabled, true);
+  window.close();
+});
