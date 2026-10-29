@@ -395,9 +395,9 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     if (saving) { text('[data-info="error"]', '正在保存设置，完成后再刷新。'); return; }
     if (refreshing) return;
     sorter?.cancel('刷新前已取消未放下的拖动');
-    // 用户确认丢弃后清掉草稿标记，迟到的响应也不会被草稿挡回。
-    if (force) dirty = false;
-    if (dirty) {
+    // 用户确认丢弃后由 force 跳过确认；草稿标记只在成功读回新设置后清除，
+    // 刷新失败时草稿仍是未保存状态。
+    if (dirty && !force) {
       const holder = q('[data-restore-confirm]');
       holder.replaceChildren();
       const panel = doc.createElement('div');
