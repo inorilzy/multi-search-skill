@@ -966,3 +966,97 @@ test('an unconfirmed credential keeps the busy and read-only save limits', async
   assert.equal(second.root.querySelector('[data-chain-row="exa"] .scrape-drag-handle').disabled, true);
   second.window.close();
 });
+
+// T11 交叉矩阵：链内容 × 必需成员来源 → 保存资格与提示（按钮与绕过按钮的直接提交）。
+// 有效来源与凭据库条目状态分开给出：unknown 用未识别来源表示（缺失字段属于另一条规则），
+// 并可搭配任意 store 状态，覆盖"低优先级条目为空/不可读"的组合。
+const SOURCE_OF = { present: 'credential_store', absent: 'none', unreadable: 'unavailable', unknown: 'some-future-source' };
+const stateView = (state, storeState) => ({
+  store: { state: storeState ?? state, saved_at: (storeState ?? state) === 'present' ? 1 : null, error: '' },
+  effective_source: SOURCE_OF[state] ?? state,
+  key_application_available: true, store_supported: true,
+});
+
+const validityCases = [
+  { chain: ['exa'], states: { exa: 'present' }, blocked: false, wholeChainText: false },
+  { chain: ['exa'], states: { exa: 'absent' }, blocked: true, wholeChainText: true },
+  { chain: ['exa'], states: { exa: 'unreadable' }, blocked: true, wholeChainText: true },
+  { chain: ['tavily'], states: { tavily: 'present' }, blocked: false, wholeChainText: false },
+  { chain: ['tavily'], states: { tavily: 'absent' }, blocked: true, wholeChainText: true },
+  { chain: ['exa', 'tavily'], states: { exa: 'present', tavily: 'absent' }, blocked: false, wholeChainText: false },
+  { chain: ['exa', 'tavily'], states: { exa: 'absent', tavily: 'present' }, blocked: false, wholeChainText: false },
+  { chain: ['exa', 'tavily'], states: { exa: 'absent', tavily: 'absent' }, blocked: true, wholeChainText: true },
+  { chain: ['exa', 'tavily'], states: { exa: 'unreadable', tavily: 'absent' }, blocked: true, wholeChainText: true },
+  { chain: ['exa', 'tavily'], states: { exa: 'unreadable', tavily: 'unreadable' }, blocked: true, wholeChainText: true },
+  { chain: ['exa', 'jina'], states: { exa: 'absent' }, blocked: false, wholeChainText: false },
+  { chain: ['exa', 'tavily', 'jina', 'firecrawl'], states: { exa: 'absent', tavily: 'unreadable' }, blocked: false, wholeChainText: false },
+  { chain: ['jina', 'firecrawl'], states: {}, blocked: false, wholeChainText: false },
+  { chain: ['exa', 'tavily'], states: { exa: 'present', tavily: 'unknown' }, blocked: false, wholeChainText: false },
+  // 既有策略：未知不等于确认缺失，未知本身不触发整链阻止（工单 31）。
+  { chain: ['exa', 'tavily'], states: { exa: 'absent', tavily: 'unknown' }, blocked: false, wholeChainText: false },
+  { chain: ['exa'], states: { exa: 'unknown' }, blocked: false, wholeChainText: false },
+  // 确认有效来源 + 空凭据库条目：仍可用（28/29 的组合回归）。
+  { chain: ['exa', 'tavily'], states: { exa: 'present', tavily: 'present' }, storeStates: { exa: 'absent', tavily: 'unreadable' }, blocked: false, wholeChainText: false },
+];
+
+test('chain validity matrix judges save eligibility by chain members and their sources', async () => {
+  for (const testCase of validityCases) {
+    const label = `${testCase.chain.join('+')} / ${JSON.stringify(testCase.states)}${testCase.storeStates ? ' + store ' + JSON.stringify(testCase.storeStates) : ''}`;
+    const { window, root } = setup();
+    let saves = 0;
+    await mountScrape(root, api({
+      settingsView: async () => settingsView({ scrape_backends: testCase.chain }),
+      credentialStatus: async source => stateView(testCase.states[source] ?? 'present', testCase.storeStates?.[source]),
+      scrapeSettingsSave: async input => { saves++; return settingsView({ scrape_backends: input }); },
+    }));
+    const warning = root.querySelector('[data-info="saved-chain-warning"]').textContent;
+    assert.equal(root.querySelector('[data-action="save"]').disabled, testCase.blocked, `button ${label}`);
+    assert.equal(/整条链无法运行/.test(warning), testCase.wholeChainText, `whole-chain text ${label}`);
+    // 提示必须真的可见；草稿与已保存文案相同时刻意只留一处，所以按可见节点计数。
+    const visible = [root.querySelector('[data-info="chain-warning"]'), root.querySelector('[data-info="saved-chain-warning"]')]
+      .filter(node => !node.hidden && node.textContent);
+    if (testCase.blocked) {
+      assert.ok(visible.some(node => /整条链无法运行/.test(node.textContent)), `whole-chain message visible ${label}`);
+      assert.equal(visible.length, 1, `warning shown exactly once ${label}`);
+    }
+    // 绕过禁用按钮：直接提交表单也不得保存。
+    root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await flush();
+    assert.equal(saves, testCase.blocked ? 0 : 1, `direct submit ${label}`);
+    if (testCase.blocked) assert.match(root.querySelector('[data-info="error"]').textContent, /整条链无法运行|至少保留一个后端/, `visible refusal ${label}`);
+    window.close();
+  }
+});
+
+test('a chain with one confirmed member still names the missing member and never claims anonymity works', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily', 'jina'] }),
+    credentialStatus: async source => source === 'exa' ? stateView('present') : stateView('absent'),
+  }));
+  const warning = root.querySelector('[data-info="saved-chain-warning"]').textContent;
+  assert.match(warning, /Tavily 缺少可用 Key/);
+  assert.doesNotMatch(warning, /Exa/);
+  assert.doesNotMatch(warning, /整条链无法运行|Jina/);
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  assert.match(root.textContent, /Jina Reader/);
+  assert.match(root.querySelectorAll('[data-chain-row="jina"]')[0].textContent, /可匿名使用/);
+  window.close();
+});
+
+test('an empty chain blocks the button and a direct submit without calling the backend', async () => {
+  const { window, root } = setup();
+  let saves = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'tavily'] }),
+    scrapeSettingsSave: async () => { saves++; return settingsView(); },
+  }));
+  chainButton(root, 'exa', '停用').click();
+  chainButton(root, 'tavily', '停用').click();
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true);
+  assert.match(root.querySelector('[data-info="chain-warning"]').textContent, /全部抓取后端都已停用/);
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await flush();
+  assert.equal(saves, 0);
+  window.close();
+});
