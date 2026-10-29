@@ -460,22 +460,19 @@ test('03: an in-place drop after a long keyboard round trip stays clean', async 
 
 test('03: a Home/End excursion that ends on a different slot is a real change', async () => {
   const { window, root, mounted, fake } = await mountStateful();
-  const key = key => {
-    // Home/End 之后的焦点保持由工单 02 负责；本单只验证放下的脏标记，
-    // 因此每步显式聚焦同一手柄，不据此宣称 Home/End 焦点已修复。
-    handle(root, 'tavily').focus();
-    pressFocused(window, key);
-  };
-  key('Enter');   // 拿起
-  key('Home');    // 移到 0
-  key('Enter');   // 放下：真实变化
+  // 工单 02 已让 Home/End 与方向键共用移动逻辑并保持焦点，这里直接断言焦点保持，不再逐步重新聚焦。
+  handle(root, 'tavily').focus();
+  pressFocused(window, 'Enter');   // 拿起
+  pressFocused(window, 'Home');    // 移到 0，焦点仍在同一手柄
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'tavily'), 'focus stays on the picked handle after Home');
+  pressFocused(window, 'Enter');   // 放下：真实变化
   assert.deepEqual(chainNames(root), ['tavily', 'jina', 'exa', 'firecrawl']);
   assert.equal(mounted.dirty, true, 'ending on another slot marks an unsaved draft');
   assert.equal(fake.state.saves, 0, 'the drop itself never writes');
-  // 再次拿起并原地放下：相对上次放下的草稿没有新变化，脏状态不得再次“新增”或改变。
+  // 再次拿起并原地放下：相对已提交草稿没有新变化，脏状态不得再次新增或改变。
   const drafted = chainNames(root);
-  key('Enter');
-  key('Enter');
+  pressFocused(window, 'Enter');
+  pressFocused(window, 'Enter');
   assert.deepEqual(chainNames(root), drafted, 'in-place re-drop keeps the committed draft');
   assert.equal(mounted.dirty, true, 'the one real change is still the only unsaved draft');
   assert.match(statusNode(root).textContent, /仍在第 1 位，顺序未变化/);
@@ -616,5 +613,73 @@ test('03: only a real drop change can enable a save, in-place drops never dirty 
   dragKeys(window, [' ', 'ArrowDown', 'Enter']);
   assert.equal(mounted.dirty, true, 'the changed drop is the first unsaved step');
   assert.equal(fake.state.saves, 0);
+  window.close();
+});
+
+test('Home from a middle row moves to first and keeps focus on that handle', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api());
+  handle(root, 'tavily').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'Home');
+  assert.deepEqual(chainNames(root), ['tavily', 'jina', 'exa', 'firecrawl']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'tavily'));
+  assert.equal(chainRow(root, 'tavily').querySelector('.scrape-order').textContent, '01');
+  assert.match(statusNode(root).textContent, /第 1 位/);
+  window.close();
+});
+
+test('End from first row moves to last and keeps focus on that handle', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api());
+  handle(root, 'jina').focus();
+  pressFocused(window, 'Enter');
+  pressFocused(window, 'End');
+  assert.deepEqual(chainNames(root), ['exa', 'tavily', 'firecrawl', 'jina']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'jina'));
+  assert.equal(chainRow(root, 'jina').querySelector('.scrape-order').textContent, '04');
+  assert.match(statusNode(root).textContent, /第 4 位/);
+  window.close();
+});
+
+test('repeated Home or End at a boundary neither drops nor duplicates rows', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api());
+  handle(root, 'exa').focus();
+  pressFocused(window, 'Enter');
+  pressFocused(window, 'Home');
+  pressFocused(window, 'Home');
+  pressFocused(window, 'Home');
+  assert.deepEqual(chainNames(root), ['exa', 'jina', 'tavily', 'firecrawl']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'));
+  pressFocused(window, 'End');
+  pressFocused(window, 'End');
+  assert.deepEqual(chainNames(root), ['jina', 'tavily', 'firecrawl', 'exa']);
+  assert.equal(root.querySelectorAll('[data-chain-row]').length, 4);
+  assert.equal(chainRow(root, 'exa').querySelector('.scrape-order').textContent, '04');
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'exa'));
+  window.close();
+});
+
+test('Home/End mixed with arrows and Enter save the exact visible order', async () => {
+  const { window, root } = setup();
+  let sent = null;
+  await mountScrape(root, api({
+    scrapeSettingsSave: async input => { sent = input; return settingsView({ scrape_backends: input }); },
+  }));
+  handle(root, 'tavily').focus();
+  pressFocused(window, ' ');
+  pressFocused(window, 'End');
+  pressFocused(window, 'ArrowUp');
+  pressFocused(window, 'Home');
+  pressFocused(window, 'ArrowDown');
+  pressFocused(window, 'Enter');
+  const visible = chainNames(root);
+  assert.deepEqual(visible, ['jina', 'tavily', 'exa', 'firecrawl']);
+  assert.equal(root.ownerDocument.activeElement, handle(root, 'tavily'));
+  root.querySelector('[data-scrape-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.deepEqual(sent, visible);
+  assert.deepEqual(chainNames(root), visible);
   window.close();
 });

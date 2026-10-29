@@ -146,34 +146,69 @@ test('a CLI started while unmounting is cancelled instead of leaking', async () 
   window.close();
 });
 
-test('a failed cancel resets the run and allows a new test search', async () => {
+test('a failed cancel says it is unconfirmed, keeps search blocked, and never starts a second run', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
-  let starts = 0;
+  let starts = 0; let cancels = 0; let backendDone = false;
   const api = {
     detect: async () => ({ app: { status: 'ready' }, execution: { status: 'ready' } }),
-    start: async () => { starts += 1; return starts; },
-    poll: async () => ({ status: 'running' }),
-    cancel: async () => { throw 'IPC unavailable'; },
+    start: async () => { starts += 1; return 60; },
+    poll: async () => (backendDone ? { status: 'cancelled' } : { status: 'running' }),
+    cancel: async () => { cancels += 1; if (cancels === 1) throw 'IPC unavailable'; backendDone = true; return { status: 'cancelled' }; },
   };
-  const page = await mountDiagnostics(root, api, { pollInterval: 1000 });
-  root.querySelector('[data-field="query"]').value = 'retryable';
+  const page = await mountDiagnostics(root, api, { pollInterval: 5 });
+  root.querySelector('[data-field="query"]').value = 'unconfirmed';
   root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(root.querySelector('[data-action="search"]').disabled, true);
-  assert.equal(root.querySelector('[data-action="cancel"]').disabled, false);
-
   root.querySelector('[data-action="cancel"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
   const cancelError = root.querySelector('[data-execution-error]');
-  assert.match(cancelError.textContent, /取消失败，无法取消本次执行。 状态已复位/);
+  assert.match(cancelError.textContent, /取消未确认/);
+  assert.doesNotMatch(cancelError.textContent, /已取消/);
   assert.equal(cancelError.title, 'IPC unavailable', 'raw reason is kept as a tooltip, not shown as UI text');
-  assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待测试');
-  assert.equal(root.querySelector('[data-action="search"]').disabled, false, 'state is reset after a failed cancel');
-  assert.equal(root.querySelector('[data-action="cancel"]').disabled, true);
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '取消未确认');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true, 'search stays blocked while the run may still exist');
+  assert.equal(root.querySelector('[data-action="cancel"]').disabled, false, 'cancel can be retried');
+  assert.equal(starts, 1, 'a failed cancel never starts a new search');
 
   root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(starts, 2, 'a new test search can be started');
+  assert.equal(starts, 1, 'a click on search during an unconfirmed run does not start another execution');
+
+  root.querySelector('[data-action="cancel"]').click();
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(cancels, 2, 'the retry cancels the same execution');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  assert.equal(root.querySelector('[data-execution-error]').textContent, '');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false, 'search is available after a confirmed cancel');
+  assert.equal(starts, 1);
+  page.dispose();
+  window.close();
+});
+
+test('after a failed cancel, the real terminal state from polling restores the page', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let starts = 0; let finished = false;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => { starts += 1; return 61; },
+    poll: async () => (finished ? { status: 'success', payload: { results: [], errors: [] } } : { status: 'running' }),
+    cancel: async () => { throw 'IPC unavailable'; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 5 });
+  root.querySelector('[data-field="query"]').value = 'finishes later';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  root.querySelector('[data-action="cancel"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '取消未确认');
+
+  finished = true;
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '搜索成功');
+  assert.equal(root.querySelector('[data-execution-error]').textContent, '');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  assert.equal(root.querySelector('[data-action="cancel"]').disabled, true);
+  assert.equal(starts, 1, 'recovery never starts another search');
   page.dispose();
   window.close();
 });
@@ -324,25 +359,235 @@ test('a start failure after a cancel click shows the real start error and sends 
   page.dispose(); window.close();
 });
 
-test('a pending cancel that fails after the id arrives resets the run and allows a new search', async () => {
+test('a pending cancel that fails after the id arrives reports it unconfirmed and keeps search blocked', async () => {
   const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
-  let resolveStart; let starts = 0;
+  let resolveStart; let starts = 0; let cancels = 0;
   const api = {
     detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
     start: () => { starts += 1; return new Promise(resolve => { resolveStart = resolve; }); },
-    cancel: async () => { throw 'IPC unavailable'; },
+    poll: async () => ({ status: 'running' }),
+    cancel: async () => { cancels += 1; throw 'IPC unavailable'; },
   };
-  const page = await mountDiagnostics(root, api);
+  const page = await mountDiagnostics(root, api, { pollInterval: 1000 });
   root.querySelector('[data-field="query"]').value = 'cancel fails';
   root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
   root.querySelector('[data-action="cancel"]').click();
   resolveStart(5);
   await new Promise(resolve => setTimeout(resolve, 5));
-  assert.match(root.querySelector('[data-execution-error]').textContent, /取消失败，无法取消本次执行。 状态已复位/);
-  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  assert.match(root.querySelector('[data-execution-error]').textContent, /取消未确认/);
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '取消未确认');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="cancel"]').disabled, false);
   root.querySelector('[data-action="search"]').click();
   await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(starts, 2, 'a new test search starts after the failed pending cancel');
+  assert.equal(starts, 1, 'no second search starts while the first may still run');
+  assert.equal(cancels, 1);
+  page.dispose(); window.close();
+});
+
+test('a retry after a start failure does not inherit the earlier cancel intent', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const starts = [];
+  const calls = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => new Promise((resolve, reject) => { starts.push({ resolve, reject }); }),
+    poll: async id => { calls.push(['poll', id]); return { status: 'running' }; },
+    cancel: async id => { calls.push(['cancel', id]); return { status: 'cancelled' }; },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  const query = root.querySelector('[data-field="query"]');
+  const search = root.querySelector('[data-action="search"]');
+  const cancel = root.querySelector('[data-action="cancel"]');
+  query.value = 'first attempt';
+  search.click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  cancel.click();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待启动完成后取消');
+  starts[0].reject('spawn failed');
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(calls, [], 'a failed start sends no cancel and no poll');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '执行失败');
+  assert.equal(search.disabled, false, 'retry is enabled after the failure');
+  assert.equal(cancel.disabled, true);
+
+  query.value = 'second attempt';
+  search.click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在执行', 'the new run is not shown as waiting to cancel');
+  assert.equal(cancel.disabled, false, 'the new run is cancellable through the normal path');
+  assert.equal(starts.length, 2);
+  starts[1].resolve(88);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(calls, [['poll', 88]], 'the second run polls its own id and is not cancelled automatically');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在执行');
+  page.dispose(); window.close();
+});
+
+for (const [status, label, payload, error] of [
+  ['success', '搜索成功', { results: [{ title: 'Finished result', url: 'https://example.com/a' }] }, ''],
+  ['empty', '没有结果', { results: [], errors: [] }, ''],
+  ['failed', '执行失败', null, 'CLI 退出码 2'],
+  ['timed_out', '执行超时', null, 'CLI 超过测试执行时限'],
+]) {
+  test(`cancel that finds the run already ${status} shows the backend terminal state, not cancelled`, async () => {
+    const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+    let resolveCancel;
+    const api = {
+      detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+      start: async () => 51,
+      poll: async () => ({ status: 'running' }),
+      cancel: () => new Promise(resolve => { resolveCancel = resolve; }),
+    };
+    const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+    root.querySelector('[data-field="query"]').value = 'finishes first';
+    root.querySelector('[data-action="search"]').click();
+    await new Promise(resolve => setTimeout(resolve, 5));
+    root.querySelector('[data-action="cancel"]').click();
+    // Only the request has been sent: the UI must not claim cancellation yet.
+    assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在取消');
+    assert.notEqual(root.querySelector('[data-status="execution"]').textContent, '已取消');
+    resolveCancel({ id: 51, status, payload, error });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(root.querySelector('[data-status="execution"]').textContent, label);
+    assert.notEqual(root.querySelector('[data-status="execution"]').textContent, '已取消');
+    assert.equal(root.querySelector('[data-execution-error]').textContent, error);
+    assert.equal(root.querySelector('[data-action="search"]').disabled, false, 'start is available again');
+    assert.equal(root.querySelector('[data-action="cancel"]').disabled, true, 'cancel is no longer offered');
+    if (payload?.results?.length) assert.match(root.querySelector('[data-results]').textContent, /Finished result/);
+    page.dispose(); window.close();
+  });
+}
+
+test('a confirmed cancel shows cancelled and restores start only after the backend answers', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let resolveCancel;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => 52,
+    poll: async () => ({ status: 'running' }),
+    cancel: () => new Promise(resolve => { resolveCancel = resolve; }),
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'cancel wins';
+  root.querySelector('[data-action="search"]').click();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  root.querySelector('[data-action="cancel"]').click();
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true, 'start stays disabled while cancel is unconfirmed');
+  resolveCancel({ id: 52, status: 'cancelled' });
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  page.dispose(); window.close();
+});
+
+const tick = (ms = 5) => new Promise(resolve => setTimeout(resolve, ms));
+
+test('a poll response that arrives after the cancel was confirmed cannot rewrite the terminal state', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const pollResolvers = []; const cancelResolvers = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => 61,
+    poll: () => new Promise(resolve => { pollResolvers.push(resolve); }),
+    cancel: () => new Promise(resolve => { cancelResolvers.push(resolve); }),
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 30 });
+  root.querySelector('[data-field="query"]').value = 'late poll';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  pollResolvers[0]({ status: 'running' });          // running, schedules the next poll
+  await tick(40);                                    // poll #2 is now in flight
+  assert.equal(pollResolvers.length, 2);
+  root.querySelector('[data-action="cancel"]').click();
+  await tick();
+  cancelResolvers[0]({ id: 61, status: 'cancelled' });
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  pollResolvers[1]({ status: 'running' });           // the stale response arrives late
+  await tick(60);
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  assert.equal(root.querySelector('[data-action="cancel"]').disabled, true);
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  assert.equal(root.querySelector('[data-execution-error]').textContent, '', 'a dropped stale poll adds no error text');
+  assert.equal(pollResolvers.length, 2, 'the stale poll does not schedule another one');
+  page.dispose(); window.close();
+});
+
+test('a stale cancel reply cannot confirm or unlock a newer cancel attempt', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  let cancels = 0;
+  const replies = [];
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: async () => 62,
+    poll: async () => ({ status: 'running' }),
+    cancel: () => {
+      cancels += 1;
+      return new Promise((resolve, reject) => replies.push({ resolve, reject }));
+    },
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 10000 });
+  root.querySelector('[data-field="query"]').value = 'cancel retry';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  const cancelButton = root.querySelector('[data-action="cancel"]');
+  cancelButton.click();
+  await tick();
+  assert.equal(cancels, 1);
+  replies[0].reject('IPC unavailable');              // first cancel fails: unconfirmed, retry allowed
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '取消未确认');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true);
+  assert.equal(cancelButton.disabled, false, 'cancel stays retryable');
+  cancelButton.click();
+  await tick();
+  assert.equal(cancels, 2, 'the retry sends a second cancel for the same execution');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '正在取消');
+  assert.equal(cancelButton.disabled, true, 'cancel stays locked while the retry is in flight');
+  replies[0].resolve({ id: 62, status: 'cancelled' }); // the FIRST request's reply arrives after the retry
+  await tick();
+  assert.notEqual(root.querySelector('[data-status="execution"]').textContent, '已取消',
+    'an earlier cancel reply must not fake confirmation of the retry');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, true, 'start stays blocked during the retry');
+  replies[1].resolve({ id: 62, status: 'cancelled' }); // the retry itself is confirmed
+  await tick();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
+  assert.equal(root.querySelector('[data-action="search"]').disabled, false);
+  assert.equal(cancels, 2, 'no further cancel request is sent after confirmation');
+  page.dispose(); window.close();
+});
+
+test('a scheduled poll for a finished execution is not requested while a new start is awaiting cancel', async () => {
+  const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root);
+  const polled = []; let resolveStart;
+  const api = {
+    detect: async () => ({ app: { status: 'ready' }, user: { status: 'ready' }, execution: { status: 'ready' } }),
+    start: () => new Promise(resolve => { resolveStart = resolve; }),
+    poll: async id => { polled.push(id); return { status: 'running' }; },
+    cancel: async id => ({ id, status: 'cancelled' }),
+  };
+  const page = await mountDiagnostics(root, api, { pollInterval: 20 });
+  root.querySelector('[data-field="query"]').value = 'first run';
+  root.querySelector('[data-action="search"]').click();
+  await tick();
+  resolveStart(71);                                  // run 71 becomes active
+  await tick(30);                                    // it finishes and a poll is scheduled
+  api.poll = async id => { polled.push(id); return { id, status: 'empty', payload: { results: [], errors: [] } }; };
+  await tick(30);
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '没有结果');
+  const requestsBeforeSecondStart = polled.length;
+  root.querySelector('[data-action="search"]').click();  // second start is pending
+  await tick();
+  root.querySelector('[data-action="cancel"]').click();
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待启动完成后取消');
+  await tick(50);                                    // an old timer would have fired by now
+  assert.equal(polled.length, requestsBeforeSecondStart, 'no stale execution id is polled while the new start is pending');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '等待启动完成后取消');
+  resolveStart(72);
+  await tick();
+  assert.deepEqual(polled.slice(requestsBeforeSecondStart), [], 'the pending cancel goes straight to cancel, not to polling');
+  assert.equal(root.querySelector('[data-status="execution"]').textContent, '已取消');
   page.dispose(); window.close();
 });
