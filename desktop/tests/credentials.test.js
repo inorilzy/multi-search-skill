@@ -8,7 +8,7 @@ const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const flush2 = async () => { await flush(); await flush(); };
 // The backend contract reports capability unconditionally (required field); a stub that
 // omits it is contract-invalid, so supported is the default and tests override it.
-const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'sqlite' : 'none', key_application_available: false, store_supported: true, ...extra });
+const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'sqlite' : 'none', key_application_available: false, key_application_open_supported: true, store_supported: true, ...extra });
 function setup() { const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root); return { window, root }; }
 const submit = ({ window, root }) => root.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
 function api(overrides = {}) { return { credentialStatus: async () => status(), credentialRead: async () => ({ value: '' }), credentialAppend: async () => status(true), credentialRemove: async () => status(), ...overrides }; }
@@ -221,8 +221,125 @@ test('application link stays disabled without mapping, configured entry passes s
     const ctx = setup(), opened = [];
     await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: available }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'github_repos' });
     const button = ctx.root.querySelector('[data-action="application"]'); assert.equal(button.disabled, !available); button.click(); await flush(); assert.deepEqual(opened, available ? ['github_repos'] : []);
-    if (!available) assert.match(ctx.root.textContent, /申请链接待配置/); ctx.window.close();
+    if (!available) assert.match(ctx.root.textContent, /该搜索源暂无固定申请链接，无法打开申请页。/); ctx.window.close();
   }
+});
+
+test('missing application mapping disables opening without guessing or echoing a link', async () => {
+  const ctx = setup(), opened = [];
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: false, key_application_open_supported: false, key_application_url: undefined }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'serpapi' });
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  assert.equal(button.disabled, true);
+  assert.match(note.textContent, /暂无固定申请链接/);
+  // The explanation must not fabricate an address for the missing mapping.
+  assert.doesNotMatch(note.textContent, /https?:/);
+  button.click(); await flush();
+  assert.deepEqual(opened, []);
+  ctx.window.close();
+});
+
+test('unsupported platform pre-disables opening and offers the fixed link for manual copy', async () => {
+  const ctx = setup(), opened = [];
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: false, key_application_url: 'https://api.search.brave.com/app/keys' }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'brave' });
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  assert.equal(button.disabled, true, 'disabled before any click, not failing after');
+  assert.match(note.textContent, /无法直接打开系统浏览器/);
+  assert.match(note.textContent, /https:\/\/api\.search\.brave\.com\/app\/keys/);
+  button.click(); await flush();
+  assert.deepEqual(opened, []);
+  ctx.window.close();
+});
+
+test('browser capability is independent of the encrypted store capability', async () => {
+  const ctx = setup(), opened = [];
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/', store_supported: false, store_unsupported_reason: 'platform_unsupported' }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'tavily' });
+  const app = ctx.root.querySelector('[data-action="application"]');
+  // macOS-style combination: opening works even while DPAPI writes do not.
+  assert.equal(app.disabled, false);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true);
+  assert.equal(ctx.root.querySelector('[data-action="add"]').disabled, true);
+  assert.match(ctx.root.querySelector('[data-capability]').textContent, /加密凭据存储仅支持 Windows 当前用户 DPAPI/);
+  app.click(); await flush();
+  assert.deepEqual(opened, ['tavily']);
+  ctx.window.close();
+});
+
+test('application entry stays disabled and pending while the metadata query is in flight', async () => {
+  const ctx = setup(), opened = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const mounting = mountCredentials(ctx.root, api({
+    credentialStatus: async () => { await gate; return status(false, { key_application_available: true }); },
+    credentialApplicationOpen: async source => { opened.push(source); },
+  }), { source: 'tavily' });
+  await flush();
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  // An unconfirmed entry must never be clickable or claim a definite state.
+  assert.equal(button.disabled, true);
+  assert.match(note.textContent, /正在确认申请链接与打开能力/);
+  assert.doesNotMatch(note.textContent, /暂无固定申请链接|无法直接打开系统浏览器/);
+  button.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true })); await flush();
+  assert.deepEqual(opened, [], 'no open request from an unconfirmed entry');
+  release(); await mounting; await flush();
+  assert.equal(button.disabled, false);
+  assert.match(note.textContent, /使用系统浏览器打开固定申请链接/);
+  ctx.window.close();
+});
+
+test('failed metadata query is unconfirmed with retry, and retry recovers each accurate outcome', async () => {
+  const outcomes = [
+    [{ key_application_available: true, key_application_open_supported: true }, /使用系统浏览器打开固定申请链接/, false],
+    [{ key_application_available: false }, /该搜索源暂无固定申请链接/, true],
+    [{ key_application_available: true, key_application_open_supported: false, key_application_url: 'https://api.search.brave.com/app/keys' }, /无法直接打开系统浏览器/, true],
+  ];
+  for (const [extra, expected, disabled] of outcomes) {
+    const ctx = setup(); let calls = 0;
+    await mountCredentials(ctx.root, api({
+      credentialStatus: async () => { calls += 1; if (calls === 1) throw new Error('status failed'); return status(false, extra); },
+    }), { source: 'brave' });
+    const button = ctx.root.querySelector('[data-action="application"]');
+    const note = ctx.root.querySelector('[data-info="application"]');
+    // The failed query is neither "no link" nor "platform unsupported".
+    assert.equal(button.disabled, true);
+    assert.match(note.textContent, /无法确认申请链接与打开能力/);
+    assert.match(note.textContent, /刷新已保存值/);
+    assert.doesNotMatch(note.textContent, /暂无固定申请链接|无法直接打开系统浏览器/);
+    // The existing refresh control is the retry entry.
+    ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+    assert.equal(button.disabled, disabled, JSON.stringify(extra));
+    assert.match(note.textContent, expected);
+    ctx.window.close();
+  }
+});
+
+test('an earlier metadata response cannot override the newer application state', async () => {
+  const ctx = setup(); const resolvers = [];
+  const mounted = mountCredentials(ctx.root, api({
+    credentialStatus: () => new Promise(resolve => resolvers.push(resolve)),
+  }), { source: 'tavily' });
+  await flush();
+  resolvers[0](status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }));
+  await mounted; await flush2();
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  assert.equal(button.disabled, false);
+  // Start a refresh, then a second request while the first is still in flight.
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush();
+  ctx.root.querySelector('[data-action="refresh"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true })); await flush();
+  const newer = resolvers[resolvers.length - 1], older = resolvers[1];
+  newer(status(false, { key_application_available: false })); await flush2();
+  assert.equal(button.disabled, true);
+  assert.match(note.textContent, /该搜索源暂无固定申请链接/);
+  // The older answer (link available) arrives last and must not revive the entry.
+  older(status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }));
+  await flush2();
+  assert.equal(button.disabled, true, 'stale answer must not re-enable a withdrawn entry');
+  assert.match(note.textContent, /该搜索源暂无固定申请链接/);
+  assert.doesNotMatch(note.textContent, /https:/);
+  ctx.window.close();
 });
 
 test('test outcomes retain provider error messages and external request warning', async () => {
