@@ -189,6 +189,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_format_argument(sources_parser)
     sources_parser.set_defaults(handler=_handle_sources)
 
+    routes_parser = subparsers.add_parser(
+        "routes",
+        help="list the routes the current settings define, with the default route",
+    )
+    _add_format_argument(routes_parser)
+    routes_parser.set_defaults(handler=_handle_routes)
+
     keys_parser = subparsers.add_parser("keys", help="inspect or reset key health state")
     keys_subparsers = keys_parser.add_subparsers(dest="keys_command", required=True)
 
@@ -425,6 +432,13 @@ def _handle_sources(args: argparse.Namespace) -> dict[str, Any]:
     if args.scraper_stats:
         catalog["site_scraper_stats"] = site_scraper_stats()
     return catalog
+
+
+def _handle_routes(args: argparse.Namespace) -> dict[str, Any]:
+    from .src.search.resolve import describe_configured_routes
+    from .src.support.config import load_config
+
+    return describe_configured_routes(load_config())
 
 
 def _handle_keys_status(args: argparse.Namespace) -> dict[str, Any]:

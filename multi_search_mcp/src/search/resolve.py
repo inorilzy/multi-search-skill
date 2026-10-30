@@ -16,6 +16,7 @@ from ..support.config import (
 from .capabilities import PROVIDER_CAPABILITIES
 from .search_runner import (
     ALL_SOURCE_NAMES,
+    ROUTE_ALIASES,
     ROUTE_PROFILES,
     default_routes_config,
     normalize_route,
@@ -225,6 +226,32 @@ def resolve_configured_routes(config: dict) -> dict[str, RouteDefinition]:
             timeout=raw_timeout,
         )
     return routes
+
+
+def describe_configured_routes(config: dict) -> dict[str, Any]:
+    """Public route listing for ``multi-search routes``.
+
+    Uses the same route validation and default-route selection as
+    :func:`resolve_search_plan`, so every listed id is accepted by search.
+    Route groups keep their settings order; ``timeout`` is the group's own
+    value (``None`` means inherit).
+    """
+    routes = resolve_configured_routes(config)
+    default_route = _resolve_configured_route(config, routes)
+    return {
+        "default_route": default_route,
+        "aliases": dict(ROUTE_ALIASES),
+        "routes": [
+            {
+                "id": route_id,
+                "label": definition.label,
+                "sources": list(definition.sources),
+                "timeout": definition.timeout,
+                "is_default": route_id == default_route,
+            }
+            for route_id, definition in routes.items()
+        ],
+    }
 
 
 def _resolve_configured_route(
