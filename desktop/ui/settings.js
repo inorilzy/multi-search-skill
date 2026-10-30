@@ -36,7 +36,7 @@ const RERANK_KEY_SOURCE_LABELS = {
   env: '已由环境变量提供（优先于这里保存的密钥）',
   keys_file: '已保存',
   none: '未设置',
-  unreadable: '密钥文件无法读取，请检查 ~/.search-keys.json',
+  unreadable: '密钥文件无法读取，请检查 ~/.multi-search/keys.json',
 };
 // 与 core 的 _valid_base_url 同义：http(s)、有主机、无 ? 与 #。
 const baseUrlError = value => {
@@ -443,7 +443,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   }
 
   function renderRerankKey() {
-    const path = rerankKey.keys_file || '~/.search-keys.json';
+    const path = rerankKey.keys_file || '~/.multi-search/keys.json';
     const label = RERANK_KEY_SOURCE_LABELS[rerankKey.source] ?? rerankKey.source;
     text('[data-status="rerank-key"]', `密钥状态：${label}。保存在 ${path}（仅你本人可读），不写入设置；环境变量 ${rerankKey.env_var} 优先。`);
   }
@@ -497,7 +497,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     return null;
   }
 
-  // 密钥单独保存：直接写进 ~/.search-keys.json，不随设置草稿提交，也从不回显。
+  // 密钥单独保存：直接写进 ~/.multi-search/keys.json，不随设置草稿提交，也从不回显。
   async function saveRerankKey(clear) {
     if (keySaving) return;
     const field = q('[data-field="rerank-api-key"]');

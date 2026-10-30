@@ -9,7 +9,7 @@ import type * as T from './types';
 
 // Dedicated command arguments: scraping never round-trips search settings.
 export interface ScrapeSettingsSaveArgs { backends: string[] }
-// The key goes straight to ~/.search-keys.json; it is never echoed back.
+// The key goes straight to ~/.multi-search/keys.json; it is never echoed back.
 export interface RerankKeySaveArgs { key: string }
 export interface CommandContracts {
   cookie_status: { args: Record<string, never>; result: T.CookieStatus };

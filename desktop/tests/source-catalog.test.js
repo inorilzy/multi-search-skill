@@ -24,7 +24,7 @@ test('runtime module and checked-in JSON are the same catalog', () => {
   assert.deepEqual(CATALOG, ARTIFACT);
   assert.equal(SOURCE_CATALOG.schema_version, 1);
   assert.equal(SOURCE_CATALOG.key_resolution.env_alias_priority, 'last_non_empty_wins');
-  assert.deepEqual(SOURCE_CATALOG.key_resolution.order, ['env', 'credential_store', 'keys_file']);
+  assert.deepEqual(SOURCE_CATALOG.key_resolution.order, ['env', 'keys_file']);
 });
 
 test('catalog has one entry per search source and route with stable aliases', () => {
