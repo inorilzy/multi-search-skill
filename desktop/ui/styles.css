@@ -1422,6 +1422,67 @@
   .error-message:empty {
     display: none;
   }
+  /* 模型重排面板：开关行、分组字段、密钥操作与数值参数。 */
+  .ranking-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+  }
+  .ranking-toggle input {
+    width: 16px;
+    height: 16px;
+    margin: 2px 0 0;
+    flex-shrink: 0;
+    accent-color: var(--teal);
+  }
+  .ranking-toggle span {
+    display: grid;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .ranking-toggle small {
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+  .ranking-panel .error-message:not(:empty) {
+    margin: 12px 0 0;
+  }
+  .ranking-advanced {
+    display: grid;
+    gap: 18px;
+    max-width: 640px;
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px dashed var(--line);
+  }
+  .ranking-advanced>.note {
+    margin: 0;
+    padding: 0;
+    border-top: 0;
+  }
+  .rerank-key {
+    display: grid;
+    gap: 10px;
+  }
+  .rerank-key .run-controls button {
+    padding: 7px 14px;
+    font-size: 12px;
+  }
+  .rerank-key .note {
+    margin: 0;
+    padding: 0;
+    border-top: 0;
+    overflow-wrap: anywhere;
+  }
+  .ranking-advanced .settings-default-grid {
+    grid-template-columns: repeat(3,minmax(0,1fr));
+    gap: 16px;
+  }
   .settings-page .cred-status [data-status] {
     color: var(--muted);
     font-weight: 400;
@@ -1770,6 +1831,9 @@
       grid-template-columns: 1fr;
     }
     .settings-default-grid {
+      grid-template-columns: 1fr;
+    }
+    .ranking-advanced .settings-default-grid {
       grid-template-columns: 1fr;
     }
     .route-editor-grid {
