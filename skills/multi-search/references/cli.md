@@ -93,41 +93,25 @@ original previews, makes the final selection, and fetches necessary bodies.
 ```sh
 multi-search doctor --no-keys --format human
 multi-search search --source hackernews --count 3 --format json -- 'Python TaskGroup cancellation'
-multi-search search --route dev --expand 'TaskGroup ExceptionGroup' --expand 'TaskGroup cancellation semantics' --format json -- 'Python TaskGroup cancellation'
+multi-search routes --format json
+multi-search search --route '<route-id>' --expand 'TaskGroup ExceptionGroup' --expand 'TaskGroup cancellation semantics' --format json -- 'Python TaskGroup cancellation'
 ```
+
+`multi-search routes --format json` lists the routes the current settings
+define, with `default_route`, each route's `description`, `label`, `sources`,
+and `disabled_sources`. Choose a route by its `description`, falling back to
+`label` and `sources` when it has none. Omit `--route` to use `default_route`.
+Run `multi-search <command> --help` for parameters and allowed values.
 
 Put options first and the query after `--` (`multi-search search [options] -- '<query>'`).
 Without `--`, a query that starts with `-` is parsed as an option and the
 command fails with a usage error (exit 2) or, worse, changes the search.
 
-`--route` selects a configured route-group id. `--source` and `--expand` can
-repeat; explicit sources replace the selected group's source list for that
-request, while globally disabled sources are still filtered. Route groups live
-in the settings record as a complete `routes` map (shown in its JSON shape):
-
-```json
-{
-  "type": "research",
-  "routes": {
-    "research": {
-      "label": "Research",
-      "sources": ["hackernews", "github_repos", "stackoverflow"],
-      "timeout": 30
-    }
-  }
-}
-```
-
-Each id is 1-64 ASCII lowercase letters, digits, `_`, or `-`; `web` is reserved
-as an alias for `default`. For an id beginning with `-`, use the equals form,
-for example `--route=-focus`. Labels are trimmed to 1-80 characters. Sources use
-the twelve canonical search ids (legacy aliases such as `github` and `v2ex` are
-normalized and duplicates removed), and each group needs at least one. Group
-timeout is `null`/omitted to inherit or an integer from 1 through 60. An
-explicit `routes` map is authoritative: deleted built-ins are not restored.
-When `routes` is absent, the five built-in groups are supplied. Timeout
-precedence is command `--timeout`, group timeout, global config timeout, then
-the built-in route behavior. The configured `type` must name an existing group.
+`--route` takes a route id from `multi-search routes --format json`. `--source`
+and `--expand` can repeat; explicit sources replace the selected route's source
+list for that request, while globally disabled sources are still filtered.
+Use `--source` when the user names a platform. Replace `'<route-id>'` in the
+example with an id returned by route discovery.
 
 `--no-fetch` returns fused, ranked candidates only: no page bodies are fetched
 and nothing is written to the body cache; every result still carries a
