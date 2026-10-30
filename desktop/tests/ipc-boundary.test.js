@@ -25,13 +25,13 @@ test('no CLI-running command sends a path, even when a caller passes one', async
   await api.detect('C:\\evil\\multi-search.exe');
   await api.start({ query: 'q', route: 'default', sources: [], timeout: 5 }, 'C:\\evil\\multi-search.exe');
   await api.credentialTest('tavily', 'C:\\evil\\multi-search.exe');
-  await api.migrationPlan('C:\\evil\\multi-search.exe');
-  await api.migrationApply('token', ['tavily'], {}, 'C:\\evil\\multi-search.exe');
   for (const [cmd, args] of calls) {
     assert.ok(!args || !('path' in args), `${cmd} must not forward a path`);
     assert.doesNotMatch(JSON.stringify(args ?? {}), /evil/, `${cmd} must not forward caller-chosen executables`);
   }
-  assert.deepEqual(calls.map(([cmd]) => cmd), ['detect_cli', 'start_test_search', 'credential_test', 'migration_plan', 'migration_apply']);
+  assert.deepEqual(calls.map(([cmd]) => cmd), ['detect_cli', 'start_test_search', 'credential_test']);
+  assert.equal(api.migrationPlan, undefined, 'the legacy migration commands are gone');
+  assert.equal(api.migrationApply, undefined);
 });
 
 test('the Rust command signatures accept no executable path parameter', () => {

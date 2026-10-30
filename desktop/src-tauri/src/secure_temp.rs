@@ -47,6 +47,7 @@ fn name(prefix: &str, suffix: &str) -> String {
 
 /// Create a new file `<dir>/<prefix><token><suffix>` that did not exist before, write `contents`
 /// and flush it to disk. On a write failure the partial file is removed.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn create_file(dir: &Path, prefix: &str, suffix: &str, contents: &[u8]) -> io::Result<PathBuf> {
     create_file_with(dir, prefix, suffix, contents, false)
 }
@@ -107,6 +108,26 @@ pub(crate) fn replace_file(target: &Path, contents: &[u8]) -> io::Result<()> {
 /// is owner-only regardless of the umask or of the previous file's mode.
 pub(crate) fn replace_private_file(target: &Path, contents: &[u8]) -> io::Result<()> {
     replace_file_with(target, contents, true)
+}
+
+/// Create `target` with `contents` (owner-only on Unix) only if it does not exist yet. The bytes
+/// go to a fresh sibling temp file first and are hard-linked into place, so a file that another
+/// writer created in the meantime is never replaced. Returns `false` when `target` already existed.
+pub(crate) fn create_private_file_if_absent(target: &Path, contents: &[u8]) -> io::Result<bool> {
+    let dir = target
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "target has no parent directory"))?;
+    let base = target.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let temp = create_file_with(dir, &format!(".{base}.tmp-"), "", contents, true)?;
+    let result = match fs::hard_link(&temp, target) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        // No hard links on this filesystem: fall back to a rename while the target is still absent.
+        Err(_) if fs::symlink_metadata(target).is_err() => fs::rename(&temp, target).map(|()| true),
+        Err(_) => Ok(false),
+    };
+    let _ = fs::remove_file(&temp);
+    result
 }
 
 fn replace_file_with(target: &Path, contents: &[u8], owner_only: bool) -> io::Result<()> {

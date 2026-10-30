@@ -29,7 +29,7 @@ pub struct CliStatus {
     pub app: Discovery,
     pub user: Discovery,
     pub restart_required: bool,
-    /// The CLI the desktop itself will run for searches, tests and migration: the verified managed
+    /// The CLI the desktop itself will run for searches and tests: the verified managed
     /// install first, then the app PATH, then the fresh user PATH. The UI enables actions from this
     /// row only, so its ready state always matches what will actually execute.
     pub execution: Discovery,

@@ -67,8 +67,6 @@ const APP_COMMANDS: &[&str] = &[
     "credential_test",
     "credential_append",
     "credential_remove",
-    "migration_plan",
-    "migration_apply",
     "settings_view",
     "settings_save",
     "scrape_settings_save",

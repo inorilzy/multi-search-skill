@@ -21,7 +21,8 @@ from multi_search_mcp import cli
 from multi_search_mcp.src.search import registry
 from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES, default_routes_config
 from multi_search_mcp.src.state.state_store import StateStore
-from multi_search_mcp.src.support.credential_store import ConfigDatabase, default_store
+from multi_search_mcp.src.state.keys import write_keys_file_atomic
+from multi_search_mcp.src.support.config_db import ConfigDatabase
 
 HANDOFF = os.environ.get("MS_SETTINGS_HANDOFF")
 SYNTHETIC_KEYS = {"baidu": "synthetic-baidu-0701", "brave": "synthetic-brave-0702"}
@@ -42,17 +43,16 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
         self.addCleanup(stack.close)
         for name in ALL_SOURCE_NAMES:
             stack.enter_context(mock.patch.object(registry, f"search_{name}", self._fake(name)))
-        env = {"MULTI_SEARCH_CONFIG_DB": str(self.config), "MULTI_SEARCH_CONFIG": "", "TWITTER_COOKIES_PATH": ""}
+        home = root / "home"
+        env = {"MULTI_SEARCH_CONFIG_DB": str(self.config), "MULTI_SEARCH_CONFIG": "", "TWITTER_COOKIES_PATH": "",
+               "HOME": str(home), "USERPROFILE": str(home)}
         stack.enter_context(mock.patch.dict(os.environ, env))
         stack.enter_context(
             mock.patch("multi_search_mcp.src.search_web.StateStore",
                        lambda *a, **k: StateStore(root / "state.sqlite"))
         )
-        # 真实运行时必须从设置所在的同一数据库加载，不能注入字典。
-        # 合成 Key 只写入一次性副本。
-        store = default_store()
-        for provider, value in SYNTHETIC_KEYS.items():
-            store.set(provider, value)
+        # 真实运行时从一次性 HOME 下的 ~/.multi-search/keys.json 加载 Key，不能注入字典。
+        write_keys_file_atomic(home / ".multi-search" / "keys.json", SYNTHETIC_KEYS)
 
     def _fake(self, name):
         def fake(*_args, timeout=None, **_kwargs):

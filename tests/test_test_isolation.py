@@ -52,9 +52,14 @@ from multi_search_mcp.src.state.keys import load_keys
 assert config_module.USER_CONFIG_PATH == home / ".multi-search" / "multi-search-config.json"
 assert config_module.USER_CONFIG_PATH.is_file()
 assert json.loads(config_module.USER_CONFIG_PATH.read_text(encoding="utf-8")) == {}
-keys_path = home / ".search-keys.json"
+from multi_search_mcp.src.state.keys import default_keys_file
+keys_path = home / ".multi-search" / "keys.json"
+assert default_keys_file() == keys_path
 assert keys_path.is_file()
 assert json.loads(keys_path.read_text(encoding="utf-8")) == {}
+legacy_path = home / ".search-keys.json"
+assert legacy_path.is_file()
+assert json.loads(legacy_path.read_text(encoding="utf-8")) == {}
 assert state_store.DEFAULT_STATE_PATH == home / ".multi-search" / "state.sqlite"
 assert set(load_keys()) == set()
 print("isolated defaults ok")
@@ -208,6 +213,7 @@ assert os.environ.get("MULTI_SEARCH_CONFIG", "") == ""
 from multi_search_mcp.src.support.config import USER_CONFIG_PATH
 assert USER_CONFIG_PATH == home / ".multi-search" / "multi-search-config.json"
 assert USER_CONFIG_PATH.is_file()
+assert json.loads((home / ".multi-search" / "keys.json").read_text(encoding="utf-8")) == {}
 assert json.loads((home / ".search-keys.json").read_text(encoding="utf-8")) == {}
 from multi_search_mcp.src.state.keys import load_keys
 loaded_keys = load_keys()

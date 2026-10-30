@@ -5,7 +5,6 @@ import { mountSources } from './sources.js';
 import { mountSettings } from './settings.js';
 import { mountScrape } from './scrape.js';
 import { mountCookies } from './cookies.js';
-import { mountMigration } from './migration.js';
 
 // Every entry is `{ id, label, number, mount }`; `tests/test_docs_sync.py` reads this table to keep
 // the README in sync, so keep the regex-friendly literal shape (`id:` then `label:` then `number:`).
@@ -17,6 +16,5 @@ export const pages = [
   { id: 'sources', label: '搜索源与凭据', number: '04', mount: mountSources },
   { id: 'settings', label: '搜索设置', number: '05', mount: mountSettings },
   { id: 'scrape', label: '抓取设置', number: '06', mount: mountScrape },
-  { id: 'cookies', label: 'Cookie 托管', number: '07', mount: mountCookies },
-  { id: 'migration', label: '旧配置迁移', number: '08', mount: mountMigration },
+  { id: 'cookies', label: 'Cookie 导入', number: '07', mount: mountCookies },
 ];

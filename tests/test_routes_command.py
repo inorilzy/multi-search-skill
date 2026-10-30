@@ -23,9 +23,9 @@ class RoutesCommandTests(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {config.CONFIG_ENV_VAR: str(self.path)})
         patcher.start()
         self.addCleanup(patcher.stop)
-        # The command must never open the credential store or touch the network.
+        # The command must never read API keys or touch the network.
         for target in (
-            "multi_search_mcp.src.support.credential_store.default_store",
+            "multi_search_mcp.src.state.keys.load_keys",
             "socket.getaddrinfo",
             "socket.socket.connect",
         ):

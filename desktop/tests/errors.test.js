@@ -9,7 +9,6 @@ import { mountSkill } from '../ui/skill.js';
 import { mountCredentials } from '../ui/credentials.js';
 import { mountSettings } from '../ui/settings.js';
 import { mountSources } from '../ui/sources.js';
-import { mountMigration } from '../ui/migration.js';
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const here = new URL('.', import.meta.url);
@@ -88,7 +87,7 @@ test('the API layer rejects with normalized IpcError objects', async () => {
   await assert.rejects(api.credentialSave('tavily', 'k'), error => {
     assert.ok(error instanceof IpcError);
     assert.equal(error.code, 'credential_save_failed');
-    assert.equal(error.message, '凭据保存失败，请检查凭据库访问后重试。');
+    assert.equal(error.message, '凭据保存失败，请检查 ~/.multi-search/keys.json 后重试。');
     assert.equal(error.detail, 'Credential save worker failed');
     return true;
   });
@@ -147,7 +146,7 @@ test('skill page reports check/update IPC failures instead of swallowing them', 
 test('credentials page reports read/append/remove IPC failures and keeps outcomes out of the test area', async () => {
   const { window, root } = setup();
   let statusCalls = 0;
-  const overview = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite', key_application_available: false, store_supported: true };
+  const overview = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'file', key_application_available: false };
   let appendFails = true;
   await mountCredentials(root, {
     credentialStatus: async () => { statusCalls += 1; return overview; },
@@ -205,7 +204,7 @@ test('sources settings failure shows a retry button that reloads the overview', 
   const view = { route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null };
   const mounted = await mountSources(root, {
     settingsView: async () => { if (fail) throw coded('settings_view_failed', 'Settings view worker failed'); return view; },
-    credentialStatus: async () => ({ source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false, store_supported: true }),
+    credentialStatus: async () => ({ source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false }),
   });
   const error = root.querySelector('[data-list-error]');
   const retry = root.querySelector('[data-action="retry-settings"]');
@@ -218,40 +217,6 @@ test('sources settings failure shows a retry button that reloads the overview', 
   assert.equal(retry.hidden, true);
   assert.equal(error.textContent, '');
   assert.ok([...root.querySelectorAll('[data-toggle]')].every(toggle => !toggle.disabled));
-  mounted.dispose();
-  window.close();
-});
-
-test('migration IPC failures show the backend reason and hostile provider names cannot break selectors', async () => {
-  const { window, root } = setup();
-  let applyArgs = null;
-  const hostile = 'evil"]';
-  const plan = {
-    plan_token: 'token',
-    store_supported: true,
-    items: [
-      { provider: hostile, action: 'conflict', preview: 'x…1' },
-      { provider: 'tavily', action: 'migrate', preview: 'x…2' },
-    ],
-    migratable: [hostile, 'tavily'],
-    skipped: [],
-  };
-  const mounted = await mountMigration(root, {
-    migrationPlan: async () => plan,
-    migrationApply: async (...args) => { applyArgs = args; throw coded('migration_apply_failed', 'Migration apply worker failed'); },
-  });
-  root.querySelector('[data-action="preview"]').click();
-  await flush();
-  const hostileBox = [...root.querySelectorAll('[data-approve]')].find(box => box.dataset.approve === hostile);
-  hostileBox.checked = true;
-  hostileBox.closest('li').querySelector('select[data-choice]').value = 'keep';
-  root.querySelector('[data-approve="tavily"]').checked = true;
-  root.querySelector('[data-action="apply"]').click();
-  await flush();
-  assert.equal(applyArgs[1][0], hostile, 'the hostile provider name is passed through unchanged');
-  assert.match(root.querySelector('[data-info="result"]').textContent, /迁移执行失败|迁移未完成/);
-  assert.doesNotMatch(root.querySelector('[data-info="result"]').textContent, /worker/);
-  assert.equal(root.querySelector('[data-info="error"]').textContent, '', 'a failed apply is not reported as a preview error');
   mounted.dispose();
   window.close();
 });

@@ -6,7 +6,7 @@ import { mountSources } from '../ui/sources.js';
 const ALL = ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter'];
 const KEYED = ALL.slice(0, 8);
 
-const absent = { source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false, store_supported: true };
+const absent = { source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false };
 const settings = (overrides = {}) => ({ route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null, route_ok: true, ...overrides });
 
 function setup() {
@@ -58,7 +58,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
 
 test('per-source test outcomes map to their own source and never leak into a rebuilt detail', async () => {
   const { window, root } = setup();
-  const stored = { ...absent, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'sqlite' };
+  const stored = { ...absent, store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'file' };
   const outcomes = { tavily: 'success', brave: 'auth_failed', exa: 'quota' };
   const resolvers = {};
   const api = {
@@ -69,7 +69,7 @@ test('per-source test outcomes map to their own source and never leak into a reb
   await mountSources(root, api);
 
   const expected = {
-    tavily: '测试成功：Tavily 本次使用 SQLite / DPAPI。',
+    tavily: '测试成功：Tavily 本次使用 Key 文件（~/.multi-search/keys.json）。',
     brave: '认证失败：Brave 搜索 拒绝了该 Key。',
     exa: '额度不足：Exa 额度已用尽。',
   };
@@ -161,7 +161,7 @@ test('overview, search, filters and keyboard shortcut use real source state', as
   const { window, root } = setup();
   const mounted = await mountSources(root, {
     settingsView: async () => settings({ disabled_sources: ['exa', 'twitter'] }),
-    credentialStatus: async source => source === 'baidu' ? { ...absent, effective_source: 'sqlite', store: { state: 'present', saved_at: 1, error: '' } } : absent,
+    credentialStatus: async source => source === 'baidu' ? { ...absent, effective_source: 'file', store: { state: 'present', saved_at: 1, error: '' } } : absent,
   });
   assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '10');
   assert.equal(root.querySelector('[data-stat="configured"]').textContent, '1');
@@ -220,7 +220,7 @@ test('queued source changes reread current settings and preserve both toggles', 
 test('row testing sends one request and saving invalidates row success', async () => {
   const { window, root } = setup();
   let calls = 0;
-  const stored = { ...absent, effective_source: 'sqlite', store: { state: 'present', saved_at: 1, error: '' } };
+  const stored = { ...absent, effective_source: 'file', store: { state: 'present', saved_at: 1, error: '' } };
   await mountSources(root, {
     settingsView: async () => settings(),
     credentialStatus: async () => stored,
@@ -395,32 +395,32 @@ test('disposal or navigation abort releases the Ctrl K shortcut', async () => {
   window.close(); second.window.close();
 });
 
-// 03 平台写入限制不误伤生效来源展示和连接测试。
+// 03 Key 文件状态不误伤生效来源展示和连接测试。
 
-test('env effective source is shown as 环境变量生效 even when the store row is unreadable', async () => {
+test('env effective source is shown as 环境变量生效 even when the keys file is unreadable', async () => {
   const { window, root } = setup();
-  const broken = { ...absent, effective_source: 'env', env_var: 'TAVILY_API_KEY', store: { state: 'unreadable', saved_at: null, error: 'decrypt failed' }, store_supported: false };
+  const broken = { ...absent, effective_source: 'env', env_var: 'TAVILY_API_KEY', store: { state: 'unavailable', saved_at: null, error: 'not JSON' } };
   await mountSources(root, { settingsView: async () => settings(), credentialStatus: async () => broken });
   const row = root.querySelector('[data-source-row="tavily"]');
   assert.equal(row.querySelector('[data-row-status]').textContent, '环境变量生效');
   assert.equal(row.querySelector('[data-row-status]').dataset.kind, 'configured');
-  // The test button is not disabled by the broken store.
+  // The test button is not disabled by the broken file.
   assert.equal(row.querySelector('[data-row-test]').disabled, false);
   window.close();
 });
 
-test('unavailable effective_source still fails closed as 凭据库异常', async () => {
+test('an unreadable keys file without an env key is shown as an error, not as 未配置', async () => {
   const { window, root } = setup();
-  const view = { ...absent, effective_source: 'unavailable', store: { state: 'unavailable', saved_at: null, error: 'unreadable entry' } };
+  const view = { ...absent, effective_source: 'none', store: { state: 'unavailable', saved_at: null, error: 'not JSON' } };
   await mountSources(root, { settingsView: async () => settings(), credentialStatus: async () => view });
-  assert.equal(root.querySelector('[data-source-row="tavily"] [data-row-status]').textContent, '凭据库异常');
+  assert.equal(root.querySelector('[data-source-row="tavily"] [data-row-status]').textContent, 'Key 文件无法读取');
   assert.equal(root.querySelector('[data-source-row="tavily"] [data-row-status]').dataset.kind, 'error');
   window.close();
 });
 
-test('file effective_source on an unsupported platform reports 文件 Key 生效 and tests stay enabled', async () => {
+test('file effective_source reports Key 文件生效 and tests stay enabled', async () => {
   const { window, root } = setup();
-  const view = { ...absent, effective_source: 'file', file_key_count: 1, store: { state: 'absent', saved_at: null, error: '' }, store_supported: false };
+  const view = { ...absent, effective_source: 'file', file_key_count: 1, store: { state: 'present', saved_at: 1, error: '' } };
   let tested = 0;
   await mountSources(root, {
     settingsView: async () => settings(),
@@ -429,7 +429,7 @@ test('file effective_source on an unsupported platform reports 文件 Key 生效
     credentialRead: async () => ({ value: 'masked', snapshot: 's' }),
   });
   const row = root.querySelector('[data-source-row="tavily"]');
-  assert.equal(row.querySelector('[data-row-status]').textContent, '文件 Key 生效');
+  assert.equal(row.querySelector('[data-row-status]').textContent, 'Key 文件生效');
   row.querySelector('[data-row-test]').click();
   await flush(); await flush();
   assert.equal(tested, 1, 'a file-backed source still runs the connection test');
@@ -437,7 +437,7 @@ test('file effective_source on an unsupported platform reports 文件 Key 生效
   window.close();
 });
 
-test('unsupported store does not fabricate credential errors for a keyless source test', async () => {
+test('an absent keys file does not fabricate credential errors for a keyless source test', async () => {
   const { window, root } = setup();
   let tested = 0;
   await mountSources(root, {

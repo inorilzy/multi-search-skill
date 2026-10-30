@@ -49,8 +49,6 @@ pub fn backend(code: &str) -> CommandError {
         "credential_save_failed" => "凭据保存工作器失败",
         "credential_delete_failed" => "凭据删除工作器失败",
         "credential_test_failed" => "凭据测试工作器失败",
-        "migration_plan_failed" => "迁移预览工作器失败",
-        "migration_apply_failed" => "迁移执行工作器失败",
         "settings_view_failed" => "设置读取失败",
         "settings_save_failed" => "设置保存工作器失败",
         "skill_status_failed" => "Skill 状态检查工作器失败",
@@ -82,6 +80,7 @@ pub fn finish<T>(result: Result<T, String>) -> Result<T, String> {
     result.map_err(|message| CommandError::new("operation_failed", message).into())
 }
 
+#[allow(dead_code)]
 /// Lift a typed `CommandError` (already carrying its own stable code) into the
 /// command return type. Used where the error source is a typed guard, so the
 /// code never depends on the message wording.
@@ -115,7 +114,7 @@ mod tests {
             "install_plan_failed", "install_failed", "update_failed", "uninstall_failed",
             "user_path_check_failed", "user_path_change_failed", "credential_status_failed",
             "credential_save_failed", "credential_delete_failed", "credential_test_failed",
-            "migration_plan_failed", "migration_apply_failed", "settings_view_failed",
+            "settings_view_failed",
             "settings_save_failed", "skill_status_failed", "skill_update_failed",
             "skill_remove_plan_failed", "skill_remove_failed", "cookie_status_failed",
             "cookie_import_failed", "cookie_delete_failed", "credential_read_failed",
@@ -135,23 +134,5 @@ mod tests {
         let (code, message) = payload(text);
         assert_eq!(code, "operation_failed");
         assert_eq!(message, "现有配置文件不是有效的 JSON 对象");
-    }
-
-    #[test]
-    fn typed_guard_errors_keep_their_code_regardless_of_message_wording() {
-        // The code travels with the typed error, so rewording the message cannot drop it.
-        let text = typed::<()>(Err(CommandError::new("credential_platform_unsupported", "任意中文措辞")))
-            .unwrap_err();
-        let (code, message) = payload(text);
-        assert_eq!(code, "credential_platform_unsupported");
-        assert_eq!(message, "任意中文措辞");
-    }
-
-    #[test]
-    fn plain_message_never_selects_the_unsupported_code() {
-        // A string that happens to resemble the unsupported text stays generic.
-        let text = finish::<()>(Err("加密凭据存储仅支持 Windows 当前用户 DPAPI".into())).unwrap_err();
-        let (code, _) = payload(text);
-        assert_eq!(code, "operation_failed");
     }
 }

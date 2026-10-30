@@ -1,10 +1,8 @@
 //! Allowlisted desktop credential operations. Overview is non-secret; read returns one source
-//! only when its editor is expanded. All native persistence is SQLite/DPAPI, never legacy fallback.
+//! only when its editor is expanded. Keys live in `~/.multi-search/keys.json` (see `keys_file`).
 #![cfg_attr(not(feature = "native-window"), allow(dead_code))]
-use crate::credential::{self, CredentialBackend, CredentialStatus};
+use crate::credential::{self, CredentialStatus};
 use crate::provider::{self, ProviderEntry};
-
-const KEYS_FILE_NAME: &str = ".search-keys.json";
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -67,35 +65,21 @@ pub(crate) fn resolve_test_source(name: &str) -> Result<SourceEntry, String> {
 #[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct CredentialOverview {
     pub source: String,
+    /// This provider's entry in `~/.multi-search/keys.json`.
     pub store: CredentialStatus,
-    /// Effective source Core reports: env | credential_store | file | none | unavailable, or
-    /// sqlite when only the local store is known. New values may appear; UI falls back to a raw string.
+    /// Effective source Core reports: env | file | none. Before Core answers it is `file` when the
+    /// keys file has this provider, else `none`. New values may appear; UI falls back to a raw string.
     pub effective_source: String,
-    /// True when Core reports that an environment variable overrides the saved key.
-    /// Absent unless Core's `doctor` report supplied a row for this provider.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub env_overrides_store: Option<bool>,
     /// Name (never value) of the environment variable Core found set. Absent without a Core row.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub env_var: Option<String>,
-    /// Count of keys Core found in the legacy keys file. Values are never returned. Absent
+    /// Count of keys Core found in the keys file. Values are never returned. Absent
     /// without a Core row.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub file_key_count: Option<usize>,
     pub key_application_available: bool,
-    /// Whether this build's encrypted credential backend can write on the
-    /// current platform (Windows current-user DPAPI only). Reported by the
-    /// native backend, independent of whether any Key is saved; the UI keeps
-    /// writes disabled until this is `true`.
-    pub store_supported: bool,
-    /// Machine-readable reason when `store_supported` is `false` —
-    /// `platform_unsupported` today — absent when the store is supported.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
-    pub store_unsupported_reason: Option<String>,
 }
 
 /// One row of Core's `doctor --format json` -> `key_sources` report.
@@ -110,29 +94,32 @@ pub struct CoreKeySource {
     #[serde(default)]
     pub env_vars_set: Vec<String>,
     #[serde(default)]
-    pub env_overrides_store: bool,
-    #[serde(default)]
-    pub credential_store: String,
+    pub file_present: bool,
     #[serde(default)]
     pub file_key_count: usize,
-    #[serde(default)]
-    pub credential_store_error: Option<String>,
 }
 
-/// Parse the per-provider section of a `doctor --format json` payload.
-/// A payload without `key_sources` (e.g. `doctor --no-keys`) yields an empty map.
+/// Parse the per-provider section of a `doctor --format json` payload. Non-row entries
+/// (`env`, `file`, `state`) are skipped; a payload without `key_sources` yields an empty map.
 pub(crate) fn core_key_sources(payload: &Value) -> BTreeMap<String, CoreKeySource> {
     payload
         .get("key_sources")
-        .and_then(|sources| serde_json::from_value(sources.clone()).ok())
+        .and_then(Value::as_object)
+        .map(|rows| {
+            rows.iter()
+                .filter(|(_, row)| row.is_object())
+                .filter_map(|(name, row)| {
+                    serde_json::from_value(row.clone()).ok().map(|row| (name.clone(), row))
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 /// Overwrite the fields Core owns with Core's answer. Only called at the command
-/// boundary; unit tests may omit it and use the local-store answer below.
+/// boundary; unit tests may omit it and use the local answer below.
 pub(crate) fn apply_core_source(overview: &mut CredentialOverview, core: Option<&CoreKeySource>) {
     let Some(core) = core else { return };
-    overview.env_overrides_store = Some(core.env_overrides_store);
     overview.env_var = Some(core.env_vars_set.last().cloned().unwrap_or_default());
     overview.file_key_count = Some(core.file_key_count);
     if !core.effective_source.is_empty() {
@@ -140,51 +127,26 @@ pub(crate) fn apply_core_source(overview: &mut CredentialOverview, core: Option<
     }
 }
 
-/// Legacy keys file location derived from the given variables only (never the
-/// process environment). Only the migration command needs it.
-pub(crate) fn keys_file_path(variables: &BTreeMap<String, String>) -> Option<PathBuf> {
-    variables
-        .get("USERPROFILE")
-        .or_else(|| variables.get("HOME"))
-        .filter(|home| !home.is_empty())
-        .map(|home| PathBuf::from(home).join(KEYS_FILE_NAME))
-}
-
-/// Local-store answer, used until (or unless) Core's `doctor` report arrives.
+/// Local answer, used until (or unless) Core's `doctor` report arrives.
 fn local_effective_source(store_state: &str) -> &'static str {
     match store_state {
-        "present" => "sqlite",
-        "absent" => "none",
-        _ => "unavailable",
+        "present" | "unreadable" => "file",
+        _ => "none",
     }
 }
 
-pub(crate) fn overview(
-    backend: &dyn CredentialBackend,
-    variables: &BTreeMap<String, String>,
-    entry: &SourceEntry,
-) -> CredentialOverview {
-    let store = credential::status_of(credential::load(
-        backend,
-        &credential::namespace(variables),
-        entry.provider,
-    ));
-    // Locally only the store is known. Env precedence and the legacy file count are Core's
-    // answer (`apply_core_source`); the desktop never re-derives them, so they start empty.
+pub(crate) fn overview(variables: &BTreeMap<String, String>, entry: &SourceEntry) -> CredentialOverview {
+    let store = credential::status_of(credential::load(variables, entry.provider));
+    // Env precedence and the key count are Core's answer (`apply_core_source`); the desktop
+    // never re-derives them, so they start empty.
     let effective_source = local_effective_source(&store.state).to_string();
-    // The backend's platform fact is a shared compile-time check, kept separate
-    // from data presence: "未配置 Key" does not mean "存储不可用".
-    let store_supported = credential::storage_supported();
     CredentialOverview {
         source: entry.source.into(),
-        env_overrides_store: None,
         env_var: None,
         file_key_count: None,
         store,
         effective_source,
         key_application_available: application_url(entry.source).is_some(),
-        store_supported,
-        store_unsupported_reason: unsupported_reason(store_supported),
     }
 }
 #[derive(Serialize)]
@@ -197,13 +159,8 @@ pub struct CredentialValue {
     /// SHA-256 of the plaintext editor snapshot; pass it back to `credential_remove`.
     pub snapshot: String,
 }
-pub(crate) fn reveal(
-    backend: &dyn CredentialBackend,
-    variables: &BTreeMap<String, String>,
-    entry: &SourceEntry,
-) -> Result<CredentialValue, String> {
-    let value = credential::load(backend, &credential::namespace(variables), entry.provider)
-        .map_err(|e| e.to_string())?;
+pub(crate) fn reveal(variables: &BTreeMap<String, String>, entry: &SourceEntry) -> Result<CredentialValue, String> {
+    let value = credential::load(variables, entry.provider).map_err(|e| e.to_string())?;
     let value = match value {
         None => String::new(),
         Some((Value::String(s), _)) => s,
@@ -221,8 +178,8 @@ pub(crate) fn reveal(
     let snapshot = credential::snapshot(&value);
     Ok(CredentialValue { value, snapshot })
 }
-pub(crate) fn read(backend: &dyn CredentialBackend, variables: &BTreeMap<String, String>, entry: &SourceEntry) -> Result<CredentialValue, String> {
-    let mut result = reveal(backend, variables, entry)?;
+pub(crate) fn read(variables: &BTreeMap<String, String>, entry: &SourceEntry) -> Result<CredentialValue, String> {
+    let mut result = reveal(variables, entry)?;
     result.value = result.value.lines().map(|line| {
         let chars: Vec<char> = line.chars().collect();
         if chars.len() <= 8 { "********".to_string() }
@@ -230,127 +187,35 @@ pub(crate) fn read(backend: &dyn CredentialBackend, variables: &BTreeMap<String,
     }).collect::<Vec<_>>().join("\n");
     Ok(result)
 }
-pub(crate) fn save(
-    backend: &dyn CredentialBackend,
-    variables: &BTreeMap<String, String>,
-    entry: &SourceEntry,
-    key: &str,
-    now: f64,
-) -> Result<CredentialOverview, String> {
-    credential::save(
-        backend,
-        &credential::namespace(variables),
-        entry.provider,
-        key,
-        now,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(overview(backend, variables, entry))
+/// Whole-editor save into the keys file; returns the non-secret overview.
+pub(crate) fn save(variables: &BTreeMap<String, String>, entry: &SourceEntry, key: &str) -> Result<CredentialOverview, String> {
+    credential::save(variables, entry.provider, key).map_err(|e| e.to_string())?;
+    Ok(overview(variables, entry))
 }
-pub(crate) fn delete(
-    backend: &dyn CredentialBackend,
-    variables: &BTreeMap<String, String>,
-    entry: &SourceEntry,
-) -> Result<CredentialOverview, String> {
-    credential::remove(backend, &credential::namespace(variables), entry.provider)
-        .map_err(|e| e.to_string())?;
-    Ok(overview(backend, variables, entry))
+/// Remove the provider's whole entry from the keys file.
+pub(crate) fn delete(variables: &BTreeMap<String, String>, entry: &SourceEntry) -> Result<CredentialOverview, String> {
+    credential::remove(variables, entry.provider).map_err(|e| e.to_string())?;
+    Ok(overview(variables, entry))
 }
 /// Per-row append for `credential_append`: merges `keys` into the CURRENT
 /// stored rows (never a whole-list replacement), then returns the same
 /// non-secret overview as `credential_save`.
-pub(crate) fn append(
-    backend: &dyn CredentialBackend,
-    variables: &BTreeMap<String, String>,
-    entry: &SourceEntry,
-    keys: &[String],
-    now: f64,
-) -> Result<CredentialOverview, String> {
-    credential::append_keys(
-        backend,
-        &credential::namespace(variables),
-        entry.provider,
-        keys,
-        now,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(overview(backend, variables, entry))
+pub(crate) fn append(variables: &BTreeMap<String, String>, entry: &SourceEntry, keys: &[String]) -> Result<CredentialOverview, String> {
+    credential::append_keys(variables, entry.provider, keys).map_err(|e| e.to_string())?;
+    Ok(overview(variables, entry))
 }
-/// Per-row remove for `credential_remove`: `expected` is the exact
-/// `credential_read.value` snapshot the caller saw, `index` is the 0-based
-/// editor row to delete (duplicate keys remove the exact occurrence, raw Jina
-/// metadata included). Removing the last row deletes the credentials row.
+/// Per-row remove for `credential_remove`: `expected` is the snapshot hash from
+/// `credential_read`, `index` is the 0-based editor row to delete (duplicate keys
+/// remove the exact occurrence, raw Jina metadata included). Removing the last row
+/// deletes the provider's entry.
 pub(crate) fn remove_row(
-    backend: &dyn CredentialBackend,
     variables: &BTreeMap<String, String>,
     entry: &SourceEntry,
     index: usize,
     expected: &str,
-    now: f64,
 ) -> Result<CredentialOverview, String> {
-    credential::remove_at(
-        backend,
-        &credential::namespace(variables),
-        entry.provider,
-        index,
-        expected,
-        now,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(overview(backend, variables, entry))
-}
-/// Guard a command-boundary write: rejects with the stable unsupported code
-/// before the backend is touched. Read-only flows never call this. The code is
-/// produced here, at the interception point, never recovered from message text.
-#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-pub(crate) fn require_supported() -> Result<(), crate::errors::CommandError> {
-    match credential::require_storage() {
-        Ok(()) => Ok(()),
-        Err(credential::CredentialError::PlatformUnsupported) => Err(unsupported_error()),
-        Err(other) => Err(crate::errors::CommandError::new("operation_failed", other.to_string())),
-    }
-}
-
-/// The typed rejection every encrypted write returns on an unsupported platform.
-pub(crate) fn unsupported_error() -> crate::errors::CommandError {
-    crate::errors::CommandError::new(
-        credential::PLATFORM_UNSUPPORTED_CODE,
-        credential::CredentialError::PlatformUnsupported.to_string(),
-    )
-}
-
-/// The reason string both status payloads publish when the store is unsupported.
-pub(crate) fn unsupported_reason(supported: bool) -> Option<String> {
-    (!supported).then(|| credential::PLATFORM_UNSUPPORTED_REASON.to_string())
-}
-
-#[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-pub(crate) fn with_native<T>(
-    variables: &BTreeMap<String, String>,
-    operation: impl FnOnce(&dyn CredentialBackend) -> T,
-) -> T {
-    struct MissingDatabase;
-    impl CredentialBackend for MissingDatabase {
-        fn read(&self, _: &str) -> Result<Option<Vec<u8>>, credential::CredentialError> {
-            Err(credential::CredentialError::Unavailable(
-                "无法定位配置数据库".into(),
-            ))
-        }
-        fn write(&self, _: &str, _: &[u8]) -> Result<(), credential::CredentialError> {
-            Err(credential::CredentialError::Unavailable(
-                "无法定位配置数据库".into(),
-            ))
-        }
-        fn delete(&self, _: &str) -> Result<bool, credential::CredentialError> {
-            Err(credential::CredentialError::Unavailable(
-                "无法定位配置数据库".into(),
-            ))
-        }
-    }
-    match crate::config_db::path(variables) {
-        Some(path) => operation(&credential::SqliteCredentialBackend { path }),
-        None => operation(&MissingDatabase),
-    }
+    credential::remove_at(variables, entry.provider, index, expected).map_err(|e| e.to_string())?;
+    Ok(overview(variables, entry))
 }
 
 // Fixed provider consoles only; never accept a URL from the WebView.
@@ -445,10 +310,6 @@ pub(crate) fn classify(error_type: &str, label: &str) -> TestOutcome {
             "missing_key",
             format!("未找到可用的 {label} Key，请先保存。"),
         ),
-        "credential_store" => (
-            "credential_store",
-            format!("无法读取凭据库中 {label} 的 Key。请重新保存该来源的 Key。"),
-        ),
         _ => ("error", format!("{label} 测试失败，请查看 CLI 输出。")),
     };
     TestOutcome {
@@ -508,9 +369,11 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
     ]
 }
 const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Protocol handshake with the CLI. `keys-file` means API keys live in `~/.multi-search/keys.json`;
+/// an older DPAPI-era CLI (`sqlite-dpapi`) would not read that file, so it is refused.
 pub(crate) fn supports_storage(payload: &Value) -> bool {
     payload.get("config_storage").is_some_and(|v| {
-        v.get("backend").and_then(Value::as_str) == Some("sqlite-dpapi")
+        v.get("backend").and_then(Value::as_str) == Some("keys-file")
             && v.get("schema_version").and_then(Value::as_i64) == Some(1)
     })
 }
@@ -532,7 +395,7 @@ impl CredentialManager<'_> {
     ) -> Result<TestOutcome, String> {
         self.require_storage_cli(&cli)?;
         // Only this source's own key variables reach the child, so Core sees the same credential
-        // the UI page shows (env aliases win over the store in Core's resolution order).
+        // the UI page shows (env aliases win over the keys file in Core's resolution order).
         let names: Vec<&str> = crate::source_catalog::catalog()
             .source(entry.canonical)
             .map(|source| source.env.iter().map(String::as_str).collect())
@@ -582,7 +445,7 @@ pub(crate) fn require_storage_cli(
     let payload = serde_json::from_str::<Value>(&output.stdout).ok();
     if output.timed_out || !payload.as_ref().is_some_and(supports_storage) {
         return Err(
-            "此 CLI 不支持 SQLite/DPAPI 配置协议，请更新 CLI 后重试；不会读取旧 Key 来源。"
+            "此 CLI 不支持当前的配置协议，请更新 CLI 后重试。"
                 .into(),
         );
     }
@@ -592,189 +455,10 @@ pub(crate) fn require_storage_cli(
         || output.code != Some(0)
     {
         return Err(
-            "CLI 支持 SQLite/DPAPI，但当前配置数据库或凭据无法读取，请检查数据库。".into(),
+            "CLI 无法读取当前的配置数据库或 Key 文件（~/.multi-search/keys.json），请检查后重试。".into(),
         );
     }
     Ok(())
-}
-
-// Legacy migration adapter. The Python CLI (`migrate-legacy`) owns every rule and every store
-// access. This layer only maps UI source names to providers, writes a request file that holds
-// names and choices (never key values), runs the CLI, and returns its masked output.
-
-/// One planned item from the CLI. Carries masked previews and reasons only.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MigrationItem {
-    pub provider: String,
-    pub action: String,
-    #[serde(default)]
-    pub preview: String,
-    #[serde(default)]
-    pub reason: String,
-}
-
-/// Masked preview returned to the UI. `plan_token` is an opaque digest pair, not key material.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MigrationPlan {
-    pub plan_token: String,
-    pub items: Vec<MigrationItem>,
-    pub migratable: Vec<String>,
-    pub skipped: Vec<String>,
-    /// Same backend platform fact as `CredentialOverview.store_supported`,
-    /// attached by the command boundary after the CLI returns its masked plan:
-    /// format-compatible items are not executable when the store cannot write.
-    #[serde(default)]
-    pub store_supported: bool,
-    /// Machine-readable reason when `store_supported` is `false` (see
-    /// `credential::PLATFORM_UNSUPPORTED_REASON`); absent when writes can run.
-    /// Omitted from the wire like `CredentialOverview`, never `null`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub store_unsupported_reason: Option<String>,
-}
-
-/// Provider names only. The CLI never returns values.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MigrationResult {
-    pub written: Vec<String>,
-    pub kept: Vec<String>,
-    pub unchanged: Vec<String>,
-    pub failed: Vec<String>,
-    pub not_done: Vec<String>,
-    pub complete: bool,
-    /// Absolute path of the legacy plaintext file. The CLI never edits or deletes it.
-    #[serde(default)]
-    pub legacy_file: String,
-    /// True when that file still contains plaintext secrets after the migration.
-    #[serde(default)]
-    pub legacy_file_has_plaintext: bool,
-    /// Advisory warnings, e.g. a POSIX keys file readable by other users.
-    #[serde(default)]
-    pub warnings: Vec<String>,
-}
-
-/// Request file contents for `apply`. Holds only provider names, choices, and the plan token.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
-pub(crate) struct MigrationRequest {
-    pub plan_token: String,
-    pub approved: Vec<String>,
-    pub choices: BTreeMap<String, String>,
-}
-
-/// Validate UI selections against the allowlist before anything reaches the CLI.
-pub(crate) fn migration_request(
-    plan_token: &str,
-    approved_sources: &[String],
-    choices_by_source: &BTreeMap<String, String>,
-) -> Result<MigrationRequest, String> {
-    if plan_token.len() != 64 || !plan_token.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err("迁移预览无效，请重新预览".into());
-    }
-    let mut approved = Vec::new();
-    for source in approved_sources {
-        approved.push(resolve_source(source)?.provider.to_string());
-    }
-    approved.sort();
-    approved.dedup();
-    let mut choices = BTreeMap::new();
-    for (source, choice) in choices_by_source {
-        let provider = resolve_source(source)?.provider.to_string();
-        if choice != "keep" && choice != "replace" {
-            return Err("冲突选择无效，请选择保留或替换".into());
-        }
-        if !approved.contains(&provider) {
-            return Err("冲突选择必须对应已批准的源".into());
-        }
-        choices.insert(provider, choice.clone());
-    }
-    Ok(MigrationRequest {
-        plan_token: plan_token.into(),
-        approved,
-        choices,
-    })
-}
-
-/// Request file under the temp directory; removed on drop. Holds no key material.
-pub(crate) struct RequestFile(pub(crate) PathBuf);
-impl RequestFile {
-    pub(crate) fn create(dir: &Path, request: &MigrationRequest) -> Result<Self, String> {
-        let body = serde_json::to_string(request).map_err(|_| "无法准备迁移请求".to_string())?;
-        // Random name + create_new: a pre-placed request file cannot be swapped in.
-        let path = crate::secure_temp::create_file(dir, "multi-search-migrate-request-", ".json", body.as_bytes())
-            .map_err(|_| "无法准备迁移请求".to_string())?;
-        Ok(Self(path))
-    }
-}
-impl Drop for RequestFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
-/// Legacy migration is local file/state work and has no network stage.
-const MIGRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-
-fn run_migration_cli(
-    environment: &crate::RuntimeEnvironment,
-    cli: &Path,
-    args: &[String],
-) -> Result<crate::process::Output, String> {
-    let output = crate::process::bounded(cli, args, environment, MIGRATION_TIMEOUT)
-        .map_err(|_| "无法启动 CLI".to_string())?;
-    if output.timed_out {
-        return Err("迁移操作超时，请稍后重试。".into());
-    }
-    if output.code != Some(0) {
-        return Err("迁移操作未完成，请重新预览后再试。".into());
-    }
-    Ok(output)
-}
-
-/// Masked preview of the legacy keys file via the CLI.
-pub(crate) fn migration_plan(
-    environment: &crate::RuntimeEnvironment,
-    cli: &Path,
-    keys_file: &Path,
-) -> Result<MigrationPlan, String> {
-    let args = vec![
-        "migrate-legacy".into(),
-        "plan".into(),
-        "--keys-file".into(),
-        keys_file.to_string_lossy().into_owned(),
-        "--format".into(),
-        "json".into(),
-    ];
-    let output = run_migration_cli(environment, cli, &args)?;
-    let mut plan = serde_json::from_str::<MigrationPlan>(&output.stdout)
-        .map_err(|_| "无法解析迁移预览".to_string())?;
-    // The CLI reports item formats; the desktop reports whether the encrypted
-    // store can write them on this platform. Both reach the page independently.
-    plan.store_supported = credential::storage_supported();
-    plan.store_unsupported_reason = unsupported_reason(plan.store_supported);
-    Ok(plan)
-}
-
-/// Apply an approved request via the CLI, which re-checks the file and store itself.
-pub(crate) fn migration_apply(
-    environment: &crate::RuntimeEnvironment,
-    cli: &Path,
-    keys_file: &Path,
-    request: &MigrationRequest,
-) -> Result<MigrationResult, String> {
-    let dir = std::env::temp_dir();
-    let request_file = RequestFile::create(&dir, request)?;
-    let args = vec![
-        "migrate-legacy".into(),
-        "apply".into(),
-        "--keys-file".into(),
-        keys_file.to_string_lossy().into_owned(),
-        "--request".into(),
-        request_file.0.to_string_lossy().into_owned(),
-        "--format".into(),
-        "json".into(),
-    ];
-    let output = run_migration_cli(environment, cli, &args)?;
-    serde_json::from_str::<MigrationResult>(&output.stdout)
-        .map_err(|_| "无法解析迁移结果".to_string())
 }
 
 #[cfg(test)]
@@ -782,30 +466,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_read_masks_keys_and_returns_nonsecret_revision() {
-        struct Memory;
-        impl CredentialBackend for Memory {
-            fn read(&self, _: &str) -> Result<Option<Vec<u8>>, credential::CredentialError> {
-                Ok(Some(credential::encode_blob(&serde_json::json!(["abcd-secret-wxyz", "tiny"]), 1.0)))
-            }
-            fn write(&self, _: &str, _: &[u8]) -> Result<(), credential::CredentialError> { unreachable!() }
-            fn delete(&self, _: &str) -> Result<bool, credential::CredentialError> { unreachable!() }
-        }
-        let entry = resolve_source("tavily").unwrap();
-        let value = read(&Memory, &BTreeMap::new(), &entry).unwrap();
-        assert_eq!(value.value, "abcd********wxyz\n********");
-        assert_eq!(value.snapshot, credential::snapshot("abcd-secret-wxyz\ntiny"));
-        assert_eq!(reveal(&Memory, &BTreeMap::new(), &entry).unwrap().value, "abcd-secret-wxyz\ntiny");
-    }
-
-    #[test]
     fn storage_capability_rejects_old_cli() {
         assert!(!supports_storage(&serde_json::json!({})));
         assert!(supports_storage(
+            &serde_json::json!({"config_storage":{"backend":"keys-file","schema_version":1}})
+        ));
+        // A DPAPI-era CLI does not read ~/.multi-search/keys.json.
+        assert!(!supports_storage(
             &serde_json::json!({"config_storage":{"backend":"sqlite-dpapi","schema_version":1}})
         ));
         assert!(!supports_storage(
-            &serde_json::json!({"config_storage":{"backend":"sqlite-dpapi","schema_version":2}})
+            &serde_json::json!({"config_storage":{"backend":"keys-file","schema_version":2}})
         ));
     }
 

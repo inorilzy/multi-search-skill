@@ -1,4 +1,4 @@
-"""Synthetic regressions for deadline, authorization and managed-cookie boundaries."""
+"""Synthetic regressions for deadline and authorization boundaries."""
 import io
 import tempfile
 import time
@@ -9,9 +9,6 @@ from pathlib import Path
 from unittest import mock
 
 from multi_search_mcp.src.support import http, url_security
-from multi_search_mcp.src.support.credential_store import validate_twitter_cookies, CredentialStore, CredentialStoreError
-from multi_search_mcp.src.providers.xkit import ManagedTwitterCookies, load_twitter_cookies
-from multi_search_mcp.src.state import runtime
 from multi_search_mcp.src.scrape.fetch import _scope_keys
 from multi_search_mcp.src.state.key_state import SQLiteKeyManager
 from multi_search_mcp.src.state.state_store import StateStore
@@ -45,46 +42,6 @@ class RemainingBoundariesTests(unittest.TestCase):
         b = _scope_keys({'exa': 'one', 'brave': 'rotated'}, ['direct'], ['exa'])
         self.assertEqual(a, b)
         self.assertNotEqual(a, _scope_keys({'exa': 'two'}, ['direct'], ['exa']))
-
-
-class ManagedCookieTests(unittest.TestCase):
-    cookies = {'auth_token': 'synthetic-auth', 'ct0': 'synthetic-csrf'}
-
-    def test_runtime_reference_does_not_decrypt_or_read_file(self):
-        with mock.patch.object(runtime, 'load_keys', return_value={}), mock.patch('multi_search_mcp.src.support.credential_store.default_store') as store:
-            keys = runtime.load_runtime_keys({'twitter_cookies_mode': 'managed'})
-        self.assertIsInstance(keys['twitter_cookies_path'], ManagedTwitterCookies)
-        store.assert_not_called()
-
-    def test_managed_load_returns_map_directly_without_files(self):
-        with mock.patch('multi_search_mcp.src.providers.xkit.sys.platform', 'win32'), mock.patch('multi_search_mcp.src.support.credential_store.default_store') as store, mock.patch('builtins.open', side_effect=AssertionError('no plaintext file')):
-            store.return_value.get.return_value = self.cookies
-            self.assertEqual(load_twitter_cookies(ManagedTwitterCookies()), self.cookies)
-            store.return_value.get.assert_called_once_with('twitter_cookies')
-
-    def test_missing_corrupt_and_unsupported_fail_closed(self):
-        with mock.patch('builtins.open', side_effect=AssertionError('no fallback')):
-            with mock.patch('multi_search_mcp.src.providers.xkit.sys.platform', 'linux'):
-                with self.assertRaisesRegex(ValueError, 'Windows DPAPI'):
-                    load_twitter_cookies(ManagedTwitterCookies())
-            with mock.patch('multi_search_mcp.src.providers.xkit.sys.platform', 'win32'), mock.patch('multi_search_mcp.src.support.credential_store.default_store') as store:
-                for value in (None, {'auth_token': 'secret'}, {'auth_token': '\nsecret', 'ct0': 'secret'}):
-                    store.return_value.get.return_value = value
-                    with self.assertRaisesRegex(ValueError, 'unavailable or invalid') as exc:
-                        load_twitter_cookies(ManagedTwitterCookies())
-                    self.assertNotIn('secret', str(exc.exception))
-
-    def test_cookie_contract_and_independent_provider(self):
-        from multi_search_mcp.src.state.keys import CREDENTIAL_STORE_PROVIDERS
-        self.assertNotIn('twitter_cookies', CREDENTIAL_STORE_PROVIDERS)
-        self.assertEqual(validate_twitter_cookies(self.cookies), self.cookies)
-        for value in ({**self.cookies, 'bad-name': 'x'}, {**self.cookies, 'big': '中'*2000}, {**self.cookies, 'control': '\x85'}):
-            with self.assertRaises(ValueError):
-                validate_twitter_cookies(value)
-
-    def test_unknown_mode_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, 'unsupported Twitter'):
-            runtime.load_runtime_keys({'twitter_cookies_mode': 'other'})
 
 
 class SiteHistoryMigrationTests(unittest.TestCase):

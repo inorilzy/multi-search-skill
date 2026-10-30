@@ -2,7 +2,7 @@
 //!
 //! The desktop process usually holds provider credentials exported by other
 //! tools (`TAVILY_API_KEY`, `GITHUB_TOKEN`, ...). Those must never reach the
-//! CLI child, which reads credentials from `config.sqlite` + DPAPI instead.
+//! CLI child, which reads credentials from `~/.multi-search/keys.json` instead.
 mod common;
 
 use multi_search_desktop::process_fixture;

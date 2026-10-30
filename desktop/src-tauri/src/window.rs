@@ -191,26 +191,20 @@ async fn user_path_change(
     .await
 }
 // Every credential command takes a UI source name. `resolve_source` is the only way a
-// provider reaches the store target, so an unknown or crafted name fails before any access.
+// provider reaches the keys file, so an unknown or crafted name fails before any access.
 #[tauri::command]
 async fn credential_status(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
     let entry = finish(crate::credential_commands::resolve_source(&source))?;
-    let variables = manager.inner().environment.variables.clone();
     let manager = manager.inner().clone();
     offload_value(
         move || {
             // Core decides the effective source; the desktop only displays it.
             let key_sources = manager.key_sources();
-            let mut overview = crate::credential_commands::with_native(&variables, |backend| {
-                crate::credential_commands::overview(backend, &variables, &entry)
-            });
-            crate::credential_commands::apply_core_source(
-                &mut overview,
-                key_sources.get(entry.provider),
-            );
+            let mut overview = crate::credential_commands::overview(&manager.environment.variables, &entry);
+            crate::credential_commands::apply_core_source(&mut overview, key_sources.get(entry.provider));
             overview
         },
         "credential_status_failed",
@@ -224,15 +218,7 @@ async fn credential_read(
 ) -> Result<crate::credential_commands::CredentialValue, String> {
     let entry = finish(crate::credential_commands::resolve_source(&source))?;
     let variables = manager.inner().environment.variables.clone();
-    offload(
-        move || {
-            crate::credential_commands::with_native(&variables, |backend| {
-                crate::credential_commands::read(backend, &variables, &entry)
-            })
-        },
-        "credential_read_failed",
-    )
-    .await
+    offload(move || crate::credential_commands::read(&variables, &entry), "credential_read_failed").await
 }
 #[tauri::command]
 async fn credential_reveal(
@@ -241,15 +227,7 @@ async fn credential_reveal(
 ) -> Result<crate::credential_commands::CredentialValue, String> {
     let entry = finish(crate::credential_commands::resolve_source(&source))?;
     let variables = manager.inner().environment.variables.clone();
-    offload(
-        move || {
-            crate::credential_commands::with_native(&variables, |backend| {
-                crate::credential_commands::reveal(backend, &variables, &entry)
-            })
-        },
-        "credential_read_failed",
-    )
-    .await
+    offload(move || crate::credential_commands::reveal(&variables, &entry), "credential_read_failed").await
 }
 #[tauri::command]
 async fn credential_application_open(source: String) -> Result<(), String> {
@@ -259,6 +237,17 @@ async fn credential_application_open(source: String) -> Result<(), String> {
     )
     .await
 }
+/// Run a keys-file mutation, then attach Core's answer so the overview reflects the new state.
+fn with_core(
+    manager: &DesktopManager,
+    entry: &crate::credential_commands::SourceEntry,
+    result: Result<crate::credential_commands::CredentialOverview, String>,
+) -> Result<crate::credential_commands::CredentialOverview, String> {
+    let mut overview = result?;
+    let key_sources = manager.key_sources();
+    crate::credential_commands::apply_core_source(&mut overview, key_sources.get(entry.provider));
+    Ok(overview)
+}
 #[tauri::command]
 async fn credential_save(
     manager: tauri::State<'_, Arc<DesktopManager>>,
@@ -266,56 +255,27 @@ async fn credential_save(
     key: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
     let entry = finish(crate::credential_commands::resolve_source(&source))?;
-    let variables = manager.inner().environment.variables.clone();
     let manager = manager.inner().clone();
     offload(
         move || {
-            // Platform guard before the backend is built: a write that bypasses
-            // the disabled UI rejects without touching the database or files.
-            crate::errors::typed(crate::credential_commands::require_supported())?;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs_f64())
-                .unwrap_or(0.0);
-            let mut overview = crate::credential_commands::with_native(&variables, |backend| {
-                crate::credential_commands::save(backend, &variables, &entry, &key, now)
-            })?;
-            // Read Core after the write so the returned overview reflects the new state.
-            let key_sources = manager.key_sources();
-            crate::credential_commands::apply_core_source(
-                &mut overview,
-                key_sources.get(entry.provider),
-            );
-            Ok::<_, String>(overview)
+            let result = crate::credential_commands::save(&manager.environment.variables, &entry, &key);
+            with_core(&manager, &entry, result)
         },
         "credential_save_failed",
     )
     .await
 }
-// Deliberately has no platform guard (spec c): removing a stored entry is cleanup.
-// It deletes the encrypted row without decrypting or writing new key material, so
-// it stays available where encryption is unsupported. Pinned by a test in
-// tests/credentials.rs (`delete_is_cleanup_and_stays_available_without_encryption`).
 #[tauri::command]
 async fn credential_delete(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
     let entry = finish(crate::credential_commands::resolve_source(&source))?;
-    let variables = manager.inner().environment.variables.clone();
     let manager = manager.inner().clone();
     offload(
         move || {
-            let mut overview = crate::credential_commands::with_native(&variables, |backend| {
-                crate::credential_commands::delete(backend, &variables, &entry)
-            })?;
-            // Read Core after the delete so the returned overview reflects the new state.
-            let key_sources = manager.key_sources();
-            crate::credential_commands::apply_core_source(
-                &mut overview,
-                key_sources.get(entry.provider),
-            );
-            Ok::<_, String>(overview)
+            let result = crate::credential_commands::delete(&manager.environment.variables, &entry);
+            with_core(&manager, &entry, result)
         },
         "credential_delete_failed",
     )
@@ -328,17 +288,11 @@ async fn credential_append(
     keys: Vec<String>,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
     let entry = finish(crate::credential_commands::resolve_source(&source))?;
-    let variables = manager.inner().environment.variables.clone();
+    let manager = manager.inner().clone();
     offload(
         move || {
-            crate::errors::typed(crate::credential_commands::require_supported())?;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs_f64())
-                .unwrap_or(0.0);
-            crate::credential_commands::with_native(&variables, |backend| {
-                crate::credential_commands::append(backend, &variables, &entry, &keys, now)
-            })
+            let result = crate::credential_commands::append(&manager.environment.variables, &entry, &keys);
+            with_core(&manager, &entry, result)
         },
         "credential_append_failed",
     )
@@ -352,19 +306,11 @@ async fn credential_remove(
     expected: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
     let entry = finish(crate::credential_commands::resolve_source(&source))?;
-    let variables = manager.inner().environment.variables.clone();
+    let manager = manager.inner().clone();
     offload(
         move || {
-            crate::errors::typed(crate::credential_commands::require_supported())?;
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs_f64())
-                .unwrap_or(0.0);
-            crate::credential_commands::with_native(&variables, |backend| {
-                crate::credential_commands::remove_row(
-                    backend, &variables, &entry, index, &expected, now,
-                )
-            })
+            let result = crate::credential_commands::remove_row(&manager.environment.variables, &entry, index, &expected);
+            with_core(&manager, &entry, result)
         },
         "credential_remove_failed",
     )
@@ -383,54 +329,6 @@ async fn credential_test(
             manager.test_source(cli, &entry, &format!("{} connectivity check", entry.source))
         },
         "credential_test_failed",
-    )
-    .await
-}
-
-// Legacy migration: the CLI (`migrate-legacy`) owns every rule and store access; the desktop
-// only maps UI names, writes a name-only request file, and returns the masked result.
-#[tauri::command]
-async fn migration_plan(
-    manager: tauri::State<'_, Arc<DesktopManager>>,
-) -> Result<crate::credential_commands::MigrationPlan, String> {
-    let manager = manager.inner().clone();
-    offload(
-        move || {
-            let keys_file =
-                crate::credential_commands::keys_file_path(&manager.environment.variables)
-                    .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
-            let cli = manager.execution_cli()?;
-            manager.migration_plan(cli, &keys_file)
-        },
-        "migration_plan_failed",
-    )
-    .await
-}
-#[tauri::command]
-async fn migration_apply(
-    manager: tauri::State<'_, Arc<DesktopManager>>,
-    plan_token: String,
-    approved: Vec<String>,
-    choices: std::collections::BTreeMap<String, String>,
-) -> Result<crate::credential_commands::MigrationResult, String> {
-    let request = finish(crate::credential_commands::migration_request(
-        &plan_token,
-        &approved,
-        &choices,
-    ))?;
-    let manager = manager.inner().clone();
-    offload(
-        move || {
-            // Backend guard: an apply that bypasses the disabled UI must reject
-            // before the CLI runs or the legacy file/request is touched.
-            crate::errors::typed(crate::credential_commands::require_supported())?;
-            let keys_file =
-                crate::credential_commands::keys_file_path(&manager.environment.variables)
-                    .ok_or_else(|| "无法定位旧 key 文件".to_string())?;
-            let cli = manager.execution_cli()?;
-            manager.migration_apply(cli, &keys_file, &request)
-        },
-        "migration_apply_failed",
     )
     .await
 }
@@ -467,7 +365,7 @@ async fn scrape_settings_save(
     .await
 }
 
-/// 写入或清空 `~/.search-keys.json` 的 System One 密钥；值从不进入设置数据库或返回值。
+/// 写入或清空 `~/.multi-search/keys.json` 的 System One 密钥；值从不进入设置数据库或返回值。
 #[tauri::command]
 async fn rerank_key_save(
     manager: tauri::State<'_, Arc<DesktopManager>>,
@@ -680,8 +578,6 @@ pub fn run() {
             credential_test,
             credential_append,
             credential_remove,
-            migration_plan,
-            migration_apply,
             settings_view,
             settings_save,
             scrape_settings_save,

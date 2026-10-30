@@ -103,16 +103,6 @@ path = "tests/process_env.rs"
 required-features = ["test-fixtures"]
 
 [[test]]
-name = "sqlite_credentials"
-path = "tests/sqlite_credentials.rs"
-required-features = ["test-fixtures"]
-
-[[test]]
-name = "credential_rows"
-path = "tests/credential_rows.rs"
-required-features = ["test-fixtures"]
-
-[[test]]
 name = "ui_contract"
 path = "tests/ui_contract.rs"
 required-features = ["test-fixtures", "ts"]
@@ -124,7 +114,7 @@ required-features = ["native-window"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
 # ts-rs exports TypeScript declarations for the UI command contract. The
@@ -132,7 +122,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 ts-rs = { version = "12", features = ["serde-json-impl"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_Security_Credentials", "Win32_UI_Shell", "Win32_System_Diagnostics_ToolHelp", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
 default = ["native-window"]

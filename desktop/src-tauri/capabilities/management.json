@@ -34,8 +34,6 @@
     "allow-credential-test",
     "allow-credential-append",
     "allow-credential-remove",
-    "allow-migration-plan",
-    "allow-migration-apply",
     "allow-settings-view",
     "allow-settings-save",
     "allow-scrape-settings-save",

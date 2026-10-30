@@ -3,7 +3,7 @@ import type { JsonValue } from "./serde_json/JsonValue";
 
 export type CliStatus = { app: Discovery, user: Discovery, restart_required: boolean, 
 /**
- * The CLI the desktop itself will run for searches, tests and migration: the verified managed
+ * The CLI the desktop itself will run for searches and tests: the verified managed
  * install first, then the app PATH, then the fresh user PATH. The UI enables actions from this
  * row only, so its ready state always matches what will actually execute.
  */
@@ -13,46 +13,53 @@ execution: Discovery,
  */
 managed: boolean, };
 
-export type CookieStatus = { present: boolean, supported: boolean, mode: string, };
-
-export type CredentialOverview = { source: string, store: CredentialStatus, 
+export type CookieStatus = { 
 /**
- * Effective source Core reports: env | credential_store | file | none | unavailable, or
- * sqlite when only the local store is known. New values may appear; UI falls back to a raw string.
+ * The managed copy `~/.multi-search/twitter-cookies.json` exists.
+ */
+present: boolean, 
+/**
+ * Always `file`; the encrypted mode was removed. A legacy `twitter_cookies_mode` setting is ignored.
+ */
+mode: string, 
+/**
+ * Absolute path of the managed copy, or `None` without a home directory.
+ */
+path: string | null, 
+/**
+ * The `twitter_cookies_path` setting, if any (it may point at another file).
+ */
+configured_path: string | null, };
+
+export type CredentialOverview = { source: string, 
+/**
+ * This provider's entry in `~/.multi-search/keys.json`.
+ */
+store: CredentialStatus, 
+/**
+ * Effective source Core reports: env | file | none. Before Core answers it is `file` when the
+ * keys file has this provider, else `none`. New values may appear; UI falls back to a raw string.
  */
 effective_source: string, 
-/**
- * True when Core reports that an environment variable overrides the saved key.
- * Absent unless Core's `doctor` report supplied a row for this provider.
- */
-env_overrides_store?: boolean, 
 /**
  * Name (never value) of the environment variable Core found set. Absent without a Core row.
  */
 env_var?: string, 
 /**
- * Count of keys Core found in the legacy keys file. Values are never returned. Absent
+ * Count of keys Core found in the keys file. Values are never returned. Absent
  * without a Core row.
  */
-file_key_count?: number, key_application_available: boolean, 
-/**
- * Whether this build's encrypted credential backend can write on the
- * current platform (Windows current-user DPAPI only). Reported by the
- * native backend, independent of whether any Key is saved; the UI keeps
- * writes disabled until this is `true`.
- */
-store_supported: boolean, 
-/**
- * Machine-readable reason when `store_supported` is `false` —
- * `platform_unsupported` today — absent when the store is supported.
- */
-store_unsupported_reason?: string, };
+file_key_count?: number, key_application_available: boolean, };
 
 export type CredentialStatus = { 
 /**
  * present | absent | unreadable | unavailable, or a new value added later; UI must fall back to a raw string.
  */
-state: string, saved_at: number | null, error: string, };
+state: string, 
+/**
+ * Modification time of the keys file (seconds) when this provider has a key.
+ */
+saved_at: number | null, error: string, };
 
 export type CredentialValue = { 
 /**
@@ -136,7 +143,7 @@ search: boolean, cookie: boolean, aliases: Array<string>, };
 
 /**
  * 保存时提交的 `ranking` 块；字段名与 core 的配置键严格一致。
- * 密钥不在这里：它单独写进 `~/.search-keys.json`（见 `save_systemone_key`）。
+ * 密钥不在这里：它单独写进 `~/.multi-search/keys.json`（见 `save_systemone_key`）。
  */
 export type RankingInput = { 
 /**

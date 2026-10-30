@@ -30,7 +30,7 @@ const schema = (fields) => ({ fields });
 
 // One entry per public command payload type emitted by tests/ui_contract.rs.
 // Keep comments OUT of the schema({ ... }) bodies: ui_contract.rs splits each body on commas.
-// CredentialOverview.env_overrides_store/env_var/file_key_count are optional in Rust (`?:`) and
+// CredentialOverview.env_var/file_key_count are optional in Rust (`?:`) and
 // present only when Core's doctor report has a row; SettingsInput.timeout null keeps the stored value.
 // Field order matches `types.d.ts`. Adding a new status variant in Rust does
 // NOT require updating this file — only adding a *field* does.
@@ -76,12 +76,11 @@ export const schemas = {
   PathPlan: schema({
     status: 's', directory: 's', reason: 's', can_add: 'b', can_remove: 'b', warning: 's',
   }),
-  CookieStatus: schema({ present: 'b', mode: 's', supported: 'b' }),
+  CookieStatus: schema({ present: 'b', mode: 's', path: 'sn', configured_path: 'sn' }),
   CredentialStatus: schema({ state: 's', saved_at: 'nn', error: 's' }),
   CredentialOverview: schema({
     source: 's', store: 'CredentialStatus', effective_source: 's',
-    env_overrides_store: 'bo', env_var: 'so', file_key_count: 'no',
-    key_application_available: 'b', store_supported: 'b', store_unsupported_reason: 'so',
+    env_var: 'so', file_key_count: 'no', key_application_available: 'b',
   }),
   CredentialValue: schema({ value: 's', snapshot: 's' }),
   TestOutcome: schema({ result: 's', message: 's' }),

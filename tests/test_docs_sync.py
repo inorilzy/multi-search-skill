@@ -44,15 +44,15 @@ def _local_links(path):
 class ReadmeDesktopTests(unittest.TestCase):
     def test_desktop_section_lists_exactly_the_pages_the_ui_mounts(self):
         pages = _pages()
-        self.assertEqual(len(pages), 8, "pages.js must define the eight management pages")
+        self.assertEqual(len(pages), 7, "pages.js must define the seven management pages")
         self.assertEqual(
             [(page["number"], page["label"]) for page in pages],
             [("01", "概览与测试"), ("02", "安装 CLI"), ("03", "Claude Code Skill"),
              ("04", "搜索源与凭据"), ("05", "搜索设置"), ("06", "抓取设置"),
-             ("07", "Cookie 托管"), ("08", "旧配置迁移")],
+             ("07", "Cookie 导入")],
         )
         readme = README.read_text(encoding="utf-8")
-        self.assertIn("共 8 个页面", readme)
+        self.assertIn("共 7 个页面", readme)
         rows = _readme_rows(readme)
         self.assertEqual(
             rows,
@@ -67,8 +67,8 @@ class ReadmeDesktopTests(unittest.TestCase):
             "Claude Code Skill",
             "搜索源与凭据",
             "搜索设置",
-            "旧配置迁移",
-            "Windows 凭据库",
+            "Cookie 导入",
+            "~/.multi-search/keys.json",
             "bundle 的信任锚",
             "Job Object",
         ):
@@ -85,19 +85,15 @@ class ReadmeDesktopTests(unittest.TestCase):
 class ReadmeCredentialTests(unittest.TestCase):
     def test_credential_precedence_matches_the_core(self):
         readme = README.read_text(encoding="utf-8")
-        self.assertIn(
-            "环境变量（`env`）> Windows 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）",
-            readme,
-        )
-        self.assertIn("不会回退到明文文件", readme)
-        self.assertIn("multi-search/<provider>", readme)
+        self.assertIn("环境变量（`env`）> `~/.multi-search/keys.json`（`keys_file`）", readme)
+        for gone in ("credential_store", "Windows 凭据库", "migrate-legacy", "旧配置迁移", "Cookie 托管"):
+            with self.subTest(gone=gone):
+                self.assertNotIn(gone, readme)
 
-    def test_migrate_legacy_is_documented_with_both_steps(self):
+    def test_legacy_keys_file_copy_is_documented(self):
         readme = README.read_text(encoding="utf-8")
-        self.assertIn("multi-search migrate-legacy plan", readme)
-        self.assertIn("multi-search migrate-legacy apply", readme)
-        self.assertIn("plan_token", readme)
-        self.assertIn("legacy_file_has_plaintext", readme)
+        self.assertIn("`~/.search-keys.json` 只在新文件不存在时被原样复制一次", readme)
+        self.assertIn("DPAPI 加密条目不再读取", readme)
 
     def test_documented_subcommands_exist_in_the_cli(self):
         from multi_search_mcp.cli import build_parser
@@ -161,10 +157,10 @@ class ContextTests(unittest.TestCase):
         for term in (
             "受管 CLI",
             "bundle 锚点",
-            "Windows 凭据库",
+            "Key 文件（Keys file）",
             "受管 Skill",
             "skill_version",
-            "Credential store",
+            "Twitter Cookie 导入",
         ):
             with self.subTest(term=term):
                 self.assertIn(term, text)

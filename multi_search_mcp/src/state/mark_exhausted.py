@@ -2,19 +2,18 @@
 
 Live key health (cooldown / quota / invalid) is owned by the SQLite key-state
 store; this CLI only flips the operator-controlled static opt-out flag in
-``~/.search-keys.json`` so a known-dead key never enters rotation.
+``~/.multi-search/keys.json`` so a known-dead key never enters rotation.
 """
 from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
-from .keys import KeysError, write_keys_file_atomic
+from .keys import KeysError, default_keys_file, write_keys_file_atomic
 
 
 def _mark_config_exhausted(key_to_mark: str) -> bool:
-    keys_file = Path.home() / ".search-keys.json"
+    keys_file = default_keys_file()
     if not keys_file.exists():
         return False
     try:
@@ -72,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Marked Jina key as exhausted.")
         return 0
 
-    print("Jina key was not found or ~/.search-keys.json could not be updated.", file=sys.stderr)
+    print("Jina key was not found or ~/.multi-search/keys.json could not be updated.", file=sys.stderr)
     return 1
 
 

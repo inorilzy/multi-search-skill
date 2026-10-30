@@ -20,7 +20,7 @@ The scoring model is reached over the System One protocol
 (``POST {base_url}/systemone``), configured by ``ranking.base_url`` and
 ``ranking.model``.  The API key is a secret and never lives in settings: it is
 read from ``SYSTEMONE_API_KEY`` or the ``systemone`` entry of
-``~/.search-keys.json`` (the desktop writes it there, owner-only).
+``~/.multi-search/keys.json`` (the desktop writes it there, owner-only).
 
 Adapter construction lives in core: when the merged policy (config file plus
 per-request override) selects ``rrf_model`` and no reranker was injected,
@@ -56,6 +56,7 @@ from typing import Any, Protocol, runtime_checkable
 from ..support.concurrency import BoundedDaemonExecutor
 from ..support.config import ConfigError
 from ..support.http import read_limited
+from ..state.keys import default_keys_file
 
 
 class RerankError(Exception):
@@ -84,7 +85,7 @@ _RANKING_KEYS = frozenset(
 # so a stale settings row cannot break every search.
 _LEGACY_RANKING_KEYS = frozenset({"reranker_profile_id"})
 
-# Environment variable and ``~/.search-keys.json`` entry holding the key.
+# Environment variable and ``~/.multi-search/keys.json`` entry holding the key.
 SYSTEMONE_KEY_ENV = "SYSTEMONE_API_KEY"
 SYSTEMONE_KEY_NAME = "systemone"
 
@@ -340,7 +341,7 @@ GRADE_MAX = float(len(SCORE_CRITERIA) - 1)
 def load_systemone_key(
     environ: Mapping[str, str] | None = None, keys_file: Path | None = None,
 ) -> str:
-    """The System One key: ``SYSTEMONE_API_KEY`` wins over ``~/.search-keys.json``.
+    """The System One key: ``SYSTEMONE_API_KEY`` wins over ``~/.multi-search/keys.json``.
 
     Read lazily inside a scoring call, never at construction.  A malformed
     keys file yields no key (the stage then falls back as ``auth``) rather
@@ -350,8 +351,8 @@ def load_systemone_key(
     value = environ.get(SYSTEMONE_KEY_ENV, "").strip()
     if value:
         return value
-    path = keys_file or Path.home() / ".search-keys.json"
     try:
+        path = keys_file or default_keys_file()
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return ""

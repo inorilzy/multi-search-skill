@@ -2,7 +2,7 @@
 
 Regression coverage for the review findings that every SQLite call opened its own
 connection (so a read-modify-write spanned several transactions) and that
-``mark_exhausted`` rewrote ``~/.search-keys.json`` in place, which could truncate
+``mark_exhausted`` rewrote the keys file in place, which could truncate
 the only copy of every key on a crash.
 """
 import json
@@ -209,8 +209,8 @@ class KeysFileWriteTests(unittest.TestCase):
     def test_mark_exhausted_uses_the_atomic_path(self):
         # `mark_exhausted` owns the default location, not an injected path.
         home = Path(self.temp.name) / "home"
-        home.mkdir()
-        keys_file = home / ".search-keys.json"
+        (home / ".multi-search").mkdir(parents=True)
+        keys_file = home / ".multi-search" / "keys.json"
         keys_file.write_text(json.dumps({"jina": [{"key": "j1"}, {"key": "j2"}]}), encoding="utf-8")
         with mock.patch("pathlib.Path.home", return_value=home):
             self.assertTrue(_mark_config_exhausted("j2"))
@@ -218,12 +218,13 @@ class KeysFileWriteTests(unittest.TestCase):
             json.loads(keys_file.read_text(encoding="utf-8")),
             {"jina": [{"key": "j1"}, {"key": "j2", "exhausted": True}]},
         )
-        self.assertEqual([item.name for item in home.iterdir()], [".search-keys.json"])
+        self.assertEqual([item.name for item in home.iterdir()], [".multi-search"])
+        self.assertEqual([item.name for item in keys_file.parent.iterdir()], ["keys.json"])
 
     def test_failed_mark_keeps_the_original_file_and_reports_false(self):
         home = Path(self.temp.name) / "home"
-        home.mkdir()
-        keys_file = home / ".search-keys.json"
+        (home / ".multi-search").mkdir(parents=True)
+        keys_file = home / ".multi-search" / "keys.json"
         original = json.dumps({"jina": [{"key": "j1"}]})
         keys_file.write_text(original, encoding="utf-8")
         with mock.patch("pathlib.Path.home", return_value=home), mock.patch(
@@ -231,7 +232,8 @@ class KeysFileWriteTests(unittest.TestCase):
         ):
             self.assertFalse(_mark_config_exhausted("j1"))
         self.assertEqual(keys_file.read_text(encoding="utf-8"), original)
-        self.assertEqual([item.name for item in home.iterdir()], [".search-keys.json"])
+        self.assertEqual([item.name for item in home.iterdir()], [".multi-search"])
+        self.assertEqual([item.name for item in keys_file.parent.iterdir()], ["keys.json"])
 
 
 class KeysFilePermissionTests(unittest.TestCase):
@@ -239,7 +241,8 @@ class KeysFilePermissionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="keys-permission-")
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name)
-        self.path = self.home / ".search-keys.json"
+        self.path = self.home / ".multi-search" / "keys.json"
+        self.path.parent.mkdir()
 
     @unittest.skipUnless(os.name == "posix", "POSIX file modes only")
     def test_world_readable_file_is_reported(self):

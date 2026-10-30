@@ -105,6 +105,6 @@ try {
 Write-Output ""
 Write-Output "Twitter/X setup:"
 Write-Output "  xkit-py is installed with all project dependencies by ./multi_search_mcp/src/support/init.ps1 (uv sync --locked)."
-Write-Output "  Add twitter cookies to ~/.search-keys.json with auth_token and ct0, or set TWITTER_COOKIES_PATH."
+Write-Output "  Add twitter cookies to ~/.multi-search/keys.json with auth_token and ct0, or set TWITTER_COOKIES_PATH."
 
 exit $doctorExit

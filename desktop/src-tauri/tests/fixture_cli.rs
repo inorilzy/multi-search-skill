@@ -74,8 +74,8 @@ fn main() {
     }
     if args.first().map(String::as_str) == Some("doctor") {
         if env::var("FIXTURE_STORAGE").as_deref() == Ok("legacy") { println!("{{\"outcome\":\"success\"}}"); }
-        else if env::var("FIXTURE_STORAGE").as_deref() == Ok("corrupt") { println!("{{\"config_storage\":{{\"backend\":\"sqlite-dpapi\",\"schema_version\":1}},\"config_error\":\"unreadable\"}}"); std::process::exit(1); }
-        else { println!("{{\"config_storage\":{{\"backend\":\"sqlite-dpapi\",\"schema_version\":1}}}}"); }
+        else if env::var("FIXTURE_STORAGE").as_deref() == Ok("corrupt") { println!("{{\"config_storage\":{{\"backend\":\"keys-file\",\"schema_version\":1}},\"config_error\":\"unreadable\"}}"); std::process::exit(1); }
+        else { println!("{{\"config_storage\":{{\"backend\":\"keys-file\",\"schema_version\":1}}}}"); }
         return;
     }
     if args.first().map(String::as_str) == Some("descendant") {

@@ -556,11 +556,15 @@ def isolated_test_environment(
         (home / ".local" / "state").mkdir(parents=True)
 
         config_path = home / ".multi-search" / "multi-search-config.json"
-        keys_path = home / ".search-keys.json"
+        keys_path = home / ".multi-search" / "keys.json"
+        # The pre-unification location must stay inside the disposable home
+        # too, so the one-time copy can never read a real user file.
+        legacy_keys_path = home / ".search-keys.json"
         state_path = home / ".multi-search" / "state.sqlite"
         report_path = temp_root / "network-violations.log"
         config_path.write_text("{}\n", encoding="utf-8")
         keys_path.write_text("{}\n", encoding="utf-8")
+        legacy_keys_path.write_text("{}\n", encoding="utf-8")
         report_path.touch()
         # Emulate the desktop schema owner in the disposable profile; the CLI
         # itself must never create or migrate its configuration database.

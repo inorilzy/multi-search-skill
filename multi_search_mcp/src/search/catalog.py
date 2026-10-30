@@ -27,9 +27,8 @@ from .search_runner import (
 SCHEMA_VERSION = 1
 
 # Credential resolution order in ``state.keys.load_keys``. Environment
-# variables win over the Windows credential store, which wins over the legacy
-# JSON keys file.
-KEY_RESOLUTION_ORDER = ("env", "credential_store", "keys_file")
+# variables win over the keys file (~/.multi-search/keys.json).
+KEY_RESOLUTION_ORDER = ("env", "keys_file")
 # ``load_keys`` walks each provider's env aliases in declaration order and
 # assigns every non-empty value, so the last non-empty alias wins.
 ENV_ALIAS_PRIORITY = "last_non_empty_wins"
@@ -209,8 +208,8 @@ def build_source_catalog() -> dict[str, Any]:
             "order": list(KEY_RESOLUTION_ORDER),
             "env_alias_priority": ENV_ALIAS_PRIORITY,
             "description": (
-                "Environment variables override the Windows credential store, which "
-                "overrides ~/.search-keys.json. Within one provider the env aliases are "
+                "Environment variables override ~/.multi-search/keys.json. "
+                "Within one provider the env aliases are "
                 "applied in listed order and the last non-empty value wins."
             ),
         },

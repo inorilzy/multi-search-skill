@@ -28,7 +28,7 @@
 
 **重排（Rerank）**：在两级 RRF 融合之后、正文抓取之前，用可选的外部模型给候选打相关性分数（`relevance_score`，[0,1]）并重新排序；默认关闭，排序完全由 RRF 决定且不产生任何模型调用。
 
-**重排端点（Rerank endpoint）**：打分模型所在的 System One 服务，由 `ranking.base_url` 与 `ranking.model` 指定，请求发往 `{base_url}/systemone`；开启重排时两者都必填。API 密钥不属于设置，保存在 `~/.search-keys.json` 的 `systemone` 条目，环境变量 `SYSTEMONE_API_KEY` 优先。
+**重排端点（Rerank endpoint）**：打分模型所在的 System One 服务，由 `ranking.base_url` 与 `ranking.model` 指定，请求发往 `{base_url}/systemone`；开启重排时两者都必填。API 密钥不属于设置，保存在 `~/.multi-search/keys.json` 的 `systemone` 条目，环境变量 `SYSTEMONE_API_KEY` 优先。
 
 **重排回退（Rerank fallback）**：模型阶段出现任何失败（缺 key、超时、限流、鉴权或响应非法）时整体放弃重排，保留完整 RRF 顺序，响应标记 `mode_used="rrf"` 与无凭据的 `fallback_reason`，所有 `relevance_score` 为 `null`。
 
@@ -45,8 +45,8 @@ Unix 上还要求产物与 `runtime/bin/*` 保持可执行位，权限被改动�
 
 **bundle 锚点（Bundle anchor）**：受控构建脚本对 bundle 的 `manifest.json` 原始字节计算的 SHA-256，编译进桌面二进制。安装或更新时先比对锚点，再解析 manifest 并逐文件核对大小与哈希；不匹配即拒绝，不覆盖未知安装。
 
-**Windows 凭据库（Credential store）**：桌面端与 CLI 共用的搜索 Key 存储，位于 `~/.multi-search/config.sqlite`（`MULTI_SEARCH_CONFIG_DB` 可为隔离运行改指路径），每个 provider 一行，值以当前 Windows 用户的 DPAPI 加密，非 Windows 不可用且没有明文回退。Key 来源优先级是环境变量（`env`）> 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）；凭据库条目损坏或无法解密时该 provider fail-closed，不回退明文文件。旧的 Windows 凭据管理器通用凭据 `multi-search/<provider>` 只作为显式迁移源读取，不再写入。
+**Key 文件（Keys file）**：桌面端与 CLI 共用的搜索 Key 存储，所有平台都是 `~/.multi-search/keys.json` 这一个明文 JSON 文件（Unix 上 0600，仅当前用户可读写）。Key 来源优先级是环境变量（`env`）> Key 文件（`keys_file`）。写入方（桌面端编辑器、Jina 软删除、System One 密钥）都原子替换、只改动自己的条目并保留其余内容；文件无法解析时视为错误，不会被覆盖。旧的 `~/.search-keys.json` 只在新文件不存在时被复制一次，旧文件不修改也不删除；早期 Windows 版本写在 `config.sqlite` 中的 DPAPI 加密条目不再读取。
 
-**Twitter Cookie 托管（Managed Twitter cookies）**：Twitter/X 的 Cookie 有两种模式。`file`（缺省）读取设置中的明文 Cookie 文件路径；`managed` 是用户在桌面端显式导入后，把 Cookie 以当前用户 DPAPI 加密存入凭据库，实际调用 X 时才解密，不写临时明文文件，也不进入 API-key 轮换。`managed` 缺失、损坏或在非 Windows 上一律 fail-closed，不回退旧文件。协议、存储校验与威胁边界见 [Cookie 协议](desktop/src-tauri/COOKIE-PROTOCOL.md)。
+**Twitter Cookie 导入（Twitter cookie import）**：Twitter/X 的 Cookie 只有文件模式，按 `TWITTER_COOKIES_PATH` > 设置中的 `twitter_cookies_path` > Key 文件的 `twitter` 条目读取。桌面端“Cookie 导入”把选定的 Cookie JSON 校验后复制到 `~/.multi-search/twitter-cookies.json`（0600）并写入 `twitter_cookies_path`；删除只移除这份副本。旧设置中的 `twitter_cookies_mode` 被忽略。协议见 [Cookie 协议](desktop/src-tauri/COOKIE-PROTOCOL.md)。
 
 **受管 Skill（Managed Skill）**：桌面端安装到 `.claude/skills/multi-search` 的 Skill。仓库 `skills/multi-search/` 是唯一权威来源，桌面二进制在编译期原样打包其全部 5 个文件；`skill_version` 是打包内容的哈希，内容变化即提示更新。安装、更新和移除只触碰本工具写入并记录在 marker 中的文件。

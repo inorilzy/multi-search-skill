@@ -80,13 +80,13 @@
 
 ## 5. Key 与状态
 
-> Jina 凭据条目中的静态 `exhausted`（凭据库或 `~/.search-keys.json`）与 SQLite 状态库中的 `quota_exhausted` 是两层独立状态：前者是操作员维护的配置级静态排除，后者是运行时健康状态。配置仍启用不代表运行时一定可用；运行时暂不可用也不会自动改写配置。
+> Jina 凭据条目中的静态 `exhausted`（`~/.multi-search/keys.json`）与 SQLite 状态库中的 `quota_exhausted` 是两层独立状态：前者是操作员维护的配置级静态排除，后者是运行时健康状态。配置仍启用不代表运行时一定可用；运行时暂不可用也不会自动改写配置。
 
 | 术语 | 定义 | 代码出处 |
 |------|------|---------|
 | **key 轮换** | 同一 provider 有多个 key 时，按「未用过优先 → 最久未用（LRU）」挑选。`reserve()` 在 `BEGIN IMMEDIATE` 写事务内重新检查健康状态，按最新 `last_used_at` 选取仍可用的候选，并原子更新 `use_count` / `last_used_at`；没有可用候选时返回空。它分配调用尝试，不是独占租约，同一 key 可以并发使用。 | `multi_search_mcp/src/state/key_state.py` → `SQLiteKeyManager.candidates` / `SQLiteKeyManager.reserve` |
 | **key 指纹** | 状态库与诊断只保存 `sha256:<8hex>` 形式的 key 指纹，不落明文或可逆片段。 | `multi_search_mcp/src/state/key_state.py` → `key_fingerprint` |
-| **Jina 配置 `exhausted`** | Jina 凭据条目（凭据库或 `~/.search-keys.json`）中的静态排除标记，由操作员手动维护；为 `true` 时 `jina_config_keys()` 不会将该 key 交给轮换。它不是运行态状态，不由 HTTP 402 自动写入，也没有 24 小时恢复期。 | `multi_search_mcp/src/state/keys.py` → `jina_config_keys`；`multi_search_mcp/src/state/mark_exhausted.py` |
+| **Jina 配置 `exhausted`** | Jina 凭据条目（`~/.multi-search/keys.json`）中的静态排除标记，由操作员手动维护；为 `true` 时 `jina_config_keys()` 不会将该 key 交给轮换。它不是运行态状态，不由 HTTP 402 自动写入，也没有 24 小时恢复期。 | `multi_search_mcp/src/state/keys.py` → `jina_config_keys`；`multi_search_mcp/src/state/mark_exhausted.py` |
 | **key 状态：active** | 运行态当前没有阻止使用的健康状态；若 `manually_disabled` 仍为真，候选选择仍会跳过；也不覆盖 Jina 配置中的静态 `exhausted` 排除。成功回报在通过 `started_at` 因果检查后写回 `active`；迟到成功不会清除请求开始后新写入的状态。 | `multi_search_mcp/src/state/key_state.py` → `ACTIVE` / `SQLiteKeyManager.record_result` |
 | **key 状态：cooldown** | 运行态临时失败（如限流）；当前冷却 15 分钟，`cooldown_until` 未到期时跳过，期满后重新允许尝试。 | `multi_search_mcp/src/state/key_state.py` → `COOLDOWN` / `cooldown_until` |
 | **key 状态：quota_exhausted** | 运行态收到配额/余额用尽信号；当前恢复期 24 小时，`exhausted_until` 未到期时跳过，期满后重新允许尝试。它不等于配置级 `exhausted`，不会写回凭据。 | `multi_search_mcp/src/state/key_state.py` → `QUOTA_EXHAUSTED` / `exhausted_until` |
@@ -103,12 +103,12 @@
 | 术语 | 定义 | 代码出处 |
 |------|------|---------|
 | **Core 请求** | `search_web` 和 `multi_search` 共用 RRF 搜索及正文获取；`fetch_source` / `scrape_url` 可直接抓 URL，`read_source` 局部读缓存，另有状态/诊断能力。无 MCP 服务入口。 | `multi_search_mcp/src/service.py` |
-| **CLI** | `multi-search` console entry；`search/fetch/read/doctor/routes/sources/keys/site/migrate-legacy` 都直接调用同一 Core 和 StateStore，是唯一产品入口；按需启动并退出，不依赖 MCP 或常驻服务。 | `multi_search_mcp/cli.py` |
+| **CLI** | `multi-search` console entry；`search/fetch/read/doctor/routes/sources/keys/site` 都直接调用同一 Core 和 StateStore，是唯一产品入口；按需启动并退出，不依赖 MCP 或常驻服务。 | `multi_search_mcp/cli.py` |
 | **受管 CLI** | 概念见 [CONTEXT.md](../CONTEXT.md)。由桌面端把应用资源里的受控 bundle 装到当前用户目录：Windows 为 `%LOCALAPPDATA%\MultiSearch\cli\multi-search.exe`，macOS 为 `~/Library/Application Support/MultiSearch/cli/bin/multi-search`。两平台 bundle 都自带运行时（Windows 内置 CPython、macOS `runtime/bin/python3.12`），安装后不依赖仓库或系统 Python；写入前先比对 manifest 原始字节的 SHA-256 锚点再逐文件校验，Unix 还要求可执行位仍在，否则判为不可验证。 | `scripts/build_cli_bundle.py`（锚点） |
 | **SKILL** | 给 agent 的薄自然语言触发层，告诉它何时调工具、传什么 route/sources。 | `skills/multi-search/SKILL.md` |
 | **config（行为配置）** | 非敏感的默认值（route/count/timeout、路由组 `routes`、抓取链 `scrape_backends`、Twitter Cookie 模式等）。解析顺序：env `MULTI_SEARCH_CONFIG`（JSON 文件）→ `config.sqlite` 的 settings 记录（存在即权威，桌面端写入）→ `~/.multi-search/multi-search-config.json` → 源码树开发 fallback → 内置默认值；显式指定却不存在的文件是错误。 | `multi_search_mcp/src/support/config.py` → `resolve_config_path` |
-| **credential store（凭据库）** | 概念见 [CONTEXT.md](../CONTEXT.md)。`config.sqlite` 中按 provider 保存、以当前用户 DPAPI 加密的凭据（含 Jina 与托管 Twitter Cookie）。Key 来源只判定一次：环境变量（`env`）> 凭据库（`credential_store`）> `~/.search-keys.json`（`keys_file`）；同一 provider 不跨来源合并，凭据库条目不可读时该 provider fail-closed、不回退明文文件。旧 Windows 凭据管理器条目只作 `migrate-legacy` 的显式迁移源。 | `multi_search_mcp/src/support/credential_store.py` / `multi_search_mcp/src/state/keys.py` |
-| **Twitter Cookie 模式** | 概念见 [CONTEXT.md](../CONTEXT.md)。settings 的 `twitter_cookies_mode` 缺省为 `file`：按 `TWITTER_COOKIES_PATH` > 设置中的 `twitter_cookies_path` > keys 文件 `twitter` 条目读取明文 Cookie，不自动迁移。Windows 桌面显式导入后切换为 `managed`：独立 `twitter_cookies` 加密条目在实际调用时解密为字典交给 XKit，无临时明文文件，不属于 API-key 轮换集合，此模式下忽略 `TWITTER_COOKIES_PATH`。managed 缺失/损坏/非 Windows 一律 fail-closed，不回退 file。协议细节见 [Cookie 协议](../desktop/src-tauri/COOKIE-PROTOCOL.md)。 | `multi_search_mcp/src/state/runtime.py` → `load_runtime_keys` / `multi_search_mcp/src/providers/xkit.py` → `ManagedTwitterCookies` |
+| **keys file（Key 文件）** | 概念见 [CONTEXT.md](../CONTEXT.md)。所有平台统一的明文 Key 文件 `~/.multi-search/keys.json`（含 Jina 条目与 `systemone`）。Key 来源只判定一次：环境变量（`env`）> Key 文件（`keys_file`）；同一 provider 不跨来源合并。旧 `~/.search-keys.json` 仅在新文件缺失时复制一次。 | `multi_search_mcp/src/state/keys.py` → `default_keys_file` / `desktop/src-tauri/src/keys_file.rs` |
+| **Twitter Cookie 文件** | 概念见 [CONTEXT.md](../CONTEXT.md)。只有文件模式：`TWITTER_COOKIES_PATH` > 设置中的 `twitter_cookies_path` > Key 文件 `twitter` 条目。桌面端导入时复制到 `~/.multi-search/twitter-cookies.json` 并写入 `twitter_cookies_path`；旧 `twitter_cookies_mode` 被忽略。协议见 [Cookie 协议](../desktop/src-tauri/COOKIE-PROTOCOL.md)。 | `multi_search_mcp/src/state/runtime.py` → `load_runtime_keys` / `desktop/src-tauri/src/cookie.rs` |
 | **providers（调用方适配）** | 第三方 SDK/服务的调用封装：XKit（Twitter/X 搜索与帖子抓取、托管 Cookie 装配）与 Tavily。搜索器和抓取器通过这里取得客户端，不直接拼装凭据。 | `multi_search_mcp/src/providers/xkit.py` / `multi_search_mcp/src/providers/tavily.py` |
 
 ## 维护约定

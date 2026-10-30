@@ -25,8 +25,8 @@ def main() -> int:
         os.environ["MULTI_SEARCH_STATE_DB"] = str(isolation.paths.state)
         # Rust interop tests call Command::new("python"), not a custom selector.
         from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES
-        from multi_search_mcp.src.support.credential_store import CredentialStore
-        assert ALL_SOURCE_NAMES and CredentialStore
+        from multi_search_mcp.src.support.config_db import ConfigDatabase
+        assert ALL_SOURCE_NAMES and ConfigDatabase
         os.environ.pop("TAURI_CONFIG", None)
         for args in (
             ["test", "--no-default-features"],

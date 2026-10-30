@@ -26,32 +26,19 @@ export function scrapeCredentialProviders() {
 }
 
 const DEFAULT_SOURCE = 'tavily';
-const storeLabels = { present: '已保存', absent: '未保存', unavailable: '数据库不可用', unreadable: '已保存条目无法读取' };
-// Backend-reported capability only: a browser platform string or a failed save
-// never decides this. The wire reason is `platform_unsupported`
-// (credential::PLATFORM_UNSUPPORTED_REASON); any unrecognized reason falls back
-// to the same honest text rather than a second near-identical copy.
-const CAPABILITY_TEXT = {
-  platform_unsupported: '加密凭据存储仅支持 Windows 当前用户 DPAPI。当前平台不支持该操作：可以查看生效来源并运行允许的连接测试，但无法创建、修改或显示已保存的 Key。',
-};
-const capabilityText = reason => CAPABILITY_TEXT[reason] || CAPABILITY_TEXT.platform_unsupported;
-// Shown while a capability query is in flight or after it failed: writes stay
-// off and the user gets a retry entry instead of a guessed platform answer.
-const CAPABILITY_PENDING = '正在确认当前平台是否支持加密凭据存储…';
-const CAPABILITY_FAILED = '无法确认当前平台是否支持加密凭据存储。可以查看生效来源，但保存、删除和显示 Key 不可用；请点击"刷新已保存值"重试。';
+const storeLabels = { present: '已保存', absent: '未保存', unavailable: 'Key 文件无法读取', unreadable: '已保存条目格式无法识别' };
+export const KEYS_FILE_NOTE = 'Key 以明文保存在 ~/.multi-search/keys.json（仅当前用户可读写）';
 
-// The effective source after the SQLite/DPAPI merge. Unknown future values stay labelled.
+// Effective source as Core reports it (types.d.ts: env | file | none). Unknown future values stay labelled.
 function sourceText(overview) {
-  // Core's doctor report may name the provenance it actually resolved (types.d.ts:
-  // env | credential_store | file | none | unavailable, or sqlite when only the store is known).
   if (overview.effective_source === 'env') return overview.env_var ? `环境变量 ${overview.env_var}` : '环境变量';
-  if (overview.effective_source === 'credential_store') return '本机凭据库';
   if (overview.effective_source === 'file') {
-    return overview.file_key_count ? `旧 Key 文件中的 ${overview.file_key_count} 个 Key` : '旧 Key 文件';
+    const count = overview.file_key_count;
+    return typeof count === 'number' && count > 0
+      ? `Key 文件（~/.multi-search/keys.json）中的 ${count} 个 Key`
+      : 'Key 文件（~/.multi-search/keys.json）';
   }
-  if (overview.effective_source === 'sqlite') return 'SQLite / DPAPI';
   if (overview.effective_source === 'none') return '未配置';
-  if (overview.effective_source === 'unavailable') return '不可用';
   return `未知来源（${overview.effective_source ?? '无'}）`;
 }
 
@@ -63,7 +50,6 @@ function testText(result, label, provenance) {
     quota: `额度不足：${label} 额度已用尽。`,
     rate_limited: '触发频率限制：请稍后再试。',
     missing_key: '缺少 Key：请先保存。',
-    credential_store: '凭据库错误：无法读取这个来源的 Key，请重新保存。',
     network: `网络错误：无法连接 ${label}。`,
     timeout: '超时：请稍后重试。',
     error: '测试失败：请查看 CLI 输出。',
@@ -83,7 +69,7 @@ export async function mountCredentials(root, api, options = {}) {
   root = pageRoot(root);
   const { number = '04', ...pageOptions } = options;
   const entry = sourceEntry(pageOptions.source);
-  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / CREDENTIALS</p><h1 tabindex="-1">凭据</h1><p>Key 默认掩码显示，以当前系统用户的 DPAPI 加密保存在本机 SQLite。生效来源按 Core 的优先级判定：环境变量 > 凭据库 > 旧 Key 文件。</p></section>`;
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / CREDENTIALS</p><h1 tabindex="-1">凭据</h1><p>Key 默认掩码显示。生效来源按 Core 的优先级判定：环境变量 > Key 文件。</p></section>`;
   root.querySelector('h1').textContent = `${entry.label} 凭据`;
   const holder = root.ownerDocument.createElement('div'); root.append(holder);
   return mountCredentialBody(holder, api, pageOptions);
@@ -103,8 +89,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <button type="submit" class="primary" data-action="save">提交新增 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
       <span class="credential-note" data-info="application">申请链接待配置</span></div>
     </form>
-    <details class="config-details"><summary>说明</summary><p class="credential-note">Key 仅保存在本机 SQLite，DPAPI 保护范围为当前 Windows 用户/设备。保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > 凭据库 > 旧 Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
-    <p data-capability class="credential-note" role="note" hidden></p>
+    <details class="config-details"><summary>说明</summary><p class="credential-note">保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
+    <p data-keys-file-note class="credential-note" role="note"></p>
     <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
     <p data-info="error" class="error-message"></p>
     <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div></div>
@@ -115,11 +101,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   const text = (selector, value) => { q(selector).textContent = value; };
   let current = { store: { state: 'absent', error: '' }, effective_source: 'none' };
   let generation = 0, disposed = false, busy = false;
-  // Storage capability is unknown until credentialStatus reports it: all writes stay
-  // disabled rather than presenting an uncertain state as permission to save.
-  // `capability.phase`: 'pending' (first/re-query in flight) | 'ok' | 'failed'.
-  let capability = { supported: null, reason: '', phase: 'pending' };
-  // Monotonic refresh guard: only the latest refresh may publish capability or
+  q('[data-keys-file-note]').textContent = KEYS_FILE_NOTE;
+  // Monotonic refresh guard: only the latest refresh may publish status or
   // rows. A slower older response must never overwrite a newer outcome.
   let refreshGeneration = 0;
   /** @type {string[]} rows last confirmed by credentialRead */
@@ -136,12 +119,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     q('[data-test-result]').dataset.kind = kind; onTest?.({ kind, title, message });
   }
   function invalidateTest() { generation += 1; reportTest('idle', '尚未测试'); }
-  // Capability-confirmed encrypted operation check, shared by reveals and
-  // mutations so the unsupported judgement lives in one place.
-  const capabilityReady = () => capability.supported === true;
-  // Every encrypted mutation additionally requires a successful row read so
-  // the remove guard has a live snapshot to check.
-  const writesReady = () => readHealthy && capabilityReady();
+  // Every mutation requires a successful row read so the remove guard has a live snapshot.
+  const writesReady = () => readHealthy;
   function setBusy(value) {
     busy = value;
     root.setAttribute('aria-busy', String(value)); root.classList.toggle('is-busy', value);
@@ -149,23 +128,13 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     for (const input of root.querySelectorAll('[data-draft-list] input')) input.disabled = value || !writesReady();
     for (const input of root.querySelectorAll('[data-saved-list] input')) input.disabled = value;
     for (const button of root.querySelectorAll('[data-action="copy"]')) button.disabled = value || !revealed.has(Number(button.dataset.rowIndex));
-    // Plaintext reveal is an encrypted read; unsupported platforms cannot run it.
-    for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || !capabilityReady();
+    for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || !readHealthy;
     q('[data-action="application"]').disabled = value || !current.key_application_available;
     q('[data-action="test"]').disabled = value || !searchTest;
     q('[data-action="test"]').hidden = !searchTest;
     // Saved-row delete and draft add/submit are mutations; keep them disabled
-    // until a successful read anchors the remove guard AND the backend reports
-    // a supported platform.
+    // until a successful read anchors the remove guard.
     for (const button of root.querySelectorAll('[data-action="remove"], [data-action="remove-draft"], [data-action="add"], [data-action="save"]')) button.disabled = value || !writesReady();
-  }
-  function renderCapability() {
-    const banner = q('[data-capability]');
-    if (capability.supported === true) { banner.hidden = true; banner.textContent = ''; return; }
-    banner.hidden = false;
-    banner.textContent = capability.phase === 'pending' ? CAPABILITY_PENDING
-      : capability.phase === 'failed' ? CAPABILITY_FAILED
-      : capabilityText(capability.reason);
   }
   function renderSaved() {
     const list = q('[data-saved-list]');
@@ -206,9 +175,6 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     if (disposed) return;
     if (provenance(current) !== provenance(view)) invalidateTest();
     current = view; onStatus?.(view);
-    // The backend is authoritative: absent/false means unsupported, not "Key 未配置".
-    capability = { supported: view.store_supported === true, reason: view.store_supported === true ? '' : (view.store_unsupported_reason || 'platform_unsupported'), phase: 'ok' };
-    renderCapability();
     setBusy(busy);
     text('[data-status="store"]', storeLabels[view.store.state] || view.store.state);
     text('[data-status="source"]', sourceText(view));
@@ -228,19 +194,14 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     renderSaved();
   }
   async function refresh() {
-    // A newer refresh supersedes this one: only it may publish capability or
+    // A newer refresh supersedes this one: only it may publish status or
     // rows, so a slower older response cannot overwrite a newer outcome.
     const requestId = ++refreshGeneration;
-    capability = { supported: null, reason: '', phase: 'pending' };
-    renderCapability();
     setBusy(true);
     try {
       const view = await api.credentialStatus(source);
       if (disposed || requestId !== refreshGeneration) return;
       render(view);
-      // Capability is known now (even if it is "unsupported"); only the row
-      // read can still fail below. Keep that distinct so a read failure is not
-      // misreported as "capability unconfirmed".
       try {
         await readBack(requestId);
         if (disposed || requestId !== refreshGeneration) return;
@@ -248,24 +209,20 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       } catch (readError) {
         if (!disposed && requestId === refreshGeneration) {
           readHealthy = false;
-          // Rows could not be read but capability already arrived; the banner
-          // keeps its status-based message and the error slot gets the read
-          // reason. Writes stay off until a refresh read succeeds again.
+          // Rows could not be read: the error slot gets the read reason and
+          // writes stay off until a refresh read succeeds again.
           renderSaved();
           showError(q('[data-info="error"]'), readError, '无法读取已保存凭据，请重试。');
         }
       }
     } catch (error) {
       if (!disposed && requestId === refreshGeneration) {
+        // A failed lookup is never an empty, writable file: writes stay disabled.
         readHealthy = false;
-        // Capability is unknown again: writes stay disabled until a status
-        // succeeds, so a failed lookup is never an empty, writable store.
-        capability = { supported: null, reason: '', phase: 'failed' };
-        renderCapability();
         // Keep the last saved rows visible so the user can still see state; all
         // writes stay disabled until a refresh succeeds again.
         renderSaved();
-        showError(q('[data-info="error"]'), error, '无法确认凭据能力，请重试。');
+        showError(q('[data-info="error"]'), error, '无法读取凭据状态，请重试。');
       }
     }
     finally { if (!disposed && requestId === refreshGeneration) setBusy(false); }
@@ -287,9 +244,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   q('[data-saved-list]').addEventListener('click', async event => {
     const button = event.target.closest('[data-action="reveal"], [data-action="copy"]');
     if (!button || busy || disposed) return;
-    // Guard the action itself too: a synthesized click on an enabled row must
-    // still not issue an encrypted read on an unsupported platform.
-    if (button.dataset.action === 'reveal' && !capabilityReady()) return;
+    if (button.dataset.action === 'reveal' && !readHealthy) return;
     const index = Number(button.dataset.rowIndex);
     const row = button.closest('[data-saved-index]');
     const input = row.querySelector('input');
@@ -301,7 +256,6 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     if (revealed.has(index)) {
       revealed.delete(index); input.value = savedRows[index]; input.type = 'password'; button.textContent = '显示'; setBusy(false); return;
     }
-    if (!capabilityReady()) return;
     setBusy(true);
     try {
       const value = await api.credentialReveal(source);
@@ -358,7 +312,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     if (slot.firstElementChild) return;
     const panel = root.ownerDocument.createElement('div');
     panel.className = 'inline-confirm'; panel.dataset.confirm = 'remove';
-    panel.innerHTML = `<p class="note">确定删除第 ${index + 1} 行已保存的 Key 吗？删除后旧文件、凭据库及环境变量不会自动恢复生效。</p><div class="run-controls"><button type="button" class="danger" data-action="confirm-remove">确认删除</button><button type="button" data-action="cancel-remove">取消</button></div>`;
+    panel.innerHTML = `<p class="note">确定删除第 ${index + 1} 行已保存的 Key 吗？该行会从 ~/.multi-search/keys.json 中移除，环境变量不受影响。</p><div class="run-controls"><button type="button" class="danger" data-action="confirm-remove">确认删除</button><button type="button" data-action="cancel-remove">取消</button></div>`;
     slot.append(panel);
     // Shared contract: cancel has focus, Escape cancels, focus returns to this row's delete button.
     const release = confirmInline(panel, () => { panel.remove(); release(); }, button);

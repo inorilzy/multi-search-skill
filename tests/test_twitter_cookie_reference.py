@@ -92,9 +92,9 @@ class TwitterConfigPathReachesSearchTests(unittest.TestCase):
 
         real_load_keys = keys_module.load_keys
 
-        def isolated_load_keys(keys_file=None, environ=None, credential_store=None, *, twitter_cookies_path=None):
+        def isolated_load_keys(keys_file=None, environ=None, *, twitter_cookies_path=None):
             return real_load_keys(
-                self.keys_file, environ=self.environ, credential_store=None,
+                self.keys_file, environ=self.environ,
                 twitter_cookies_path=twitter_cookies_path,
             )
 

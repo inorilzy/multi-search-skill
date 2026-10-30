@@ -44,6 +44,13 @@ from multi_search_mcp.src.search.searchers import serpapi as serpapi_searcher
 from multi_search_mcp.src.search.searchers import tavily as tavily_searcher
 
 
+
+def _keys_path(home: Path) -> Path:
+    """The default keys file under ``home`` (``~/.multi-search/keys.json``)."""
+    path = home / ".multi-search" / "keys.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
 class SecretTests(unittest.TestCase):
     def test_scrub_secrets_redacts_common_credentials_and_nested_values(self):
         message = (
@@ -602,7 +609,7 @@ class KeyTests(unittest.TestCase):
 
     def test_load_keys_preserves_json_key_pool_arrays(self):
         with tempfile.TemporaryDirectory() as tmp:
-            keys_path = Path(tmp) / ".search-keys.json"
+            keys_path = _keys_path(Path(tmp))
             keys_path.write_text(
                 json.dumps({"serpapi": ["s1", "s2"], "exa": ["e1", "e2"]}),
                 encoding="utf-8",
@@ -614,7 +621,7 @@ class KeyTests(unittest.TestCase):
 
     def test_load_keys_ignores_non_object_json_file(self):
         with tempfile.TemporaryDirectory() as tmp:
-            keys_path = Path(tmp) / ".search-keys.json"
+            keys_path = _keys_path(Path(tmp))
             keys_path.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
             with mock.patch("pathlib.Path.home", return_value=Path(tmp)):
                 with mock.patch.dict(os.environ, {"EXA_API_KEY": "env-exa"}, clear=False):
@@ -624,7 +631,7 @@ class KeyTests(unittest.TestCase):
 
     def test_load_keys_raises_on_corrupt_json_without_leaking_content(self):
         with tempfile.TemporaryDirectory() as tmp:
-            keys_path = Path(tmp) / ".search-keys.json"
+            keys_path = _keys_path(Path(tmp))
             # Valid-looking but malformed JSON (missing closing brace) that also
             # contains a secret-like value. A silent {} here would make every
             # provider report "missing key" instead of the real cause.
@@ -637,7 +644,7 @@ class KeyTests(unittest.TestCase):
 
     def test_twitter_cookies_path_env_overrides_json_twitter_dict(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            keys_path = Path(tmpdir) / ".search-keys.json"
+            keys_path = _keys_path(Path(tmpdir))
             keys_path.write_text(
                 json.dumps({"twitter": {"auth_token": "json-token", "ct0": "json-ct0"}}),
                 encoding="utf-8",
@@ -684,7 +691,7 @@ class KeyTests(unittest.TestCase):
 
     def test_mark_config_exhausted_updates_key_pool_entry(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            keys_path = Path(tmpdir) / ".search-keys.json"
+            keys_path = _keys_path(Path(tmpdir))
             keys_path.write_text(
                 json.dumps({"jina": [{"key": "j1"}, {"key": "j2", "exhausted": False}]}),
                 encoding="utf-8",
@@ -701,7 +708,7 @@ class KeyTests(unittest.TestCase):
 
     def test_mark_config_exhausted_raises_on_corrupt_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            keys_path = Path(tmpdir) / ".search-keys.json"
+            keys_path = _keys_path(Path(tmpdir))
             keys_path.write_text('{"jina": ["j1"', encoding="utf-8")
             with mock.patch("pathlib.Path.home", return_value=Path(tmpdir)):
                 with self.assertRaises(KeysError):
