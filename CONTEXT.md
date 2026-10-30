@@ -14,6 +14,10 @@
 
 **来源引用（Source reference）**：一次搜索响应中某个来源的短期身份，用于后续获取和阅读内容。它不同于该来源的永久身份。
 
+## 路由
+
+**路由（Route）**：按用途组织的一组搜索源，带有展示标签、可选的 `description`（何时使用）和组超时。路由发现以 `multi-search routes` 为准；按描述选择，无描述时参考标签与实际参与源，不传 `--route` 使用发现输出中的 `default_route`。设置结构与维护规则见 [路由文档](docs/route-capability-table.md#路由发现与设置维护)。
+
 ## 抓取
 
 **抓取链（Scrape chain）**：通用网页抓取依次尝试的后端顺序（`jina`、`exa`、`tavily`、`firecrawl` 的有序子集），保存在设置的 `scrape_backends` 中。前一个后端失败才尝试下一个，最后一个也失败时返回错误；缺 key 的后端在运行时跳过。Reddit 与 Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。单次 `fetch --backend` 只覆盖本次调用，不改写设置。
