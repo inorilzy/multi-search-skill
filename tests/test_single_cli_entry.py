@@ -36,7 +36,7 @@ def run_cli(*argv):
 class CliSurfaceTests(unittest.TestCase):
     def test_sources_flags_include_shared_state_sections(self):
         with mock.patch(
-            "multi_search_mcp.src.search.catalog.build_source_catalog",
+            "multi_search_mcp.src.search.catalog.build_configured_source_catalog",
             return_value={"schema_version": 1, "sources": []},
         ), mock.patch.object(cli, "key_status", return_value=[{"provider": "exa"}]) as status, \
            mock.patch.object(cli, "site_scraper_stats", return_value=[{"site": "example.com"}]) as stats:
@@ -51,7 +51,7 @@ class CliSurfaceTests(unittest.TestCase):
 
     def test_sources_without_flags_does_not_touch_state(self):
         with mock.patch(
-            "multi_search_mcp.src.search.catalog.build_source_catalog",
+            "multi_search_mcp.src.search.catalog.build_configured_source_catalog",
             return_value={"schema_version": 1, "sources": []},
         ), mock.patch(
             "multi_search_mcp.src.state.operations.StateStore",
