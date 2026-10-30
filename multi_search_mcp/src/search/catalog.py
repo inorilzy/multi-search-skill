@@ -152,33 +152,38 @@ def _source_entry(name: str) -> dict[str, Any]:
     }
 
 
+def _route_aliases_for(name: str) -> list[str]:
+    return sorted(alias for alias, target in ROUTE_ALIASES.items() if target == name)
+
+
 def _route_entry(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "label": ROUTE_LABELS[name],
         "description": BUILTIN_ROUTE_DESCRIPTIONS[name],
-        "aliases": sorted(alias for alias, target in ROUTE_ALIASES.items() if target == name),
+        "aliases": _route_aliases_for(name),
         "sources": list(ROUTE_SOURCE_ORDER[name]),
     }
 
 
 def build_configured_source_catalog(config: dict) -> dict[str, Any]:
-    """Overlay current routes on the built-in catalog without changing exports."""
-    from .resolve import describe_configured_routes
+    """Overlay configured memberships, including globally disabled sources."""
+    # Snapshot exports need only built-in constants; load config parsing only
+    # for the CLI overlay so export imports stay independent of the resolver.
+    from .resolve import resolve_configured_routes, resolve_default_route
 
-    configured = describe_configured_routes(config)
+    routes = resolve_configured_routes(config)
+    resolve_default_route(config, routes)
     catalog = build_source_catalog()
     catalog["routes"] = [
         {
-            "name": route["id"],
-            "label": route["label"],
-            "description": route["description"],
-            "aliases": sorted(
-                alias for alias, target in configured["aliases"].items() if target == route["id"]
-            ),
-            "sources": route["sources"],
+            "name": route_id,
+            "label": definition.label,
+            "description": definition.description,
+            "aliases": _route_aliases_for(route_id),
+            "sources": list(definition.sources),
         }
-        for route in configured["routes"]
+        for route_id, definition in routes.items()
     ]
     for source in catalog["sources"]:
         source["routes"] = [

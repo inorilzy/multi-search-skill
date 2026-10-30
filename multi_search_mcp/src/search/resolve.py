@@ -117,7 +117,7 @@ def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSea
         raise TypeError("resolve_search_plan requires a SearchPlanRequest")
     _warn_deprecated_config(config)
     routes = resolve_configured_routes(config)
-    configured_route = _resolve_configured_route(config, routes)
+    configured_route = resolve_default_route(config, routes)
     route = (
         normalize_route(str(request.route))
         if request.route is not None
@@ -247,7 +247,7 @@ def describe_configured_routes(config: dict) -> dict[str, Any]:
     value (``None`` means inherit).
     """
     routes = resolve_configured_routes(config)
-    default_route = _resolve_configured_route(config, routes)
+    default_route = resolve_default_route(config, routes)
     disabled = resolve_disabled_sources(config)
     return {
         "default_route": default_route,
@@ -269,9 +269,10 @@ def describe_configured_routes(config: dict) -> dict[str, Any]:
     }
 
 
-def _resolve_configured_route(
+def resolve_default_route(
     config: dict, routes: dict[str, RouteDefinition]
 ) -> str:
+    """Validate the configured default against the parsed route definitions."""
     raw_route = config.get("type", "default")
     if raw_route is None:
         raw_route = "default"
