@@ -669,14 +669,14 @@ def _render_routes(payload: dict[str, Any], *, markdown: bool) -> str:
         if not routes:
             lines.append("_No routes_")
             return "\n".join(lines)
-        lines.append("| Route | Default | Label | Sources |")
+        lines.append("| Route | Default | Description | Sources |")
         lines.append("| --- | --- | --- | --- |")
         for route in routes:
             is_default = "yes" if route.get("is_default") else ""
             sources = ", ".join(str(source) for source in route.get("sources") or [])
             lines.append(
                 f"| `{_table_cell(route.get('id'))}` | {is_default} | "
-                f"{_table_cell(route.get('label'))} | {_table_cell(sources)} |"
+                f"{_table_cell(_route_summary(route))} | {_table_cell(sources)} |"
             )
         return "\n".join(lines)
 
@@ -690,9 +690,17 @@ def _render_routes(payload: dict[str, Any], *, markdown: bool) -> str:
     for route in routes:
         marker = " (default)" if route.get("is_default") else ""
         sources = ", ".join(str(source) for source in route.get("sources") or []) or "none"
-        lines.append(f"- {route.get('id')}{marker}: {route.get('label')}")
+        lines.append(f"- {route.get('id')}{marker}: {_route_summary(route)}")
         lines.append(f"  sources: {sources}")
     return "\n".join(lines)
+
+
+def _route_summary(route: dict[str, Any]) -> str:
+    """Describe when to use a route; fall back to its label when it has no description."""
+    description = route.get("description")
+    if isinstance(description, str) and description:
+        return description
+    return str(route.get("label") or "")
 
 
 def _table_cell(value: Any) -> str:
