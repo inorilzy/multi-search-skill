@@ -5,7 +5,8 @@ import { mountCookies } from '../ui/cookies.js';
 import { managementApi } from '../ui/api.js';
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
-const view = (overrides = {}) => ({ present: false, mode: 'file', supported: true, ...overrides });
+const MANAGED = '/home/u/.multi-search/twitter-cookies.json';
+const view = (overrides = {}) => ({ present: false, mode: 'file', path: MANAGED, configured_path: null, ...overrides });
 const coded = (code, message = '') => JSON.stringify({ code, message });
 
 // Every test closes its window even when an assertion fails, so a failure reports instead of hanging.
@@ -17,8 +18,8 @@ async function setup(t, overrides = {}) {
   const calls = [];
   const mounted = await mountCookies(root, {
     cookieStatus: async () => { calls.push('status'); return view(); },
-    cookieImport: async (...args) => { calls.push(['import', ...args]); return view({ present: true, mode: 'managed' }); },
-    cookieDelete: async (...args) => { calls.push(['delete', ...args]); return view({ mode: 'managed' }); },
+    cookieImport: async (...args) => { calls.push(['import', ...args]); return view({ present: true, configured_path: MANAGED }); },
+    cookieDelete: async (...args) => { calls.push(['delete', ...args]); return view(); },
     ...overrides,
   });
   return { window, root, calls, mounted, q: selector => root.querySelector(selector) };
@@ -45,12 +46,13 @@ test('cookie page loads status only and requires confirmation before import', as
   ctx.q('[data-cookie-confirm-yes]').click();
   await flush();
   assert.deepEqual(ctx.calls, ['status', ['import', '<img src=x>.json', true]]);
-  assert.match(ctx.q('[data-cookie-status]').textContent, /managed.*已有/);
+  assert.match(ctx.q('[data-cookie-status]').textContent, /已导入：\/home\/u\/\.multi-search\/twitter-cookies\.json/);
+  assert.match(ctx.q('[data-cookie-configured]').textContent, /设置中的 Cookie 文件：\/home\/u\/\.multi-search\/twitter-cookies\.json/);
   assert.equal(ctx.q('[data-cookie-path]').value, '');
 });
 
 test('Escape cancels the confirmation without mutating anything', async t => {
-  const ctx = await setup(t, { cookieStatus: async () => view({ present: true, mode: 'managed' }) });
+  const ctx = await setup(t, { cookieStatus: async () => view({ present: true }) });
   const trigger = ctx.q('[data-cookie-delete]');
   trigger.focus();
   trigger.click();
@@ -61,8 +63,8 @@ test('Escape cancels the confirmation without mutating anything', async t => {
   assert.deepEqual(ctx.calls, []);
 });
 
-test('cookie delete cancellation and confirmed delete retain managed mode with no fallback', async t => {
-  const ctx = await setup(t, { cookieStatus: async () => view({ present: true, mode: 'managed' }) });
+test('cookie delete needs confirmation and then reports the copy as gone', async t => {
+  const ctx = await setup(t, { cookieStatus: async () => view({ present: true, configured_path: MANAGED }) });
   ctx.q('[data-cookie-delete]').click();
   ctx.q('[data-cookie-confirm-cancel]').click();
   assert.deepEqual(ctx.calls, []);
@@ -70,7 +72,8 @@ test('cookie delete cancellation and confirmed delete retain managed mode with n
   ctx.q('[data-cookie-confirm-yes]').click();
   await flush();
   assert.deepEqual(ctx.calls, [['delete', true]]);
-  assert.match(ctx.q('[data-cookie-status]').textContent, /managed.*没有/);
+  assert.match(ctx.q('[data-cookie-status]').textContent, /尚未导入 Cookie/);
+  assert.match(ctx.q('[data-cookie-configured]').textContent, /设置中没有 Cookie 文件路径/);
   assert.equal(ctx.q('[data-cookie-delete]').disabled, true);
 });
 
@@ -86,7 +89,7 @@ test('failed import preserves path/status and shows normalized text, never marku
   assert.doesNotMatch(error.textContent, /import failed/, 'an English backend reason is not shown');
   assert.match(error.title, /<img src=x> import failed/, 'the raw reason stays available for support');
   assert.equal(ctx.q('[data-cookie-path]').value, 'cookies.json');
-  assert.match(ctx.q('[data-cookie-status]').textContent, /file/);
+  assert.match(ctx.q('[data-cookie-status]').textContent, /尚未导入 Cookie/);
   assert.deepEqual(ctx.calls, ['status']);
 });
 
@@ -96,42 +99,25 @@ test('a coded backend failure shows its mapped Chinese message', async t => {
   ctx.q('[data-cookie-import]').click();
   ctx.q('[data-cookie-confirm-yes]').click();
   await flush();
-  assert.match(ctx.q('[data-cookie-error]').textContent, /Cookie 导入失败，原文件与已有的托管 Cookie 都没有改动/);
+  assert.match(ctx.q('[data-cookie-error]').textContent, /Cookie 导入失败，原文件与已导入的 Cookie 都没有改动/);
 });
 
-test('unsupported platform disables encrypted mutations but explains explicit file compatibility', async t => {
-  const ctx = await setup(t, { cookieStatus: async () => view({ supported: false }) });
-  assert.equal(ctx.q('[data-cookie-import]').disabled, true);
-  assert.equal(ctx.q('[data-cookie-delete]').disabled, true);
-  const text = ctx.q('[data-cookie-status]').textContent;
-  assert.match(text, /当前平台不支持加密托管/);
-  assert.match(text, /仅支持 Windows 当前用户 DPAPI/);
-  assert.match(text, /文件兼容模式（file）/);
-  assert.doesNotMatch(text, /Linux/, 'non-Windows platforms are not described as Linux');
-  assert.equal(ctx.q('[data-cookie-refresh]').disabled, false, 'status refresh stays usable');
-});
-
-test('unsupported platform keeps every managed/file mode combination without switching or reading content', async t => {
-  for (const mode of ['managed', 'file']) {
-    for (const present of [true, false]) {
-      const ctx = await setup(t, { cookieStatus: async () => view({ supported: false, mode, present }) });
-      const text = ctx.q('[data-cookie-status]').textContent;
-      assert.match(text, new RegExp(`${mode === 'managed' ? '加密托管' : '文件兼容'}（${mode}）`));
-      assert.match(text, /仅支持 Windows 当前用户 DPAPI/);
-      assert.equal(ctx.q('[data-cookie-import]').disabled, true, `${mode}/${present}: import stays disabled`);
-      assert.equal(ctx.q('[data-cookie-delete]').disabled, true, `${mode}/${present}: delete stays disabled`);
-      assert.equal(ctx.q('[data-cookie-path]').disabled, true, `${mode}/${present}: path input stays disabled`);
-      assert.deepEqual(ctx.calls, [], `${mode}/${present}: no import or delete was sent`);
-    }
-  }
+test('every platform can import; a setting that points elsewhere is shown as is', async t => {
+  const ctx = await setup(t, { cookieStatus: async () => view({ configured_path: 'D:/secure/cookies.json' }) });
+  assert.equal(ctx.q('[data-cookie-import]').disabled, false);
+  assert.equal(ctx.q('[data-cookie-path]').disabled, false);
+  assert.equal(ctx.q('[data-cookie-delete]').disabled, true, 'nothing imported yet');
+  assert.match(ctx.q('[data-cookie-configured]').textContent, /D:\/secure\/cookies\.json/);
+  assert.match(ctx.root.textContent, /~\/\.multi-search\/twitter-cookies\.json（仅当前用户可读写）/);
+  assert.doesNotMatch(ctx.root.textContent, /DPAPI|managed|托管/);
 });
 
 test('status failure fails closed and refresh can recover', async t => {
   let count = 0;
   const ctx = await setup(t, { cookieStatus: async () => { if (!count++) throw new Error('unavailable'); return view(); } });
   assert.equal(ctx.q('[data-cookie-import]').disabled, true);
-  assert.match(ctx.q('[data-cookie-error]').textContent, /无法读取 Cookie 托管状态/);
-  assert.match(ctx.q('[data-cookie-status]').textContent, /不会自动切换模式/);
+  assert.match(ctx.q('[data-cookie-error]').textContent, /无法读取 Cookie 状态/);
+  assert.match(ctx.q('[data-cookie-status]').textContent, /Cookie 状态未知/);
   ctx.q('[data-cookie-refresh]').click();
   await flush();
   assert.equal(ctx.q('[data-cookie-import]').disabled, false);
@@ -151,7 +137,7 @@ test('pending import marks the page busy, ignores duplicate confirmation and lat
   yes.click();
   assert.equal(count, 1);
   ctx.mounted.dispose();
-  finish(view({ mode: 'managed', present: true }));
+  finish(view({ present: true }));
   await flush();
   assert.equal(ctx.root.textContent, '');
 });
@@ -176,15 +162,15 @@ test('cookie adapters expose only status and confirmed mutation contracts', asyn
   });
 });
 
-test('failed managed deletion never switches mode or falls back to file', async t => {
+test('failed deletion keeps the imported state and shows the failure', async t => {
   const ctx = await setup(t, {
-    cookieStatus: async () => view({ present: true, mode: 'managed' }),
+    cookieStatus: async () => view({ present: true }),
     cookieDelete: async () => { throw new Error('delete failed'); },
   });
   ctx.q('[data-cookie-delete]').click();
   ctx.q('[data-cookie-confirm-yes]').click();
   await flush();
-  assert.match(ctx.q('[data-cookie-status]').textContent, /managed.*已有/);
-  assert.match(ctx.q('[data-cookie-error]').textContent, /删除失败，仍保持托管模式/);
+  assert.match(ctx.q('[data-cookie-status]').textContent, /已导入/);
+  assert.match(ctx.q('[data-cookie-error]').textContent, /删除失败/);
   assert.deepEqual(ctx.calls, []);
 });
