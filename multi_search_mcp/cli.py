@@ -517,6 +517,8 @@ def _write_payload(payload: Any, output_format: str, stream: TextIO) -> None:
 def _render_human(payload: Any) -> str:
     if _is_search_payload(payload):
         return _render_search(payload, markdown=False)
+    if _is_routes_payload(payload):
+        return _render_routes(payload, markdown=False)
     if isinstance(payload, dict) and set(payload) == {"key_status"} and isinstance(payload["key_status"], list):
         rows = ["key_status:"]
         rows.extend(_render_key_rows(payload["key_status"], markdown=False))
@@ -532,6 +534,8 @@ def _render_human(payload: Any) -> str:
 def _render_markdown(payload: Any) -> str:
     if _is_search_payload(payload):
         return _render_search(payload, markdown=True)
+    if _is_routes_payload(payload):
+        return _render_routes(payload, markdown=True)
     if isinstance(payload, dict) and set(payload) == {"key_status"} and isinstance(payload["key_status"], list):
         rows = ["# Key Status", ""]
         rows.extend(_render_key_rows(payload["key_status"], markdown=True))
@@ -639,6 +643,60 @@ def _is_search_payload(payload: Any) -> bool:
         and "query" in payload
         and isinstance(payload.get("results"), list)
     )
+
+
+def _is_routes_payload(payload: Any) -> bool:
+    return (
+        isinstance(payload, dict)
+        and {"default_route", "aliases", "routes"} <= set(payload)
+        and isinstance(payload.get("routes"), list)
+    )
+
+
+def _render_routes(payload: dict[str, Any], *, markdown: bool) -> str:
+    default_route = str(payload.get("default_route") or "")
+    aliases = payload.get("aliases") or {}
+    alias_names = ", ".join(f"{alias} -> {target}" for alias, target in sorted(aliases.items()))
+    routes = payload.get("routes") or []
+    lines: list[str] = []
+    if markdown:
+        lines.append("# Routes")
+        lines.append("")
+        lines.append(f"Default route: `{default_route}`")
+        if alias_names:
+            lines.append(f"Aliases: {alias_names}")
+        lines.append("")
+        if not routes:
+            lines.append("_No routes_")
+            return "\n".join(lines)
+        lines.append("| Route | Default | Label | Sources |")
+        lines.append("| --- | --- | --- | --- |")
+        for route in routes:
+            is_default = "yes" if route.get("is_default") else ""
+            sources = ", ".join(str(source) for source in route.get("sources") or [])
+            lines.append(
+                f"| `{_table_cell(route.get('id'))}` | {is_default} | "
+                f"{_table_cell(route.get('label'))} | {_table_cell(sources)} |"
+            )
+        return "\n".join(lines)
+
+    lines.append(f"default_route: {default_route}")
+    if alias_names:
+        lines.append(f"aliases: {alias_names}")
+    if not routes:
+        lines.append("routes: none")
+        return "\n".join(lines)
+    lines.append("routes:")
+    for route in routes:
+        marker = " (default)" if route.get("is_default") else ""
+        sources = ", ".join(str(source) for source in route.get("sources") or []) or "none"
+        lines.append(f"- {route.get('id')}{marker}: {route.get('label')}")
+        lines.append(f"  sources: {sources}")
+    return "\n".join(lines)
+
+
+def _table_cell(value: Any) -> str:
+    return str("" if value is None else value).replace("|", "\\|").replace("\n", " ").strip()
 
 
 def _render_key_rows(rows: list[dict[str, Any]], *, markdown: bool) -> list[str]:

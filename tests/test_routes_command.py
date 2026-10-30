@@ -207,6 +207,39 @@ class RoutesCommandTests(unittest.TestCase):
         self.assertEqual(cli.main(["routes"], stdout=stdout, stderr=stderr), 1)
         self.assertIn("unknown field", json.loads(stdout.getvalue())["error"])
 
+    def routes_text(self, output_format):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = cli.main(["routes", "--format", output_format], stdout=stdout, stderr=stderr)
+        self.assertEqual(code, 0, stderr.getvalue())
+        return stdout.getvalue()
+
+    def test_human_output_lists_every_route_id_source_and_marks_default(self):
+        self.write_config({"type": "dev"})
+        text = self.routes_text("human")
+        self.assertTrue(text.strip())
+        self.assertIn("default_route: dev", text)
+        self.assertIn("web -> default", text)
+        for route_id in BUILTIN_IDS:
+            self.assertIn(f"- {route_id}", text)
+        self.assertIn("- dev (default): 开发者（Stack Overflow / GitHub / Hacker News）", text)
+        self.assertIn("sources: stackoverflow, github_repos, hackernews", text)
+        self.assertNotIn("- default (default)", text)
+
+    def test_markdown_output_is_table_with_default_marked(self):
+        self.write_config({"routes": {"research": {"label": "x|y", "sources": ["exa"], "timeout": None}}, "type": "research"})
+        text = self.routes_text("markdown")
+        self.assertTrue(text.strip())
+        self.assertIn("Default route: `research`", text)
+        self.assertIn("Aliases: web -> default", text)
+        self.assertIn("| Route | Default | Label | Sources |", text)
+        self.assertIn("| `research` | yes | x\\|y | exa |", text)
+
+    def test_human_output_with_no_routes_setting_shows_builtin_default(self):
+        self.write_config({})
+        text = self.routes_text("human")
+        self.assertIn("default_route: default", text)
+        self.assertIn("- default (default): ", text)
+
     def test_routes_is_listed_in_top_level_help(self):
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer), self.assertRaises(SystemExit) as exit_info:
