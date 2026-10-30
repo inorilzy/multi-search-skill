@@ -205,12 +205,12 @@ class ThinWrapperTests(unittest.TestCase):
         self.assertIn("no business rules", lowered)
 
 
-class MigrationTokenLocationTests(unittest.TestCase):
-    def test_cli_has_no_local_plan_token_implementation(self):
+class LegacyMigrationRemovedTests(unittest.TestCase):
+    def test_cli_has_no_legacy_migration_command(self):
         source = CLI.read_text(encoding="utf-8")
-        self.assertNotIn("def _plan_token", source)
-        self.assertNotIn("hashlib", source)
-        self.assertIn("legacy_migration.plan_token", source)
+        self.assertNotIn("migrate-legacy", source)
+        self.assertNotIn("legacy_migration", source)
+        self.assertFalse((CLI.parent / "src" / "support" / "legacy_migration.py").exists())
 
 
 if __name__ == "__main__":

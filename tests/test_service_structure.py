@@ -24,9 +24,8 @@ SNAPSHOTS = SRC / "search" / "snapshots.py"
 TOP_LEVEL_SERVICE_MODULES = {
     "service", "read", "search_web", "multi_search", "diagnostics",
 }
-# Known pre-existing edge outside this ticket's scope: the legacy key-file
-# migration adapter needs the keys parser. Everything else must point downward.
-KNOWN_SUPPORT_UPWARD = {"legacy_migration.py"}
+# No support module may import upward.
+KNOWN_SUPPORT_UPWARD: set[str] = set()
 
 
 def _imports(path: Path) -> list[tuple[int, str]]:
