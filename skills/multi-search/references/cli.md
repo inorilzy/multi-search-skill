@@ -25,22 +25,20 @@ terminal. Without uv, use a virtual environment and `python -m pip install .`
 from the checkout, then `python -m multi_search_mcp.cli --help`.
 
 Provider keys resolve once per provider: environment variables, then the
-credential store, then `~/.search-keys.json`. The credential store is the
-shared `~/.multi-search/config.sqlite` database written by the desktop app;
-values are encrypted with the current Windows user's DPAPI (no plaintext
-fallback elsewhere), and `MULTI_SEARCH_CONFIG_DB` selects an alternate database
-only for an explicitly isolated runtime. An unreadable store entry fails that
-provider closed instead of falling back to the plaintext file. No credentials
-belong in these commands. Non-secret configuration resolves from
+plaintext keys file `~/.multi-search/keys.json` (owner-only, mode 0600; `~` is
+`USERPROFILE` on Windows and `HOME` elsewhere). The desktop app writes that same
+file. When it is missing and the old `~/.search-keys.json` exists, the old file
+is copied there once and is never modified; afterwards only the new file is
+read. A keys file that is not valid JSON is an error. No credentials belong in
+these commands. Non-secret configuration resolves from
 `MULTI_SEARCH_CONFIG`, the `config.sqlite` settings record when present,
 `~/.multi-search/multi-search-config.json`, then the checkout default. An
 explicitly configured missing file is an error.
 
-Twitter/X cookies use `file` mode by default (a plaintext cookie file named by
-`TWITTER_COOKIES_PATH` or the saved `twitter_cookies_path`). After an explicit
-desktop import they use `managed` mode: a DPAPI-encrypted store entry decrypted
-only for X calls. Managed mode never falls back to the file and fails closed on
-a missing or unreadable entry or outside Windows.
+Twitter/X cookies always come from a plaintext cookie file named by
+`TWITTER_COOKIES_PATH` or the saved `twitter_cookies_path` (the desktop import
+writes `~/.multi-search/twitter-cookies.json`). A legacy `twitter_cookies_mode`
+setting is ignored.
 
 The `xkit-py` dependency for Twitter/X is currently commented out in
 `pyproject.toml` (its repository is private), so Twitter/X search and post
@@ -185,10 +183,7 @@ not every provider's credentials, quota, or search quality.
 Maintenance commands share the same Core state: `multi-search keys status` /
 `keys reset`, `multi-search sources --key-status --scraper-stats`, and
 `multi-search site stats [site]`, `site set-preference <site> <scraper>
-[--priority N] [--note TEXT]`, `site reset [site]`. `multi-search migrate-legacy plan --keys-file <path>`
-and `migrate-legacy apply --keys-file <path> --request <json>` move single-key
-entries from a legacy keys file into the credential store after a masked
-preview and explicit per-provider approval; the legacy file is never deleted.
+[--priority N] [--note TEXT]`, `site reset [site]`.
 Prefer these over the legacy Python adapter module, which only forwards to Core.
 
 Completion: the CLI runs, the search outcome is visible, and matching links are
