@@ -221,7 +221,8 @@ class RoutesCommandTests(unittest.TestCase):
         self.assertIn("web -> default", text)
         for route_id in BUILTIN_IDS:
             self.assertIn(f"- {route_id}", text)
-        self.assertIn("- dev (default): 开发者（Stack Overflow / GitHub / Hacker News）", text)
+        self.assertIn("- dev (default): ", text)
+        self.assertIn("开发者", text)
         self.assertIn("sources: stackoverflow, github_repos, hackernews", text)
         self.assertNotIn("- default (default)", text)
 
@@ -231,8 +232,33 @@ class RoutesCommandTests(unittest.TestCase):
         self.assertTrue(text.strip())
         self.assertIn("Default route: `research`", text)
         self.assertIn("Aliases: web -> default", text)
-        self.assertIn("| Route | Default | Label | Sources |", text)
+        self.assertIn("| Route | Default | Description | Sources |", text)
         self.assertIn("| `research` | yes | x\\|y | exa |", text)
+
+    def test_human_output_shows_description_and_falls_back_to_label(self):
+        self.write_config({
+            "routes": {
+                "research": {"label": "研究", "description": "  查论文时使用。 ", "sources": ["exa"], "timeout": None},
+                "plain": {"label": "普通", "sources": ["brave"], "timeout": None},
+            },
+            "type": "research",
+        })
+        text = self.routes_text("human")
+        self.assertIn("- research (default): 查论文时使用。", text)
+        self.assertIn("- plain: 普通", text)
+        self.assertNotIn("研究", text)
+
+    def test_markdown_shows_description_and_falls_back_to_label(self):
+        self.write_config({
+            "routes": {
+                "research": {"label": "研究", "description": "查论文时使用。", "sources": ["exa"], "timeout": None},
+                "plain": {"label": "普通", "sources": ["brave"], "timeout": None},
+            },
+            "type": "research",
+        })
+        text = self.routes_text("markdown")
+        self.assertIn("| `research` | yes | 查论文时使用。 | exa |", text)
+        self.assertIn("| `plain` |  | 普通 | brave |", text)
 
     def test_human_output_with_no_routes_setting_shows_builtin_default(self):
         self.write_config({})
