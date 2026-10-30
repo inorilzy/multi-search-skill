@@ -884,18 +884,57 @@
   }
   .credential-fields form {
     display: grid;
-    grid-template-columns: minmax(100px,1fr) auto auto;
-    gap: 10px;
-    align-items: end;
+    gap: 12px;
+    margin-top: 12px;
   }
-  .credential-fields form>label {
+  /* 已保存行与新增行：标签+输入框占满左侧，操作按钮与输入框底边对齐。 */
+  .key-saved-list, .key-draft-list {
+    display: grid;
+    gap: 10px;
+  }
+  .key-saved-list:not(:empty) {
+    margin-top: 12px;
+  }
+  .key-saved-row, .key-draft-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .key-saved-row>label, .key-draft-row>label {
+    flex: 1;
+    min-width: 0;
     font-size: 12px;
     color: #37485d;
   }
-  .credential-fields form>button {
+  .key-saved-row input, .key-draft-row input {
     height: 36px;
+  }
+  .key-saved-row>button, .key-draft-row>button, .draft-controls>button {
+    height: 36px;
+    padding: 0 12px;
     font-size: 12px;
     white-space: nowrap;
+  }
+  .key-draft-row>button, .draft-controls>[data-action=add] {
+    width: 36px;
+    padding: 0;
+    color: var(--muted);
+  }
+  .key-saved-row>[data-confirm-slot]:empty {
+    display: none;
+  }
+  .key-saved-row:has([data-confirm-slot]:not(:empty)) {
+    flex-wrap: wrap;
+  }
+  .key-saved-row>[data-confirm-slot]:not(:empty) {
+    flex-basis: 100%;
+  }
+  .credential-fields .draft-controls {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .draft-controls>.credential-note {
+    margin: 0 0 0 4px;
   }
   .key-input {
     display: flex;
@@ -1096,12 +1135,6 @@
     .credential-fields {
       padding-right: 16px;
     }
-    .credential-fields form {
-      grid-template-columns: minmax(0,1fr) auto;
-    }
-    .credential-fields form>label {
-      grid-column: 1/-1;
-    }
   }
   @media (max-width:1120px) {
     main {
@@ -1169,15 +1202,6 @@
     .credential-fields {
       border: 0;
       padding: 0;
-    }
-    .credential-fields form {
-      grid-template-columns: minmax(120px,1fr);
-    }
-    .credential-fields form>label {
-      grid-column: auto;
-    }
-    .credential-fields .draft-controls {
-      flex-wrap: wrap;
     }
     .test-result {
       min-height: 64px;
@@ -1285,12 +1309,6 @@
     }
     .source-detail {
       padding: 12px;
-    }
-    .credential-fields form {
-      grid-template-columns: 1fr 1fr;
-    }
-    .credential-fields form>label {
-      grid-column: 1/-1;
     }
     .credential-tools {
       flex-wrap: wrap;
@@ -1421,6 +1439,70 @@
   }
   .error-message:empty {
     display: none;
+  }
+  /* 模型重排面板：开关行、分组字段、密钥操作与数值参数。 */
+  .ranking-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+  }
+  .ranking-toggle input {
+    width: 16px;
+    height: 16px;
+    margin: 2px 0 0;
+    flex-shrink: 0;
+    accent-color: var(--teal);
+  }
+  .ranking-toggle span {
+    display: grid;
+    gap: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .ranking-toggle small {
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+  .ranking-panel .error-message:not(:empty) {
+    margin: 12px 0 0;
+  }
+  .ranking-advanced {
+    display: grid;
+    gap: 18px;
+    max-width: 640px;
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px dashed var(--line);
+  }
+  .ranking-advanced>.note {
+    margin: 0;
+    padding: 0;
+    border-top: 0;
+  }
+  .rerank-key {
+    display: grid;
+    gap: 10px;
+  }
+  .rerank-key .run-controls button {
+    padding: 7px 14px;
+    font-size: 12px;
+  }
+  .rerank-key .note {
+    margin: 0;
+    padding: 0;
+    border-top: 0;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .ranking-advanced .settings-default-grid {
+    grid-template-columns: repeat(3,minmax(0,1fr));
+    gap: 16px;
   }
   .settings-page .cred-status [data-status] {
     color: var(--muted);
@@ -1770,6 +1852,9 @@
       grid-template-columns: 1fr;
     }
     .settings-default-grid {
+      grid-template-columns: 1fr;
+    }
+    .ranking-advanced .settings-default-grid {
       grid-template-columns: 1fr;
     }
     .route-editor-grid {
