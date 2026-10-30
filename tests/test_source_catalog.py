@@ -21,6 +21,7 @@ from multi_search_mcp.src.search.search_runner import (
     ROUTE_PROFILES,
     ROUTE_SOURCE_ORDER,
     SOURCE_ALIASES,
+    default_routes_config,
 )
 from multi_search_mcp.src.state.keys import (
     CREDENTIAL_STORE_PROVIDERS,
@@ -100,6 +101,13 @@ class CatalogCoreParityTests(unittest.TestCase):
                 entry["routes"],
                 [route for route in ROUTE_SOURCE_ORDER if name in ROUTE_PROFILES[route]],
             )
+
+    def test_route_descriptions_match_builtin_route_groups(self):
+        defaults = default_routes_config()
+        for route in self.catalog["routes"]:
+            with self.subTest(route=route["name"]):
+                self.assertTrue(route["description"].strip())
+                self.assertEqual(route["description"], defaults[route["name"]]["description"])
 
     def test_env_names_match_key_env_pairs(self):
         self.assertEqual(self.catalog["key_resolution"]["order"], list(catalog_module.KEY_RESOLUTION_ORDER))
