@@ -162,6 +162,31 @@ def _route_entry(name: str) -> dict[str, Any]:
     }
 
 
+def build_configured_source_catalog(config: dict) -> dict[str, Any]:
+    """Overlay current routes on the built-in catalog without changing exports."""
+    from .resolve import describe_configured_routes
+
+    configured = describe_configured_routes(config)
+    catalog = build_source_catalog()
+    catalog["routes"] = [
+        {
+            "name": route["id"],
+            "label": route["label"],
+            "description": route["description"],
+            "aliases": sorted(
+                alias for alias, target in configured["aliases"].items() if target == route["id"]
+            ),
+            "sources": route["sources"],
+        }
+        for route in configured["routes"]
+    ]
+    for source in catalog["sources"]:
+        source["routes"] = [
+            route["name"] for route in catalog["routes"] if source["name"] in route["sources"]
+        ]
+    return catalog
+
+
 def build_source_catalog() -> dict[str, Any]:
     """Return the shared catalog. Deterministic: safe to snapshot in artifacts."""
     expected = set(PROVIDER_CAPABILITIES)

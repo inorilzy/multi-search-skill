@@ -424,9 +424,10 @@ def _handle_doctor(args: argparse.Namespace) -> dict[str, Any]:
 
 def _handle_sources(args: argparse.Namespace) -> dict[str, Any]:
     # Imported lazily so the light search CLI paths do not grow their import graph.
-    from .src.search.catalog import build_source_catalog
+    from .src.search.catalog import build_configured_source_catalog
+    from .src.support.config import load_config
 
-    catalog = build_source_catalog()
+    catalog = build_configured_source_catalog(load_config())
     if args.key_status:
         catalog["key_status"] = key_status()
     if args.scraper_stats:

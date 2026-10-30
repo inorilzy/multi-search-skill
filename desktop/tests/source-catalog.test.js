@@ -1,7 +1,7 @@
 // Contract tests for the shared source catalog (issue 09).
 // The catalog is generated from Python core metadata; this test proves both
 // desktop entry points read the same artifact and, when Python is available,
-// that the artifact still equals the live CLI output. Rust has the mirror test
+// that the artifact still equals the built-in catalog. Rust has the mirror test
 // in src-tauri/tests/source_catalog.rs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -72,15 +72,15 @@ test('credentials and settings derive from the same catalog', () => {
   }
 });
 
-test('checked-in catalog still matches the live Python CLI', t => {
+test('checked-in catalog still matches the built-in Python catalog', t => {
   const python = process.env.MULTI_SEARCH_PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
   const result = spawnSync(
     python,
-    ['-m', 'multi_search_mcp.cli', 'sources', '--format', 'json'],
+    ['-c', 'import json; from multi_search_mcp.src.search.catalog import build_source_catalog; print(json.dumps(build_source_catalog()))'],
     { cwd: ROOT, encoding: 'utf8', timeout: 30_000 },
   );
   if (result.error || result.status !== 0) {
-    t.skip(`Python CLI unavailable (${python}): ${result.error || result.stderr}`);
+    t.skip(`Python catalog unavailable (${python}): ${result.error || result.stderr}`);
     return;
   }
   assert.deepEqual(JSON.parse(result.stdout), ARTIFACT);
