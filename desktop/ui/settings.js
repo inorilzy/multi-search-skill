@@ -14,6 +14,7 @@ const ID_PATTERN = /^[a-z0-9_-]{1,64}$/;
 
 const cloneRoute = route => ({
   label: String(route.label),
+  description: route.description?.trim() || null,
   sources: [...route.sources],
   timeout: route.timeout == null ? null : Number(route.timeout),
 });
@@ -61,6 +62,7 @@ function validateRoute(id, route, routes, originalId = null) {
   if (id !== originalId && routes.has(id)) return '该路由标识已存在。';
   const label = route.label.trim();
   if (charLength(label) < 1 || charLength(label) > 80) return '名称需为 1–80 个字符。';
+  if (charLength(route.description?.trim() || '') > 120) return '何时使用描述不能超过 120 个字符。';
   if (!route.sources.length) return '请至少选择一个搜索源。';
   if (route.timeout != null && (!Number.isInteger(route.timeout) || route.timeout < 1 || route.timeout > 60)) return '独立超时需为 1–60 秒，留空则继承全局。';
   return '';
@@ -271,13 +273,14 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     const source = routeId == null ? null : routes.get(routeId);
     const copy = mode === 'copy';
     const editing = mode === 'edit';
-    const initial = source ? cloneRoute(source) : { label: '', sources: [], timeout: null };
+    const initial = source ? cloneRoute(source) : { label: '', description: null, sources: [], timeout: null };
     editorDirty = false;
     const panel = doc.createElement('section');
     panel.className = 'route-editor';
     panel.dataset.mode = mode;
     panel.innerHTML = `<div class="route-editor-head"><div><p class="eyebrow">${editing ? 'EDIT' : copy ? 'COPY' : 'NEW'}</p><h3>${editing ? '编辑分组' : copy ? '复制为新分组' : '新建分组'}</h3></div></div>
       <div class="route-editor-grid"><label>标识<input data-edit="id" maxlength="64" spellcheck="false" autocomplete="off"><small data-edit-id-hint></small></label><label>名称<input data-edit="label" maxlength="80"></label><label>独立超时（秒）<input data-edit="timeout" type="number" min="1" max="60" step="1"><small>留空继承全局 ${globalTimeout} 秒</small></label></div>
+      <label>何时使用<input data-edit="description" type="text" placeholder="可选，最多 120 个字符"><small>说明适合使用这个分组的场景，可留空。</small></label>
       <fieldset class="route-sources"><legend class="visually-hidden">搜索源（至少一个）</legend><div class="route-sources-head"><span class="route-sources-label">搜索源（至少一个）</span><span class="route-sources-count" data-source-count aria-live="polite"></span><div class="route-source-tools"><button type="button" data-source-action="all">全选</button><button type="button" data-source-action="none">全不选</button><button type="button" data-source-action="invert">反选</button></div></div><div class="route-source-grid" data-edit="sources"></div></fieldset>
       <p class="error-message route-form-error" data-edit-error ></p>
       <div class="route-editor-foot"><small>应用后仍需点击“保存全部设置”写入配置。</small><div class="run-controls"><button type="button" data-action="close-editor">取消</button><button type="button" class="primary" data-action="apply-route">应用到草稿</button></div></div>`;
@@ -289,6 +292,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       ? '创建后不可修改'
       : '小写字母、数字、下划线或连字符';
     panel.querySelector('[data-edit="label"]').value = copy ? `${initial.label} 副本` : initial.label;
+    panel.querySelector('[data-edit="description"]').value = initial.description ?? '';
     panel.querySelector('[data-edit="timeout"]').value = initial.timeout == null ? '' : String(initial.timeout);
     const sourceGrid = panel.querySelector('[data-edit="sources"]');
     for (const entry of SETTINGS_SOURCES) {
@@ -339,6 +343,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       const timeoutText = panel.querySelector('[data-edit="timeout"]').value.trim();
       const candidate = {
         label: panel.querySelector('[data-edit="label"]').value.trim(),
+        description: panel.querySelector('[data-edit="description"]').value.trim() || null,
         sources: [...panel.querySelectorAll('[data-route-source]:checked')].map(box => box.value),
         timeout: timeoutText === '' ? null : Number(timeoutText),
       };
