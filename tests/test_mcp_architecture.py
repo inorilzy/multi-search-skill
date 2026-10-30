@@ -1120,7 +1120,7 @@ class PluginServiceConfigTests(unittest.TestCase):
         data = doctor_data(include_keys=False)
 
         self.assertIn("config_path", data)
-        self.assertEqual(data["key_sources"]["file"], "~/.search-keys.json")
+        self.assertEqual(data["key_sources"]["file"], "~/.multi-search/keys.json")
         self.assertIn("TAVILY_API_KEY", data["key_sources"]["env"])
         self.assertEqual(data["key_sources"]["state"], data["state_path"])
         self.assertNotIn("levels", data)
@@ -1130,7 +1130,7 @@ class PluginServiceConfigTests(unittest.TestCase):
 
         with mock.patch(
             "multi_search_mcp.src.state.runtime.load_keys",
-            side_effect=KeysError("keys file is not valid JSON: /home/u/.search-keys.json"),
+            side_effect=KeysError("keys file is not valid JSON: /home/u/.multi-search/keys.json"),
         ):
             data = doctor_data(include_keys=True)
 

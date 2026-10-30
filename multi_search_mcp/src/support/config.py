@@ -33,6 +33,8 @@ def dev_config_path() -> Path | None:
 
 
 CONFIG_DB_ENV = "MULTI_SEARCH_CONFIG_DB"
+# ``config.sqlite`` schema version owned by the desktop (``PRAGMA user_version``).
+CONFIG_SCHEMA_VERSION = 1
 
 
 def _home_from_environment(env) -> Path | None:
@@ -52,7 +54,7 @@ def _home_from_environment(env) -> Path | None:
 
 
 def config_db_path(environ=None) -> Path:
-    """Locate the desktop-owned ``config.sqlite`` (settings + DPAPI credentials).
+    """Locate the desktop-owned ``config.sqlite`` (the ``settings`` record).
 
     ``MULTI_SEARCH_CONFIG_DB`` selects an isolated database. It is a literal path
     (desktop ``PathBuf`` semantics): ``~`` and environment variables are not
@@ -75,12 +77,12 @@ def _sqlite_settings_state() -> tuple[Path, str]:
     path = config_db_path()
     if not path.exists():
         return path, "absent"
-    from .credential_store import ConfigDatabase, CredentialStoreError
+    from .config_db import ConfigDatabase, ConfigDatabaseError
 
     try:
         with ConfigDatabase(path).connect() as conn:
             row = conn.execute("SELECT 1 FROM settings WHERE id=1").fetchone() if conn else None
-    except CredentialStoreError:
+    except ConfigDatabaseError:
         return path, "unreadable"
     return path, "present" if row else "absent"
 
@@ -144,10 +146,10 @@ def load_config(path: str | None = None) -> dict:
     if path is None:
         resolved, source = resolve_config_path_source()
         if source == "sqlite":
-            from .credential_store import ConfigDatabase, CredentialStoreError
+            from .config_db import ConfigDatabase, ConfigDatabaseError
             try:
                 return ConfigDatabase(resolved).read_settings()
-            except CredentialStoreError as exc:
+            except ConfigDatabaseError as exc:
                 raise ConfigError(f"config database is unreadable: {exc}") from None
         explicit = source == "env"
         config_path = resolved

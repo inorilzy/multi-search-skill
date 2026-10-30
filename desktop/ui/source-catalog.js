@@ -53,11 +53,10 @@ export const SOURCE_CATALOG = {
     }
   },
   "key_resolution": {
-    "description": "Environment variables override the Windows credential store, which overrides ~/.search-keys.json. Within one provider the env aliases are applied in listed order and the last non-empty value wins.",
+    "description": "Environment variables override ~/.multi-search/keys.json. Within one provider the env aliases are applied in listed order and the last non-empty value wins.",
     "env_alias_priority": "last_non_empty_wins",
     "order": [
       "env",
-      "credential_store",
       "keys_file"
     ]
   },

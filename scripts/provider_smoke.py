@@ -2,7 +2,7 @@
 
 Never run by default, CI, packaging, or controlled acceptance. This does not accept
 secrets on argv or write configuration. Supply credentials through the normal CLI
-credential store/environment before explicitly opting in.
+keys file (~/.multi-search/keys.json) or environment before explicitly opting in.
 """
 import argparse
 import json

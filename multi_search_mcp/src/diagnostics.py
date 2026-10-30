@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 from .search.query_plan import build_query_plan
 from .search.query_policy import QueryFusionPolicy
@@ -10,40 +9,38 @@ from .search.resolve import SearchPlanRequest, resolve_search_plan
 from .search.search_runner import ALL_SOURCE_NAMES, available_routes
 from .state import runtime
 from .state.keys import (
+    DISPLAY_KEYS_FILE,
     KEY_ENV_NAMES,
     KeysError,
     count_jina_keys,
+    default_keys_file,
     key_sources,
     keys_file_permission_warning,
 )
 from .state.operations import key_status, site_scraper_stats
 from .state.state_store import StateStore
-from .support.config import config_db_path, config_list, load_config, resolve_config_path_source
-from .support.credential_store import SCHEMA_VERSION as CONFIG_SCHEMA_VERSION
+from .support.config import CONFIG_SCHEMA_VERSION, config_list, load_config, resolve_config_path_source
 from .support.secrets import scrub_secrets
 
 
-# Storage protocol the desktop requires before it hands credentials or cookies
-# to this CLI (``credential_commands::supports_storage``): the shared
-# ``config.sqlite`` with current-user Windows DPAPI-encrypted credentials.
+# Settings-database protocol handshake checked by the desktop
+# (``credential_commands::supports_storage``). The identifier is kept stable for
+# that check; ``config.sqlite`` now holds only the ``settings`` record, and API
+# keys live in ``~/.multi-search/keys.json``.
 CONFIG_STORAGE_BACKEND = "sqlite-dpapi"
 
 
 def config_storage() -> dict:
-    """The config/credential storage protocol this CLI speaks. Never reads secrets."""
+    """The config storage protocol this CLI speaks. Never reads secrets."""
     return {"backend": CONFIG_STORAGE_BACKEND, "schema_version": CONFIG_SCHEMA_VERSION}
 
 
 def twitter_cookie_storage(config: dict) -> dict:
-    """Where X cookies come from for ``twitter_cookies_mode``; never reads the cookies."""
-    mode = config.get("twitter_cookies_mode", "file") if isinstance(config, dict) else "file"
-    if mode == "managed":
-        boundary = "Windows DPAPI; decrypted only for X calls"
-    elif mode == "file":
-        boundary = "legacy plaintext cookie file; not encrypted by multi-search"
-    else:
-        boundary = "unsupported mode; X calls fail closed"
-    return {"mode": mode if isinstance(mode, str) else "invalid", "boundary": boundary}
+    """Where X cookies come from; never reads the cookies.
+
+    Only file mode exists. A legacy ``twitter_cookies_mode`` setting is ignored.
+    """
+    return {"mode": "file", "boundary": "plaintext cookie file; not encrypted by multi-search"}
 
 
 def list_sources(include_key_status: bool = False, include_scraper_stats: bool = False) -> dict:
@@ -61,8 +58,8 @@ def list_sources(include_key_status: bool = False, include_scraper_stats: bool =
 def keys_file_warnings() -> list[str]:
     """Advisory warnings about the plaintext keys file (POSIX permissions)."""
     try:
-        warning = keys_file_permission_warning(Path.home() / ".search-keys.json")
-    except OSError:
+        warning = keys_file_permission_warning(default_keys_file())
+    except (OSError, KeysError):
         return []
     return [warning] if warning else []
 
@@ -106,11 +103,8 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         "config_loaded": config_error is None and config_path.exists(),
         "config_status": "error" if config_error else "ok" if config_path.exists() else "defaults",
         "key_sources": {
-            "storage": CONFIG_STORAGE_BACKEND,
-            "database": str(config_db_path()),
             "env": KEY_ENV_NAMES,
-            "file": "~/.search-keys.json",
-            "legacy_sources": "explicit import only",
+            "file": DISPLAY_KEYS_FILE,
             "state": str(store.path),
         },
         "routes": route_names,
@@ -148,7 +142,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
             data["key_sources"] = key_sources()
         except Exception as exc:  # diagnostic boundary: provenance is advisory
             data["key_sources_error"] = scrub_secrets(exc, keys)
-        # Booleans only; a managed-cookie handle is a non-secret reference.
+        # Booleans only, never values.
         data["configured_keys"] = {name: bool(value) for name, value in keys.items()}
         data["key_status"] = key_status(store=store)
         data["jina_keys_active_total"] = count_jina_keys(keys.get("jina"))

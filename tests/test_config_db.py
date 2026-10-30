@@ -1,31 +1,25 @@
-"""Desktop-owned SQLite/DPAPI additions, alongside legacy source priority tests."""
-import json
+"""The desktop-owned ``config.sqlite`` settings record, read and written by the CLI."""
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 from tests.desktop_schema import create_config_db as desktop_create_config_db
-from multi_search_mcp.src.support.credential_store import CredentialStore, CredentialStoreError
-from multi_search_mcp.src.state.keys import load_keys
+from multi_search_mcp.src.support.config_db import ConfigDatabase, ConfigDatabaseError
 SYNTHETIC_KEY = "synthetic-tavily-key-0001"
 
 
-class SQLiteDPAPIStoreTests(unittest.TestCase):
-    """Real DPAPI with synthetic values; all SQLite paths are disposable."""
+class ConfigDatabaseTests(unittest.TestCase):
+    """All SQLite paths are disposable."""
 
     def setUp(self):
-        from multi_search_mcp.src.support.credential_store import SQLiteCredentialBackend, ConfigDatabase
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / "config.sqlite"
-        self.backend = SQLiteCredentialBackend(self.path)
-        self.store = CredentialStore(self.backend)
         self.db = ConfigDatabase(self.path)
         desktop_create_config_db(self.path)
 
     def test_explicit_database_selector_is_literal_and_home_priority_matches_desktop(self):
-        from multi_search_mcp.src.support.credential_store import config_db_path
+        from multi_search_mcp.src.support.config import config_db_path
         for selected in ("~/config.sqlite", "%USERPROFILE%/config.sqlite", "relative/config.sqlite"):
             self.assertEqual(config_db_path({"MULTI_SEARCH_CONFIG_DB": selected}), Path(selected))
         self.assertEqual(config_db_path({"USERPROFILE": self.tmp.name, "HOME": "ignored"}),
@@ -33,54 +27,27 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
         self.assertEqual(config_db_path({"USERPROFILE": "", "HOME": self.tmp.name}),
                          Path(self.tmp.name) / ".multi-search" / "config.sqlite")
 
-    def test_missing_database_read_does_not_create_or_touch_legacy_store(self):
+    def test_missing_database_read_does_not_create_it(self):
         self.path.unlink()
-        self.assertIsNone(self.store.get("tavily"))
         self.assertEqual(self.db.read_settings(), {})
         self.assertFalse(self.path.exists())
         # Writes must fail loudly rather than letting the CLI become a second
         # schema owner by creating the database itself.
-        with self.assertRaisesRegex(CredentialStoreError, "desktop application"):
+        with self.assertRaisesRegex(ConfigDatabaseError, "desktop application"):
             self.db.write_settings({})
         self.assertFalse(self.path.exists())
-
-    @unittest.skipUnless(__import__("sys").platform == "win32", "native DPAPI requires Windows")
-    def test_native_encrypted_roundtrip_restart_lists_jina_and_settings(self):
-        import sqlite3
-        from multi_search_mcp.src.support.credential_store import SQLiteCredentialBackend, WindowsDPAPI
-        values = {"tavily": [SYNTHETIC_KEY, "synthetic-second-0011"],
-                  "jina": [{"key": "synthetic-jina-0012", "exhausted": True, "metadata": "preserved"}]}
-        for provider, value in values.items():
-            self.store.set(provider, value, saved_at=1700000001.5)
-        self.db.write_settings({"type": "fast", "timeout": 9, "disabled_sources": ["brave"]})
-        restarted = CredentialStore(SQLiteCredentialBackend(self.path))
-        for provider, value in values.items():
-            self.assertEqual(restarted.get(provider), value)
-        self.assertEqual(self.db.read_settings()["type"], "fast")
-        from contextlib import closing
-        with closing(sqlite3.connect(self.path)) as conn:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
-            encrypted, stamp = conn.execute("SELECT encrypted_value,saved_at FROM credentials WHERE provider='tavily'").fetchone()
-        self.assertEqual(json.loads(WindowsDPAPI().decrypt(encrypted))["saved_at"], stamp)
-        for file in self.path.parent.iterdir():
-            if file.is_file():
-                raw = file.read_bytes()
-                for secret in (SYNTHETIC_KEY, "synthetic-second-0011", "synthetic-jina-0012"):
-                    self.assertNotIn(secret.encode(), raw)
-        self.assertTrue(restarted.delete("tavily"))
-        self.assertIsNone(restarted.get("tavily"))
 
     def test_future_schema_corruption_and_unreadable_settings_fail_explicitly(self):
         import sqlite3
         self.path.write_bytes(b"not sqlite " + SYNTHETIC_KEY.encode())
-        with self.assertRaises(CredentialStoreError) as error:
-            self.store.get("tavily")
+        with self.assertRaises(ConfigDatabaseError) as error:
+            self.db.read_settings()
         self.assertNotIn(SYNTHETIC_KEY, str(error.exception))
         self.path.unlink()
         from contextlib import closing
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("PRAGMA user_version=2")
-        with self.assertRaisesRegex(CredentialStoreError, "schema version"):
+        with self.assertRaisesRegex(ConfigDatabaseError, "schema version"):
             self.db.read_settings()
         self.path.unlink()
         desktop_create_config_db(self.path)
@@ -89,44 +56,16 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
         with closing(sqlite3.connect(self.path)) as conn:
             conn.execute("UPDATE settings SET data=?", (SYNTHETIC_KEY,))
             conn.commit()
-        with self.assertRaisesRegex(CredentialStoreError, "settings are unreadable"):
+        with self.assertRaisesRegex(ConfigDatabaseError, "settings are unreadable"):
             self.db.read_settings()
 
-    def test_failed_encrypt_and_transaction_never_write_plaintext_or_partial_changes(self):
-        self.backend.protector = mock.Mock()
-        self.backend.protector.encrypt.side_effect = CredentialStoreError("DPAPI encryption failed")
-        with self.assertRaises(CredentialStoreError):
-            self.store.set("tavily", SYNTHETIC_KEY)
-        # Encryption fails before any SQL runs: the credentials table stays empty.
-        with self.db.connect() as conn:
-            self.assertEqual(conn.execute("SELECT count(*) FROM credentials").fetchone()[0], 0)
+    def test_failed_transaction_leaves_no_partial_changes(self):
         self.db.write_settings({"timeout": 8})
         with self.assertRaises(RuntimeError):
             with self.db.connect() as conn:
                 conn.execute("UPDATE settings SET data='{}'")
                 raise RuntimeError("synthetic failure")
         self.assertEqual(self.db.read_settings(), {"timeout": 8})
-
-    @unittest.skipUnless(__import__("sys").platform == "win32", "native DPAPI requires Windows")
-    def test_default_database_preserves_explicit_env_precedence_and_no_implicit_legacy_store_reads(self):
-        from multi_search_mcp.src.support.credential_store import default_store
-        from multi_search_mcp.src.support.config import load_config
-        old_keys = Path(self.tmp.name) / ".search-keys.json"
-        old_keys.write_text(json.dumps({"tavily": "synthetic-old-file-0012"}), encoding="utf-8")
-        old_config = Path(self.tmp.name) / "old-config.json"
-        old_config.write_text(json.dumps({"timeout": 55}), encoding="utf-8")
-        env = {"MULTI_SEARCH_CONFIG_DB": str(self.path), "MULTI_SEARCH_CONFIG": str(old_config),
-               "USERPROFILE": self.tmp.name, "HOME": self.tmp.name, "TAVILY_API_KEY": "synthetic-env-0013"}
-        with mock.patch.dict("os.environ", env):
-            store = default_store()
-            store.set("tavily", SYNTHETIC_KEY)
-            self.db.write_settings({"timeout": 7})
-            self.assertEqual(load_keys()["tavily"], "synthetic-env-0013")
-            self.assertEqual(load_config()["timeout"], 55)
-            store.delete("tavily")
-            with mock.patch("multi_search_mcp.src.support.credential_store.WindowsCredentialBackend", side_effect=AssertionError("no legacy reads")):
-                self.assertEqual(load_keys()["tavily"], "synthetic-env-0013")
-            self.assertEqual(old_keys.read_text(encoding="utf-8"), json.dumps({"tavily": "synthetic-old-file-0012"}))
 
     def test_cli_never_creates_or_migrates_schema(self):
         """Ticket 05: the CLI must not perform schema creation or migration SQL."""
@@ -135,7 +74,7 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
         # Missing database: read is empty, write refuses and no file appears.
         self.path.unlink()
         self.assertEqual(self.db.read_settings(), {})
-        with self.assertRaisesRegex(CredentialStoreError, "desktop application"):
+        with self.assertRaisesRegex(ConfigDatabaseError, "desktop application"):
             self.db.write_settings({"timeout": 5})
         self.assertFalse(self.path.exists())
         # Version 0 database: untouched byte-for-byte and reported as unsupported.
@@ -143,9 +82,9 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
             conn.execute("CREATE TABLE unrelated(value TEXT)")
             conn.commit()
         before = self.path.read_bytes()
-        with self.assertRaisesRegex(CredentialStoreError, "desktop application"):
+        with self.assertRaisesRegex(ConfigDatabaseError, "desktop application"):
             self.db.read_settings()
-        with self.assertRaisesRegex(CredentialStoreError, "desktop application"):
+        with self.assertRaisesRegex(ConfigDatabaseError, "desktop application"):
             self.db.write_settings({})
         self.assertEqual(self.path.read_bytes(), before)
         with closing(_sqlite3.connect(self.path)) as conn:
@@ -177,17 +116,9 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
                     conn.execute(sql)
                 conn.commit()
             before = self.path.read_bytes()
-            with self.assertRaisesRegex(CredentialStoreError, pattern):
+            with self.assertRaisesRegex(ConfigDatabaseError, pattern):
                 self.db.read_settings()
             self.assertEqual(self.path.read_bytes(), before)
-
-    @unittest.skipUnless(__import__("sys").platform == "win32", "native DPAPI requires Windows")
-    def test_corrupt_ciphertext_is_explicit_without_plaintext_fallback(self):
-        self.store.set("tavily", SYNTHETIC_KEY)
-        with self.db.connect() as conn:
-            conn.execute("UPDATE credentials SET encrypted_value=? WHERE provider='tavily'", (b"synthetic-invalid-ciphertext",))
-        with self.assertRaisesRegex(CredentialStoreError, "DPAPI decryption failed"):
-            self.store.get("tavily")
 
     def test_hash_fingerprint_contains_no_key_prefix_or_suffix(self):
         from multi_search_mcp.src.state.key_state import key_fingerprint
@@ -234,9 +165,16 @@ class SQLiteDPAPIStoreTests(unittest.TestCase):
         self.assertTrue(fingerprints["tavily"].startswith("sha256:"))
         self.assertEqual(fingerprints["brave"], "brv...0002 (old)")
 
-    def test_invalid_nested_pools_and_unknown_provider_are_rejected(self):
-        for value in ([[SYNTHETIC_KEY]], [], [None], {"key": SYNTHETIC_KEY}):
-            with self.assertRaises(ValueError):
-                self.store.set("tavily", value)
-        with self.assertRaises(ValueError):
-            self.store.set("not-a-provider", SYNTHETIC_KEY)
+    def test_legacy_credentials_table_is_never_read_or_required(self):
+        from contextlib import closing
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("INSERT INTO credentials(provider,encrypted_value,saved_at) VALUES('tavily',?,1)",
+                         (SYNTHETIC_KEY.encode(),))
+            conn.commit()
+        self.db.write_settings({"timeout": 5})
+        self.assertEqual(self.db.read_settings(), {"timeout": 5})
+        # A desktop database without the legacy table is valid too.
+        with closing(sqlite3.connect(self.path)) as conn:
+            conn.execute("DROP TABLE credentials")
+            conn.commit()
+        self.assertEqual(self.db.read_settings(), {"timeout": 5})

@@ -38,14 +38,6 @@ ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
 
 
-class _FakeStore:
-    def __init__(self, values: dict[str, str] | None = None):
-        self.values = values or {}
-
-    def get(self, provider: str):
-        return self.values.get(provider)
-
-
 def _run_cli(*args: str) -> tuple[int, str, str]:
     out, err = io.StringIO(), io.StringIO()
     code = cli.main(list(args), stdout=out, stderr=err)
@@ -247,7 +239,7 @@ class EnvPrecedenceTests(unittest.TestCase):
             env_name: f"value-{env_name}"
             for env_name, _provider in KEY_ENV_PAIRS
         }
-        keys = load_keys(keys_file, environ=environ, credential_store=None)
+        keys = load_keys(keys_file, environ=environ)
         for provider, env_names in catalog["env"]["providers"].items():
             expected = environ[env_names[-1]]
             if provider == "twitter_cookies":
@@ -256,26 +248,23 @@ class EnvPrecedenceTests(unittest.TestCase):
             else:
                 self.assertEqual(keys[provider], expected, provider)
 
-    def test_key_resolution_order_is_env_store_file(self):
+    def test_key_resolution_order_is_env_then_keys_file(self):
         catalog = catalog_module.build_source_catalog()
-        self.assertEqual(catalog["key_resolution"]["order"], ["env", "credential_store", "keys_file"])
+        self.assertEqual(catalog["key_resolution"]["order"], ["env", "keys_file"])
+        self.assertIn("~/.multi-search/keys.json", catalog["key_resolution"]["description"])
+        self.assertNotIn("credential store", catalog["key_resolution"]["description"])
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         keys_file = Path(temp.name) / "keys.json"
         keys_file.write_text(json.dumps({"brave": "file-key"}), encoding="utf-8")
-        store = _FakeStore({"brave": "store-key"})
-
-        from_store = load_keys(keys_file, environ={}, credential_store=store)
-        self.assertEqual(from_store["brave"], "store-key")
 
         from_env = load_keys(
             keys_file,
             environ={"BRAVE_SEARCH_API_KEY": "env-old", "BRAVE_API_KEY": "env-new"},
-            credential_store=store,
         )
-        self.assertEqual(from_env["brave"], "env-new", "last non-empty env alias wins over env+store")
+        self.assertEqual(from_env["brave"], "env-new", "last non-empty env alias wins over the file")
 
-        from_file = load_keys(keys_file, environ={}, credential_store=_FakeStore())
+        from_file = load_keys(keys_file, environ={})
         self.assertEqual(from_file["brave"], "file-key")
 
 
