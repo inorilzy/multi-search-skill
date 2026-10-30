@@ -63,7 +63,9 @@ class RoutesCommandTests(unittest.TestCase):
         }
         for route in payload["routes"]:
             self.assertEqual(route["description"], expected_descriptions[route["id"]])
-            self.assertEqual(set(route), {"id", "label", "description", "sources", "timeout", "is_default"})
+            self.assertEqual(
+                set(route), {"id", "label", "description", "sources", "disabled_sources", "timeout", "is_default"}
+            )
 
     def test_custom_route_appears_in_settings_order_and_deleted_builtin_is_absent(self):
         self.write_config({
@@ -88,6 +90,33 @@ class RoutesCommandTests(unittest.TestCase):
         self.assertTrue(flags["dev"])
         self.assertFalse(flags["default"])
         self.assertEqual(sum(flags.values()), 1)
+
+    def test_globally_disabled_source_moves_from_sources_to_disabled_sources(self):
+        self.write_config({"disabled_sources": ["github_repos", "stackoverflow"]})
+        payload = self.routes_json()
+        by_id = {route["id"]: route for route in payload["routes"]}
+        self.assertEqual(by_id["dev"]["sources"], ["hackernews"])
+        self.assertEqual(by_id["dev"]["disabled_sources"], ["stackoverflow", "github_repos"])
+        for route in payload["routes"]:
+            self.assertEqual(set(route["sources"]) & set(route["disabled_sources"]), set())
+
+    def test_disabled_sources_is_empty_when_no_source_is_disabled(self):
+        self.write_config({})
+        for route in self.routes_json()["routes"]:
+            with self.subTest(route=route["id"]):
+                self.assertEqual(route["disabled_sources"], [])
+
+    def test_source_order_follows_route_settings_order(self):
+        self.write_config({
+            "disabled_sources": ["exa"],
+            "routes": {
+                "research": {"label": "研究", "sources": ["tavily", "exa", "brave", "baidu"], "timeout": None},
+                "default": {"label": "默认", "sources": ["brave"], "timeout": None},
+            },
+        })
+        research = self.routes_json()["routes"][0]
+        self.assertEqual(research["sources"], ["tavily", "brave", "baidu"])
+        self.assertEqual(research["disabled_sources"], ["exa"])
 
     def test_every_listed_id_is_accepted_by_search_route_planning(self):
         self.write_config({
