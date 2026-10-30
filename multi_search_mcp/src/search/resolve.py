@@ -238,6 +238,7 @@ def describe_configured_routes(config: dict) -> dict[str, Any]:
     """
     routes = resolve_configured_routes(config)
     default_route = _resolve_configured_route(config, routes)
+    disabled = resolve_disabled_sources(config)
     return {
         "default_route": default_route,
         "aliases": dict(ROUTE_ALIASES),
@@ -245,7 +246,10 @@ def describe_configured_routes(config: dict) -> dict[str, Any]:
             {
                 "id": route_id,
                 "label": definition.label,
-                "sources": list(definition.sources),
+                # Sources that actually take part in this route, in route order.
+                "sources": [s for s in definition.sources if s not in disabled],
+                # Globally disabled sources that this route would otherwise include.
+                "disabled_sources": [s for s in definition.sources if s in disabled],
                 "timeout": definition.timeout,
                 "is_default": route_id == default_route,
             }
