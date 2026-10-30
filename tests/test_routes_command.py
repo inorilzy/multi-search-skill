@@ -108,6 +108,27 @@ class RoutesCommandTests(unittest.TestCase):
         self.write_config({})
         self.assertEqual(self.routes_json(), self.routes_json("--format", "json"))
 
+    def test_invalid_settings_exit_one_with_error_json_and_stderr(self):
+        cases = (
+            ({"routes": {"x": {"label": "a", "sources": ["brave"], "bogus": 1}}},
+             "unknown field"),
+            ({"routes": {"x": {"label": "a", "sources": []}}}, "at least one source"),
+            ({"routes": {}}, "at least one route"),
+            ({"type": "nope"}, "type references unknown route: nope"),
+        )
+        for value, expected in cases:
+            with self.subTest(config=value):
+                self.write_config(value)
+                stdout, stderr = io.StringIO(), io.StringIO()
+                code = cli.main(["routes"], stdout=stdout, stderr=stderr)
+                self.assertEqual(code, 1)
+                # Parsing the whole stream also ensures stdout has no prose.
+                payload = json.loads(stdout.getvalue())
+                self.assertIn(expected, payload["error"])
+                self.assertEqual(payload["error_type"], "invalid_request")
+                self.assertEqual(stderr.getvalue(), f"error: {payload['error']}\n")
+                self.assertNotIn("Traceback", stderr.getvalue())
+
     def test_routes_is_listed_in_top_level_help(self):
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer), self.assertRaises(SystemExit) as exit_info:
