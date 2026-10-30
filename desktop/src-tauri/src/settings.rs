@@ -44,7 +44,7 @@ pub const RANKING_RERANK_TIMEOUT_MAX: u32 = 60;
 /// 与 core 的 `BASE_URL_MAX` / `MODEL_MAX` 一致（按字符计）。
 pub const RANKING_BASE_URL_MAX: usize = 2048;
 pub const RANKING_MODEL_MAX: usize = 200;
-/// `~/.search-keys.json` 里 System One 密钥的条目名；与 core 的 `SYSTEMONE_KEY_NAME` 一致。
+/// `~/.multi-search/keys.json` 里 System One 密钥的条目名；与 core 的 `SYSTEMONE_KEY_NAME` 一致。
 pub const SYSTEMONE_KEY_NAME: &str = "systemone";
 /// 覆盖 keys 文件的环境变量；与 core 的 `SYSTEMONE_KEY_ENV` 一致。
 pub const SYSTEMONE_KEY_ENV: &str = "SYSTEMONE_API_KEY";
@@ -222,7 +222,7 @@ pub struct ScrapeBackendOption {
 }
 
 /// 保存时提交的 `ranking` 块；字段名与 core 的配置键严格一致。
-/// 密钥不在这里：它单独写进 `~/.search-keys.json`（见 `save_systemone_key`）。
+/// 密钥不在这里：它单独写进 `~/.multi-search/keys.json`（见 `save_systemone_key`）。
 #[derive(Clone, Debug, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
@@ -647,26 +647,9 @@ fn validate_ranking(input: &RankingInput) -> Result<RankingState, String> {
     })
 }
 
-/// `~/.search-keys.json` 的位置；与 CLI 读取的是同一个文件。
+/// `~/.multi-search/keys.json` 的位置；与 CLI 和凭据编辑器读写的是同一个文件。
 pub fn keys_file_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
-    environment
-        .variables
-        .get("USERPROFILE")
-        .filter(|v| !v.is_empty())
-        .or_else(|| environment.variables.get("HOME").filter(|v| !v.is_empty()))
-        .map(|home| PathBuf::from(home).join(".search-keys.json"))
-}
-
-fn read_keys_object(path: &Path) -> Result<Map<String, Value>, String> {
-    match std::fs::read_to_string(path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Map::new()),
-        Err(_) => Err("无法读取密钥文件".into()),
-        Ok(text) => match serde_json::from_str(text.trim_start_matches('\u{feff}')) {
-            Ok(Value::Object(map)) => Ok(map),
-            // 不覆盖一个无法解析的密钥文件：里面可能有其它搜索源的 Key。
-            _ => Err("密钥文件不是有效的 JSON 对象，未保存；请先修复 ~/.search-keys.json".into()),
-        },
-    }
+    crate::keys_file::path(&environment.variables)
 }
 
 /// 只报来源、不回传值：环境变量优先于 keys 文件，和 core 的读取顺序一致。
@@ -678,11 +661,13 @@ pub fn rerank_key_status(environment: &RuntimeEnvironment) -> RerankKeyStatus {
         .is_some_and(|v| !v.trim().is_empty());
     let source = if env_set {
         "env"
+    } else if path.is_none() {
+        "none"
     } else {
-        match path.as_deref().map(read_keys_object) {
-            Some(Ok(map)) if map.get(SYSTEMONE_KEY_NAME).and_then(Value::as_str).is_some_and(|v| !v.trim().is_empty()) => "keys_file",
-            Some(Err(_)) => "unreadable",
-            _ => "none",
+        match crate::keys_file::prepare(&environment.variables).and_then(|p| crate::keys_file::read(&p)) {
+            Ok(map) if map.get(SYSTEMONE_KEY_NAME).and_then(Value::as_str).is_some_and(|v| !v.trim().is_empty()) => "keys_file",
+            Ok(_) => "none",
+            Err(_) => "unreadable",
         }
     };
     RerankKeyStatus {
@@ -692,25 +677,22 @@ pub fn rerank_key_status(environment: &RuntimeEnvironment) -> RerankKeyStatus {
     }
 }
 
-/// 写入（或在 `key` 为空时删除）`~/.search-keys.json` 的 `systemone` 条目。
+/// 写入（或在 `key` 为空时删除）`~/.multi-search/keys.json` 的 `systemone` 条目。
 /// 其它条目原样保留；文件以 0600 原子替换（Unix），绝不经过设置数据库。
 pub fn save_systemone_key(environment: &RuntimeEnvironment, key: &str) -> Result<SettingsView, String> {
     let key = key.trim();
     if key.chars().count() > SYSTEMONE_KEY_MAX || key.chars().any(char::is_control) {
         return Err("API 密钥格式无效".into());
     }
-    let path = keys_file_path(environment).ok_or("无法定位用户目录")?;
-    let mut map = read_keys_object(&path)?;
     if key.is_empty() {
-        if map.remove(SYSTEMONE_KEY_NAME).is_none() {
+        // 清空一个不存在的条目不创建文件。
+        let path = crate::keys_file::prepare(&environment.variables)?;
+        if !crate::keys_file::read(&path)?.contains_key(SYSTEMONE_KEY_NAME) {
             return Ok(view(environment));
         }
-    } else {
-        map.insert(SYSTEMONE_KEY_NAME.into(), Value::String(key.into()));
     }
-    let mut body = serde_json::to_vec_pretty(&Value::Object(map)).map_err(|_| "无法序列化密钥文件".to_string())?;
-    body.push(b'\n');
-    crate::secure_temp::replace_private_file(&path, &body).map_err(|_| "无法写入密钥文件".to_string())?;
+    let value = (!key.is_empty()).then(|| Value::String(key.into()));
+    crate::keys_file::update(&environment.variables, SYSTEMONE_KEY_NAME, |_| Ok((value, ())))?;
     Ok(view(environment))
 }
 

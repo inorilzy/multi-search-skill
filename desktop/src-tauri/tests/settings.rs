@@ -544,7 +544,7 @@ fn python_cli_reads_desktop_written_settings_and_rejects_future_versions() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let read_script = r#"
 import json, sys
-from multi_search_mcp.src.support.credential_store import ConfigDatabase
+from multi_search_mcp.src.support.config_db import ConfigDatabase
 from multi_search_mcp.src.scrape.service import configured_scrape_backends
 data = ConfigDatabase(sys.argv[1]).read_settings()
 assert list(configured_scrape_backends(data)) == ['firecrawl', 'jina']
@@ -1210,7 +1210,11 @@ fn malformed_stored_ranking_is_flagged_and_can_be_repaired() {
 }
 
 fn keys_file(s: &Sandbox) -> PathBuf {
-    s.0.join(".search-keys.json")
+    s.0.join(".multi-search/keys.json")
+}
+fn seed_keys(s: &Sandbox, text: &str) {
+    std::fs::create_dir_all(keys_file(s).parent().unwrap()).unwrap();
+    std::fs::write(keys_file(s), text).unwrap();
 }
 
 #[test]
@@ -1218,7 +1222,7 @@ fn systemone_key_goes_to_the_keys_file_never_to_settings() {
     let s = Sandbox::new("rerank-key-write");
     let e = s.env(&[]);
     fixture::save(&e, &input("default", 60, &[])).unwrap();
-    std::fs::write(keys_file(&s), r#"{"brave":"b-key","tavily":["t1","t2"]}"#).unwrap();
+    seed_keys(&s, r#"{"brave":"b-key","tavily":["t1","t2"]}"#);
     let view = fixture::save_systemone_key(&e, "  sk-secret  ").unwrap();
     assert_eq!(view.rerank_key.source, "keys_file");
     let stored: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(keys_file(&s)).unwrap()).unwrap();
@@ -1245,7 +1249,7 @@ fn systemone_key_goes_to_the_keys_file_never_to_settings() {
 fn systemone_key_tightens_a_world_readable_keys_file() {
     let s = Sandbox::new("rerank-key-mode");
     let e = s.env(&[]);
-    std::fs::write(keys_file(&s), "{}").unwrap();
+    seed_keys(&s, "{}");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1260,7 +1264,7 @@ fn systemone_key_tightens_a_world_readable_keys_file() {
 fn a_corrupt_keys_file_is_never_overwritten() {
     let s = Sandbox::new("rerank-key-corrupt");
     let e = s.env(&[]);
-    std::fs::write(keys_file(&s), "{not json, but other keys live here").unwrap();
+    seed_keys(&s, "{not json, but other keys live here");
     let error = fixture::save_systemone_key(&e, "k").unwrap_err();
     assert!(error.contains("不是有效的 JSON"));
     assert_eq!(std::fs::read_to_string(keys_file(&s)).unwrap(), "{not json, but other keys live here");
@@ -1270,7 +1274,7 @@ fn a_corrupt_keys_file_is_never_overwritten() {
 #[test]
 fn key_status_prefers_the_environment_and_never_carries_the_value() {
     let s = Sandbox::new("rerank-key-env");
-    std::fs::write(keys_file(&s), r#"{"systemone":"file-key"}"#).unwrap();
+    seed_keys(&s, r#"{"systemone":"file-key"}"#);
     let file_only = fixture::rerank_key_status(&s.env(&[]));
     assert_eq!(file_only.source, "keys_file");
     let env = s.env(&[("SYSTEMONE_API_KEY", "env-key".into())]);

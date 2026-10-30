@@ -51,7 +51,7 @@ fn legacy_cli_cannot_search_using_old_credentials() {
             },
         )
         .unwrap_err();
-    assert!(error.contains("不支持 SQLite/DPAPI") && error.contains("不会读取旧 Key"));
+    assert!(error.contains("不支持当前的配置协议") && error.contains("更新 CLI"));
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn database_error_is_not_reported_as_old_cli_capability() {
             },
         )
         .unwrap_err();
-    assert!(error.contains("当前配置数据库") && !error.contains("更新 CLI"));
+    assert!(error.contains("当前的配置数据库或 Key 文件") && !error.contains("更新 CLI"));
 }
 
 #[test]

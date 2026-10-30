@@ -1,4 +1,3 @@
-use crate::credential::{self, CredentialBackend};
 use crate::RuntimeEnvironment;
 use serde_json::Value;
 
@@ -23,35 +22,9 @@ fn strings(value: &Value, out: &mut Vec<String>) {
         _ => (),
     }
 }
-/// Secrets for the real environment: env vars, keys file, cookie file, and every
-/// key saved in the SQLite store (the recommended storage location).
+/// Secrets for the real environment: env vars, the keys file, and the cookie files.
 pub(crate) fn secrets(environment: &RuntimeEnvironment) -> Vec<String> {
-    let backend = crate::config_db::path(&environment.variables)
-        .filter(|path| path.exists())
-        .map(|path| credential::SqliteCredentialBackend { path });
-    match backend.as_ref() {
-        Some(backend) => collect(environment, backend),
-        // No database yet: the store contributes nothing, and an unavailable store never
-        // fails redaction.
-        None => collect_without_store(environment),
-    }
-}
-
-/// Pure collection over an explicit store backend, so tests never touch the real store.
-pub(crate) fn collect(environment: &RuntimeEnvironment, backend: &dyn CredentialBackend) -> Vec<String> {
-    let mut values = collect_without_store(environment);
-    // One entry per key provider. A missing, unreadable, or unavailable row contributes
-    // nothing; it never fails redaction.
-    for provider in credential::store_providers()
-        .iter()
-        .map(String::as_str)
-        .chain(std::iter::once(crate::cookie::PROVIDER))
-    {
-        if let Ok(Some((value, _saved_at))) = credential::load(backend, "", provider) {
-            strings(&value, &mut values);
-        }
-    }
-    finish(values)
+    finish(collect_values(environment))
 }
 
 fn finish(mut values: Vec<String>) -> Vec<String> {
@@ -61,7 +34,7 @@ fn finish(mut values: Vec<String>) -> Vec<String> {
     values
 }
 
-fn collect_without_store(environment: &RuntimeEnvironment) -> Vec<String> {
+fn collect_values(environment: &RuntimeEnvironment) -> Vec<String> {
     let mut values = Vec::new();
     for (name, value) in &environment.variables {
         if value.chars().count() >= MIN_SECRET_LEN
@@ -70,14 +43,18 @@ fn collect_without_store(environment: &RuntimeEnvironment) -> Vec<String> {
             values.push(value.clone());
         }
     }
-    if let Some(home) = environment
+    // Read only: redaction never runs the legacy copy. Both locations may hold keys.
+    let home = environment
         .variables
         .get("USERPROFILE")
         .or_else(|| environment.variables.get("HOME"))
-    {
-        if let Ok(text) =
-            std::fs::read_to_string(std::path::Path::new(home).join(".search-keys.json"))
-        {
+        .map(std::path::PathBuf::from);
+    let files = crate::keys_file::path(&environment.variables)
+        .into_iter()
+        .chain(home.as_ref().map(|home| home.join(crate::keys_file::LEGACY_FILE_NAME)))
+        .chain(crate::cookie::managed_path(environment));
+    for file in files {
+        if let Ok(text) = std::fs::read_to_string(file) {
             if let Ok(data) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
                 strings(&data, &mut values);
             }

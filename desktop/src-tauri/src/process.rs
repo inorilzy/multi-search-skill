@@ -345,7 +345,7 @@ impl Drop for OwnedProcess {
     }
 }
 
-/// Run a credential-free CLI invocation (`--version`, `--help`, migration, …) to completion.
+/// Run a credential-free CLI invocation (`--version`, `--help`, `doctor`, …) to completion.
 pub(crate) fn bounded(
     program: &Path,
     args: &[String],

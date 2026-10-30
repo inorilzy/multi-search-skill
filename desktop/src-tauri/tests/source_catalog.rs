@@ -23,7 +23,7 @@ fn catalog_shape_and_shared_metadata_are_stable() {
     assert_eq!(catalog.schema_version, 1);
     assert_eq!(
         catalog.key_resolution.order,
-        vec!["env".to_string(), "credential_store".to_string(), "keys_file".to_string()],
+        vec!["env".to_string(), "keys_file".to_string()],
     );
     assert_eq!(catalog.key_resolution.env_alias_priority, "last_non_empty_wins");
     assert_eq!(catalog.env.alias_priority, "last_non_empty_wins");

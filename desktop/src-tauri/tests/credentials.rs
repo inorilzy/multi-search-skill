@@ -1,126 +1,294 @@
-//! Tavily credential store behaviour, against an in-memory backend (never the real store).
-//! Blob format is pinned to the Python CredentialStore by the shared fixture below.
+//! Credential editor against `~/.multi-search/keys.json` in a disposable HOME (never the real one).
 use multi_search_desktop::credential_fixture as fixture;
-use std::{collections::BTreeMap, sync::Mutex};
+use serde_json::{json, Value};
+use std::{collections::BTreeMap, path::PathBuf};
 
 const SYNTHETIC_KEY: &str = "synthetic-tavily-key-0001";
 
-#[derive(Default)]
-struct Memory(Mutex<BTreeMap<String, Vec<u8>>>);
-impl fixture::Backend for Memory {
-    fn read(&self, target: &str) -> Result<Option<Vec<u8>>, String> {
-        Ok(self.0.lock().unwrap().get(target).cloned())
+/// Unique temp home per test; removed on drop.
+struct Home(PathBuf);
+impl Home {
+    fn new(tag: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "ms-keys-{tag}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
     }
-    fn write(&self, target: &str, blob: &[u8]) -> Result<(), String> {
-        self.0.lock().unwrap().insert(target.into(), blob.to_vec());
-        Ok(())
+    fn vars(&self) -> BTreeMap<String, String> {
+        BTreeMap::from([("HOME".into(), self.0.to_string_lossy().into_owned())])
     }
-    fn delete(&self, target: &str) -> Result<bool, String> {
-        Ok(self.0.lock().unwrap().remove(target).is_some())
+    fn file(&self) -> PathBuf {
+        self.0.join(".multi-search/keys.json")
+    }
+    fn legacy(&self) -> PathBuf {
+        self.0.join(".search-keys.json")
+    }
+    fn write(&self, text: &str) {
+        std::fs::create_dir_all(self.file().parent().unwrap()).unwrap();
+        std::fs::write(self.file(), text).unwrap();
+    }
+    fn json(&self) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(self.file()).unwrap()).unwrap()
     }
 }
-
-fn ns(name: &str) -> BTreeMap<String, String> {
-    BTreeMap::from([("MULTI_SEARCH_CREDENTIAL_NAMESPACE".into(), name.into())])
+impl Drop for Home {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+fn keys(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+fn snapshot_of(home: &Home, source: &str) -> String {
+    fixture::masked_for(&home.vars(), source).unwrap().snapshot
 }
 
 #[test]
-fn save_writes_namespaced_versioned_blob_and_trims_key() {
-    let backend = Memory::default();
-    let vars = ns("ns-test");
-    fixture::save(
-        &backend,
-        &vars,
-        &format!("  {SYNTHETIC_KEY}  "),
-        1700000000.0,
-    )
-    .unwrap();
-    let stored = backend.0.lock().unwrap();
-    assert_eq!(stored.keys().collect::<Vec<_>>(), vec!["tavily"]);
-    let blob: serde_json::Value = serde_json::from_slice(&stored["tavily"]).unwrap();
-    assert_eq!(blob["v"], 1);
-    assert_eq!(blob["key"], SYNTHETIC_KEY);
-    assert_eq!(blob["saved_at"], 1700000000.0);
-    assert_eq!(blob.as_object().unwrap().len(), 3);
+fn keys_file_path_is_under_dot_multi_search_and_prefers_userprofile() {
+    let home = Home::new("path");
+    assert_eq!(fixture::keys_file_path(&home.vars()), Some(home.file()));
+    let mut both = home.vars();
+    both.insert("USERPROFILE".into(), "/profile".into());
+    assert_eq!(fixture::keys_file_path(&both), Some(PathBuf::from("/profile/.multi-search/keys.json")));
+    assert_eq!(fixture::keys_file_path(&BTreeMap::new()), None);
 }
 
 #[test]
-fn overview_reports_source_without_value_and_env_overrides_store() {
-    let backend = Memory::default();
-    let mut vars = ns("ns-test");
-    fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
-    let store_only = fixture::overview(&backend, &vars);
-    assert_eq!(store_only.effective_source, "sqlite");
-    assert!(!serde_json::to_value(&store_only).unwrap().as_object().unwrap().contains_key("env_var"));
-    assert!(!format!("{store_only:?}").contains(SYNTHETIC_KEY));
-
-    vars.insert("TAVILY_API_KEY".into(), "synthetic-env-key-0003".into());
-    let overridden = fixture::overview(&backend, &vars);
-    assert_eq!(overridden.effective_source, "sqlite");
-    assert_eq!(overridden, store_only);
-    assert!(!format!("{overridden:?}").contains("synthetic-env-key-0003"));
-}
-
-#[test]
-fn delete_then_absent_and_unreadable_entry_is_reported_not_echoed() {
-    let backend = Memory::default();
-    let vars = ns("ns-test");
-    fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
-    assert_eq!(
-        fixture::delete(&backend, &vars).unwrap().store.state,
-        "absent"
-    );
-
-    backend.0.lock().unwrap().insert(
-        "tavily".into(),
-        format!("{{not json {SYNTHETIC_KEY}").into_bytes(),
-    );
-    let row = fixture::overview(&backend, &vars);
-    assert_eq!(row.store.state, "unreadable");
+fn save_creates_the_directory_trims_and_keeps_other_entries() {
+    let home = Home::new("save");
+    // No ~/.multi-search yet: the first save creates it.
+    let row = fixture::save_for(&home.vars(), "tavily", &format!("  {SYNTHETIC_KEY}  ")).unwrap();
+    assert_eq!(row.store.state, "present");
+    assert_eq!(row.effective_source, "file");
+    assert_eq!(home.json(), json!({"tavily": SYNTHETIC_KEY}));
     assert!(!format!("{row:?}").contains(SYNTHETIC_KEY));
+
+    home.write(r#"{"brave":"b-key","future":{"x":[1,2]},"systemone":"s1","tavily":"old"}"#);
+    fixture::save_for(&home.vars(), "tavily", "first-key\nsecond-key").unwrap();
+    assert_eq!(
+        home.json(),
+        json!({"brave":"b-key","future":{"x":[1,2]},"systemone":"s1","tavily":["first-key","second-key"]})
+    );
+    // Key order on disk is preserved, so a diff of the file shows only the touched entry.
+    let text = std::fs::read_to_string(home.file()).unwrap();
+    assert!(text.find("brave").unwrap() < text.find("future").unwrap());
+    assert!(text.find("systemone").unwrap() < text.find("tavily").unwrap());
 }
 
 #[test]
-fn invalid_keys_rejected_without_echoing_value() {
-    let backend = Memory::default();
-    let vars = ns("ns-test");
+fn append_and_remove_rows_change_only_that_provider() {
+    let home = Home::new("rows");
+    home.write(r#"{"brave":["b1","b2"],"tavily":"k1"}"#);
+    fixture::append_for(&home.vars(), "tavily", &keys(&["k2", " k3 "])).unwrap();
+    assert_eq!(home.json(), json!({"brave":["b1","b2"],"tavily":["k1","k2","k3"]}));
+
+    let snapshot = snapshot_of(&home, "tavily");
+    assert_eq!(snapshot, fixture::snapshot("k1\nk2\nk3"));
+    fixture::remove_row_for(&home.vars(), "tavily", 1, &snapshot).unwrap();
+    assert_eq!(home.json(), json!({"brave":["b1","b2"],"tavily":["k1","k3"]}));
+
+    // Removing the last rows deletes the entry, never the other providers.
+    fixture::remove_row_for(&home.vars(), "tavily", 0, &fixture::snapshot("k1\nk3")).unwrap();
+    let row = fixture::remove_row_for(&home.vars(), "tavily", 0, &fixture::snapshot("k3")).unwrap();
+    assert_eq!(row.store.state, "absent");
+    assert_eq!(row.effective_source, "none");
+    assert_eq!(home.json(), json!({"brave":["b1","b2"]}));
+}
+
+#[test]
+fn append_creates_an_absent_entry_and_a_single_key_stays_scalar() {
+    let home = Home::new("append-absent");
+    fixture::append_for(&home.vars(), "tavily", &keys(&["only"])).unwrap();
+    assert_eq!(home.json(), json!({"tavily":"only"}));
+}
+
+#[test]
+fn append_rejects_invalid_and_over_limit_without_writing() {
+    let home = Home::new("append-invalid");
+    home.write(r#"{"tavily":"orig"}"#);
+    let before = std::fs::read(home.file()).unwrap();
+    for bad in [keys(&[""]), keys(&["   "]), keys(&["line\u{7}break"]), keys(&[&"x".repeat(1025)]), vec![]] {
+        assert!(fixture::append_for(&home.vars(), "tavily", &bad).is_err());
+    }
+    let many: Vec<String> = (0..257).map(|i| format!("synthetic-bulk-{i}")).collect();
+    assert!(fixture::append_for(&home.vars(), "tavily", &many).is_err());
+    assert_eq!(std::fs::read(home.file()).unwrap(), before);
+}
+
+#[test]
+fn remove_is_guarded_by_the_snapshot_hash() {
+    let home = Home::new("stale");
+    home.write(r#"{"tavily":["k1","k2"]}"#);
+    let before = std::fs::read(home.file()).unwrap();
+    assert!(fixture::remove_row_for(&home.vars(), "tavily", 0, &fixture::snapshot("k1\nCHANGED")).is_err());
+    assert!(fixture::remove_row_for(&home.vars(), "tavily", 5, &fixture::snapshot("k1\nk2")).is_err());
+    assert!(fixture::remove_row_for(&home.vars(), "tavily", 0, "k1\nk2").is_err(), "raw text is not a hash");
+    assert!(fixture::remove_row_for(&home.vars(), "brave", 0, &fixture::snapshot("k1")).is_err(), "absent entry");
+    assert_eq!(std::fs::read(home.file()).unwrap(), before);
+}
+
+#[test]
+fn remove_exact_duplicate_jina_row_drops_its_metadata() {
+    let home = Home::new("dup-jina");
+    let original = json!([
+        {"key":"synthetic-dup","exhausted":true,"note":{"owner":"first"}},
+        "synthetic-dup",
+        {"key":"synthetic-dup","exhausted":false,"note":["second"]}
+    ]);
+    home.write(&json!({"jina": original}).to_string());
+    fixture::remove_row_for(&home.vars(), "jina", 0, &fixture::snapshot("synthetic-dup\nsynthetic-dup\nsynthetic-dup")).unwrap();
+    assert_eq!(home.json()["jina"], json!(["synthetic-dup", {"key":"synthetic-dup","exhausted":false,"note":["second"]}]));
+    fixture::append_for(&home.vars(), "jina", &keys(&["synthetic-new"])).unwrap();
+    assert_eq!(
+        home.json()["jina"],
+        json!(["synthetic-dup", {"key":"synthetic-dup","exhausted":false,"note":["second"]}, "synthetic-new"])
+    );
+}
+
+#[test]
+fn reveal_returns_plaintext_and_read_masks_first_and_last_four() {
+    let home = Home::new("reveal");
+    home.write(r#"{"tavily":["abcd-secret-wxyz","tiny"]}"#);
+    assert_eq!(fixture::read_for(&home.vars(), "tavily").unwrap(), "abcd-secret-wxyz\ntiny");
+    let masked = fixture::masked_for(&home.vars(), "tavily").unwrap();
+    assert_eq!(masked.value, "abcd********wxyz\n********");
+    assert_eq!(masked.snapshot, fixture::snapshot("abcd-secret-wxyz\ntiny"));
+    assert!(fixture::read_for(&home.vars(), "../tavily").is_err());
+    // Nothing saved: an empty editor, not an error.
+    assert_eq!(fixture::read_for(&home.vars(), "brave").unwrap(), "");
+}
+
+#[test]
+fn delete_removes_only_the_entry_and_works_on_any_shape() {
+    let home = Home::new("delete");
+    home.write(r#"{"tavily":[["nested"]],"brave":"b"}"#);
+    let row = fixture::delete_for(&home.vars(), "tavily").unwrap();
+    assert_eq!(row.store.state, "absent");
+    assert_eq!(home.json(), json!({"brave":"b"}));
+    // Deleting an absent entry does not create or rewrite the file.
+    let other = Home::new("delete-absent");
+    fixture::delete_for(&other.vars(), "tavily").unwrap();
+    assert!(!other.file().exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn every_write_leaves_the_file_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Home::new("mode");
+    home.write(r#"{"brave":"b"}"#);
+    std::fs::set_permissions(home.file(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    let mode = || std::fs::metadata(home.file()).unwrap().permissions().mode() & 0o777;
+    fixture::save_for(&home.vars(), "tavily", "k1").unwrap();
+    assert_eq!(mode(), 0o600);
+    fixture::append_for(&home.vars(), "tavily", &keys(&["k2"])).unwrap();
+    assert_eq!(mode(), 0o600);
+    fixture::remove_row_for(&home.vars(), "tavily", 0, &fixture::snapshot("k1\nk2")).unwrap();
+    assert_eq!(mode(), 0o600);
+    // No temp file is left next to it.
+    let names: Vec<_> = std::fs::read_dir(home.file().parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(names, vec![std::ffi::OsString::from("keys.json")]);
+}
+
+#[test]
+fn a_corrupt_keys_file_is_reported_and_never_overwritten() {
+    let home = Home::new("corrupt");
+    let corrupt = format!("{{not json {SYNTHETIC_KEY}");
+    home.write(&corrupt);
+    assert!(fixture::save_for(&home.vars(), "tavily", "k").unwrap_err().contains("不是有效的 JSON"));
+    assert!(fixture::append_for(&home.vars(), "tavily", &keys(&["k"])).is_err());
+    assert!(fixture::remove_row_for(&home.vars(), "tavily", 0, &fixture::snapshot("k")).is_err());
+    assert!(fixture::delete_for(&home.vars(), "tavily").is_err());
+    assert!(fixture::read_for(&home.vars(), "tavily").is_err());
+    let row = fixture::overview(&home.vars());
+    assert_eq!(row.store.state, "unavailable");
+    assert!(!format!("{row:?}").contains(SYNTHETIC_KEY));
+    assert_eq!(std::fs::read_to_string(home.file()).unwrap(), corrupt);
+}
+
+#[test]
+fn an_unaddressable_entry_shape_rejects_row_ops_without_losing_data() {
+    let home = Home::new("hidden-shape");
+    let text = r#"{"tavily":[["nested"],"k1"]}"#;
+    home.write(text);
+    assert_eq!(fixture::overview(&home.vars()).store.state, "unreadable");
+    assert!(fixture::append_for(&home.vars(), "tavily", &keys(&["k2"])).is_err());
+    assert!(fixture::remove_row_for(&home.vars(), "tavily", 0, &fixture::snapshot("k1")).is_err());
+    assert_eq!(std::fs::read_to_string(home.file()).unwrap(), text);
+}
+
+#[test]
+fn empty_entries_count_as_absent() {
+    let home = Home::new("empty");
+    home.write(r#"{"tavily":"","brave":[],"exa":null}"#);
+    for source in ["tavily", "brave", "exa"] {
+        let row = fixture::overview_for(&home.vars(), source).unwrap();
+        assert_eq!(row.store.state, "absent", "{source}");
+        assert_eq!(row.effective_source, "none", "{source}");
+    }
+    fixture::append_for(&home.vars(), "brave", &keys(&["b1"])).unwrap();
+    assert_eq!(home.json()["brave"], json!("b1"));
+}
+
+#[test]
+fn the_legacy_file_is_copied_once_and_never_modified() {
+    let home = Home::new("legacy");
+    let legacy = r#"{"tavily":"legacy-key","unknown":true}"#;
+    std::fs::write(home.legacy(), legacy).unwrap();
+    assert_eq!(fixture::read_for(&home.vars(), "tavily").unwrap(), "legacy-key");
+    assert_eq!(std::fs::read_to_string(home.file()).unwrap(), legacy, "byte-for-byte copy");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(home.file()).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    fixture::save_for(&home.vars(), "tavily", "new-key").unwrap();
+    assert_eq!(home.json(), json!({"tavily":"new-key","unknown":true}));
+    // The old file is untouched and is not read again once the new one exists.
+    assert_eq!(std::fs::read_to_string(home.legacy()).unwrap(), legacy);
+    std::fs::write(home.legacy(), r#"{"tavily":"changed-legacy"}"#).unwrap();
+    assert_eq!(fixture::read_for(&home.vars(), "tavily").unwrap(), "new-key");
+}
+
+#[test]
+fn invalid_keys_are_rejected_without_echoing_the_value() {
+    let home = Home::new("invalid");
     for bad in ["", "   ", "line\u{7}break", &"x".repeat(1025)] {
-        let error = fixture::save(&backend, &vars, bad, 1.0).unwrap_err();
-        assert!(!error.contains(SYNTHETIC_KEY));
+        let error = fixture::save_for(&home.vars(), "tavily", bad).unwrap_err();
         assert!(!error.contains(&"x".repeat(20)));
     }
-    assert!(backend.0.lock().unwrap().is_empty());
+    assert!(!home.file().exists());
 }
 
 #[test]
-fn store_failure_is_explicit_and_never_falls_back() {
-    struct Denied;
-    impl fixture::Backend for Denied {
-        fn read(&self, _: &str) -> Result<Option<Vec<u8>>, String> {
-            Err("credential store access denied".into())
-        }
-        fn write(&self, _: &str, _: &[u8]) -> Result<(), String> {
-            Err("credential store access denied".into())
-        }
-        fn delete(&self, _: &str) -> Result<bool, String> {
-            Err("credential store access denied".into())
-        }
+fn overview_without_core_never_reads_the_environment() {
+    let home = Home::new("local");
+    let mut vars = home.vars();
+    vars.insert("TAVILY_API_KEY".into(), "synthetic-env-key-0003".into());
+    let row = fixture::overview(&vars);
+    // Env precedence is Core's answer; locally only the file is known.
+    assert_eq!(row.effective_source, "none");
+    let object = serde_json::to_value(&row).unwrap();
+    for absent in ["env_var", "file_key_count", "store_supported", "store_unsupported_reason", "env_overrides_store"] {
+        assert!(!object.as_object().unwrap().contains_key(absent), "{absent}");
     }
-    let row = fixture::overview(&Denied, &ns("ns-test"));
-    assert_eq!(row.store.state, "unavailable");
-    assert_eq!(row.effective_source, "unavailable");
-    assert!(fixture::save(&Denied, &ns("ns-test"), SYNTHETIC_KEY, 1.0).is_err());
+    assert!(!format!("{row:?}").contains("synthetic-env-key-0003"));
 }
 
 #[test]
 fn test_outcome_classifies_provider_errors_and_success() {
     let payload = |status: &str, error_type: &str| {
-        serde_json::json!({
+        json!({
             "provider_status": [{
                 "source": "tavily",
                 "status": status,
-                "errors": if error_type.is_empty() { serde_json::json!([]) }
-                    else { serde_json::json!([{"error": "x", "error_type": error_type}]) },
+                "errors": if error_type.is_empty() { json!([]) }
+                    else { json!([{"error": "x", "error_type": error_type}]) },
             }]
         })
     };
@@ -130,10 +298,8 @@ fn test_outcome_classifies_provider_errors_and_success() {
     assert_eq!(fixture::interpret(&payload("error", "rate_limit")).result, "rate_limited");
     assert_eq!(fixture::interpret(&payload("error", "network")).result, "network");
     assert_eq!(fixture::interpret(&payload("error", "timeout")).result, "timeout");
-    // Core emits ``missing_key`` for a provider that was skipped because no key is
-    // configured; the desktop consumes that classification instead of re-deriving it.
     assert_eq!(fixture::interpret(&payload("error", "missing_key")).result, "missing_key");
-    assert_eq!(fixture::interpret(&serde_json::json!({})).result, "error");
+    assert_eq!(fixture::interpret(&json!({})).result, "error");
 }
 
 #[test]
@@ -142,7 +308,6 @@ fn test_args_never_contain_key_material() {
     assert!(args.iter().all(|a| !a.contains(SYNTHETIC_KEY)));
     assert!(args.windows(2).any(|w| w == ["--source", "tavily"]));
     assert!(!args.iter().any(|a| a.contains("key")));
-    // Candidate-only: the test key run must never trigger Core page fetching.
     assert!(args.iter().any(|a| a.as_str() == "--no-fetch"));
 }
 
@@ -152,203 +317,4 @@ fn test_args_pass_the_query_after_the_option_terminator() {
     let terminator = args.iter().position(|a| a.as_str() == "--").expect("query follows `--`");
     assert_eq!(args[terminator + 1], "--count=999");
     assert_eq!(terminator + 2, args.len(), "nothing may follow the query");
-}
-
-#[test]
-fn multi_key_readback_is_one_per_line_and_overview_stays_non_secret() {
-    let backend = Memory::default();
-    let vars = ns("ignored");
-    fixture::save(&backend, &vars, "first-key\nsecond-key", 1.0).unwrap();
-    assert_eq!(
-        fixture::read_for(&backend, &vars, "tavily").unwrap(),
-        "first-key\nsecond-key"
-    );
-    assert!(fixture::read_for(&backend, &vars, "../tavily").is_err());
-    let stored: serde_json::Value =
-        serde_json::from_slice(&backend.0.lock().unwrap()["tavily"]).unwrap();
-    assert_eq!(
-        stored["key"],
-        serde_json::json!(["first-key", "second-key"])
-    );
-    assert!(!format!("{:?}", fixture::overview(&backend, &vars)).contains("first-key"));
-}
-
-#[test]
-fn rust_reads_blob_written_by_python_store() {
-    // Byte-for-byte output of multi_search_mcp CredentialStore.set("tavily", ..., saved_at=1700000001.5).
-    let python_blob = br#"{"v":1,"key":"synthetic-roundtrip-key-0009","saved_at":1700000001.5}"#;
-    let backend = Memory::default();
-    backend
-        .0
-        .lock()
-        .unwrap()
-        .insert("tavily".into(), python_blob.to_vec());
-    let row = fixture::overview(&backend, &ns("ns-roundtrip"));
-    assert_eq!(row.store.state, "present");
-    assert_eq!(row.store.saved_at, Some(1700000001.5));
-    assert!(!format!("{row:?}").contains("synthetic-roundtrip-key-0009"));
-}
-
-#[test]
-fn rust_written_blob_has_contract_bytes() {
-    // Exact bytes Rust writes; tests/test_credential_store.py decodes this same literal.
-    let backend = Memory::default();
-    fixture::save(
-        &backend,
-        &ns("ns-roundtrip"),
-        "  synthetic-roundtrip-key-0009  ",
-        1700000001.5,
-    )
-    .unwrap();
-    let stored = backend.0.lock().unwrap()["tavily"].clone();
-    assert_eq!(
-        String::from_utf8(stored).unwrap(),
-        r#"{"key":"synthetic-roundtrip-key-0009","saved_at":1700000001.5,"v":1}"#
-    );
-}
-
-#[test]
-fn overview_reports_platform_capability_separately_from_key_presence() {
-    let backend = Memory::default();
-    let vars = ns("ns-cap");
-    let supported = fixture::storage_supported();
-    // "未配置 Key" must never be mistaken for "存储不可用": on a supported
-    // build an absent store still reports write support.
-    let overview = fixture::overview(&backend, &vars);
-    assert_eq!(overview.store.state, "absent");
-    assert_eq!(overview.store_supported, supported);
-    assert_eq!(
-        overview.store_unsupported_reason.as_deref(),
-        if supported { None } else { Some("platform_unsupported") },
-    );
-    // A present row on a supported build reports support; on an unsupported
-    // build the same row cannot be rewritten even though it exists.
-    fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
-    let present = fixture::overview(&backend, &vars);
-    assert_eq!(present.store.state, "present");
-    assert_eq!(present.store_supported, supported);
-}
-
-#[test]
-fn unsupported_platform_rejects_the_command_guard_before_any_backend_access() {
-    // The test binary runs on the host platform: the guard must reject exactly
-    // when the build cannot encrypt. On Windows this test proves the guard is
-    // a no-op for supported writes; elsewhere it proves the stable reason.
-    if fixture::storage_supported() {
-        fixture::require_supported().unwrap();
-        return;
-    }
-    // The guard now returns the serialized {code,message} contract directly:
-    // the code travels with the error, not inside the message wording.
-    let error = fixture::require_supported().unwrap_err();
-    assert_eq!(error, fixture::unsupported_rejection(), "{error}");
-    let parsed: serde_json::Value = serde_json::from_str(&error).unwrap();
-    assert_eq!(parsed["code"], "credential_platform_unsupported");
-    assert!(parsed["message"].as_str().unwrap().contains("DPAPI"));
-    // A write that bypassed the disabled UI must not touch the store: seed
-    // data stays byte-for-byte identical and nothing new is written.
-    let backend = Memory::default();
-    let vars = ns("ns-guard");
-    fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
-    let before = backend.0.lock().unwrap().clone();
-    assert!(fixture::require_supported().is_err());
-    assert_eq!(*backend.0.lock().unwrap(), before);
-}
-
-#[test]
-fn command_body_writes_return_the_stable_unsupported_code_and_change_nothing() {
-    // Spec 7: a request that bypassed the disabled UI must reject with the
-    // stable serialized code and leave any existing rows byte-for-byte intact.
-    // The seams run the same guard the Tauri command bodies run, then the real
-    // SQLite path. On a supported build this test only proves the seams work.
-    if fixture::storage_supported() {
-        return;
-    }
-    let expected = fixture::unsupported_rejection();
-    let parsed: serde_json::Value = serde_json::from_str(&expected).unwrap();
-    assert_eq!(parsed["code"], "credential_platform_unsupported");
-    assert!(parsed["message"].as_str().unwrap().contains("DPAPI"));
-
-    let dir = std::env::temp_dir().join(format!("ms-unsupported-guard-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let db = dir.join("config.sqlite");
-    let bytes_before = std::fs::read(&db).unwrap_or_default();
-    let db_before_exists = db.exists();
-
-    assert_eq!(fixture::guarded_native_save(&db, "tavily", "synthetic-key", 1.0).unwrap_err(), expected);
-    assert_eq!(fixture::guarded_native_append(&db, "tavily", &["synthetic-key".into()], 1.0).unwrap_err(), expected);
-    assert_eq!(fixture::guarded_native_remove_row(&db, "tavily", 0, "expected-snapshot", 1.0).unwrap_err(), expected);
-
-    // No database row or file may appear as a side effect of a rejected write.
-    assert_eq!(db.exists(), db_before_exists);
-    if db_before_exists { assert_eq!(std::fs::read(&db).unwrap(), bytes_before); }
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn migration_apply_is_rejected_before_the_legacy_file_is_touched() {
-    // Spec 7: the apply path runs the same guard the command runs, so a request
-    // that bypassed the disabled UI rejects before the CLI is launched and the
-    // legacy file bytes are byte-for-byte identical afterwards.
-    if fixture::storage_supported() {
-        return;
-    }
-    let dir = std::env::temp_dir().join(format!("ms-unsupported-migrate-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let keys_file = dir.join(".search-keys.json");
-    std::fs::write(&keys_file, br#"{"tavily":"synthetic-legacy-key"}"#).unwrap();
-    let bytes_before = std::fs::read(&keys_file).unwrap();
-    let token = "0".repeat(64);
-    let approved = vec!["tavily".to_string()];
-    let choices = std::collections::BTreeMap::new();
-    // The CLI path is unreachable after the guard rejects, so an arbitrary
-    // non-existent path proves the guard ran before the spawn.
-    let cli = dir.join("nonexistent-cli");
-    let environment = multi_search_desktop::RuntimeEnvironment {
-        app_path: vec![],
-        user_path: vec![],
-        variables: std::collections::BTreeMap::new(),
-        cwd: dir.clone(),
-    };
-    let err = fixture::guarded_migration_apply(&environment, &cli, &keys_file, &token, &approved, &choices)
-        .unwrap_err();
-    assert_eq!(err, fixture::unsupported_rejection());
-    assert_eq!(std::fs::read(&keys_file).unwrap(), bytes_before);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn delete_is_cleanup_and_stays_available_without_encryption() {
-    // Spec c: removing a stored entry must not be blocked by the unsupported
-    // platform; it is a cleanup, not a new write, so no encryption is needed.
-    // The command body is not guarded (see window.rs), and the backend delete
-    // does not call crypt, so it succeeds even where writes are rejected.
-    let backend = Memory::default();
-    let vars = ns("ns-delete");
-    fixture::save(&backend, &vars, SYNTHETIC_KEY, 1.0).unwrap();
-    assert!(fixture::delete(&backend, &vars).is_ok());
-    assert_eq!(fixture::overview(&backend, &vars).store.state, "absent");
-}
-
-#[test]
-fn reveal_reports_unavailable_on_unsupported_platform_not_a_write_code() {
-    // S1 pin: a read path (credential_read / credential_reveal) must not be
-    // promoted to the write-only `credential_platform_unsupported` code; it
-    // surfaces as the ordinary unavailable/read error the UI already maps.
-    struct PlatformBlocked;
-    impl fixture::Backend for PlatformBlocked {
-        fn read(&self, _: &str) -> Result<Option<Vec<u8>>, String> {
-            // Same DPAPI text the native read surfaces on this platform.
-            Err("加密凭据存储仅支持 Windows 当前用户 DPAPI；当前平台不可用，且没有明文回退。".into())
-        }
-        fn write(&self, _: &str, _: &[u8]) -> Result<(), String> { unreachable!() }
-        fn delete(&self, _: &str) -> Result<bool, String> { unreachable!() }
-    }
-    let backend = PlatformBlocked;
-    let vars = ns("ns-reveal");
-    let err = fixture::read_for(&backend, &vars, "tavily").unwrap_err();
-    assert!(!err.contains("credential_platform_unsupported"));
-    assert!(err.contains("DPAPI") || err.contains("无法"), "{err}");
 }
