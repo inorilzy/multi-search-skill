@@ -16,16 +16,19 @@ from multi_search_mcp.src.support.config import ConfigError
 EXPECTED_BUILTINS = {
     "default": {
         "label": "默认（网页综合）",
+        "description": "默认使用；普通网页综合搜索。",
         "sources": ["brave", "parallel", "tavily", "exa", "serpapi", "firecrawl", "baidu"],
         "timeout": None,
     },
     "fast": {
         "label": "快速",
+        "description": "需要快速出结果时使用；源较少、延迟较低。",
         "sources": ["baidu", "tavily", "firecrawl", "exa"],
         "timeout": None,
     },
     "all": {
         "label": "全部",
+        "description": "需要尽可能全面召回时使用；查询全部源，耗时最长。",
         "sources": [
             "brave", "parallel", "tavily", "exa", "serpapi", "baidu", "firecrawl",
             "twitter", "stackoverflow", "github_repos", "hackernews", "sov2ex",
@@ -34,11 +37,13 @@ EXPECTED_BUILTINS = {
     },
     "social": {
         "label": "社交（Twitter）",
+        "description": "查 Twitter / X 上的讨论和反馈时使用。",
         "sources": ["twitter"],
         "timeout": None,
     },
     "dev": {
         "label": "开发者（Stack Overflow / GitHub / Hacker News）",
+        "description": "搜索开发项目、代码、技术问答和开发者讨论时使用（GitHub / Stack Overflow / Hacker News）。",
         "sources": ["stackoverflow", "github_repos", "hackernews"],
         "timeout": None,
     },

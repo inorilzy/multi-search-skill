@@ -54,9 +54,17 @@ class RoutesCommandTests(unittest.TestCase):
         self.assertEqual(by_id["dev"]["label"], "开发者（Stack Overflow / GitHub / Hacker News）")
         self.assertEqual(by_id["dev"]["sources"], ["stackoverflow", "github_repos", "hackernews"])
         self.assertIsNone(by_id["dev"]["timeout"])
+        expected_descriptions = {
+            "default": "默认使用；普通网页综合搜索。",
+            "fast": "需要快速出结果时使用；源较少、延迟较低。",
+            "all": "需要尽可能全面召回时使用；查询全部源，耗时最长。",
+            "social": "查 Twitter / X 上的讨论和反馈时使用。",
+            "dev": "搜索开发项目、代码、技术问答和开发者讨论时使用（GitHub / Stack Overflow / Hacker News）。",
+        }
         for route in payload["routes"]:
+            self.assertEqual(route["description"], expected_descriptions[route["id"]])
             self.assertEqual(
-                set(route), {"id", "label", "sources", "disabled_sources", "timeout", "is_default"}
+                set(route), {"id", "label", "description", "sources", "disabled_sources", "timeout", "is_default"}
             )
 
     def test_custom_route_appears_in_settings_order_and_deleted_builtin_is_absent(self):
@@ -157,6 +165,47 @@ class RoutesCommandTests(unittest.TestCase):
                 self.assertEqual(payload["error_type"], "invalid_request")
                 self.assertEqual(stderr.getvalue(), f"error: {payload['error']}\n")
                 self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_custom_description_is_trimmed_and_missing_or_blank_is_null(self):
+        definitions = {
+            "default": {"label": "默认", "sources": ["brave"], "description": "  查论文时使用。\n "},
+            "missing": {"label": "未写", "sources": ["exa"]},
+            "empty": {"label": "空", "sources": ["exa"], "description": " \n\t "},
+            "null": {"label": "空值", "sources": ["exa"], "description": None},
+        }
+        self.write_config({"routes": definitions})
+        by_id = {row["id"]: row for row in self.routes_json()["routes"]}
+        self.assertEqual(by_id["default"]["description"], "查论文时使用。")
+        for route_id in ("missing", "empty", "null"):
+            self.assertIsNone(by_id[route_id]["description"])
+        # A Unicode code point counts once, even when its UTF-8 encoding is longer.
+        definitions["default"]["description"] = "  " + "🌲" * 120 + "  "
+        self.write_config({"routes": definitions})
+        self.assertEqual(self.routes_json()["routes"][0]["description"], "🌲" * 120)
+
+    def test_invalid_description_fails_in_routes_and_search(self):
+        for value in ("界" * 121, 7, True, [], {}):
+            with self.subTest(value=value):
+                self.write_config({"routes": {
+                    "default": {"label": "默认", "sources": ["brave"], "description": value},
+                }})
+                for argv in (["routes"], ["search", "test", "--no-state", "--no-fetch"]):
+                    with self.subTest(command=argv[0]):
+                        stdout, stderr = io.StringIO(), io.StringIO()
+                        code = cli.main(argv, stdout=stdout, stderr=stderr)
+                        self.assertEqual(code, 1, stderr.getvalue())
+                        payload = json.loads(stdout.getvalue())
+                        self.assertEqual(payload["error_type"], "invalid_request")
+                        self.assertIn("routes.default.description", payload["error"])
+                        self.assertIn("description", stderr.getvalue())
+
+    def test_description_does_not_allow_unknown_fields(self):
+        self.write_config({"routes": {
+            "default": {"label": "默认", "sources": ["brave"], "description": "使用时机", "extra": None},
+        }})
+        stdout, stderr = io.StringIO(), io.StringIO()
+        self.assertEqual(cli.main(["routes"], stdout=stdout, stderr=stderr), 1)
+        self.assertIn("unknown field", json.loads(stdout.getvalue())["error"])
 
     def test_routes_is_listed_in_top_level_help(self):
         buffer = io.StringIO()

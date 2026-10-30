@@ -67,6 +67,15 @@ BUILTIN_ROUTE_LABELS = {
 }
 
 
+BUILTIN_ROUTE_DESCRIPTIONS = {
+    "default": "默认使用；普通网页综合搜索。",
+    "fast": "需要快速出结果时使用；源较少、延迟较低。",
+    "all": "需要尽可能全面召回时使用；查询全部源，耗时最长。",
+    "social": "查 Twitter / X 上的讨论和反馈时使用。",
+    "dev": "搜索开发项目、代码、技术问答和开发者讨论时使用（GitHub / Stack Overflow / Hacker News）。",
+}
+
+
 def default_routes_config() -> dict[str, dict[str, Any]]:
     """Return the built-in route groups in the desktop JSON shape.
 
@@ -76,6 +85,7 @@ def default_routes_config() -> dict[str, dict[str, Any]]:
     return {
         route_id: {
             "label": BUILTIN_ROUTE_LABELS[route_id],
+            "description": BUILTIN_ROUTE_DESCRIPTIONS[route_id],
             "sources": list(ROUTE_SOURCE_ORDER[route_id]),
             "timeout": None,
         }
