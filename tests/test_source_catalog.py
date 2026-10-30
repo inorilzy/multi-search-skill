@@ -99,13 +99,27 @@ class CatalogCliTests(unittest.TestCase):
             expected = [route["id"] for route in routes if source["name"] in route["sources"]]
             self.assertEqual(source["routes"], expected, source["name"])
 
-    def test_disabled_sources_match_actual_route_participation(self):
-        self.write_config({"disabled_sources": ["brave"]})
+    def test_disabled_sources_preserve_configured_memberships(self):
+        self.write_config({
+            "type": "research",
+            "disabled_sources": ["brave"],
+            "routes": {"research": {"label": "Research", "sources": ["brave", "exa"]}},
+        })
         code, out, err = _run_cli("sources")
         self.assertEqual(code, 0, err)
         payload = json.loads(out)
-        self.assertTrue(all("brave" not in route["sources"] for route in payload["routes"]))
-        self.assertEqual(next(source["routes"] for source in payload["sources"] if source["name"] == "brave"), [])
+        self.assertEqual(payload["routes"][0]["sources"], ["brave", "exa"])
+        self.assertEqual(next(source["routes"] for source in payload["sources"] if source["name"] == "brave"), ["research"])
+        route_code, route_out, route_err = _run_cli("routes")
+        self.assertEqual(route_code, 0, route_err)
+        effective = json.loads(route_out)["routes"][0]
+        self.assertEqual(effective["sources"], ["exa"])
+        self.assertEqual(effective["disabled_sources"], ["brave"])
+
+    def test_route_aliases_match_builtin_catalog_entries(self):
+        builtin = {route["name"]: route["aliases"] for route in catalog_module.build_source_catalog()["routes"]}
+        configured = catalog_module.build_configured_source_catalog({})
+        self.assertEqual({route["name"]: route["aliases"] for route in configured["routes"]}, builtin)
 
     def test_invalid_settings_exit_one_with_error(self):
         for value in ({"routes": {}}, {"type": "missing"}, {"routes": {"default": {"label": "Default", "sources": []}}}):
