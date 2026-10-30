@@ -304,7 +304,7 @@ class ReadmeContractTests(unittest.TestCase):
         self.assertIn("最后一个非空值生效", text)
         self.assertIn("BRAVE_SEARCH_API_KEY", text)
         self.assertIn("`BRAVE_API_KEY`", text)
-        self.assertIn("`credential_store`", text)
+        self.assertNotIn("`credential_store`", text)
         self.assertIn("`keys_file`", text)
         self.assertIn("TWITTER_COOKIES_PATH", text)
 

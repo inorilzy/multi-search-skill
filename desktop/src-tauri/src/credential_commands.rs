@@ -369,11 +369,11 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
     ]
 }
 const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-/// Protocol handshake with the CLI. The backend id `sqlite-dpapi` is historical and kept stable
-/// by Core; `config.sqlite` now only holds settings and keys live in the keys file.
+/// Protocol handshake with the CLI. `keys-file` means API keys live in `~/.multi-search/keys.json`;
+/// an older DPAPI-era CLI (`sqlite-dpapi`) would not read that file, so it is refused.
 pub(crate) fn supports_storage(payload: &Value) -> bool {
     payload.get("config_storage").is_some_and(|v| {
-        v.get("backend").and_then(Value::as_str) == Some("sqlite-dpapi")
+        v.get("backend").and_then(Value::as_str) == Some("keys-file")
             && v.get("schema_version").and_then(Value::as_i64) == Some(1)
     })
 }
@@ -469,10 +469,14 @@ mod tests {
     fn storage_capability_rejects_old_cli() {
         assert!(!supports_storage(&serde_json::json!({})));
         assert!(supports_storage(
+            &serde_json::json!({"config_storage":{"backend":"keys-file","schema_version":1}})
+        ));
+        // A DPAPI-era CLI does not read ~/.multi-search/keys.json.
+        assert!(!supports_storage(
             &serde_json::json!({"config_storage":{"backend":"sqlite-dpapi","schema_version":1}})
         ));
         assert!(!supports_storage(
-            &serde_json::json!({"config_storage":{"backend":"sqlite-dpapi","schema_version":2}})
+            &serde_json::json!({"config_storage":{"backend":"keys-file","schema_version":2}})
         ));
     }
 

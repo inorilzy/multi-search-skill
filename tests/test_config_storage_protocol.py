@@ -1,7 +1,7 @@
 """Core storage protocol the desktop relies on.
 
 The desktop runs ``multi-search doctor --no-keys --format json`` and checks the
-``config_storage`` handshake ``{"backend": "sqlite-dpapi", "schema_version": 1}``
+``config_storage`` handshake ``{"backend": "keys-file", "schema_version": 1}``
 (``credential_commands::supports_storage``). The identifier is kept stable;
 ``config.sqlite`` now holds only the ``settings`` record and API keys live in
 ``~/.multi-search/keys.json``. These tests lock that contract, settings from
@@ -64,7 +64,7 @@ class DoctorStorageContractTests(StorageFixture):
         code = cli.main(["doctor", "--no-keys", "--format", "json"], stdout=stdout, stderr=stderr)
         self.assertEqual(code, 0, stderr.getvalue())
         payload = json.loads(stdout.getvalue())
-        self.assertEqual(payload["config_storage"], {"backend": "sqlite-dpapi", "schema_version": 1})
+        self.assertEqual(payload["config_storage"], {"backend": "keys-file", "schema_version": 1})
         self.assertEqual(payload["key_sources"]["file"], "~/.multi-search/keys.json")
         for removed in ("storage", "database", "legacy_sources"):
             self.assertNotIn(removed, payload["key_sources"])
@@ -74,7 +74,7 @@ class DoctorStorageContractTests(StorageFixture):
 
     def test_service_facade_exposes_the_same_protocol(self):
         self.assertEqual(service.config_storage(), diagnostics.config_storage())
-        self.assertEqual(service.doctor_data(include_keys=False)["config_storage"]["backend"], "sqlite-dpapi")
+        self.assertEqual(service.doctor_data(include_keys=False)["config_storage"]["backend"], "keys-file")
 
     def test_legacy_managed_cookie_mode_is_reported_as_file(self):
         create_config_db(self.db, {"twitter_cookies_mode": "managed"})

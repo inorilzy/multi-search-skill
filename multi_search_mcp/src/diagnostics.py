@@ -27,7 +27,7 @@ from .support.secrets import scrub_secrets
 # (``credential_commands::supports_storage``). The identifier is kept stable for
 # that check; ``config.sqlite`` now holds only the ``settings`` record, and API
 # keys live in ``~/.multi-search/keys.json``.
-CONFIG_STORAGE_BACKEND = "sqlite-dpapi"
+CONFIG_STORAGE_BACKEND = "keys-file"
 
 
 def config_storage() -> dict:
