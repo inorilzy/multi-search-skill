@@ -187,7 +187,7 @@ source: string,
  */
 keys_file: string | null, env_var: string, };
 
-export type RouteConfig = { label: string, sources: Array<string>, timeout: number | null, };
+export type RouteConfig = { label: string, description: string | null, sources: Array<string>, timeout: number | null, };
 
 export type ScrapeBackendOption = { name: string, label: string, };
 

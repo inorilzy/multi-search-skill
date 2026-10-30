@@ -89,7 +89,7 @@ export const schemas = {
     source: 's', cliSource: 's', provider: 'sn', label: 's',
     keyed: 'b', search: 'b', cookie: 'b', aliases: 'sa',
   }),
-  RouteConfig: schema({ label: 's', sources: 'sa', timeout: 'nn' }),
+  RouteConfig: schema({ label: 's', description: 'sn', sources: 'sa', timeout: 'nn' }),
   RankingInput: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
   RankingState: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
   RerankKeyStatus: schema({ source: 's', keys_file: 'sn', env_var: 's' }),

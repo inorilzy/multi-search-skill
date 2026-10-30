@@ -85,6 +85,7 @@ class DesktopWrittenConfigReadByCliTests(unittest.TestCase):
         expected_routes = default_routes_config()
         expected_routes["handoff_custom"] = {
             "label": "联调",
+            "description": None,
             "sources": ["hackernews", "stackoverflow"],
             "timeout": 11,
         }

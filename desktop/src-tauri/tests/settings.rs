@@ -517,6 +517,7 @@ fn independent_cli_handoff_database() {
         "handoff_custom".into(),
         RouteConfig {
             label: "联调".into(),
+            description: None,
             sources: vec!["hackernews".into(), "stackoverflow".into()],
             timeout: Some(11),
         },
@@ -592,12 +593,129 @@ print(json.dumps({"type": data.get("type"), "timeout": data.get("timeout"), "dis
     assert!(fixture::save(&s.env(&[]), &input("fast", 30, &[])).is_err());
 }
 
+#[test]
+fn route_description_survives_save_and_read_after_trimming() {
+    let s = Sandbox::new("route-description-roundtrip");
+    let e = s.env(&[]);
+    let mut request = input("default", 30, &[]);
+    request.routes = Some(
+        serde_json::from_value(serde_json::json!({
+            "default": {"label": "默认", "sources": ["brave"], "description": "  查论文时使用。\n "}
+        }))
+        .unwrap(),
+    );
+    fixture::save(&e, &request).unwrap();
+    let saved = serde_json::to_value(fixture::view(&e)).unwrap();
+    assert_eq!(saved["routes"]["default"]["description"], "查论文时使用。");
+    // Saving another setting without editing routes must retain the description.
+    fixture::save(&e, &input("default", 40, &[])).unwrap();
+    let reread = serde_json::to_value(fixture::view(&e)).unwrap();
+    assert_eq!(reread["routes"]["default"]["description"], "查论文时使用。");
+}
+
+#[test]
+fn blank_and_legacy_route_descriptions_read_as_none() {
+    let s = Sandbox::new("route-description-blank");
+    let e = s.env(&[]);
+    for description in [serde_json::Value::Null, serde_json::json!(" \n\t ")] {
+        let mut request = input("default", 30, &[]);
+        request.routes = Some(
+            serde_json::from_value(serde_json::json!({
+                "default": {"label": "默认", "sources": ["brave"], "description": description}
+            }))
+            .unwrap(),
+        );
+        fixture::save(&e, &request).unwrap();
+        assert_eq!(fixture::view(&e).routes["default"].description, None);
+    }
+    s.replace(r#"{"type":"default","routes":{"default":{"label":"旧设置","sources":["brave"]}}}"#);
+    let legacy = fixture::view(&e);
+    assert_eq!(legacy.status, "ok");
+    assert_eq!(legacy.routes["default"].description, None);
+    fixture::save(&e, &input("default", 40, &[])).unwrap();
+    assert_eq!(fixture::view(&e).routes["default"].description, None);
+}
+
+#[test]
+fn route_description_counts_unicode_characters_and_rejects_overlong_without_writing() {
+    let s = Sandbox::new("route-description-limit");
+    let e = s.env(&[]);
+    let mut routes = fixture::builtin_routes();
+    routes.get_mut("default").unwrap().description = Some(format!("  {}  ", "🌲".repeat(120)));
+    let mut request = input("default", 30, &[]);
+    request.routes = Some(routes.clone());
+    fixture::save(&e, &request).unwrap();
+    assert_eq!(
+        fixture::view(&e).routes["default"].description,
+        Some("🌲".repeat(120))
+    );
+    routes.get_mut("default").unwrap().description = Some("界".repeat(121));
+    request.routes = Some(routes);
+    let error = fixture::save(&e, &request).unwrap_err();
+    assert!(error.contains("描述") && error.contains("120"), "{error}");
+    assert_eq!(
+        fixture::view(&e).routes["default"].description,
+        Some("🌲".repeat(120))
+    );
+}
+
+#[test]
+fn route_descriptions_reject_non_strings_and_unknown_fields() {
+    let s = Sandbox::new("route-description-invalid");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 30, &[])).unwrap();
+    for value in [
+        serde_json::json!(7),
+        serde_json::json!(true),
+        serde_json::json!([]),
+        serde_json::json!({}),
+    ] {
+        let body = serde_json::json!({"type": "default", "routes": {
+            "default": {"label": "默认", "sources": ["brave"], "description": value}
+        }});
+        assert!(serde_json::from_value::<SettingsInput>(serde_json::json!({
+            "route": "default", "routes": body["routes"]
+        }))
+        .is_err());
+        s.replace(&body.to_string());
+        assert_eq!(fixture::view(&e).status, "config_unreadable");
+    }
+    s.replace(r#"{"routes":{"default":{"label":"默认","sources":["brave"],"description":"使用时机","extra":null}}}"#);
+    assert_eq!(fixture::view(&e).status, "config_unreadable");
+}
+
+#[test]
+fn builtin_route_descriptions_match_python_defaults() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let output = std::process::Command::new("python")
+        .args(["-B", "-c", "import json; from multi_search_mcp.src.search.search_runner import default_routes_config; print(json.dumps(default_routes_config()))"])
+        .env("PYTHONPATH", &root)
+        .output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let python: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let rust = fixture::builtin_routes();
+    assert_eq!(rust.len(), python.as_object().unwrap().len());
+    for (id, route) in rust {
+        assert!(route.description.is_some(), "missing description for {id}");
+        assert_eq!(
+            serde_json::to_value(route).unwrap(),
+            python[&id],
+            "builtin route {id}"
+        );
+    }
+}
+
 fn custom_routes() -> RouteMap {
     let mut routes = fixture::builtin_routes();
     routes.insert(
         "research_1".into(),
         RouteConfig {
             label: "  研究组合  ".into(),
+            description: None,
             sources: vec!["github".into(), "github_repos".into(), "v2ex".into()],
             timeout: Some(7),
         },
@@ -688,6 +806,7 @@ fn current_last_and_invalid_routes_are_rejected_before_sqlite_changes() {
             "web",
             RouteConfig {
                 label: "Web".into(),
+                description: None,
                 sources: vec!["tavily".into()],
                 timeout: None,
             },
@@ -696,6 +815,7 @@ fn current_last_and_invalid_routes_are_rejected_before_sqlite_changes() {
             "UPPER",
             RouteConfig {
                 label: "Upper".into(),
+                description: None,
                 sources: vec!["tavily".into()],
                 timeout: None,
             },
@@ -704,6 +824,7 @@ fn current_last_and_invalid_routes_are_rejected_before_sqlite_changes() {
             "bad id",
             RouteConfig {
                 label: "Space".into(),
+                description: None,
                 sources: vec!["tavily".into()],
                 timeout: None,
             },
@@ -712,6 +833,7 @@ fn current_last_and_invalid_routes_are_rejected_before_sqlite_changes() {
             "empty-source",
             RouteConfig {
                 label: "Empty".into(),
+                description: None,
                 sources: vec![],
                 timeout: None,
             },
@@ -720,6 +842,7 @@ fn current_last_and_invalid_routes_are_rejected_before_sqlite_changes() {
             "bad-timeout",
             RouteConfig {
                 label: "Timeout".into(),
+                description: None,
                 sources: vec!["tavily".into()],
                 timeout: Some(91),
             },
@@ -728,6 +851,7 @@ fn current_last_and_invalid_routes_are_rejected_before_sqlite_changes() {
             "bad-source",
             RouteConfig {
                 label: "Source".into(),
+                description: None,
                 sources: vec!["unknown".into()],
                 timeout: None,
             },
