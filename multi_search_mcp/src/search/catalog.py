@@ -17,6 +17,7 @@ from ..state.keys import CREDENTIAL_STORE_PROVIDERS, KEY_ENV_PAIRS
 from .capabilities import PROVIDER_CAPABILITIES
 from .search_runner import (
     ALL_SOURCE_NAMES,
+    BUILTIN_ROUTE_DESCRIPTIONS,
     ROUTE_ALIASES,
     ROUTE_PROFILES,
     ROUTE_SOURCE_ORDER,
@@ -155,6 +156,7 @@ def _route_entry(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "label": ROUTE_LABELS[name],
+        "description": BUILTIN_ROUTE_DESCRIPTIONS[name],
         "aliases": sorted(alias for alias, target in ROUTE_ALIASES.items() if target == name),
         "sources": list(ROUTE_SOURCE_ORDER[name]),
     }

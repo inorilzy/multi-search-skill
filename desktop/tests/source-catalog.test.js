@@ -36,6 +36,9 @@ test('catalog has one entry per search source and route with stable aliases', ()
   assert.equal(new Set(names).size, names.length);
   assert.ok(names.every(name => !name.includes('-')), 'CLI names use underscores');
   assert.equal(ROUTES.length, 5);
+  for (const route of ROUTES) {
+    assert.ok(route.description?.trim(), `${route.name} describes when to use it`);
+  }
   assert.deepEqual(ROUTES.map(route => route.name), ['default', 'fast', 'social', 'dev', 'all']);
   assert.deepEqual(routeSources('web'), routeSources('default'));
   assert.ok(routeSources('default').includes('brave'));

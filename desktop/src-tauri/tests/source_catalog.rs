@@ -62,6 +62,7 @@ fn catalog_shape_and_shared_metadata_are_stable() {
     assert_eq!(catalog.routes.len(), 5);
     for route in &catalog.routes {
         assert!(!route.label.trim().is_empty());
+        assert!(!route.description.trim().is_empty(), "{} describes when to use it", route.name);
         assert!(!route.sources.is_empty());
         for name in &route.sources {
             let source = catalog.source(name).unwrap_or_else(|| panic!("{name} must exist"));
