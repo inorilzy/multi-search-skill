@@ -1477,6 +1477,9 @@
     margin: 0;
     padding: 0;
     border-top: 0;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted);
     overflow-wrap: anywhere;
   }
   .ranking-advanced .settings-default-grid {
