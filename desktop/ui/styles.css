@@ -976,6 +976,25 @@
     font-weight: 400;
     color: var(--muted);
   }
+  /* Manual-copy fallback for a failed browser launch: selectable monospace text so the
+     address can be highlighted and copied without turning the page into a launcher. */
+  .application-fallback {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .application-fallback[hidden] {
+    display: none;
+  }
+  .application-fallback input {
+    font-family: Consolas,monospace;
+    font-size: 12px;
+    padding: 6px 8px;
+    user-select: all;
+  }
   .credential-fields .note {
     font-size: 12px;
     margin-top: 8px;

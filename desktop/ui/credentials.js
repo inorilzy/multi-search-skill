@@ -87,9 +87,10 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <div data-draft-list class="key-draft-list"></div>
       <div class="run-controls draft-controls"><button type="button" data-action="add" aria-label="新增一行 Key 输入">＋</button>
       <button type="submit" class="primary" data-action="save">提交新增 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
-      <span class="credential-note" data-info="application">申请链接待配置</span></div>
+      <span class="credential-note" data-info="application">正在确认申请链接与打开能力…</span></div>
     </form>
     <p data-keys-file-note class="credential-note" role="note"></p>
+    <div class="application-fallback" data-application-fallback hidden><label>固定申请链接（可选择并手动复制）<input type="text" readonly data-application-url spellcheck="false" aria-label="固定申请链接"></label></div>
     <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
     <p data-info="error" class="error-message"></p>
     <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div>
@@ -100,6 +101,48 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   const q = selector => /** @type {any} */ (root.querySelector(selector));
   const text = (selector, value) => { q(selector).textContent = value; };
   let current = { store: { state: 'absent', error: '' }, effective_source: 'none' };
+  // Application entry state machine. 'pending' = the metadata query is in flight (the
+  // button stays disabled, so an unconfirmed entry never flashes as usable); 'failed' =
+  // that query itself failed (distinct from "no fixed link" and from "this platform
+  // cannot open", which only an answer may claim); 'ok' = the backend answered with the
+  // fixed link and the browser-open capability. Only the latest refresh publishes this
+  // state, so a slower older response cannot revive a stale entry.
+  let application = { phase: 'pending' };
+  const appOpens = state =>
+    state.phase === 'ok'
+    && state.key_application_available === true
+    && state.key_application_open_supported !== false;
+  // A browser-launch failure keeps the entry usable (retry stays enabled) and shows the
+  // same trusted link from `application` for manual copying. The link never comes from
+  // the failed call, its error text, or the user, so a failure cannot redirect the entry.
+  // `opening` holds the entry for one in-flight launch at a time.
+  let openFailed = false, opening = false, openFailureText = '';
+  const appNote = state => {
+    if (state.phase === 'pending') return '正在确认申请链接与打开能力…';
+    if (state.phase === 'failed') return '无法确认申请链接与打开能力，请点击“刷新已保存值”重试。';
+    if (state.key_application_available !== true) return '该搜索源暂无固定申请链接，无法打开申请页。';
+    if (state.key_application_open_supported === false) {
+      return state.key_application_url
+        ? `当前平台无法直接打开系统浏览器，请手动复制固定申请链接：${state.key_application_url}`
+        : '当前平台无法直接打开系统浏览器，且暂无可复制的固定申请链接。';
+    }
+    // A launch that the backend reported as failed must not keep describing the
+    // browser path as though it had worked.
+    if (openFailed) {
+      return state.key_application_url
+        ? '系统浏览器打开失败，可点击下方固定申请链接手动复制，或重试。'
+        : '系统浏览器打开失败，请重试。';
+    }
+    return '使用系统浏览器打开固定申请链接';
+  };
+  function renderApplication() {
+    text('[data-info="application"]', appNote(application));
+    q('[data-action="application"]').disabled = busy || opening || !appOpens(application);
+    const fallback = q('[data-application-fallback]');
+    const showFallback = openFailed && application.phase === 'ok' && Boolean(application.key_application_url);
+    fallback.hidden = !showFallback;
+    q('[data-application-url]').value = showFallback ? application.key_application_url : '';
+  }
   let generation = 0, disposed = false, busy = false;
   q('[data-keys-file-note]').textContent = KEYS_FILE_NOTE;
   // Monotonic refresh guard: only the latest refresh may publish status or
@@ -129,7 +172,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     for (const input of root.querySelectorAll('[data-saved-list] input')) input.disabled = value;
     for (const button of root.querySelectorAll('[data-action="copy"]')) button.disabled = value || !revealed.has(Number(button.dataset.rowIndex));
     for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || !readHealthy;
-    q('[data-action="application"]').disabled = value || !current.key_application_available;
+    renderApplication();
     q('[data-action="test"]').disabled = value || !searchTest;
     q('[data-action="test"]').hidden = !searchTest;
     // Saved-row delete and draft add/submit are mutations; keep them disabled
@@ -178,8 +221,14 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     setBusy(busy);
     text('[data-status="store"]', storeLabels[view.store.state] || view.store.state);
     text('[data-status="source"]', sourceText(view));
-    text('[data-info="application"]', view.key_application_available ? '使用系统浏览器打开固定申请链接' : '申请链接待配置');
-    q('[data-action="application"]').disabled = busy || !view.key_application_available;
+    // A confirmed answer, which may legitimately be "no mapping" or "platform cannot open".
+    application = {
+      phase: 'ok',
+      key_application_available: view.key_application_available,
+      key_application_open_supported: view.key_application_open_supported,
+      key_application_url: view.key_application_url,
+    };
+    renderApplication();
   }
   // `requestId` ties a read-back to its owning refresh; non-refresh callers
   // (reveal snapshot re-check, post-save/post-remove read-back) pass the
@@ -197,6 +246,12 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     // A newer refresh supersedes this one: only it may publish status or
     // rows, so a slower older response cannot overwrite a newer outcome.
     const requestId = ++refreshGeneration;
+    // An in-flight query is not yet an answer, so the application button stays
+    // disabled until this request (or a newer one) resolves.
+    application = { phase: 'pending' };
+    // A new metadata answer supersedes an earlier browser-launch failure.
+    openFailed = false; openFailureText = '';
+    renderApplication();
     setBusy(true);
     try {
       const view = await api.credentialStatus(source);
@@ -219,6 +274,10 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       if (!disposed && requestId === refreshGeneration) {
         // A failed lookup is never an empty, writable file: writes stay disabled.
         readHealthy = false;
+        // The application metadata came from the same failed query: report it as
+        // unconfirmed with the existing retry entry, never as "no link"/"unsupported".
+        application = { phase: 'failed' };
+        renderApplication();
         // Keep the last saved rows visible so the user can still see state; all
         // writes stay disabled until a refresh succeeds again.
         renderSaved();
@@ -343,8 +402,30 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     });
   });
   q('[data-action="application"]').addEventListener('click', async () => {
-    try { await api.credentialApplicationOpen(source); }
-    catch (error) { if (!disposed) showError(q('[data-info="error"]'), error, '无法打开系统浏览器。'); }
+    // Guard the action itself too: a synthesized click on a disabled entry must not
+    // open anything before the metadata query has confirmed the link and capability.
+    // `opening` keeps repeated clicks from starting parallel browser launches.
+    if (busy || disposed || opening || !appOpens(application)) return;
+    opening = true; renderApplication();
+    try {
+      await api.credentialApplicationOpen(source);
+      if (disposed) return;
+      // A confirmed launch clears the earlier failure. The error slot is emptied only
+      // while it still carries that failure text, so an unrelated message survives.
+      if (openFailed) {
+        const slot = q('[data-info="error"]');
+        if (openFailureText && slot.textContent === openFailureText) { slot.textContent = ''; slot.title = ''; }
+        openFailed = false; openFailureText = '';
+      }
+    } catch (error) {
+      if (!disposed) {
+        openFailed = true;
+        openFailureText = showError(q('[data-info="error"]'), error, '无法打开系统浏览器，请重试或手动复制固定申请链接。').message;
+      }
+    } finally {
+      opening = false;
+      if (!disposed) renderApplication();
+    }
   });
   q('[data-action="test"]').addEventListener('click', async () => {
     if (!searchTest) return;

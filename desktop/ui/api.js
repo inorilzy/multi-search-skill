@@ -36,7 +36,7 @@ const ERROR_MESSAGES = {
   credential_remove_failed: '凭据删除失败，已保存的值没有改变。',
   credential_delete_failed: '凭据删除失败，请重试。',
   credential_test_failed: '凭据测试启动失败，请检查 CLI 后重试。',
-  credential_application_failed: '无法打开系统浏览器，请手动访问服务商页面。',
+  credential_application_failed: '无法打开系统浏览器，请重试或手动复制固定申请链接。',
   cookie_status_failed: 'Cookie 状态读取失败，请重试。',
   cookie_import_failed: 'Cookie 导入失败，原文件与已导入的 Cookie 都没有改动。',
   cookie_delete_failed: 'Cookie 删除失败，请重试。',

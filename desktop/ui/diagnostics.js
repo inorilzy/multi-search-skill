@@ -19,7 +19,25 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       <div class="search-options"><label>路由<select data-field="route">${routeOptions}</select></label><label>搜索源<select data-field="sources">${sourceOptions}</select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="90" value="15"></label></div>
       <div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
       <p data-execution-error role="alert"></p><div data-results class="search-results" tabindex="0" role="region" aria-label="搜索结果"><p class="search-results-empty">结果会显示在这里。</p></div></section>`;
-  let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false;
+  let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false, cancelIntent = false;
+  // Cancel failures keep the execution id and mark the cancel as unconfirmed until a real terminal state arrives.
+  // pollSeq invalidates polls that were already in flight when a cancel started.
+  // cancelSeq does the same for cancel replies, so an older attempt cannot confirm or unlock a newer one.
+  let cancelUnconfirmed = false, pollSeq = 0, cancelSeq = 0;
+  // One search round at a time owns `starting` and `cancelIntent`. Each submit numbers itself, and a
+  // round that ends releases those flags. runSeq only moves on when the next round starts, so the
+  // cleanup of an older round can never run against a newer one and hand it back a stale flag.
+  let runSeq = 0, ownerRun = null;
+  function startRound() { runSeq += 1; ownerRun = runSeq; return runSeq; }
+  // Retiring the current round releases the flags it held. finishRound is refused once a newer round
+  // has been numbered; a late reply of the old round is also dropped by the activeId / pollSeq /
+  // cancelSeq checks above.
+  function finishRound(run) {
+    if (run !== runSeq) return false;
+    ownerRun = null; starting = false; cancelIntent = false;
+    return true;
+  }
+  const UNCONFIRMED_NOTE = '执行可能仍在运行，可再次取消或等待状态更新；未重新开始搜索。';
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');
   const executionError = root.querySelector('[data-execution-error]');
@@ -107,65 +125,96 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   }
   function renderExecution(status) {
     const labels = { running: '正在执行', success: '搜索成功', empty: '没有结果', partial: '部分来源失败', failed: '执行失败', cancelled: '已取消', timed_out: '执行超时' };
-    root.querySelector('[data-status="execution"]').textContent = statusLabel(labels, status.status);
-    setExecutionError(status.error || '');
+    if (status.status !== 'running') cancelUnconfirmed = false;
+    root.querySelector('[data-status="execution"]').textContent = cancelUnconfirmed ? '取消未确认' : statusLabel(labels, status.status);
+    setExecutionError(cancelUnconfirmed ? `取消未确认，${UNCONFIRMED_NOTE}` : (status.error || ''));
     if (status.payload) renderResults(status.payload);
     controls(status.status === 'running');
   }
-  async function poll() {
-    if (disposed || activeId === null) return;
-    const id = activeId;
+  async function poll(id = activeId, run = ownerRun) {
+    if (disposed || id === null || id !== activeId) return;
+    const seq = pollSeq;
     try {
       const state = await api.poll(id);
-      if (disposed || activeId !== id) return;
+      if (disposed || activeId !== id || seq !== pollSeq) return;
       renderExecution(state);
-      if (state.status === 'running') timer = setTimeout(poll, pollInterval); else activeId = null;
+      if (state.status === 'running') timer = setTimeout(() => void poll(id, run), pollInterval); else activeId = null;
     } catch (error) {
-      if (!disposed && activeId === id) {
+      if (!disposed && activeId === id && seq === pollSeq) {
         showError(executionError, error, '无法读取执行状态，请稍后重试或取消本次执行。');
         cancel.disabled = false;
       }
     }
   }
-  async function requestCancel() {
-    if (disposed || activeId === null || cancelling) return;
-    const id = activeId;
+  // A cancel click while `start` is still pending is recorded, not dropped. The execution id is
+  // unknown until start returns, so the submit handler cancels that id as soon as it arrives.
+  function requestCancel() {
+    if (disposed || cancelling) return;
+    if (activeId === null) {
+      if (!starting || cancelIntent) return;
+      cancelIntent = true;
+      cancel.disabled = true;
+      search.disabled = true;
+      root.querySelector('[data-status="execution"]').textContent = '等待启动完成后取消';
+      return;
+    }
+    void sendCancel(activeId, ownerRun);
+  }
+  async function sendCancel(id, run = ownerRun) {
     cancelling = true;
+    pollSeq += 1;
+    const seq = cancelSeq += 1;
+    root.querySelector('[data-status="execution"]').textContent = '正在取消';
     clearTimeout(timer);
     cancel.disabled = true;
     search.disabled = true;
     try {
       const state = await api.cancel(id);
-      if (disposed) return;
+      if (disposed || seq !== cancelSeq) return;
       // A late response belongs to the execution the user just left behind.
       if (activeId !== id) return;
       activeId = null;
+      finishRound(run);
       renderExecution(state);
     } catch (error) {
-      if (disposed) return;
-      activeId = null;
-      root.querySelector('[data-status="execution"]').textContent = '等待测试';
-      setExecutionError(`${showError(executionError, error, '取消失败，无法取消本次执行。').message} 状态已复位，可重新发起测试搜索。`);
+      if (disposed || seq !== cancelSeq) return;
+      // The backend may still run this execution, so keep its id: search stays blocked, cancel can be
+      // retried, and polling resumes to pick up the real terminal state.
+      if (activeId !== id) return;
+      cancelUnconfirmed = true;
+      const reason = showError(executionError, error, '取消请求失败。').message;
+      root.querySelector('[data-status="execution"]').textContent = '取消未确认';
+      setExecutionError(`取消未确认：${reason}。${UNCONFIRMED_NOTE}`);
+      timer = setTimeout(() => void poll(id, run), pollInterval);
     } finally {
-      if (!disposed) {
+      if (!disposed && seq === cancelSeq) {
         cancelling = false;
-        controls(false);
+        controls(activeId !== null);
       }
     }
   }
   root.querySelector('[data-search-form]').addEventListener('submit', async event => {
     event.preventDefault(); if (!appReady || activeId !== null || starting || cancelling) return;
-    starting = true; controls(true); root.querySelector('[data-results]').textContent = '';
+    const run = startRound();
+    starting = true; cancelIntent = false; cancelUnconfirmed = false; controls(true); root.querySelector('[data-results]').textContent = '';
     renderExecution({ status: 'running' });
     try {
       const id = await api.start({ query: root.querySelector('[data-field="query"]').value, route: root.querySelector('[data-field="route"]').value, sources: root.querySelector('[data-field="sources"]').value.split(',').filter(Boolean), timeout: Number(root.querySelector('[data-field="timeout"]').value) });
       if (disposed) { await Promise.resolve(api.cancel(id)).catch(() => {}); return; }
-      activeId = id; await poll();
+      activeId = id;
+      if (cancelIntent) {
+        // The user already clicked cancel: cancel this execution before showing it as running.
+        cancelIntent = false;
+        starting = false;
+        await sendCancel(id, run);
+        return;
+      }
+      await poll(id, run);
     } catch (error) {
       if (disposed) return;
       activeId = null;
       renderExecution({ status: 'failed', error: `${showError(executionError, error, '启动失败，请检查 CLI 与搜索参数后重试。').message}` });
-    } finally { starting = false; }
+    } finally { if (run === runSeq) { starting = false; cancelIntent = false; } }
   });
   cancel.addEventListener('click', () => { void requestCancel(); });
   async function detect() {
@@ -236,7 +285,8 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
     const id = activeId;
     activeId = null;
     signal?.removeEventListener('abort', dispose);
-    if (id !== null) {
+    // A user cancel already in flight for this id owns the cancel: sending another would duplicate it.
+    if (id !== null && !cancelling) {
       try { Promise.resolve(api.cancel(id)).catch(() => {}); } catch { /* page is already gone */ }
     }
   }

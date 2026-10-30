@@ -49,7 +49,19 @@ env_var?: string,
  * Count of keys Core found in the keys file. Values are never returned. Absent
  * without a Core row.
  */
-file_key_count?: number, key_application_available: boolean, };
+file_key_count?: number, key_application_available: boolean, 
+/**
+ * Whether this build can hand the fixed HTTPS link to the system browser:
+ * Windows (`ShellExecuteW`) and macOS (`/usr/bin/open`) implement it, other
+ * platforms do not.
+ */
+key_application_open_supported: boolean, 
+/**
+ * Read-only copy of the single trusted mapping so the page can offer manual
+ * copying when direct opening is unavailable. Absent when the source has no
+ * configured link; opening still accepts only the source name, never this URL.
+ */
+key_application_url?: string, };
 
 export type CredentialStatus = { 
 /**

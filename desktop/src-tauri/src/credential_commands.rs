@@ -80,6 +80,16 @@ pub struct CredentialOverview {
     #[cfg_attr(feature = "ts", ts(optional))]
     pub file_key_count: Option<usize>,
     pub key_application_available: bool,
+    /// Whether this build can hand the fixed HTTPS link to the system browser:
+    /// Windows (`ShellExecuteW`) and macOS (`/usr/bin/open`) implement it, other
+    /// platforms do not.
+    pub key_application_open_supported: bool,
+    /// Read-only copy of the single trusted mapping so the page can offer manual
+    /// copying when direct opening is unavailable. Absent when the source has no
+    /// configured link; opening still accepts only the source name, never this URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub key_application_url: Option<String>,
 }
 
 /// One row of Core's `doctor --format json` -> `key_sources` report.
@@ -140,13 +150,18 @@ pub(crate) fn overview(variables: &BTreeMap<String, String>, entry: &SourceEntry
     // Env precedence and the key count are Core's answer (`apply_core_source`); the desktop
     // never re-derives them, so they start empty.
     let effective_source = local_effective_source(&store.state).to_string();
+    // Availability, the manual-copy link and the direct-open capability all come
+    // from the same fixed mapping / platform facts, never from the WebView.
+    let application = application_url(entry.source);
     CredentialOverview {
         source: entry.source.into(),
         env_var: None,
         file_key_count: None,
         store,
         effective_source,
-        key_application_available: application_url(entry.source).is_some(),
+        key_application_available: application.is_some(),
+        key_application_open_supported: browser_open_supported(),
+        key_application_url: application.map(str::to_string),
     }
 }
 #[derive(Serialize)]
@@ -241,6 +256,13 @@ fn application_url(source: &str) -> Option<&'static str> {
         .find(|(s, _)| *s == source)
         .and_then(|(_, u)| *u)
 }
+/// Platform fact: whether this build can hand a validated HTTPS application link
+/// to the system browser (`ShellExecuteW` on Windows, `/usr/bin/open` on macOS).
+/// Other platforms fall back to manual copying, and the page disables the open
+/// button up front from this same flag instead of failing only after a click.
+pub(crate) fn browser_open_supported() -> bool {
+    cfg!(any(windows, target_os = "macos"))
+}
 pub(crate) fn open_application_with(
     source: &str,
     lookup: impl FnOnce(&str) -> Option<String>,
@@ -286,9 +308,23 @@ fn open_browser(url: &str) -> Result<(), String> {
         Ok(())
     }
 }
-#[cfg(not(windows))]
+/// macOS hands the already-validated HTTPS URL to LaunchServices through the absolute
+/// `/usr/bin/open` binary. The URL is one argv entry, never interpreted by a shell.
+#[cfg(target_os = "macos")]
+fn open_browser(url: &str) -> Result<(), String> {
+    let status = std::process::Command::new("/usr/bin/open")
+        .arg(url)
+        .status()
+        .map_err(|_| "无法打开系统浏览器".to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("无法打开系统浏览器".into())
+    }
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 fn open_browser(_: &str) -> Result<(), String> {
-    Err("系统浏览器入口仅支持 Windows".into())
+    Err("系统浏览器入口仅支持 Windows 和 macOS".into())
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -503,6 +539,10 @@ mod tests {
             "https://",
             "https:///bad",
             "https://example.invalid\n",
+            "https://example.invalid/a b",
+            "https://example.invalid/\u{7}bell",
+            "   ",
+            "",
         ] {
             assert!(open_application_with("tavily", |_| Some(url.into()), |_| panic!()).is_err());
         }
@@ -529,5 +569,67 @@ mod tests {
         )
         .unwrap();
         assert_eq!(opened, expected);
+    }
+
+    #[test]
+    fn overview_application_metadata_comes_from_the_fixed_mapping() {
+        for name in [
+            "baidu",
+            "jina",
+            "brave",
+            "parallel",
+            "tavily",
+            "exa",
+            "firecrawl",
+            "serpapi",
+            "github-repos",
+        ] {
+            let entry = resolve_source(name).expect("mapped source is keyed");
+            let view = overview(&BTreeMap::new(), &entry);
+            assert!(view.key_application_available, "{name} has a configured link");
+            assert_eq!(view.key_application_url.as_deref(), application_url(entry.source));
+            assert!(view
+                .key_application_url
+                .as_deref()
+                .is_some_and(|u| u.starts_with("https://")));
+        }
+        // The direct-open capability is a platform fact reported independently of
+        // the keys file and of whether a link exists.
+        let view = overview(&BTreeMap::new(), &resolve_source("tavily").unwrap());
+        assert_eq!(view.key_application_open_supported, browser_open_supported());
+    }
+
+    /// A launch the system refuses must come back as an error (never a swallowed success),
+    /// and the address actually handed to the browser stays the one the read-only overview
+    /// publishes — that is the link the page shows for manual copying, so a failure can never
+    /// point the user at a different target than the trusted mapping used.
+    #[test]
+    fn failed_launch_reports_the_same_trusted_link_the_page_can_copy() {
+        let mut attempted: Option<String> = None;
+        let failure = open_application_with(
+            "brave",
+            |source| application_url(source).map(str::to_string),
+            |url| {
+                attempted = Some(url.to_string());
+                Err("无法打开系统浏览器".to_string())
+            },
+        );
+        assert!(failure.is_err(), "a refused launch is reported, not swallowed");
+        assert_eq!(failure.unwrap_err(), "无法打开系统浏览器");
+        let view = overview(&BTreeMap::new(), &resolve_source("brave").unwrap());
+        assert_eq!(attempted.as_deref(), view.key_application_url.as_deref());
+        assert_eq!(attempted.as_deref(), application_url("brave"));
+        // A source without a mapping fails before anything is launched.
+        let mut launched = 0usize;
+        let missing = open_application_with(
+            "jina",
+            |_| None,
+            |_| {
+                launched += 1;
+                Ok(())
+            },
+        );
+        assert!(missing.is_err());
+        assert_eq!(launched, 0, "no link means no launch and no substitute address");
     }
 }

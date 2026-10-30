@@ -75,7 +75,7 @@ test('empty schema accepts any object shape (InstallState is a string union)', (
 });
 
 test('optional Core provenance fields may be absent but must have the right kind when present', () => {
-  const base = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'file', key_application_available: false };
+  const base = { source: 'tavily', store: { state: 'present', saved_at: 1, error: '' }, effective_source: 'file', key_application_available: false, key_application_open_supported: true };
   assert.equal(check('CredentialOverview', base), null);
   assert.equal(check('CredentialOverview', { ...base, effective_source: 'env', env_var: 'TAVILY_API_KEY', file_key_count: 2 }), null);
   assert.match(check('CredentialOverview', { ...base, env_var: 7 }), /field "env_var" expected so, got number/);
@@ -90,6 +90,16 @@ test('CookieStatus carries the managed path and the configured path, never a cap
   assert.equal(check('CookieStatus', { ...base, path: null, configured_path: 'D:/c.json' }), null);
   assert.match(check('CookieStatus', { ...base, configured_path: 3 }), /field "configured_path" expected sn, got number/);
   assert.equal(schemas.CookieStatus.fields.supported, undefined);
+});
+
+test('browser-open capability is required while the read-only link is optional but typed', () => {
+  const base = { source: 'tavily', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false, key_application_open_supported: true };
+  assert.equal(check('CredentialOverview', base), null);
+  assert.equal(check('CredentialOverview', { ...base, key_application_available: true, key_application_open_supported: false, key_application_url: 'https://app.tavily.com/' }), null);
+  const { key_application_open_supported, ...without } = base;
+  assert.match(check('CredentialOverview', without), /field "key_application_open_supported" expected b, got undefined/);
+  assert.match(check('CredentialOverview', { ...base, key_application_open_supported: 'yes' }), /field "key_application_open_supported" expected b, got string/);
+  assert.match(check('CredentialOverview', { ...base, key_application_url: 7 }), /field "key_application_url" expected so, got number/);
 });
 
 test('CliStatus requires the execution row and managed flag the UI enables actions from', () => {

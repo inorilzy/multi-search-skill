@@ -7,7 +7,7 @@ const KEY = 'synthetic-ui-key-0001';
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const flush2 = async () => { await flush(); await flush(); };
 // Before Core answers, a saved provider reports `file` and an unsaved one `none`.
-const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'file' : 'none', key_application_available: false, ...extra });
+const status = (saved = false, extra = {}) => ({ store: { state: saved ? 'present' : 'absent', saved_at: saved ? 1 : null, error: '' }, effective_source: saved ? 'file' : 'none', key_application_available: false, key_application_open_supported: true, ...extra });
 function setup() { const window = new Window(); const root = window.document.createElement('main'); window.document.body.append(root); return { window, root }; }
 const submit = ({ window, root }) => root.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
 function api(overrides = {}) { return { credentialStatus: async () => status(), credentialRead: async () => ({ value: '' }), credentialAppend: async () => status(true), credentialRemove: async () => status(), ...overrides }; }
@@ -220,8 +220,204 @@ test('application link stays disabled without mapping, configured entry passes s
     const ctx = setup(), opened = [];
     await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: available }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'github_repos' });
     const button = ctx.root.querySelector('[data-action="application"]'); assert.equal(button.disabled, !available); button.click(); await flush(); assert.deepEqual(opened, available ? ['github_repos'] : []);
-    if (!available) assert.match(ctx.root.textContent, /申请链接待配置/); ctx.window.close();
+    if (!available) assert.match(ctx.root.textContent, /该搜索源暂无固定申请链接，无法打开申请页。/); ctx.window.close();
   }
+});
+
+test('missing application mapping disables opening without guessing or echoing a link', async () => {
+  const ctx = setup(), opened = [];
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: false, key_application_open_supported: false, key_application_url: undefined }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'serpapi' });
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  assert.equal(button.disabled, true);
+  assert.match(note.textContent, /暂无固定申请链接/);
+  // The explanation must not fabricate an address for the missing mapping.
+  assert.doesNotMatch(note.textContent, /https?:/);
+  button.click(); await flush();
+  assert.deepEqual(opened, []);
+  ctx.window.close();
+});
+
+test('unsupported platform pre-disables opening and offers the fixed link for manual copy', async () => {
+  const ctx = setup(), opened = [];
+  await mountCredentials(ctx.root, api({ credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: false, key_application_url: 'https://api.search.brave.com/app/keys' }), credentialApplicationOpen: async source => { opened.push(source); } }), { source: 'brave' });
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  assert.equal(button.disabled, true, 'disabled before any click, not failing after');
+  assert.match(note.textContent, /无法直接打开系统浏览器/);
+  assert.match(note.textContent, /https:\/\/api\.search\.brave\.com\/app\/keys/);
+  button.click(); await flush();
+  assert.deepEqual(opened, []);
+  ctx.window.close();
+});
+
+test('browser launch failure shows the trusted fixed link for manual copy and retry clears it', async () => {
+  const ctx = setup(); let attempts = 0;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialApplicationOpen: async () => { attempts += 1; if (attempts === 1) throw coded('credential_application_failed', '申请链接打开失败'); },
+  }));
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const fallback = ctx.root.querySelector('[data-application-fallback]');
+  const link = ctx.root.querySelector('[data-application-url]');
+  assert.equal(fallback.hidden, true, 'no link shown before any failure');
+  button.click(); await flush2();
+  assert.equal(attempts, 1);
+  assert.equal(fallback.hidden, false, 'failure exposes the copyable link');
+  assert.equal(link.value, 'https://app.tavily.com/');
+  assert.equal(link.readOnly, true);
+  assert.doesNotMatch(ctx.root.querySelector('[data-info="error"]').textContent, /已打开/);
+  assert.equal(button.disabled, false, 'retry stays available after a failed launch');
+  button.click(); await flush2();
+  assert.equal(attempts, 2);
+  assert.equal(fallback.hidden, true, 'successful retry clears the failure and the link');
+  assert.equal(ctx.root.querySelector('[data-info="error"]').textContent, '');
+  ctx.window.close();
+});
+
+test('a failed launch without a trusted mapping never creates a link', async () => {
+  const ctx = setup();
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true }),
+    credentialApplicationOpen: async () => { throw coded('credential_application_failed', ''); },
+  }));
+  const button = ctx.root.querySelector('[data-action="application"]');
+  button.click(); await flush2();
+  assert.equal(ctx.root.querySelector('[data-application-fallback]').hidden, true);
+  assert.equal(ctx.root.querySelector('[data-application-url]').value, '');
+  // An unknown link must not fall back to some invented or http-prefixed address.
+  assert.doesNotMatch(ctx.root.textContent, /https?:\/\//);
+  ctx.window.close();
+});
+
+test('the fallback link is the mapping URL, never an address carried by the error text', async () => {
+  const ctx = setup(); const opened = [];
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://dashboard.exa.ai/api-keys' }),
+    credentialApplicationOpen: async source => {
+      opened.push(source);
+      throw coded('credential_application_failed', 'https://attacker.example.invalid/?key=leak');
+    },
+  }), { source: 'exa' });
+  ctx.root.querySelector('[data-action="application"]').click(); await flush2();
+  assert.deepEqual(opened, ['exa'], 'the launch request carries only the source identifier');
+  assert.equal(ctx.root.querySelector('[data-application-url]').value, 'https://dashboard.exa.ai/api-keys');
+  assert.doesNotMatch(ctx.root.textContent, /attacker\.example\.invalid/, 'error text never becomes page content');
+  assert.equal(ctx.root.querySelector('a[href*="attacker"]'), null);
+  assert.equal(ctx.root.querySelector('[data-application-fallback] a'), null, 'the fallback is selectable text, never a launcher');
+  ctx.window.close();
+});
+
+test('a successful retry keeps an unrelated error message that arrived meanwhile', async () => {
+  const ctx = setup(); let attempts = 0;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialTest: async () => { throw coded('credential_test_failed', 'Test worker failed'); },
+    credentialApplicationOpen: async () => { attempts += 1; if (attempts === 1) throw coded('credential_application_failed', ''); },
+  }));
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const slot = ctx.root.querySelector('[data-info="error"]');
+  button.click(); await flush2();
+  assert.equal(slot.textContent, '无法打开系统浏览器，请重试或手动复制固定申请链接。');
+  assert.equal(ctx.root.querySelector('[data-application-fallback]').hidden, false);
+  ctx.root.querySelector('[data-action="test"]').click(); await flush2();
+  assert.match(slot.textContent, /凭据测试启动失败/);
+  button.click(); await flush2();
+  assert.equal(attempts, 2);
+  assert.equal(ctx.root.querySelector('[data-application-fallback]').hidden, true);
+  assert.match(slot.textContent, /凭据测试启动失败/, 'only the launch failure is cleared');
+  ctx.window.close();
+});
+
+test('repeated clicks while a launch is in flight start only one browser open', async () => {
+  const ctx = setup(); let opens = 0, release;
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialApplicationOpen: () => { opens += 1; return new Promise(resolve => { release = resolve; }); },
+  }));
+  const button = ctx.root.querySelector('[data-action="application"]');
+  button.click(); button.click(); button.click(); await flush();
+  assert.equal(opens, 1);
+  assert.equal(button.disabled, true, 'button is held while the launch is in flight');
+  release(); await flush2();
+  assert.equal(button.disabled, false);
+  ctx.window.close();
+});
+
+test('application entry stays disabled and pending while the metadata query is in flight', async () => {
+  const ctx = setup(), opened = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const mounting = mountCredentials(ctx.root, api({
+    credentialStatus: async () => { await gate; return status(false, { key_application_available: true }); },
+    credentialApplicationOpen: async source => { opened.push(source); },
+  }), { source: 'tavily' });
+  await flush();
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  // An unconfirmed entry must never be clickable or claim a definite state.
+  assert.equal(button.disabled, true);
+  assert.match(note.textContent, /正在确认申请链接与打开能力/);
+  assert.doesNotMatch(note.textContent, /暂无固定申请链接|无法直接打开系统浏览器/);
+  button.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true })); await flush();
+  assert.deepEqual(opened, [], 'no open request from an unconfirmed entry');
+  release(); await mounting; await flush();
+  assert.equal(button.disabled, false);
+  assert.match(note.textContent, /使用系统浏览器打开固定申请链接/);
+  ctx.window.close();
+});
+
+test('failed metadata query is unconfirmed with retry, and retry recovers each accurate outcome', async () => {
+  const outcomes = [
+    [{ key_application_available: true, key_application_open_supported: true }, /使用系统浏览器打开固定申请链接/, false],
+    [{ key_application_available: false }, /该搜索源暂无固定申请链接/, true],
+    [{ key_application_available: true, key_application_open_supported: false, key_application_url: 'https://api.search.brave.com/app/keys' }, /无法直接打开系统浏览器/, true],
+  ];
+  for (const [extra, expected, disabled] of outcomes) {
+    const ctx = setup(); let calls = 0;
+    await mountCredentials(ctx.root, api({
+      credentialStatus: async () => { calls += 1; if (calls === 1) throw new Error('status failed'); return status(false, extra); },
+    }), { source: 'brave' });
+    const button = ctx.root.querySelector('[data-action="application"]');
+    const note = ctx.root.querySelector('[data-info="application"]');
+    // The failed query is neither "no link" nor "platform unsupported".
+    assert.equal(button.disabled, true);
+    assert.match(note.textContent, /无法确认申请链接与打开能力/);
+    assert.match(note.textContent, /刷新已保存值/);
+    assert.doesNotMatch(note.textContent, /暂无固定申请链接|无法直接打开系统浏览器/);
+    // The existing refresh control is the retry entry.
+    ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+    assert.equal(button.disabled, disabled, JSON.stringify(extra));
+    assert.match(note.textContent, expected);
+    ctx.window.close();
+  }
+});
+
+test('an earlier metadata response cannot override the newer application state', async () => {
+  const ctx = setup(); const resolvers = [];
+  const mounted = mountCredentials(ctx.root, api({
+    credentialStatus: () => new Promise(resolve => resolvers.push(resolve)),
+  }), { source: 'tavily' });
+  await flush();
+  resolvers[0](status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }));
+  await mounted; await flush2();
+  const button = ctx.root.querySelector('[data-action="application"]');
+  const note = ctx.root.querySelector('[data-info="application"]');
+  assert.equal(button.disabled, false);
+  // Start a refresh, then a second request while the first is still in flight.
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush();
+  ctx.root.querySelector('[data-action="refresh"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true })); await flush();
+  const newer = resolvers[resolvers.length - 1], older = resolvers[1];
+  newer(status(false, { key_application_available: false })); await flush2();
+  assert.equal(button.disabled, true);
+  assert.match(note.textContent, /该搜索源暂无固定申请链接/);
+  // The older answer (link available) arrives last and must not revive the entry.
+  older(status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }));
+  await flush2();
+  assert.equal(button.disabled, true, 'stale answer must not re-enable a withdrawn entry');
+  assert.match(note.textContent, /该搜索源暂无固定申请链接/);
+  assert.doesNotMatch(note.textContent, /https:/);
+  ctx.window.close();
 });
 
 test('test outcomes retain provider error messages and external request warning', async () => {
@@ -574,5 +770,52 @@ test('no write request is issued during a failed status window', async () => {
   draftInputs(ctx.root)[0].value = KEY;
   submit(ctx); await flush2();
   assert.equal(writes.length, 1, 'write allowed once status is known');
+  ctx.window.close();
+});
+
+test('a slow launch that resolves after the editor is disposed cannot write into the next target', async () => {
+  const ctx = setup(); let release, rejectOpen;
+  const mounted = await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialApplicationOpen: () => new Promise((resolve, reject) => { release = resolve; rejectOpen = reject; }),
+  }), { source: 'tavily' });
+  const errorSlot = ctx.root.querySelector('[data-info="error"]');
+  ctx.root.querySelector('[data-action="application"]').click(); await flush();
+  // Switch the card away: the old editor is disposed while its launch is still pending.
+  mounted.dispose();
+  // The next target mounts into the same container and shows its own (empty) slots.
+  ctx.root.innerHTML = '';
+  const next = await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://dashboard.exa.ai/api-keys' }),
+  }), { source: 'exa' });
+  rejectOpen(coded('credential_application_failed', 'stale failure from tavily'));
+  await flush2();
+  const nextSlot = ctx.root.querySelector('[data-info="error"]');
+  assert.equal(nextSlot.textContent, '', 'the old launch failure must not reach the new target');
+  assert.equal(ctx.root.querySelector('[data-application-fallback]').hidden, true, 'the old fallback must not appear on the new target');
+  assert.equal(ctx.root.querySelector('[data-application-url]').value, '', 'no old link is written into the new target');
+  assert.doesNotMatch(ctx.root.textContent, /stale failure from tavily|app\.tavily\.com/);
+  next.dispose();
+  ctx.window.close();
+});
+
+test('a new editor for another source starts with no in-flight lock or fallback from the old one', async () => {
+  const ctx = setup(); const opened = []; let release;
+  const first = await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://app.tavily.com/' }),
+    credentialApplicationOpen: source => { opened.push(source); return new Promise(resolve => { release = resolve; }); },
+  }), { source: 'tavily' });
+  ctx.root.querySelector('[data-action="application"]').click(); await flush();
+  first.dispose();
+  ctx.root.replaceChildren();
+  await mountCredentials(ctx.root, api({
+    credentialStatus: async () => status(false, { key_application_available: true, key_application_open_supported: true, key_application_url: 'https://dashboard.exa.ai/api-keys' }),
+    credentialApplicationOpen: async source => { opened.push(source); },
+  }), { source: 'exa' });
+  const button = ctx.root.querySelector('[data-action="application"]');
+  assert.equal(button.disabled, false, 'the old in-flight launch does not lock the new target');
+  button.click(); await flush2();
+  assert.deepEqual(opened, ['tavily', 'exa']);
+  release();
   ctx.window.close();
 });

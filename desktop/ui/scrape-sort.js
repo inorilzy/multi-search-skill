@@ -48,18 +48,29 @@ export function createChainSorter({ list, doc, isEnabled, onCommit, announce = (
     drag = null;
   }
 
-  // 键盘模式把行真实移回原位；指针模式从未动过 DOM。
+  // 显示的序号与行的 DOM 位置保持一致（键盘拖动中实时更新）。
+  function renumberRows() {
+    rows().forEach((row, index) => {
+      const order = row.querySelector('.scrape-order');
+      if (order) order.textContent = String(index + 1).padStart(2, '0');
+    });
+  }
+
+  // 键盘模式按拿起时记录的完整行顺序重新排列；指针模式从未动过 DOM。
+  // 不能只把行插回原下标：上移、下移后原下标处的节点已不是拿起前的节点。
   function revertKeyboard() {
     if (!drag || drag.mode !== 'keyboard') return;
-    const target = rows()[drag.from];
-    if (target && target !== drag.row) list.insertBefore(drag.row, target);
-    else if (!target) list.append(drag.row);
+    for (const row of drag.origin) list.append(row);
+    renumberRows();
   }
 
   function cancel(message = '已取消拖动，顺序未变化') {
     if (!drag) return;
+    const { mode, handle } = drag;
     revertKeyboard();
     cleanup();
+    // 恢复 DOM 顺序会让浏览器丢掉手柄焦点；键盘拖动回到同一手柄。
+    if (mode === 'keyboard') handle?.focus?.();
     announce(message);
   }
 
@@ -101,7 +112,7 @@ export function createChainSorter({ list, doc, isEnabled, onCommit, announce = (
     if (drag || !isEnabled() || handle.disabled) return false;
     const from = indexOf(row);
     if (from < 0) return false;
-    drag = { mode, pointerId, row, handle, from };
+    drag = { mode, pointerId, row, handle, from, origin: rows() };
     row.classList.add('is-dragging');
     handle.setAttribute('aria-pressed', 'true');
     return true;
@@ -153,14 +164,24 @@ export function createChainSorter({ list, doc, isEnabled, onCommit, announce = (
     announce(`已拿起 ${labelOf(row)}，拖动到目标位置后松开`);
   }
 
-  function moveDragged(delta) {
+  // 把拿起的行移到目标下标（0 起）。越界夹紧；已在该位置则不动 DOM。
+  function moveDraggedTo(target) {
     const rs = rows();
     const at = rs.indexOf(drag.row);
-    const to = Math.min(rs.length - 1, Math.max(0, at + delta));
-    if (to === at) return;
+    const to = Math.min(rs.length - 1, Math.max(0, target));
+    if (to === at) return false;
     if (to < at) list.insertBefore(drag.row, rs[to]);
     else list.insertBefore(drag.row, rs[to].nextSibling);
-    announce(`${labelOf(drag.row)} 移到第 ${to + 1} 位，回车放下，Escape 取消`);
+    renumberRows();
+    // 移动会让浏览器丢掉该行内的焦点；重新聚焦同一手柄，保证连续按键仍作用于它。
+    drag.handle.focus?.();
+    return true;
+  }
+
+  function moveDragged(delta) {
+    const at = rows().indexOf(drag.row);
+    if (!moveDraggedTo(at + delta)) return;
+    announce(`${labelOf(drag.row)} 移到第 ${indexOf(drag.row) + 1} 位，回车放下，Escape 取消`);
   }
 
   function onKeyDown(event) {
@@ -181,10 +202,9 @@ export function createChainSorter({ list, doc, isEnabled, onCommit, announce = (
       moveDragged(key === 'ArrowUp' ? -1 : 1);
     } else if (key === 'Home' || key === 'End') {
       event.preventDefault();
-      const rs = rows();
-      if (key === 'Home' && rs[0] !== drag.row) list.insertBefore(drag.row, rs[0]);
-      if (key === 'End' && rs[rs.length - 1] !== drag.row) list.append(drag.row);
-      announce(`${labelOf(drag.row)} 移到第 ${indexOf(drag.row) + 1} 位，回车放下，Escape 取消`);
+      // Home 移到首位，End 移到末位；重复按键时 moveDraggedTo 不动 DOM。
+      const to = key === 'Home' ? 0 : rows().length - 1;
+      if (moveDraggedTo(to)) announce(`${labelOf(drag.row)} 移到第 ${indexOf(drag.row) + 1} 位，回车放下，Escape 取消`);
     } else if (key === 'Enter' || key === ' ') {
       event.preventDefault();
       droppingOn = handle;
