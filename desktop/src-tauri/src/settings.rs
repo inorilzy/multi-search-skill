@@ -269,6 +269,8 @@ pub struct RerankKeyStatus {
 #[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
 pub struct RouteConfig {
     pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub sources: Vec<String>,
     #[serde(default)]
     pub timeout: Option<u32>,
@@ -276,9 +278,10 @@ pub struct RouteConfig {
 
 pub type RouteMap = BTreeMap<String, RouteConfig>;
 
-fn route(label: &str, sources: &[&str]) -> RouteConfig {
+fn route(label: &str, description: &str, sources: &[&str]) -> RouteConfig {
     RouteConfig {
         label: label.into(),
+        description: Some(description.into()),
         sources: sources.iter().map(|source| (*source).into()).collect(),
         timeout: None,
     }
@@ -290,6 +293,7 @@ pub fn builtin_routes() -> RouteMap {
             "default".into(),
             route(
                 "默认（网页综合）",
+                "默认使用；普通网页综合搜索。",
                 &[
                     "brave",
                     "parallel",
@@ -303,12 +307,13 @@ pub fn builtin_routes() -> RouteMap {
         ),
         (
             "fast".into(),
-            route("快速", &["baidu", "tavily", "firecrawl", "exa"]),
+            route("快速", "需要快速出结果时使用；源较少、延迟较低。", &["baidu", "tavily", "firecrawl", "exa"]),
         ),
         (
             "all".into(),
             route(
                 "全部",
+                "需要尽可能全面召回时使用；查询全部源，耗时最长。",
                 &[
                     "brave",
                     "parallel",
@@ -325,11 +330,12 @@ pub fn builtin_routes() -> RouteMap {
                 ],
             ),
         ),
-        ("social".into(), route("社交（Twitter）", &["twitter"])),
+        ("social".into(), route("社交（Twitter）", "查 Twitter / X 上的讨论和反馈时使用。", &["twitter"])),
         (
             "dev".into(),
             route(
                 "开发者（Stack Overflow / GitHub / Hacker News）",
+                "搜索开发项目、代码、技术问答和开发者讨论时使用（GitHub / Stack Overflow / Hacker News）。",
                 &["stackoverflow", "github_repos", "hackernews"],
             ),
         ),
@@ -465,6 +471,14 @@ fn normalize_routes(routes: &RouteMap) -> Result<RouteMap, String> {
         if !(1..=80).contains(&label.chars().count()) {
             return Err("路由名称必须是 1 到 80 个字符".into());
         }
+        let description = route
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty());
+        if description.is_some_and(|text| text.chars().count() > 120) {
+            return Err("路由的何时使用描述不能超过 120 个字符".into());
+        }
         if route.sources.is_empty() {
             return Err("每个路由至少需要一个搜索源".into());
         }
@@ -485,6 +499,7 @@ fn normalize_routes(routes: &RouteMap) -> Result<RouteMap, String> {
             id.clone(),
             RouteConfig {
                 label: label.into(),
+                description: description.map(str::to_string),
                 sources,
                 timeout: route.timeout,
             },
