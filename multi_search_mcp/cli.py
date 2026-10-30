@@ -189,6 +189,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_format_argument(sources_parser)
     sources_parser.set_defaults(handler=_handle_sources)
 
+    routes_parser = subparsers.add_parser(
+        "routes",
+        help="list the routes the current settings define, with the default route",
+    )
+    _add_format_argument(routes_parser)
+    routes_parser.set_defaults(handler=_handle_routes)
+
     keys_parser = subparsers.add_parser("keys", help="inspect or reset key health state")
     keys_subparsers = keys_parser.add_subparsers(dest="keys_command", required=True)
 
@@ -417,14 +424,22 @@ def _handle_doctor(args: argparse.Namespace) -> dict[str, Any]:
 
 def _handle_sources(args: argparse.Namespace) -> dict[str, Any]:
     # Imported lazily so the light search CLI paths do not grow their import graph.
-    from .src.search.catalog import build_source_catalog
+    from .src.search.catalog import build_configured_source_catalog
+    from .src.support.config import load_config
 
-    catalog = build_source_catalog()
+    catalog = build_configured_source_catalog(load_config())
     if args.key_status:
         catalog["key_status"] = key_status()
     if args.scraper_stats:
         catalog["site_scraper_stats"] = site_scraper_stats()
     return catalog
+
+
+def _handle_routes(args: argparse.Namespace) -> dict[str, Any]:
+    from .src.search.resolve import describe_configured_routes
+    from .src.support.config import load_config
+
+    return describe_configured_routes(load_config())
 
 
 def _handle_keys_status(args: argparse.Namespace) -> dict[str, Any]:
@@ -503,6 +518,8 @@ def _write_payload(payload: Any, output_format: str, stream: TextIO) -> None:
 def _render_human(payload: Any) -> str:
     if _is_search_payload(payload):
         return _render_search(payload, markdown=False)
+    if _is_routes_payload(payload):
+        return _render_routes(payload, markdown=False)
     if isinstance(payload, dict) and set(payload) == {"key_status"} and isinstance(payload["key_status"], list):
         rows = ["key_status:"]
         rows.extend(_render_key_rows(payload["key_status"], markdown=False))
@@ -518,6 +535,8 @@ def _render_human(payload: Any) -> str:
 def _render_markdown(payload: Any) -> str:
     if _is_search_payload(payload):
         return _render_search(payload, markdown=True)
+    if _is_routes_payload(payload):
+        return _render_routes(payload, markdown=True)
     if isinstance(payload, dict) and set(payload) == {"key_status"} and isinstance(payload["key_status"], list):
         rows = ["# Key Status", ""]
         rows.extend(_render_key_rows(payload["key_status"], markdown=True))
@@ -625,6 +644,68 @@ def _is_search_payload(payload: Any) -> bool:
         and "query" in payload
         and isinstance(payload.get("results"), list)
     )
+
+
+def _is_routes_payload(payload: Any) -> bool:
+    return (
+        isinstance(payload, dict)
+        and {"default_route", "aliases", "routes"} <= set(payload)
+        and isinstance(payload.get("routes"), list)
+    )
+
+
+def _render_routes(payload: dict[str, Any], *, markdown: bool) -> str:
+    default_route = str(payload.get("default_route") or "")
+    aliases = payload.get("aliases") or {}
+    alias_names = ", ".join(f"{alias} -> {target}" for alias, target in sorted(aliases.items()))
+    routes = payload.get("routes") or []
+    lines: list[str] = []
+    if markdown:
+        lines.append("# Routes")
+        lines.append("")
+        lines.append(f"Default route: `{default_route}`")
+        if alias_names:
+            lines.append(f"Aliases: {alias_names}")
+        lines.append("")
+        if not routes:
+            lines.append("_No routes_")
+            return "\n".join(lines)
+        lines.append("| Route | Default | Description | Sources |")
+        lines.append("| --- | --- | --- | --- |")
+        for route in routes:
+            is_default = "yes" if route.get("is_default") else ""
+            sources = ", ".join(str(source) for source in route.get("sources") or [])
+            lines.append(
+                f"| `{_table_cell(route.get('id'))}` | {is_default} | "
+                f"{_table_cell(_route_summary(route))} | {_table_cell(sources)} |"
+            )
+        return "\n".join(lines)
+
+    lines.append(f"default_route: {default_route}")
+    if alias_names:
+        lines.append(f"aliases: {alias_names}")
+    if not routes:
+        lines.append("routes: none")
+        return "\n".join(lines)
+    lines.append("routes:")
+    for route in routes:
+        marker = " (default)" if route.get("is_default") else ""
+        sources = ", ".join(str(source) for source in route.get("sources") or []) or "none"
+        lines.append(f"- {route.get('id')}{marker}: {_route_summary(route)}")
+        lines.append(f"  sources: {sources}")
+    return "\n".join(lines)
+
+
+def _route_summary(route: dict[str, Any]) -> str:
+    """Describe when to use a route; fall back to its label when it has no description."""
+    description = route.get("description")
+    if isinstance(description, str) and description:
+        return description
+    return str(route.get("label") or "")
+
+
+def _table_cell(value: Any) -> str:
+    return str("" if value is None else value).replace("|", "\\|").replace("\n", " ").strip()
 
 
 def _render_key_rows(rows: list[dict[str, Any]], *, markdown: bool) -> list[str]:

@@ -62,6 +62,7 @@ fn catalog_shape_and_shared_metadata_are_stable() {
     assert_eq!(catalog.routes.len(), 5);
     for route in &catalog.routes {
         assert!(!route.label.trim().is_empty());
+        assert!(route.description.as_deref().is_some_and(|description| !description.trim().is_empty()), "{} describes when to use it", route.name);
         assert!(!route.sources.is_empty());
         for name in &route.sources {
             let source = catalog.source(name).unwrap_or_else(|| panic!("{name} must exist"));
@@ -71,6 +72,22 @@ fn catalog_shape_and_shared_metadata_are_stable() {
         for alias in &route.aliases {
             assert_eq!(catalog.route(alias).map(|item| item.name.as_str()), Some(route.name.as_str()));
         }
+    }
+}
+
+#[test]
+fn route_entries_accept_missing_null_or_string_descriptions() {
+    use multi_search_desktop::source_catalog::Route;
+
+    for (raw, expected) in [
+        (r#"{"name":"custom","label":"自定义","aliases":[],"sources":["brave"]}"#, None),
+        (r#"{"name":"custom","label":"自定义","description":null,"aliases":[],"sources":["brave"]}"#, None),
+        (r#"{"name":"custom","label":"自定义","description":"查论文时使用。","aliases":[],"sources":["brave"]}"#, Some("查论文时使用。")),
+    ] {
+        let route: Route = serde_json::from_str(raw).expect("route description may be absent or null");
+        assert_eq!(route.name, "custom");
+        assert_eq!(route.sources, ["brave"]);
+        assert_eq!(route.description.as_deref(), expected);
     }
 }
 

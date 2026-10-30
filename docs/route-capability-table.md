@@ -8,6 +8,38 @@
 - 哪些 provider 用于发现链接或社区讨论？
 - 哪些 key 能被 SQLite 状态管理轮换，哪些不能？
 
+## 路由发现与设置维护
+
+当前可用路由以 `multi-search routes --format json` 为准。它读取当前设置，不访问网络或密钥库，也不写状态。Agent 按 `description`（何时使用）选路由；无描述时参考 `label` 和 `sources`。不传 `search --route` 时使用输出中的 `default_route`。参数与取值范围通过 `multi-search <command> --help` 查询。
+
+路由组保存在非敏感设置的完整 `routes` 映射中，例如：
+
+```json
+{
+  "type": "research",
+  "routes": {
+    "research": {
+      "label": "研究",
+      "description": "查找技术资料、项目与实现方案时使用",
+      "sources": ["hackernews", "github_repos", "stackoverflow"],
+      "timeout": 30
+    }
+  }
+}
+```
+
+- `routes` 必须是非空对象；显式提供时作为完整映射，被删除的内置路由不会自动恢复。省略时提供内置 5 组及其默认描述。
+- 路由 id 为 1–64 个 ASCII 小写字母、数字、`_` 或 `-`，`web` 保留为 `default` 的别名。以 `-` 开头的 id 用 `--route=-focus` 这样的等号形式传入。
+- `label` 必须是字符串，trim 后为 1–80 字符。
+- `description` 是可选的“何时使用”说明：省略、`null`、空字符串或纯空白均规范化为无描述；字符串 trim 后非空时须为 1–120 字符。其他类型或超过 120 字符是配置错误。自定义路由无描述时保持无描述，不用 label 或内置描述填充。
+- `sources` 必须是非空字符串数组，使用搜索源 id；兼容别名（如 `github`、`v2ex`）归一化，重复项保留首次出现的顺序。未知源与未知路由字段均报错。抓取后端不属于搜索源。
+- `timeout` 省略或为 `null` 表示继承，否则须为 1–60 的整数。超时优先级为请求 `--timeout` → 路由组 `timeout` → 全局设置 `timeout` → 内置路由行为；自定义 id 继承 `default` 的行为参数。
+- 顶层 `type` 指定默认路由，缺省或 `null` 时为 `default`，必须能解析为现有路由；不会从剩余路由中任取一组。
+
+发现输出按设置顺序列出路由，每组包含 `id`、`label`、`description`、`is_default`、`sources`、`disabled_sources` 和 `timeout`。`sources` 扣除全局禁用源；`disabled_sources` 只列该组被全局禁用的源（无则为 `[]`），两个数组均保持组内顺序。这是配置参与范围，不保证凭据、配额或网络可用。`timeout` 保留组自身值，不展开最终生效值。JSON 中无描述为 `null`；human 输出在无描述时显示 label。
+
+设置非法时命令退出码为 1，stdout JSON 包含 `error` / `error_type`，stderr 给出简短说明。桌面路由编辑器保存同一结构及可选描述。`multi-search sources` 的路由归属同样反映当前设置；下方内置组合表只供维护默认值时参考。
+
 ## 路由模式定义
 
 | 模式 | 产品目标 | 典型输出 | scrape 阶段 | 适合场景 |
@@ -71,8 +103,8 @@
 
 ## 最终 Route 设计
 
-> 以代码为准（route A）：下表已同步到 `search_runner.py` 的 `ROUTE_PROFILES` /
-> `ROUTE_META` 实际值。原设计稿（收窄 `default`、`expert`等）见
+> 下表列出 `search_runner.py` 的 `ROUTE_PROFILES` / `ROUTE_META` 内置默认值，
+> 当前设置可覆盖这些组合；实际路由以 `multi-search routes` 为准。原设计稿（收窄 `default`、`expert`等）见
 > `docs/route-redesign-plan.md` 顶部「实际落地差异」。
 
 | Route | Provider 组合 | 最终正文上限 | 行为目标 |

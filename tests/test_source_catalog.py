@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from multi_search_mcp import cli
 from multi_search_mcp.src.search import catalog as catalog_module
@@ -21,6 +23,7 @@ from multi_search_mcp.src.search.search_runner import (
     ROUTE_PROFILES,
     ROUTE_SOURCE_ORDER,
     SOURCE_ALIASES,
+    default_routes_config,
 )
 from multi_search_mcp.src.state.keys import (
     CREDENTIAL_STORE_PROVIDERS,
@@ -50,10 +53,91 @@ def _run_cli(*args: str) -> tuple[int, str, str]:
 
 
 class CatalogCliTests(unittest.TestCase):
-    def test_sources_json_is_the_shared_catalog(self):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.config_path = Path(temp.name) / "settings.json"
+        self.write_config({})
+        patcher = mock.patch.dict(os.environ, {"MULTI_SEARCH_CONFIG": str(self.config_path)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def write_config(self, value):
+        self.config_path.write_text(json.dumps(value), encoding="utf-8")
+
+    def test_sources_json_defaults_to_builtin_catalog(self):
         code, out, err = _run_cli("sources", "--format", "json")
         self.assertEqual(code, 0, err)
-        self.assertEqual(json.loads(out), catalog_module.build_source_catalog())
+        expected = catalog_module.build_source_catalog()
+        # Current route settings preserve settings order; snapshots keep catalog display order.
+        expected["routes"] = sorted(expected["routes"], key=lambda route: list(default_routes_config()).index(route["name"]))
+        for source in expected["sources"]:
+            source["routes"] = [route["name"] for route in expected["routes"] if source["name"] in route["sources"]]
+        self.assertEqual(json.loads(out), expected)
+
+    def test_custom_routes_and_source_memberships_match_routes_command(self):
+        self.write_config({
+            "type": "research",
+            "routes": {
+                "research": {"label": " Research ", "description": " For research ", "sources": ["github-repos", "brave"]},
+                "default": {"label": "Default", "sources": ["exa"]},
+            },
+        })
+        code, out, err = _run_cli("sources")
+        self.assertEqual(code, 0, err)
+        payload = json.loads(out)
+        route_code, route_out, route_err = _run_cli("routes")
+        self.assertEqual(route_code, 0, route_err)
+        routes = json.loads(route_out)["routes"]
+        self.assertEqual([route["name"] for route in payload["routes"]], [route["id"] for route in routes])
+        self.assertEqual(payload["routes"][0], {
+            "name": "research", "label": "Research", "description": "For research",
+            "aliases": [], "sources": ["github_repos", "brave"],
+        })
+        self.assertEqual(payload["routes"][1]["aliases"], ["web"])
+        for source in payload["sources"]:
+            expected = [route["id"] for route in routes if source["name"] in route["sources"]]
+            self.assertEqual(source["routes"], expected, source["name"])
+
+    def test_disabled_sources_preserve_configured_memberships(self):
+        self.write_config({
+            "type": "research",
+            "disabled_sources": ["brave"],
+            "routes": {"research": {"label": "Research", "sources": ["brave", "exa"]}},
+        })
+        code, out, err = _run_cli("sources")
+        self.assertEqual(code, 0, err)
+        payload = json.loads(out)
+        self.assertEqual(payload["routes"][0]["sources"], ["brave", "exa"])
+        self.assertEqual(next(source["routes"] for source in payload["sources"] if source["name"] == "brave"), ["research"])
+        route_code, route_out, route_err = _run_cli("routes")
+        self.assertEqual(route_code, 0, route_err)
+        effective = json.loads(route_out)["routes"][0]
+        self.assertEqual(effective["sources"], ["exa"])
+        self.assertEqual(effective["disabled_sources"], ["brave"])
+
+    def test_route_aliases_match_builtin_catalog_entries(self):
+        builtin = {route["name"]: route["aliases"] for route in catalog_module.build_source_catalog()["routes"]}
+        configured = catalog_module.build_configured_source_catalog({})
+        self.assertEqual({route["name"]: route["aliases"] for route in configured["routes"]}, builtin)
+
+    def test_invalid_settings_exit_one_with_error(self):
+        for value in ({"routes": {}}, {"type": "missing"}, {"routes": {"default": {"label": "Default", "sources": []}}}):
+            with self.subTest(config=value):
+                self.write_config(value)
+                code, out, err = _run_cli("sources")
+                self.assertEqual(code, 1)
+                payload = json.loads(out)
+                self.assertTrue(payload["error"])
+                self.assertEqual(payload["error_type"], "invalid_request")
+                self.assertTrue(err.startswith("error: "))
+
+    def test_custom_settings_do_not_change_snapshot_exports(self):
+        before = artifacts()
+        self.write_config({"type": "custom", "routes": {"custom": {"label": "Custom", "sources": ["exa"]}}})
+        self.assertEqual(_run_cli("sources")[0], 0)
+        self.assertEqual(artifacts(), before)
+        self.assertEqual(check(), [])
 
     def test_sources_defaults_to_json_and_supports_other_formats(self):
         code, out, err = _run_cli("sources")
@@ -100,6 +184,13 @@ class CatalogCoreParityTests(unittest.TestCase):
                 entry["routes"],
                 [route for route in ROUTE_SOURCE_ORDER if name in ROUTE_PROFILES[route]],
             )
+
+    def test_route_descriptions_match_builtin_route_groups(self):
+        defaults = default_routes_config()
+        for route in self.catalog["routes"]:
+            with self.subTest(route=route["name"]):
+                self.assertTrue(route["description"].strip())
+                self.assertEqual(route["description"], defaults[route["name"]]["description"])
 
     def test_env_names_match_key_env_pairs(self):
         self.assertEqual(self.catalog["key_resolution"]["order"], list(catalog_module.KEY_RESOLUTION_ORDER))

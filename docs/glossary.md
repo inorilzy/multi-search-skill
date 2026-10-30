@@ -11,7 +11,7 @@
 |------|------|---------|
 | **source（搜索源）** | 单个搜索后端，最小调用单位。如 `brave`、`github_repos`、`twitter`。 | `multi_search_mcp/src/search/search_runner.py` → `ALL_SOURCE_NAMES` |
 | **source 别名** | source 的对外友好写法，调用时会被归一化。如 `github` → `github_repos`、`baidu-ai-search` → `baidu`。 | `multi_search_mcp/src/search/search_runner.py` → `SOURCE_ALIASES` |
-| **route（路由）** | 一组 source，负责粗粒度选源。内置 5 组由 `ROUTE_PROFILES` 定义；设置中的完整 `routes` 映射（路由组）存在时以它为准，可增删改组的标签、源和超时。两个公共搜索入口使用相同的排序和正文获取流程。 | `multi_search_mcp/src/search/search_runner.py` → `ROUTE_PROFILES`；`multi_search_mcp/src/search/resolve.py` → `resolve_configured_routes` |
+| **route（路由）** | 按用途组织的一组 source，负责粗粒度选源，带标签、可选 `description`（何时使用）、源和超时。路由发现以 `multi-search routes` 为准：读取当前完整 `routes` 设置，按描述选择，无描述时看 label 和 sources；省略设置才使用内置 5 组。设置规则见 [路由文档](route-capability-table.md#路由发现与设置维护)。两个公共搜索入口使用相同的排序和正文获取流程。 | `multi_search_mcp/src/search/search_runner.py` → `ROUTE_PROFILES` / `BUILTIN_ROUTE_DESCRIPTIONS`；`multi_search_mcp/src/search/resolve.py` → `resolve_configured_routes` / `describe_configured_routes` |
 | **profile（源集合）** | 某个 route 对应的那组 source 集合。`profile` 和 `route` 常被混用，但严格说 profile 只指「源集合」这一部分。 | `multi_search_mcp/src/search/search_runner.py` → `ROUTE_PROFILES` 的 value |
 | **route_meta（兼容行为参数）** | route 的搜索超时、每源召回数量和展示默认值等。旧抓取数量字段不再控制公共流程；最终 RRF 前 15 条统一获取正文。 | `multi_search_mcp/src/search/search_runner.py` → `ROUTE_META` / `DEFAULT_ROUTE_META` |
 | **want_content（正文内联）** | 仅保留为搜索器函数的兼容参数。公共搜索不再暴露路由/配置开关，召回阶段固定不请求内联正文，先取得候选并排序，再统一获取最终结果正文。 | `multi_search_mcp/src/search/searchers/tavily.py` 等搜索器 / `multi_search_mcp/src/search/candidates.py` |
@@ -27,7 +27,7 @@
 
 > 注意：旧的 `level`（fast/normal）维度已删除。`fast` 现在是一个 route。
 
-各 route 的 source 集合以代码 `ROUTE_PROFILES` 为准，逐项列举见 [route-capability-table.md](route-capability-table.md#最终-route-设计)，本表不再重复。
+以上分类只描述内置默认组。当前 route 的 source 集合以 `multi-search routes --format json` 输出为准；内置默认值逐项列举见 [route-capability-table.md](route-capability-table.md#最终-route-设计)。
 
 `sov2ex` 是 SOV2EX 提供的第三方 V2EX 专用索引搜索，匿名调用 API，无需 Firecrawl。它加入 `all`，也可通过 `sources=["sov2ex"]` 单独选择；不加入 `default` / `fast` / `dev`。`v2ex` 仅作为兼容别名保留，会被归一化为 `sov2ex`。搜索阶段只提供标题、URL 和清理后的高亮摘要，忽略 SOV2EX 索引正文。最终入选 RRF 前 15 条后，再统一抓取原帖 URL 或复用此前 URL 抓取的正文缓存。
 
@@ -103,7 +103,7 @@
 | 术语 | 定义 | 代码出处 |
 |------|------|---------|
 | **Core 请求** | `search_web` 和 `multi_search` 共用 RRF 搜索及正文获取；`fetch_source` / `scrape_url` 可直接抓 URL，`read_source` 局部读缓存，另有状态/诊断能力。无 MCP 服务入口。 | `multi_search_mcp/src/service.py` |
-| **CLI** | `multi-search` console entry；`search/fetch/read/doctor/sources/keys/site/migrate-legacy` 都直接调用同一 Core 和 StateStore，是唯一产品入口；按需启动并退出，不依赖 MCP 或常驻服务。 | `multi_search_mcp/cli.py` |
+| **CLI** | `multi-search` console entry；`search/fetch/read/doctor/routes/sources/keys/site/migrate-legacy` 都直接调用同一 Core 和 StateStore，是唯一产品入口；按需启动并退出，不依赖 MCP 或常驻服务。 | `multi_search_mcp/cli.py` |
 | **受管 CLI** | 概念见 [CONTEXT.md](../CONTEXT.md)。由桌面端把应用资源里的受控 bundle 装到当前用户目录：Windows 为 `%LOCALAPPDATA%\MultiSearch\cli\multi-search.exe`，macOS 为 `~/Library/Application Support/MultiSearch/cli/bin/multi-search`。两平台 bundle 都自带运行时（Windows 内置 CPython、macOS `runtime/bin/python3.12`），安装后不依赖仓库或系统 Python；写入前先比对 manifest 原始字节的 SHA-256 锚点再逐文件校验，Unix 还要求可执行位仍在，否则判为不可验证。 | `scripts/build_cli_bundle.py`（锚点） |
 | **SKILL** | 给 agent 的薄自然语言触发层，告诉它何时调工具、传什么 route/sources。 | `skills/multi-search/SKILL.md` |
 | **config（行为配置）** | 非敏感的默认值（route/count/timeout、路由组 `routes`、抓取链 `scrape_backends`、Twitter Cookie 模式等）。解析顺序：env `MULTI_SEARCH_CONFIG`（JSON 文件）→ `config.sqlite` 的 settings 记录（存在即权威，桌面端写入）→ `~/.multi-search/multi-search-config.json` → 源码树开发 fallback → 内置默认值；显式指定却不存在的文件是错误。 | `multi_search_mcp/src/support/config.py` → `resolve_config_path` |

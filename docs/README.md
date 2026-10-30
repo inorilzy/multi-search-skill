@@ -9,8 +9,8 @@
 | 文档 | 内容 |
 |---|---|
 | [glossary.md](glossary.md) | 搜索、来源、路由、正文、缓存、Key 状态的术语和接口约定；「代码出处」列由 `scripts/check_glossary_paths.py` 在 CI 中逐项校验。 |
-| [route-capability-table.md](route-capability-table.md) | 各 route 包含的搜索源、能力与默认超时。 |
-| [CLI 指南](../skills/multi-search/references/cli.md) | 实际 CLI 用法、shell 安全规则、路由组与抓取链配置（不另建重复的 docs/cli.md）。 |
+| [route-capability-table.md](route-capability-table.md) | 路由发现、路由组 JSON / id / description 规则与超时优先级；内置搜索源组合与能力。 |
+| [CLI 指南](../skills/multi-search/references/cli.md) | 实际 CLI 用法、shell 安全规则、动态路由选择与抓取链配置（不另建重复的 docs/cli.md）。 |
 | [Managed Twitter cookies 协议 v1](../desktop/src-tauri/COOKIE-PROTOCOL.md) | DPAPI 托管 Cookie 的存储校验、IPC 契约、file/managed 模式迁移与威胁边界。 |
 | [source-tracing-validation.md](source-tracing-validation.md) | 原文追踪验收流程：用 Skill 驱动一次可复核的来源链。 |
 | [search-snapshot-replay.md](search-snapshot-replay.md) | 搜索快照的生成与重放，用于对比排序和正文选择。 |

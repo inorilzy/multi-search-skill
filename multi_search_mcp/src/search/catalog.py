@@ -17,6 +17,7 @@ from ..state.keys import CREDENTIAL_STORE_PROVIDERS, KEY_ENV_PAIRS
 from .capabilities import PROVIDER_CAPABILITIES
 from .search_runner import (
     ALL_SOURCE_NAMES,
+    BUILTIN_ROUTE_DESCRIPTIONS,
     ROUTE_ALIASES,
     ROUTE_PROFILES,
     ROUTE_SOURCE_ORDER,
@@ -151,13 +152,44 @@ def _source_entry(name: str) -> dict[str, Any]:
     }
 
 
+def _route_aliases_for(name: str) -> list[str]:
+    return sorted(alias for alias, target in ROUTE_ALIASES.items() if target == name)
+
+
 def _route_entry(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "label": ROUTE_LABELS[name],
-        "aliases": sorted(alias for alias, target in ROUTE_ALIASES.items() if target == name),
+        "description": BUILTIN_ROUTE_DESCRIPTIONS[name],
+        "aliases": _route_aliases_for(name),
         "sources": list(ROUTE_SOURCE_ORDER[name]),
     }
+
+
+def build_configured_source_catalog(config: dict) -> dict[str, Any]:
+    """Overlay configured memberships, including globally disabled sources."""
+    # Snapshot exports need only built-in constants; load config parsing only
+    # for the CLI overlay so export imports stay independent of the resolver.
+    from .resolve import resolve_configured_routes, resolve_default_route
+
+    routes = resolve_configured_routes(config)
+    resolve_default_route(config, routes)
+    catalog = build_source_catalog()
+    catalog["routes"] = [
+        {
+            "name": route_id,
+            "label": definition.label,
+            "description": definition.description,
+            "aliases": _route_aliases_for(route_id),
+            "sources": list(definition.sources),
+        }
+        for route_id, definition in routes.items()
+    ]
+    for source in catalog["sources"]:
+        source["routes"] = [
+            route["name"] for route in catalog["routes"] if source["name"] in route["sources"]
+        ]
+    return catalog
 
 
 def build_source_catalog() -> dict[str, Any]:

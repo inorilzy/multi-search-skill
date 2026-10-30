@@ -59,6 +59,8 @@ pub struct Source {
 pub struct Route {
     pub name: String,
     pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub aliases: Vec<String>,
     pub sources: Vec<String>,
 }

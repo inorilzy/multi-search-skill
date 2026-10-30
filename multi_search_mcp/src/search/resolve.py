@@ -16,6 +16,7 @@ from ..support.config import (
 from .capabilities import PROVIDER_CAPABILITIES
 from .search_runner import (
     ALL_SOURCE_NAMES,
+    ROUTE_ALIASES,
     ROUTE_PROFILES,
     default_routes_config,
     normalize_route,
@@ -46,6 +47,7 @@ _ROUTE_ID_PATTERN = re.compile(r"[a-z0-9_-]{1,64}\Z", re.ASCII)
 @dataclass(frozen=True)
 class RouteDefinition:
     label: str
+    description: str | None
     sources: tuple[str, ...]
     timeout: int | None
 
@@ -115,7 +117,7 @@ def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSea
         raise TypeError("resolve_search_plan requires a SearchPlanRequest")
     _warn_deprecated_config(config)
     routes = resolve_configured_routes(config)
-    configured_route = _resolve_configured_route(config, routes)
+    configured_route = resolve_default_route(config, routes)
     route = (
         normalize_route(str(request.route))
         if request.route is not None
@@ -177,7 +179,7 @@ def resolve_configured_routes(config: dict) -> dict[str, RouteDefinition]:
             raise ConfigError("routes.web is reserved as an alias for default")
         if not isinstance(raw_definition, dict):
             raise ConfigError(f"routes.{route_id} requires a JSON object")
-        unknown_fields = set(raw_definition) - {"label", "sources", "timeout"}
+        unknown_fields = set(raw_definition) - {"label", "description", "sources", "timeout"}
         if unknown_fields:
             raise ConfigError(
                 f"routes.{route_id} contains unknown field(s): "
@@ -190,6 +192,14 @@ def resolve_configured_routes(config: dict) -> dict[str, RouteDefinition]:
         label = raw_label.strip()
         if not 1 <= len(label) <= 80:
             raise ConfigError(f"routes.{route_id}.label requires 1-80 characters after trimming")
+
+        raw_description = raw_definition.get("description")
+        if raw_description is not None and not isinstance(raw_description, str):
+            raise ConfigError(f"routes.{route_id}.description requires a string or null")
+        description = raw_description.strip() if raw_description is not None else None
+        if description and len(description) > 120:
+            raise ConfigError(f"routes.{route_id}.description requires at most 120 characters after trimming")
+        description = description or None
 
         raw_sources = raw_definition.get("sources")
         if not isinstance(raw_sources, list) or not raw_sources:
@@ -221,15 +231,48 @@ def resolve_configured_routes(config: dict) -> dict[str, RouteDefinition]:
             raise ConfigError(f"routes.{route_id}.timeout requires null or an integer from 1 to 60")
         routes[route_id] = RouteDefinition(
             label=label,
+            description=description,
             sources=tuple(normalized_sources),
             timeout=raw_timeout,
         )
     return routes
 
 
-def _resolve_configured_route(
+def describe_configured_routes(config: dict) -> dict[str, Any]:
+    """Public route listing for ``multi-search routes``.
+
+    Uses the same route validation and default-route selection as
+    :func:`resolve_search_plan`, so every listed id is accepted by search.
+    Route groups keep their settings order; ``timeout`` is the group's own
+    value (``None`` means inherit).
+    """
+    routes = resolve_configured_routes(config)
+    default_route = resolve_default_route(config, routes)
+    disabled = resolve_disabled_sources(config)
+    return {
+        "default_route": default_route,
+        "aliases": dict(ROUTE_ALIASES),
+        "routes": [
+            {
+                "id": route_id,
+                "label": definition.label,
+                "description": definition.description,
+                # Sources that actually take part in this route, in route order.
+                "sources": [s for s in definition.sources if s not in disabled],
+                # Globally disabled sources that this route would otherwise include.
+                "disabled_sources": [s for s in definition.sources if s in disabled],
+                "timeout": definition.timeout,
+                "is_default": route_id == default_route,
+            }
+            for route_id, definition in routes.items()
+        ],
+    }
+
+
+def resolve_default_route(
     config: dict, routes: dict[str, RouteDefinition]
 ) -> str:
+    """Validate the configured default against the parsed route definitions."""
     raw_route = config.get("type", "default")
     if raw_route is None:
         raw_route = "default"

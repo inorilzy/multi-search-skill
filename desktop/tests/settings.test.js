@@ -5,11 +5,11 @@ import { mountSettings, SETTINGS_SOURCES } from '../ui/settings.js';
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 const BUILTINS = {
-  default: { label: '默认（网页综合）', sources: ['brave', 'parallel', 'tavily', 'exa', 'serpapi', 'firecrawl', 'baidu'], timeout: null },
-  fast: { label: '快速', sources: ['baidu', 'tavily', 'firecrawl', 'exa'], timeout: null },
-  all: { label: '全部', sources: ['brave', 'parallel', 'tavily', 'exa', 'serpapi', 'baidu', 'firecrawl', 'twitter', 'stackoverflow', 'github_repos', 'hackernews', 'sov2ex'], timeout: null },
-  social: { label: '社交（Twitter）', sources: ['twitter'], timeout: null },
-  dev: { label: '开发者（Stack Overflow / GitHub / Hacker News）', sources: ['stackoverflow', 'github_repos', 'hackernews'], timeout: null },
+  default: { label: '默认（网页综合）', description: '默认使用；普通网页综合搜索。', sources: ['brave', 'parallel', 'tavily', 'exa', 'serpapi', 'firecrawl', 'baidu'], timeout: null },
+  fast: { label: '快速', description: '需要快速出结果时使用；源较少、延迟较低。', sources: ['baidu', 'tavily', 'firecrawl', 'exa'], timeout: null },
+  all: { label: '全部', description: '需要尽可能全面召回时使用；查询全部源，耗时最长。', sources: ['brave', 'parallel', 'tavily', 'exa', 'serpapi', 'baidu', 'firecrawl', 'twitter', 'stackoverflow', 'github_repos', 'hackernews', 'sov2ex'], timeout: null },
+  social: { label: '社交（Twitter）', description: '查 Twitter / X 上的讨论和反馈时使用。', sources: ['twitter'], timeout: null },
+  dev: { label: '开发者（Stack Overflow / GitHub / Hacker News）', description: '搜索开发项目、代码、技术问答和开发者讨论时使用（GitHub / Stack Overflow / Hacker News）。', sources: ['stackoverflow', 'github_repos', 'hackernews'], timeout: null },
 };
 const clone = value => JSON.parse(JSON.stringify(value));
 const coded = (code, message = '') => JSON.stringify({ code, message });
@@ -142,6 +142,106 @@ test('normal search-settings save leaves the custom scrape chain untouched', asy
   await flush();
   assert.ok(sent);
   assert.equal(Object.hasOwn(sent, 'scrape_backends'), false);
+  window.close();
+});
+
+test('route editor prefills when-to-use description and keeps the trimmed edit after saving', async () => {
+  const { window, root } = setup();
+  const routes = clone(BUILTINS);
+  routes.default.description = '普通网页搜索时使用。';
+  let sent;
+  await mountSettings(root, {
+    settingsView: async () => view({ routes }),
+    settingsSave: async input => { sent = input; return savedView(input); },
+  });
+  rowButton(root, 'default', '编辑').click();
+  const editor = root.querySelector('.route-editor');
+  const field = editor.querySelector('[data-edit="description"]');
+  assert.ok(field, 'the route editor has a description input');
+  assert.match(field.closest('label').textContent, /何时使用/);
+  assert.equal(field.value, '普通网页搜索时使用。');
+  field.value = '  查论文时使用。  ';
+  field.dispatchEvent(new window.Event('input'));
+  editor.querySelector('[data-action="apply-route"]').click();
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.routes.default.description, '查论文时使用。');
+  rowButton(root, 'default', '编辑').click();
+  assert.equal(root.querySelector('[data-edit="description"]').value, '查论文时使用。');
+  window.close();
+});
+
+test('new route description may be blank and saves as null', async () => {
+  const { window, root } = setup();
+  let sent;
+  await mountSettings(root, {
+    settingsView: async () => view(),
+    settingsSave: async input => { sent = input; return savedView(input); },
+  });
+  const editor = await openNew(root);
+  assert.equal(editor.querySelector('[data-edit="description"]').value, '');
+  editor.querySelector('[data-edit="id"]').value = 'blank_description';
+  editor.querySelector('[data-edit="label"]').value = '无描述';
+  editor.querySelector('[data-edit="description"]').value = '  \t ';
+  chooseSource(editor, 'brave');
+  editor.querySelector('[data-action="apply-route"]').click();
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.routes.blank_description.description, null);
+  rowButton(root, 'blank_description', '编辑').click();
+  assert.equal(root.querySelector('[data-edit="description"]').value, '');
+  window.close();
+});
+
+test('copying a route retains its when-to-use description in the new route', async () => {
+  const { window, root } = setup();
+  const routes = clone(BUILTINS);
+  routes.dev.description = '找开发项目时使用。';
+  let sent;
+  await mountSettings(root, {
+    settingsView: async () => view({ routes }),
+    settingsSave: async input => { sent = input; return savedView(input); },
+  });
+  rowButton(root, 'dev', '复制').click();
+  const editor = root.querySelector('.route-editor');
+  assert.equal(editor.querySelector('[data-edit="description"]').value, '找开发项目时使用。');
+  editor.querySelector('[data-edit="id"]').value = 'dev_copy';
+  editor.querySelector('[data-action="apply-route"]').click();
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.routes.dev_copy.description, '找开发项目时使用。');
+  assert.equal(sent.routes.dev.description, '找开发项目时使用。');
+  window.close();
+});
+
+test('description over 120 Unicode characters shows an error and never submits', async () => {
+  const { window, root } = setup();
+  let sent = null;
+  await mountSettings(root, {
+    settingsView: async () => view(),
+    settingsSave: async input => { sent = input; return savedView(input); },
+  });
+  const editor = await openNew(root);
+  editor.querySelector('[data-edit="id"]').value = 'long_description';
+  editor.querySelector('[data-edit="label"]').value = '描述校验';
+  chooseSource(editor, 'brave');
+  const description = editor.querySelector('[data-edit="description"]');
+  description.value = '界'.repeat(121);
+  description.dispatchEvent(new window.Event('input'));
+  editor.querySelector('[data-action="apply-route"]').click();
+  assert.match(editor.querySelector('[data-edit-error]').textContent, /何时使用.*120/);
+  assert.equal(row(root, 'long_description'), undefined);
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent, null);
+
+  description.value = `  ${'🌲'.repeat(120)}  `;
+  description.dispatchEvent(new window.Event('input'));
+  editor.querySelector('[data-action="apply-route"]').click();
+  assert.ok(row(root, 'long_description'), '120 Unicode code points are accepted after trimming');
+  root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
+  await flush();
+  assert.equal(sent.routes.long_description.description, '🌲'.repeat(120));
   window.close();
 });
 
