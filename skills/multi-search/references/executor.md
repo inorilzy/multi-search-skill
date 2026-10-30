@@ -85,21 +85,24 @@ alternate wording helps find the same target, add up to three purposeful
 language. Submit them with the main query; do not turn variants into new
 research topics.
 
-`route` selects sources; all routes rank then fetch:
+Choose the route before searching. Run `multi-search routes --format json`
+and pick the route whose `description` fits the request. When a route has no
+`description`, use its `label` and `sources`. Omit `--route` to use the
+`default_route` from that output. The route list comes from the current
+settings, so do not assume any fixed set of route ids.
 
-- Omit it for ordinary web search (`default`; `web` is an alias).
-- `fast`: smaller set of low-latency, content-capable web providers.
-- `social`: Twitter/X feedback. Search supplies candidates and text snippets;
-  selected X URLs use the dedicated XKit scraper for `.full_text` and up to
-  20 loaded replies. Reply omissions or failures are stated in the Markdown.
-  `full_content` means all acquired text, not all replies in the conversation.
-- `dev`: GitHub repositories, Stack Overflow, and Hacker News.
-- `all`: broadest API fanout.
-- `sources=[...]` names exact providers and bypasses route profiles. For
-  V2EX topics, use `sources=["sov2ex"]` (also included in `all`). Its
-  anonymous third-party SOV2EX API supplies titles, URLs, and highlight
-  snippets. Indexed topic bodies are discarded; selected URLs are fetched
-  after ranking.
+- User names a platform: use `--source <id>`. An explicit source list replaces
+  the route's sources for that request. Globally disabled sources are still
+  filtered out.
+- Source-specific notes follow the source, not the route. The `sources` command
+  describes each source.
+- X posts (`twitter`): selected X URLs use the dedicated XKit scraper for
+  `.full_text` and up to 20 loaded replies. Reply omissions or failures are
+  stated in the Markdown. `full_content` means all acquired text, not all
+  replies in the conversation.
+- V2EX topics (`sov2ex`): use `--source sov2ex`. Its anonymous third-party
+  SOV2EX API supplies titles, URLs, and highlight snippets. Indexed topic
+  bodies are discarded; selected URLs are fetched after ranking.
 
 The RRF cap, preview size, and per-field contracts are documented once in
 [cli.md](cli.md); this file describes workflow, not parameter limits.
