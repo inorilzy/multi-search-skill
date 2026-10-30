@@ -266,29 +266,6 @@ impl DesktopManager {
         self.credential_manager().test_source(cli, entry, query)
     }
 
-    // ---- legacy migration ---------------------------------------------
-
-    /// Masked preview of the legacy plaintext keys file, computed by the CLI.
-    #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-    pub(crate) fn migration_plan(
-        &self,
-        cli: PathBuf,
-        keys_file: &std::path::Path,
-    ) -> Result<crate::credential_commands::MigrationPlan, String> {
-        crate::credential_commands::migration_plan(&self.environment, &cli, keys_file)
-    }
-
-    /// Apply an approved migration request; the CLI re-checks the file and the store.
-    #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-    pub(crate) fn migration_apply(
-        &self,
-        cli: PathBuf,
-        keys_file: &std::path::Path,
-        request: &crate::credential_commands::MigrationRequest,
-    ) -> Result<crate::credential_commands::MigrationResult, String> {
-        crate::credential_commands::migration_apply(&self.environment, &cli, keys_file, request)
-    }
-
     // ---- user PATH ----------------------------------------------------
 
     pub fn user_path_plan(&self) -> Result<PathPlan, String> {
