@@ -47,6 +47,7 @@ _ROUTE_ID_PATTERN = re.compile(r"[a-z0-9_-]{1,64}\Z", re.ASCII)
 @dataclass(frozen=True)
 class RouteDefinition:
     label: str
+    description: str | None
     sources: tuple[str, ...]
     timeout: int | None
 
@@ -178,7 +179,7 @@ def resolve_configured_routes(config: dict) -> dict[str, RouteDefinition]:
             raise ConfigError("routes.web is reserved as an alias for default")
         if not isinstance(raw_definition, dict):
             raise ConfigError(f"routes.{route_id} requires a JSON object")
-        unknown_fields = set(raw_definition) - {"label", "sources", "timeout"}
+        unknown_fields = set(raw_definition) - {"label", "description", "sources", "timeout"}
         if unknown_fields:
             raise ConfigError(
                 f"routes.{route_id} contains unknown field(s): "
@@ -191,6 +192,14 @@ def resolve_configured_routes(config: dict) -> dict[str, RouteDefinition]:
         label = raw_label.strip()
         if not 1 <= len(label) <= 80:
             raise ConfigError(f"routes.{route_id}.label requires 1-80 characters after trimming")
+
+        raw_description = raw_definition.get("description")
+        if raw_description is not None and not isinstance(raw_description, str):
+            raise ConfigError(f"routes.{route_id}.description requires a string or null")
+        description = raw_description.strip() if raw_description is not None else None
+        if description and len(description) > 120:
+            raise ConfigError(f"routes.{route_id}.description requires at most 120 characters after trimming")
+        description = description or None
 
         raw_sources = raw_definition.get("sources")
         if not isinstance(raw_sources, list) or not raw_sources:
@@ -222,6 +231,7 @@ def resolve_configured_routes(config: dict) -> dict[str, RouteDefinition]:
             raise ConfigError(f"routes.{route_id}.timeout requires null or an integer from 1 to 60")
         routes[route_id] = RouteDefinition(
             label=label,
+            description=description,
             sources=tuple(normalized_sources),
             timeout=raw_timeout,
         )
@@ -245,6 +255,7 @@ def describe_configured_routes(config: dict) -> dict[str, Any]:
             {
                 "id": route_id,
                 "label": definition.label,
+                "description": definition.description,
                 "sources": list(definition.sources),
                 "timeout": definition.timeout,
                 "is_default": route_id == default_route,
