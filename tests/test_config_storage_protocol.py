@@ -1,11 +1,11 @@
-"""Core storage protocol the desktop relies on before handing over credentials.
+"""Core storage protocol the desktop relies on.
 
-The desktop runs ``multi-search doctor --no-keys --format json`` and refuses to
-manage SQLite/DPAPI credentials or X cookies unless ``config_storage`` reports
-``{"backend": "sqlite-dpapi", "schema_version": 1}``
-(``credential_commands::supports_storage``). These tests lock that contract and
-the runtime pieces behind it: settings from ``config.sqlite``, managed X cookies
-that are never decrypted at assembly time, and key-state reservation.
+The desktop runs ``multi-search doctor --no-keys --format json`` and checks the
+``config_storage`` handshake ``{"backend": "sqlite-dpapi", "schema_version": 1}``
+(``credential_commands::supports_storage``). The identifier is kept stable;
+``config.sqlite`` now holds only the ``settings`` record and API keys live in
+``~/.multi-search/keys.json``. These tests lock that contract, settings from
+``config.sqlite``, file-only X cookies, and key-state reservation.
 """
 import io
 import json
@@ -20,13 +20,11 @@ from unittest import mock
 
 from multi_search_mcp import cli
 from multi_search_mcp.src import diagnostics, service
-from multi_search_mcp.src.providers.xkit import ManagedTwitterCookies, load_twitter_cookies
 from multi_search_mcp.src.state import runtime
 from multi_search_mcp.src.state.key_state import KeyOutcome, SQLiteKeyManager, TRANSIENT_INVALID
-from multi_search_mcp.src.state.keys import CREDENTIAL_STORE_PROVIDERS, KeysError
+from multi_search_mcp.src.state.keys import CREDENTIAL_STORE_PROVIDERS
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support import config
-from multi_search_mcp.src.support.credential_store import validate_twitter_cookies
 
 
 def create_config_db(path: Path, settings: dict | None = None) -> None:
@@ -67,9 +65,9 @@ class DoctorStorageContractTests(StorageFixture):
         self.assertEqual(code, 0, stderr.getvalue())
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["config_storage"], {"backend": "sqlite-dpapi", "schema_version": 1})
-        self.assertEqual(payload["key_sources"]["storage"], "sqlite-dpapi")
-        self.assertEqual(payload["key_sources"]["database"], str(self.db))
-        self.assertEqual(payload["key_sources"]["legacy_sources"], "explicit import only")
+        self.assertEqual(payload["key_sources"]["file"], "~/.multi-search/keys.json")
+        for removed in ("storage", "database", "legacy_sources"):
+            self.assertNotIn(removed, payload["key_sources"])
         self.assertEqual(payload["twitter_cookie_storage"]["mode"], "file")
         self.assertNotIn("config_error", payload)
         self.assertNotIn("keys_error", payload)
@@ -78,14 +76,13 @@ class DoctorStorageContractTests(StorageFixture):
         self.assertEqual(service.config_storage(), diagnostics.config_storage())
         self.assertEqual(service.doctor_data(include_keys=False)["config_storage"]["backend"], "sqlite-dpapi")
 
-    def test_managed_cookie_mode_is_reported_without_decrypting(self):
+    def test_legacy_managed_cookie_mode_is_reported_as_file(self):
         create_config_db(self.db, {"twitter_cookies_mode": "managed"})
-        with mock.patch("multi_search_mcp.src.support.credential_store.default_store") as store:
-            data = service.doctor_data(include_keys=False)
-        store.assert_not_called()
-        self.assertEqual(data["twitter_cookie_storage"]["mode"], "managed")
-        self.assertIn("DPAPI", data["twitter_cookie_storage"]["boundary"])
+        data = service.doctor_data(include_keys=False)
+        self.assertEqual(data["twitter_cookie_storage"]["mode"], "file")
+        self.assertNotIn("DPAPI", data["twitter_cookie_storage"]["boundary"])
         self.assertEqual(data["config_path_source"], "sqlite")
+        self.assertNotIn("keys_error", data)
 
 
 class SqliteSettingsTests(StorageFixture):
@@ -115,42 +112,28 @@ class SqliteSettingsTests(StorageFixture):
             config.load_config()
 
 
-class ManagedCookieRuntimeTests(unittest.TestCase):
-    cookies = {"auth_token": "synthetic-auth", "ct0": "synthetic-csrf"}
+class LegacyCookieModeTests(unittest.TestCase):
+    """``twitter_cookies_mode`` is a removed setting: any value means file mode."""
 
-    def test_runtime_reference_does_not_decrypt_or_read_a_file(self):
-        with mock.patch.object(runtime, "load_keys", return_value={"twitter": "/tmp/legacy.json"}), \
-             mock.patch("multi_search_mcp.src.support.credential_store.default_store") as store:
-            keys = runtime.load_runtime_keys({"twitter_cookies_mode": "managed"})
-        store.assert_not_called()
-        for name in ("twitter", "twitter_cookies", "twitter_cookies_path"):
-            self.assertIsInstance(keys[name], ManagedTwitterCookies, name)
+    def test_managed_mode_is_ignored_and_the_file_reference_is_used(self):
+        with mock.patch.object(runtime, "load_keys", return_value={"twitter": "/tmp/legacy.json"}) as load:
+            keys = runtime.load_runtime_keys(
+                {"twitter_cookies_mode": "managed", "twitter_cookies_path": "/tmp/configured.json"}
+            )
+        load.assert_called_once_with(twitter_cookies_path="/tmp/configured.json")
+        self.assertEqual(keys, {"twitter": "/tmp/legacy.json"})
+        self.assertNotIn("twitter_cookies", keys)
 
-    def test_unknown_mode_fails_closed(self):
-        for mode in ("other", 1, None, ["managed"]):
-            with self.subTest(mode=mode), self.assertRaisesRegex(KeysError, "unsupported Twitter"):
-                runtime.load_runtime_keys({"twitter_cookies_mode": mode})
+    def test_any_legacy_mode_value_is_accepted_without_error(self):
+        for mode in ("managed", "file", "other", 1, None, ["managed"]):
+            with self.subTest(mode=mode), \
+                 mock.patch.object(runtime, "load_keys", return_value={}) as load:
+                self.assertEqual(runtime.load_runtime_keys({"twitter_cookies_mode": mode}), {})
+            load.assert_called_once_with()
 
-    def test_managed_load_fails_closed_off_windows_and_never_opens_files(self):
-        with mock.patch("multi_search_mcp.src.providers.xkit.sys.platform", "linux"), \
-             mock.patch("builtins.open", side_effect=AssertionError("no plaintext fallback")):
-            with self.assertRaisesRegex(ValueError, "Windows DPAPI"):
-                load_twitter_cookies(ManagedTwitterCookies())
-
-    def test_managed_load_redacts_store_failures(self):
-        with mock.patch("multi_search_mcp.src.providers.xkit.sys.platform", "win32"), \
-             mock.patch("multi_search_mcp.src.support.credential_store.default_store") as store:
-            store.return_value.get.return_value = {"auth_token": "secret-only"}
-            with self.assertRaisesRegex(ValueError, "unavailable or invalid") as raised:
-                load_twitter_cookies(ManagedTwitterCookies())
-        self.assertNotIn("secret-only", str(raised.exception))
-
-    def test_cookie_contract_is_a_separate_provider(self):
+    def test_cookie_reference_is_not_a_keyed_provider(self):
         self.assertNotIn("twitter_cookies", CREDENTIAL_STORE_PROVIDERS)
         self.assertIn("jina", CREDENTIAL_STORE_PROVIDERS)
-        self.assertEqual(validate_twitter_cookies(self.cookies), self.cookies)
-        with self.assertRaises(ValueError):
-            validate_twitter_cookies({**self.cookies, "bad-name": "x"})
 
 
 class KeyReservationTests(unittest.TestCase):

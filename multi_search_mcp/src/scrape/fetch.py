@@ -240,19 +240,4 @@ def _scope_keys(keys: dict, source_providers: list, backends) -> dict:
         key_name = getattr(getattr(capability, "operation", None), "key_name", None)
         if key_name:
             wanted.add(key_name)
-    managed_type = _managed_cookie_type()
-    # Managed auth is mutable behind a stable reference: do not cross-source
-    # reuse it without an authorization version. Source-id cache remains TTL-bound.
-    return {
-        name: ("managed:" + uuid.uuid4().hex if managed_type and isinstance(value, managed_type) else value)
-        for name, value in keys.items() if name in wanted
-    }
-
-
-def _managed_cookie_type():
-    """The provider-owned managed-cookie reference type, when providers/ exists."""
-    try:
-        from ..providers.xkit import ManagedTwitterCookies
-    except ImportError:  # pragma: no cover - providers/ lands with the provider port
-        return None
-    return ManagedTwitterCookies
+    return {name: value for name, value in keys.items() if name in wanted}
