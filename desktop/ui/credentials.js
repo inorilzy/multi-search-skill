@@ -89,11 +89,11 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <button type="submit" class="primary" data-action="save">提交新增 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
       <span class="credential-note" data-info="application">申请链接待配置</span></div>
     </form>
-    <details class="config-details"><summary>说明</summary><p class="credential-note">保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details>
     <p data-keys-file-note class="credential-note" role="note"></p>
     <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
     <p data-info="error" class="error-message"></p>
-    <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div></div>
+    <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div>
+    <details class="config-details"><summary>说明</summary><p class="credential-note">保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details></div>
     <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong class="status-text" data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
     <details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? `测试会向对应服务发送外部搜索请求，可能消耗额度。测试使用已保存的值；新增后请先提交。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details></div></div>`;
   root.querySelector('.credential-note').prepend(root.ownerDocument.createTextNode(`${label} `));
