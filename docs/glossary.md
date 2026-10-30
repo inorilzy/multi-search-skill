@@ -11,7 +11,7 @@
 |------|------|---------|
 | **source（搜索源）** | 单个搜索后端，最小调用单位。如 `brave`、`github_repos`、`twitter`。 | `multi_search_mcp/src/search/search_runner.py` → `ALL_SOURCE_NAMES` |
 | **source 别名** | source 的对外友好写法，调用时会被归一化。如 `github` → `github_repos`、`baidu-ai-search` → `baidu`。 | `multi_search_mcp/src/search/search_runner.py` → `SOURCE_ALIASES` |
-| **route（路由）** | 按用途组织的一组 source，负责粗粒度选源，带标签、可选 `description`（何时使用）、源和超时。路由发现以 `multi-search routes` 为准：读取当前完整 `routes` 设置，按描述选择，无描述时看 label 和 sources；省略设置才使用内置 5 组。设置规则见 [路由文档](route-capability-table.md#路由发现与设置维护)。两个公共搜索入口使用相同的排序和正文获取流程。 | `multi_search_mcp/src/search/search_runner.py` → `ROUTE_PROFILES`；`multi_search_mcp/src/search/resolve.py` → `resolve_configured_routes` |
+| **route（路由）** | 按用途组织的一组 source，负责粗粒度选源，带标签、可选 `description`（何时使用）、源和超时。路由发现以 `multi-search routes` 为准：读取当前完整 `routes` 设置，按描述选择，无描述时看 label 和 sources；省略设置才使用内置 5 组。设置规则见 [路由文档](route-capability-table.md#路由发现与设置维护)。两个公共搜索入口使用相同的排序和正文获取流程。 | `multi_search_mcp/src/search/search_runner.py` → `ROUTE_PROFILES` / `BUILTIN_ROUTE_DESCRIPTIONS`；`multi_search_mcp/src/search/resolve.py` → `resolve_configured_routes` / `describe_configured_routes` |
 | **profile（源集合）** | 某个 route 对应的那组 source 集合。`profile` 和 `route` 常被混用，但严格说 profile 只指「源集合」这一部分。 | `multi_search_mcp/src/search/search_runner.py` → `ROUTE_PROFILES` 的 value |
 | **route_meta（兼容行为参数）** | route 的搜索超时、每源召回数量和展示默认值等。旧抓取数量字段不再控制公共流程；最终 RRF 前 15 条统一获取正文。 | `multi_search_mcp/src/search/search_runner.py` → `ROUTE_META` / `DEFAULT_ROUTE_META` |
 | **want_content（正文内联）** | 仅保留为搜索器函数的兼容参数。公共搜索不再暴露路由/配置开关，召回阶段固定不请求内联正文，先取得候选并排序，再统一获取最终结果正文。 | `multi_search_mcp/src/search/searchers/tavily.py` 等搜索器 / `multi_search_mcp/src/search/candidates.py` |
