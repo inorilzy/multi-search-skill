@@ -1,32 +1,40 @@
+> Source: https://api-dashboard.search.brave.com/documentation/services/web-search/index.html.md
+> Retrieved: 2026-10-31
+> Covers: GET /res/v1/web/search (service guide: extra_snippets, pagination, enrichments)
+
 # Web Search
 
 Search from a large index of web pages with optional local and rich data enrichments, with results intended for human consumption.
 
 ## Overview
 
-Web Search provides access to our comprehensive index of web pages, enabling
-you to retrieve relevant results from across the internet. Our service crawls
-and indexes billions of web pages, ensuring fresh and accurate search results
-for your applications.
+Web Search provides access to our comprehensive index of web pages, enabling you to retrieve relevant results from across the internet. Our service crawls and indexes billions of web pages, ensuring fresh and accurate search results for your applications.
 
-Looking to power agents or chatbots? Use the [LLM Context endpoint](/documentation/services/llm-context) instead.
-  The LLM Context endpoint is specifically built for machine consumption,
-  and benchmarked as the most powerful Search API for AI.
+Looking to power agents or chatbots? Use the [LLM Context endpoint](/documentation/services/llm-context) instead. The LLM Context endpoint is specifically built for machine consumption, and benchmarked as the most powerful Search API for AI.
 
 ## Key Features
 
+### Comprehensive Index
+
 Search across billions of indexed web pages with fast, reliable results
+
+### Fresh Results
 
 Regularly updated index ensures you get the most current information
 
+### Local Enrichments
+
 Enhanced results with local business data and geographic context
+
+### Rich Data Enrichments
 
 3rd party data integration for rich real-time results
 
 ## API Reference
 
-View the complete API reference, including endpoints, parameters, and example
-  requests
+### Web Search API Documentation
+
+View the complete API reference, including endpoints, parameters, and example requests
 
 ## Use Cases
 
@@ -170,7 +178,7 @@ Control adult content filtering with the `safesearch` parameter:
 
 ## Local enrichments
 
-Local enrichments provide extra information about places of interest (POI), such as images and the websites where the POI is mentioned. The Local Search API is a **separate endpoint** from Web Search, requiring a two-step process (similar to the Summarizer API).
+Local enrichments provide extra information about places of interest (POI), such as images and the websites where the POI is mentioned. The Local Search API is a **separate endpoint** from Web Search, requiring a two-step process.
 
 ### Step 1: Query Web Search for Locations
 
@@ -244,13 +252,9 @@ Note that the `id` fields of POIs are ephemeral and will expire after approximat
 
 ## Rich Data Enrichments
 
-Rich Search API responses provide accurate, real-time information
-about the intent of the query. This data is sourced from 3rd-party
-API providers and includes verticals such as sports, stocks, and
-weather.
+Rich Search API responses provide accurate, real-time information about the intent of the query. This data is sourced from 3rd-party API providers and includes verticals such as sports, stocks, and weather.
 
-A request must be made to the web search endpoint with the query parameter `enable_rich_callback=1`.
-An example cURL request for the query `weather in munich` is given below.
+A request must be made to the web search endpoint with the query parameter `enable_rich_callback=1`. An example cURL request for the query `weather in munich` is given below.
 
 ```bash
 curl "https://api.search.brave.com/res/v1/web/search?q=weather+in+munich&enable_rich_callback=1" \
@@ -451,8 +455,7 @@ Data provided by [API Sports](https://api-sports.io).
 
 ## Changelog
 
-This changelog outlines all significant changes to the
-Brave Web Search API in chronological order.
+This changelog outlines all significant changes to the Brave Web Search API in chronological order.
 
 - **2023-01-01** Add Brave Web Search API resource.
 - **2023-04-14** Change `SearchResult` restaurant property to `location`.

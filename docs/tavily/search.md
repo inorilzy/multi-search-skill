@@ -1,6 +1,6 @@
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.tavily.com/llms.txt
-> Use this file to discover all available pages before exploring further.
+> Source: https://docs.tavily.com/documentation/api-reference/endpoint/search.md
+> Retrieved: 2026-10-31
+> Covers: POST https://api.tavily.com/search
 
 # Tavily Search
 
@@ -28,12 +28,15 @@ tags:
   - name: Crawl
   - name: Map
   - name: Research
+  - name: Feedback
   - name: Usage
+  - name: Logs
 paths:
   /search:
     post:
       summary: Search for data based on a query
       description: Execute a search query using Tavily Search.
+      operationId: search
       requestBody:
         description: Parameters for the Tavily Search request.
         required: true
@@ -58,8 +61,9 @@ paths:
                     `chunks_per_source`).
 
                     - `basic`: A balanced option for relevance and latency.
-                    Ideal for general-purpose searches. Returns one NLP summary
-                    per URL.
+                    Ideal for general-purpose searches. Returns multiple
+                    semantically relevant snippets per URL (configurable via
+                    `chunks_per_source`).
 
                     - `fast`: Prioritizes lower latency while maintaining good
                     relevance. Returns multiple semantically relevant snippets
@@ -88,13 +92,15 @@ paths:
                 chunks_per_source:
                   type: integer
                   description: >-
-                    Chunks are short content snippets (maximum 500 characters
-                    each) pulled directly from the source. Use
-                    `chunks_per_source` to define the maximum number of relevant
-                    chunks returned per source and to control the `content`
-                    length. Chunks will appear in the `content` field as:
-                    `<chunk 1> [...] <chunk 2> [...] <chunk 3>`. Available only
-                    when `search_depth` is `advanced`.
+                    Chunks are short content snippets (about 500 characters each
+                    for `basic` and `fast`, 800 for `advanced`) pulled directly
+                    from the source. Use `chunks_per_source` to define the
+                    maximum number of relevant chunks returned per source and to
+                    control the `content` length. Chunks will appear in the
+                    `content` field as: `<chunk 1> [...] <chunk 2> [...] <chunk
+                    3>`. Adjacent chunks may be joined into one longer passage,
+                    so chunk length is a target, not a hard limit. Available
+                    when `search_depth` is `advanced`, `basic` or `fast`.
                   default: 3
                   minimum: 1
                   maximum: 3
@@ -102,7 +108,7 @@ paths:
                   type: integer
                   example: 1
                   description: The maximum number of search results to return.
-                  default: 5
+                  default: 10
                   minimum: 0
                   maximum: 20
                 topic:
@@ -123,7 +129,10 @@ paths:
                   description: >-
                     The time range back from the current date to filter results
                     based on publish date or last updated date. Useful when
-                    looking for sources that have published or updated data.
+                    looking for sources that have published or updated data. By
+                    default, results with no detectable published date are not
+                    removed; set `filter_by_published_date` to `true` to remove
+                    them.
                   enum:
                     - day
                     - week
@@ -139,7 +148,9 @@ paths:
                   description: >-
                     Will return all results after the specified start date based
                     on publish date or last updated date. Required to be written
-                    in the format YYYY-MM-DD
+                    in the format YYYY-MM-DD. By default, results with no
+                    detectable published date are not removed; set
+                    `filter_by_published_date` to `true` to remove them.
                   example: '2025-02-09'
                   default: null
                 end_date:
@@ -147,8 +158,71 @@ paths:
                   description: >-
                     Will return all results before the specified end date based
                     on publish date or last updated date. Required to be written
-                    in the format YYYY-MM-DD
+                    in the format YYYY-MM-DD. By default, results with no
+                    detectable published date are not removed; set
+                    `filter_by_published_date` to `true` to remove them.
                   example: '2025-12-29'
+                  default: null
+                include_published_date:
+                  type: boolean
+                  description: >-
+                    Include a `published_date` field in each result. The date is
+                    Tavily's best estimate of when the source was published or
+                    last updated, so it can be later than the original publish
+                    date. Results with no detectable date return `null`.
+                    Automatically enabled when `topic` is `news`.
+
+
+                    **Note**: this feature is currently in beta.
+                  default: false
+                filter_by_published_date:
+                  type: boolean
+                  description: >-
+                    Remove results whose published date falls outside the
+                    `time_range`, `start_date`, or `end_date` window. Results
+                    with no detectable published date are also removed. Setting
+                    this to `true` also enables `include_published_date`.
+
+
+                    If you want date-window filtering but don't want to lose
+                    sources without a detectable date, leave this `false` and
+                    set `include_published_date: true` together with a date
+                    range instead.
+                  default: false
+                max_age_hours:
+                  type: integer
+                  description: >-
+                    The maximum age in hours of Tavily's cached copy of each
+                    result.
+
+
+                    Accepted values:
+
+
+                    - unset (default): Tavily serves cached copies and fetches
+                    pages live as needed.
+
+                    - `1` to `720` (30 days): only return a cached copy fetched
+                    within that many hours.
+
+                    - `0`: always fetch the page live.
+
+                    - `-1`: never fetch live.
+
+
+                    Lower values do not cost more credits, but fetching live
+                    adds latency. Results whose cached copy is too old and can't
+                    be fetched live are left out, so you may get fewer than
+                    `max_results`.
+
+
+                    On non-paying plans, live fetching is best-effort. While
+                    Tavily is under heavy load, requests that set
+                    `max_age_hours` may be refused with `434 Flex tier capacity
+                    exceeded`.
+                  minimum: -1
+                  maximum: 720
+                  example: 24
                   default: null
                 include_answer:
                   oneOf:
@@ -209,6 +283,20 @@ paths:
                   items:
                     type: string
                   default: []
+                include_domains_mode:
+                  type: string
+                  description: >-
+                    Controls how `include_domains` is applied. `restrict` limits
+                    results to only the listed domains. `prefer` also searches
+                    the rest of the web, so results outside `include_domains`
+                    can still surface, rather than excluding them. Defaults to
+                    `restrict`, so `include_domains` acts as a hard filter
+                    unless set to `prefer`. Setting it without `include_domains`
+                    returns a 400 error.
+                  enum:
+                    - restrict
+                    - prefer
+                  default: restrict
                 country:
                   type: string
                   description: >-
@@ -383,6 +471,26 @@ paths:
                     - zambia
                     - zimbabwe
                   default: null
+                language:
+                  type: string
+                  description: >-
+                    Boost search results in a specific language. Accepts an ISO
+                    639-1 code (e.g. `en`, `fr`, `zh-cn`) or an English language
+                    name (e.g. `english`, `french`). By default this only boosts
+                    matching-language results in ranking; pass
+                    `filter_by_language: true` to strictly filter out
+                    non-matching results instead. For best results, write your
+                    `query` in the same language you set here.
+                  example: en
+                  default: null
+                filter_by_language:
+                  type: boolean
+                  description: >-
+                    Strictly filter out search results that don't match the
+                    `language` parameter, instead of only boosting them in
+                    ranking. Requires `language` to be set; returns a 400 error
+                    otherwise.
+                  default: false
                 auto_parameters:
                   type: boolean
                   description: >-
@@ -413,9 +521,9 @@ paths:
                   default: false
                 safe_search:
                   type: boolean
-                  description: |-
-                    🔒 Enterprise only.
-                     whether to filter out adult or unsafe content from results. Not supported for `fast` or `ultra-fast` search depths.
+                  description: >-
+                    Whether to filter out adult or unsafe content from results.
+                    Not supported for `fast` or `ultra-fast` search depths.
                   default: false
               required:
                 - query
@@ -502,6 +610,16 @@ paths:
                             The cleaned and parsed HTML content of the search
                             result. Only if `include_raw_content` is true.
                           example: null
+                        published_date:
+                          type: string
+                          description: >-
+                            Tavily's best estimate of when the source was
+                            published or last updated. Can be later than the
+                            original publish date. `null` if no date could be
+                            detected. Only returned when
+                            `include_published_date` is `true` (automatically
+                            enabled when `topic` is `news`).
+                          example: Tue, 11 Mar 2025 17:00:00 GMT
                         favicon:
                           type: string
                           description: The favicon URL for the result.
@@ -520,6 +638,10 @@ paths:
                                 type: string
                               description:
                                 type: string
+                        id:
+                          type: string
+                          description: Unique identifier for this result
+                          example: a3f9c2-04
                   auto_parameters:
                     type: object
                     description: >-
@@ -555,13 +677,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: >-
@@ -572,45 +688,48 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: 'Unauthorized: missing or invalid API key.'
-        '429':
-          description: Too many requests - Rate limit exceeded
+        '422':
+          description: >-
+            Request validation failed. The detail array identifies invalid
+            fields.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ValidationError'
+              example:
+                detail:
+                  - type: string_type
+                    loc:
+                      - body
+                      - query
+                    msg: Input should be a valid string
+                    input: []
+        '429':
+          description: >-
+            Too Many Requests. Error messages and retry delays can vary by
+            rate-limit rule.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: >-
                     Your request has been blocked due to excessive requests.
-                    Please reduce rate of requests.
+                    Please reduce the rate of requests.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
         '432':
           description: Key limit or Plan Limit exceeded
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: >-
@@ -622,30 +741,30 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: >-
                     This request exceeds the pay-as-you-go limit. You can
                     increase your limit on the Tavily dashboard.
+        '434':
+          description: Flex tier capacity exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                detail:
+                  error: >-
+                    Live content fetching is temporarily unavailable on your
+                    plan due to high demand. Retry shortly, or omit
+                    max_age_hours/fetch_timeout to be served from cache.
         '500':
           description: Internal Server Error - We had a problem with our server.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: Internal Server Error
@@ -671,6 +790,45 @@ paths:
 
             console.log(response);
 components:
+  schemas:
+    ApiError:
+      type: object
+      properties:
+        detail:
+          type: object
+          properties:
+            error:
+              type: string
+    ValidationError:
+      type: object
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            properties:
+              loc:
+                type: array
+                items:
+                  oneOf:
+                    - type: string
+                    - type: integer
+              msg:
+                type: string
+              type:
+                type: string
+              input: {}
+              ctx:
+                type: object
+  headers:
+    RetryAfter:
+      description: >-
+        When present, the number of seconds to wait before retrying. Read the
+        returned value; the delay can vary.
+      schema:
+        type: integer
+        minimum: 0
+      example: 60
   securitySchemes:
     bearerAuth:
       type: http

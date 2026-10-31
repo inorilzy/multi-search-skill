@@ -1,3 +1,7 @@
+> Source: https://raw.githubusercontent.com/brave/brave-search-skills/main/skills/web-search/SKILL.md
+> Retrieved: 2026-10-31
+> Covers: GET /res/v1/web/search (official Brave skill summary)
+
 ---
 name: web-search
 description: USE FOR web search. Returns ranked results with snippets, URLs, thumbnails. Supports freshness filters, SafeSearch, Goggles for custom ranking, pagination. Primary search endpoint.
@@ -276,7 +280,7 @@ Goggles let you **re-rank search results** — boost trusted sources, suppress S
 
 > **Hosted** goggles must be on GitHub/GitLab, include `! name:`, `! description:`, `! author:` headers, and be registered at https://search.brave.com/goggles/create. **Inline** rules need no registration.
 
-**Syntax**: `$boost=N` / `$downrank=N` (1–10), `$discard`, `$site=example.com`. Combine with commas: `$site=example.com,boost=3`. Separate rules with `\n` (`%0A`).
+**Syntax**: Rules start with `$` + comma-separated options. **Actions** (pick one): `discard`, `boost[=N]`, `downrank[=N]` — N is an integer 1–10. **Site filter**: `site=DOMAIN`. Example: `$site=example.com,boost=3`. Separate rules with `\n` (`%0A`).
 
 **Allow list**: `$discard\n$site=docs.python.org\n$site=developer.mozilla.org` — **Block list**: `$discard,site=pinterest.com\n$discard,site=quora.com`
 

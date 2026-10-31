@@ -1,10 +1,10 @@
-> ## Documentation Index
-> Fetch the complete documentation index at: https://docs.tavily.com/llms.txt
-> Use this file to discover all available pages before exploring further.
+> Source: https://docs.tavily.com/documentation/api-reference/endpoint/extract.md
+> Retrieved: 2026-10-31
+> Covers: POST https://api.tavily.com/extract
 
 # Tavily Extract
 
-> Extract web page content from one or more specified URLs using Tavily Extract.
+> Extract content from one URL or batch up to 20 URLs in one request. Successful URLs appear in results; per-URL failures appear in failed_results. Check both arrays even when the response is HTTP 200. Request options apply to every URL in the batch.
 
 
 
@@ -28,14 +28,19 @@ tags:
   - name: Crawl
   - name: Map
   - name: Research
+  - name: Feedback
   - name: Usage
+  - name: Logs
 paths:
   /extract:
     post:
       summary: Retrieve raw web content from specified URLs
       description: >-
-        Extract web page content from one or more specified URLs using Tavily
-        Extract.
+        Extract content from one URL or batch up to 20 URLs in one request.
+        Successful URLs appear in results; per-URL failures appear in
+        failed_results. Check both arrays even when the response is HTTP 200.
+        Request options apply to every URL in the batch.
+      operationId: extract
       requestBody:
         description: Parameters for the Tavily Extract request.
         required: true
@@ -52,11 +57,13 @@ paths:
                     - type: array
                       items:
                         type: string
-                      description: A list of URLs to extract content from.
+                      description: A list of 1–20 URLs to extract in one request.
                       example:
                         - https://en.wikipedia.org/wiki/Artificial_intelligence
                         - https://en.wikipedia.org/wiki/Machine_learning
                         - https://en.wikipedia.org/wiki/Data_science
+                      minItems: 1
+                      maxItems: 20
                 query:
                   type: string
                   description: >-
@@ -66,13 +73,15 @@ paths:
                 chunks_per_source:
                   type: integer
                   description: >-
-                    Chunks are short content snippets (maximum 500 characters
+                    Chunks are short content snippets (about 800 characters
                     each) pulled directly from the source. Use
                     `chunks_per_source` to define the maximum number of relevant
                     chunks returned per source and to control the `raw_content`
                     length. Chunks will appear in the `raw_content` field as:
-                    `<chunk 1> [...] <chunk 2> [...] <chunk 3>`. Available only
-                    when `query` is provided. Must be between 1 and 5.
+                    `<chunk 1> [...] <chunk 2> [...] <chunk 3>`. If a page
+                    splits into no more chunks than `chunks_per_source`, its
+                    full content is returned. Available only when `query` is
+                    provided. Must be between 1 and 5.
                   minimum: 1
                   maximum: 5
                   default: 3
@@ -135,7 +144,10 @@ paths:
                 - urls
       responses:
         '200':
-          description: Extraction results returned successfully
+          description: >-
+            Extraction completed. Check results and failed_results for each URL.
+            HTTP 200 can have an empty results array when all valid URLs fail
+            during extraction; output order is not guaranteed.
           content:
             application/json:
               schema:
@@ -233,65 +245,93 @@ paths:
                       A unique request identifier you can share with customer
                       support to help resolve issues with specific requests.
                     example: 123e4567-e89b-12d3-a456-426614174111
+              examples:
+                partialSuccess:
+                  summary: One URL succeeds and another fails
+                  value:
+                    results:
+                      - url: https://example.com/article
+                        raw_content: Example extracted article content.
+                        images: []
+                    failed_results:
+                      - url: https://example.com/unavailable
+                        error: Failed to retrieve content
+                    response_time: 0.5
+                    request_id: 123e4567-e89b-12d3-a456-426614174111
         '400':
-          description: Bad Request
+          description: >-
+            Bad Request. More than 20 URLs, an empty URL list, or no URLs
+            passing validation are rejected. When all URLs fail validation,
+            detail.failed_results describes the individual failures.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
+                allOf:
+                  - $ref: '#/components/schemas/ApiError'
+                  - type: object
                     properties:
-                      error:
-                        type: string
-              example:
-                detail:
-                  error: <400 Bad Request, (e.g Max 20 URLs are allowed.)>
+                      detail:
+                        type: object
+                        properties:
+                          failed_results:
+                            type: array
+                            description: A list of URLs that could not be processed.
+                            items:
+                              type: object
+                              properties:
+                                url:
+                                  type: string
+                                  description: The URL that failed to be processed.
+                                error:
+                                  type: string
+                                  description: >-
+                                    An error message describing why the URL
+                                    couldn't be processed.
+              examples:
+                tooManyUrls:
+                  summary: More than 20 URLs
+                  value:
+                    detail:
+                      error: Max 20 URLs are allowed.
+                allInvalidUrls:
+                  summary: No URL passes validation
+                  value:
+                    detail:
+                      error: All URLs failed validation.
+                      failed_results:
+                        - url: not-a-url
+                          error: 'Validation Error: Invalid URL format'
         '401':
           description: Unauthorized - Your API key is wrong or missing.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: 'Unauthorized: missing or invalid API key.'
         '429':
-          description: Too many requests - Rate limit exceeded
+          description: >-
+            Too Many Requests. Error messages and retry delays can vary by
+            rate-limit rule.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: >-
                     Your request has been blocked due to excessive requests.
-                    Please reduce rate of requests.
+                    Please reduce the rate of requests.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
         '432':
           description: Key limit or Plan Limit exceeded
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: >-
@@ -303,13 +343,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: >-
@@ -320,13 +354,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  detail:
-                    type: object
-                    properties:
-                      error:
-                        type: string
+                $ref: '#/components/schemas/ApiError'
               example:
                 detail:
                   error: Internal Server Error
@@ -360,6 +388,24 @@ paths:
 
             console.log(response);
 components:
+  schemas:
+    ApiError:
+      type: object
+      properties:
+        detail:
+          type: object
+          properties:
+            error:
+              type: string
+  headers:
+    RetryAfter:
+      description: >-
+        When present, the number of seconds to wait before retrying. Read the
+        returned value; the delay can vary.
+      schema:
+        type: integer
+        minimum: 0
+      example: 60
   securitySchemes:
     bearerAuth:
       type: http
