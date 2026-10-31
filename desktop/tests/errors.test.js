@@ -155,6 +155,7 @@ test('credentials page reports read/append/remove IPC failures and keeps outcome
     credentialRemove: async () => { throw coded('credential_remove_failed', 'Credential remove worker failed'); },
   });
   assert.equal(statusCalls, 1);
+  root.querySelector('[data-action="add"]').click();
   const field = root.querySelector('[data-field="key"]');
   field.value = 'synthetic-error-key';
   root.querySelector('[data-save-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));

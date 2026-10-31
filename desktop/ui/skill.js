@@ -6,19 +6,20 @@ const stateLabels = { current: '当前版本', outdated: '有可用更新', modi
 const statusText = (status, fallback) => reasons[status] || fallback || `未知状态（${status ?? '无'}）`;
 export async function mountSkill(root, api, { number = '03' } = {}) {
   root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / CLAUDE CODE SKILL</p><h1 tabindex="-1">让 Claude Code 使用本机 CLI。</h1><p>安装仅写入所选目录中的 multi-search 技能文件，不覆盖已有内容，不使用 MCP。</p></section>
-    <section class="panel skill-install"><div class="section-title"><h2>安装范围</h2><span class="eyebrow">CLAUDE CODE ONLY</span></div>
-      <fieldset><legend>作用范围</legend>
-        <label><input type="radio" name="scope" value="global" checked> 全局（当前用户的所有项目）</label>
-        <label><input type="radio" name="scope" value="project"> 项目（仅所选项目）</label></fieldset>
-      <label class="path-input">项目目录<input data-field="project" placeholder="仅项目范围需要，例如 C:\\…\\my-project" spellcheck="false" disabled></label>
-      <div class="run-controls"><button type="button" data-action="preview">预览目标</button><button type="button" data-action="install" class="primary" disabled>安装 Skill</button></div>
-      <p data-info="target"></p><p data-info="status" aria-live="polite"></p><p data-info="error" role="alert"></p></section>
-    <section class="panel skill-manage"><div class="section-title"><h2>已安装 Skill</h2><span class="eyebrow">UPDATE / REMOVE</span></div>
-      <div class="run-controls"><button type="button" data-action="check">检查已安装版本</button></div>
-      <p data-info="installed" aria-live="polite"></p><p data-info="managed-target"></p><p data-info="compatibility"></p><p data-info="modified"></p>
-      <label class="confirm"><input type="checkbox" data-field="confirm-overwrite"> 我已确认：备份本地修改后再用本版本覆盖</label>
-      <div class="run-controls"><button type="button" data-action="update" disabled>更新 Skill</button><button type="button" data-action="remove-plan" disabled>预览移除</button><button type="button" data-action="remove" class="danger" disabled>确认移除</button></div>
-      <p data-info="manage-plan"></p><p data-info="manage-status" aria-live="polite"></p><p data-info="manage-error" role="alert"></p></section>`;
+    <section class="panel skill-install ms-form"><div class="section-title"><div><h2>安装 Skill</h2><p class="section-sub">选择作用范围，预览目标目录后再写入。</p></div><span class="eyebrow">CLAUDE CODE ONLY</span></div>
+      <fieldset class="choice-group"><legend>作用范围</legend>
+        <label class="choice-card"><input type="radio" name="scope" value="global" checked><span><strong>全局</strong><small>当前用户的所有项目</small></span></label>
+        <label class="choice-card"><input type="radio" name="scope" value="project"><span><strong>项目</strong><small>仅所选项目</small></span></label></fieldset>
+      <label class="field path-input"><span>项目目录</span><input data-field="project" placeholder="仅项目范围需要，例如 C:\\…\\my-project" spellcheck="false" disabled></label>
+      <div class="run-controls form-actions"><button type="button" data-action="preview">预览目标</button><button type="button" data-action="install" class="primary" disabled>安装 Skill</button></div>
+      <div class="result-box"><p data-info="target"></p><p data-info="status" aria-live="polite"></p><p data-info="error" role="alert"></p></div></section>
+    <section class="panel skill-manage ms-form"><div class="section-title"><div><h2>已安装 Skill</h2><p class="section-sub">先检查当前目标，再更新或移除。</p></div><button type="button" data-action="check">检查已安装版本</button></div>
+      <div class="result-box"><p data-info="installed" aria-live="polite"></p><p data-info="managed-target"></p><p data-info="compatibility"></p><p data-info="modified"></p></div>
+      <div class="action-row"><div><strong>更新</strong><label class="check-row"><input type="checkbox" data-field="confirm-overwrite"><span>我已确认：备份本地修改后再用本版本覆盖</span></label></div>
+        <div class="run-controls"><button type="button" data-action="update" class="primary" disabled>更新 Skill</button></div></div>
+      <div class="action-row action-row-danger"><div><strong>移除</strong><small>先预览将删除的文件，非本工具管理的文件会保留。</small></div>
+        <div class="run-controls"><button type="button" data-action="remove-plan" disabled>预览移除</button><button type="button" data-action="remove" class="danger" disabled>确认移除</button></div></div>
+      <div class="result-box"><p data-info="manage-plan"></p><p data-info="manage-status" aria-live="polite"></p><p data-info="manage-error" role="alert"></p></div></section>`;
   // Page lifecycle and in-flight state, declared before any handler can read them.
   let disposed = false;
   let busy = false;

@@ -35,12 +35,12 @@ test('sources page lists every allowlisted source once and mounts only the selec
   assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0, 'no detail is expanded on entry');
   assert.equal(root.querySelectorAll('[data-source-detail] [data-field="key"]').length, 0);
   await pick(root, 'baidu');
-  assert.equal(root.querySelectorAll('[data-source-detail] [data-field="key"]').length, 1, 'only one source detail is mounted at a time');
+  assert.equal(root.querySelectorAll('[data-source-detail] [data-action="add"]').length, 1, 'only one source detail is mounted at a time');
 
   for (const name of KEYED) {
     await pick(root, name);
     assert.ok(detailOf(root).querySelector('[data-action="test"]'), `${name} detail exposes a test control`);
-    assert.ok(detailOf(root).querySelector('[data-field="key"]'), `${name} detail exposes its key field`);
+    assert.ok(detailOf(root).querySelector('[data-action="add"]'), `${name} detail exposes its add-key control`);
   }
   assert.deepEqual(seen.slice(0, 8), KEYED, 'each keyed source is queried for the initial overview');
   assert.deepEqual(seen.slice(8), KEYED, 'each keyed source refreshes when its detail opens');
@@ -235,6 +235,7 @@ test('row testing sends one request and saving invalidates row success', async (
   assert.equal(calls, 1);
   assert.equal(row.querySelector('[data-row-result]').dataset.kind, 'success');
   assert.match(detailOf(root).querySelector('[data-status="test"]').textContent, /测试成功/);
+  detailOf(root).querySelector('[data-action="add"]').click();
   detailOf(root).querySelector('[data-field="key"]').value = 'synthetic';
   detailOf(root).querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await flush(); await flush();

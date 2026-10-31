@@ -882,59 +882,180 @@
     border-right: 1px solid var(--line);
     padding-right: 24px;
   }
-  .credential-fields form {
-    display: grid;
-    gap: 12px;
-    margin-top: 12px;
+  /* Key 列表：每条 Key 一行（序号 | 掩码值 | 操作），新增行与已保存行共用同一网格，列对齐。 */
+  .credential-intro {
+    margin: 0 0 10px;
   }
-  /* 已保存行与新增行：标签+输入框占满左侧，操作按钮与输入框底边对齐。 */
   .key-saved-list, .key-draft-list {
     display: grid;
-    gap: 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
   }
-  .key-saved-list:not(:empty) {
-    margin-top: 12px;
+  .key-saved-list:empty, .key-draft-list:empty {
+    display: none;
+  }
+  .key-draft-list {
+    margin-top: 10px;
+    border-style: dashed;
+    border-color: #9fc9bd;
+    background: var(--scrape-tint);
   }
   .key-saved-row, .key-draft-row {
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: 52px minmax(0,1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    padding: 4px 6px 4px 12px;
   }
-  .key-saved-row>label, .key-draft-row>label {
-    flex: 1;
-    min-width: 0;
+  .key-saved-row+.key-saved-row, .key-draft-row+.key-draft-row {
+    border-top: 1px solid var(--line);
+  }
+  .key-row-label {
     font-size: 12px;
-    color: #37485d;
-  }
-  .key-saved-row input, .key-draft-row input {
-    height: 36px;
-  }
-  .key-saved-row>button, .key-draft-row>button, .draft-controls>button {
-    height: 36px;
-    padding: 0 12px;
-    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .key-draft-row>button, .draft-controls>[data-action=add] {
-    width: 36px;
-    padding: 0;
+  .key-saved-row input, .key-draft-row input {
+    height: 32px;
+    padding: 0 10px;
+    border-color: transparent;
+    background: transparent;
+    font-family: Consolas,"Microsoft YaHei",monospace;
+    font-size: 13px;
+    letter-spacing: .02em;
+  }
+  .key-draft-row input {
+    border-color: var(--line);
+    background: var(--panel);
+  }
+  .key-draft-row input:focus {
+    border-color: var(--teal);
+  }
+  .key-row-actions {
+    display: flex;
+    gap: 2px;
+  }
+  .key-row-actions>button {
+    height: 30px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 4px;
+    font-size: 12px;
     color: var(--muted);
+    white-space: nowrap;
+  }
+  .key-row-actions>button:hover:not(:disabled) {
+    background: #eef3f6;
+    color: var(--ink);
+  }
+  .key-row-actions>.key-remove:hover:not(:disabled) {
+    background: #fdf2f3;
+    color: var(--red);
+  }
+  .key-row-actions>button:disabled {
+    opacity: .35;
   }
   .key-saved-row>[data-confirm-slot]:empty {
     display: none;
   }
-  .key-saved-row:has([data-confirm-slot]:not(:empty)) {
-    flex-wrap: wrap;
-  }
   .key-saved-row>[data-confirm-slot]:not(:empty) {
-    flex-basis: 100%;
+    grid-column: 1/-1;
+    padding: 0 0 8px;
+  }
+  .key-saved-empty {
+    margin: 0;
+    padding: 12px;
+    border: 1px dashed var(--line);
+    border-radius: 6px;
+    text-align: center;
+  }
+  .key-draft-form {
+    display: grid;
   }
   .credential-fields .draft-controls {
-    flex-wrap: wrap;
+    display: flex;
+    align-items: center;
     gap: 8px;
+    margin-top: 8px;
   }
-  .draft-controls>.credential-note {
+  .draft-controls>button {
+    height: 34px;
+    padding: 0 14px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .draft-controls>.key-add {
+    border: 1px dashed #bac8bd;
+    border-radius: 6px;
+    color: var(--teal);
+  }
+  .draft-controls>.key-add:hover:not(:disabled) {
+    border-color: var(--teal);
+    background: var(--scrape-tint);
+  }
+  .draft-controls>.primary {
+    border-radius: 6px;
+  }
+  .credential-actions {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+  }
+  .credential-actions>button {
+    height: 34px;
+    padding: 0 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .credential-actions>.credential-note {
     margin: 0 0 0 4px;
+  }
+  .credential-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 16px;
+    margin-top: 12px;
+  }
+  .credential-fields .credential-footer .cred-status {
+    flex: 1;
+    flex-wrap: nowrap;
+    align-items: baseline;
+    min-width: 0;
+    margin: 0;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .credential-fields .credential-footer .cred-status dd:last-of-type {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .credential-footer {
+    flex-wrap: nowrap;
+  }
+  .key-draft-row input:focus-visible {
+    outline-offset: 1px;
+  }
+  .credential-fields .credential-footer .cred-status dd {
+    margin-right: 14px;
+  }
+  .credential-fields .credential-footer .cred-status [data-status] {
+    color: var(--ink);
+  }
+  .credential-footer .credential-tools>button {
+    color: var(--teal);
+  }
+  .credential-footer .credential-tools>button:hover:not(:disabled) {
+    text-decoration: underline;
   }
   .key-input {
     display: flex;
@@ -1232,6 +1353,13 @@
     }
   }
   @media (max-width:760px) {
+    .key-saved-row, .key-draft-row {
+      grid-template-columns: 44px minmax(0,1fr);
+    }
+    .key-row-actions {
+      grid-column: 2;
+      justify-content: flex-end;
+    }
     .shell {
       grid-template-columns: 132px minmax(0,1fr);
     }
@@ -2328,6 +2456,224 @@
     .scrape-chain-row, .scrape-drag-handle {
       transition: none;
     }
+  }
+  /* Skill 与 Cookie 页：表单分区、选择卡片和结果区。 */
+  .ms-form .section-title {
+    align-items: flex-start;
+    gap: 16px;
+    padding-bottom: 16px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  .section-sub {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .ms-form .field {
+    margin-bottom: 16px;
+  }
+  .ms-form .field>span {
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .ms-form .field input {
+    height: 40px;
+    font-family: Consolas,"Microsoft YaHei",monospace;
+    border-color: #d3deea;
+  }
+  .ms-form input:disabled {
+    background: #f4f7f9;
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+  .form-actions {
+    margin-bottom: 4px;
+  }
+  .choice-group {
+    display: grid;
+    grid-template-columns: repeat(2,minmax(0,1fr));
+    gap: 12px;
+    margin: 0 0 18px;
+    padding: 0;
+    border: 0;
+  }
+  .choice-group legend {
+    padding: 0;
+    margin-bottom: 8px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .choice-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    border: 1px solid #d3deea;
+    border-radius: 8px;
+    background: var(--panel);
+    cursor: pointer;
+  }
+  .choice-card:hover {
+    border-color: #9fc9bd;
+  }
+  .choice-card:has(input:checked) {
+    border-color: var(--teal);
+    background: var(--scrape-tint);
+    box-shadow: inset 0 0 0 1px var(--teal);
+  }
+  .choice-card input, .check-row input {
+    width: 16px;
+    height: 16px;
+    margin: 2px 0 0;
+    flex-shrink: 0;
+    accent-color: var(--teal);
+  }
+  .choice-card span {
+    display: grid;
+    gap: 4px;
+  }
+  .choice-card strong {
+    font-size: 14px;
+    color: var(--ink);
+  }
+  .choice-card small {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .result-box {
+    display: grid;
+    gap: 4px;
+    margin-top: 16px;
+  }
+  .result-box p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .result-box p:empty {
+    display: none;
+  }
+  .result-box:has(p:not(:empty)) {
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #f7fafb;
+  }
+  .result-box:not(:has(p:not(:empty))) {
+    margin-top: 0;
+  }
+  .skill-manage .result-box:first-of-type {
+    margin: 0 0 16px;
+  }
+  .action-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 16px 0;
+    border-top: 1px solid var(--line);
+  }
+  .action-row>div:first-child {
+    display: grid;
+    gap: 8px;
+  }
+  .action-row strong {
+    font-size: 14px;
+  }
+  .action-row small {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .action-row .run-controls {
+    flex-shrink: 0;
+  }
+  .action-row-danger strong {
+    color: var(--red);
+  }
+  button.danger-outline {
+    border-color: #e6c3c6;
+    color: var(--red);
+  }
+  button.danger-outline:hover:not(:disabled) {
+    background: #fdf2f3;
+  }
+  .cookie-status-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    margin-bottom: 20px;
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    background: #f7fafb;
+  }
+  .cookie-status-card .status-text {
+    flex: 1;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--ink);
+  }
+  .cookie-status-card button {
+    flex-shrink: 0;
+    background: var(--panel);
+  }
+  .cookie-status-dot {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .cookie-status-card[data-state=ready] {
+    border-left-color: var(--teal);
+  }
+  .cookie-status-card[data-state=ready] .cookie-status-dot {
+    background: var(--teal);
+  }
+  .cookie-status-card[data-state=unsupported], .cookie-status-card[data-state=error] {
+    border-left-color: var(--amber);
+    background: var(--scrape-warning-bg);
+  }
+  .cookie-status-card[data-state=unsupported] .cookie-status-dot,
+  .cookie-status-card[data-state=error] .cookie-status-dot {
+    background: var(--amber);
+  }
+  .mode-compare {
+    display: grid;
+    grid-template-columns: repeat(2,minmax(0,1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .mode-card {
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .mode-card strong {
+    font-size: 13px;
+  }
+  .mode-card p {
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+  .ms-form .error-message:empty {
+    display: none;
+  }
+  .ms-form .note {
+    margin-top: 20px;
   }
 }
 

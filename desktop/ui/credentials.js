@@ -80,21 +80,23 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   const { label, search } = sourceEntry(source);
   const searchTest = search !== false;
   root.innerHTML = `<div class="credential-editor"><div class="credential-fields">
-    <p class="credential-note">API Key：已保存的每行一条；下方逐行输入新增 Key，一次粘贴一行。删除为单行操作。</p>
+    <p class="credential-note credential-intro">API Key：每行一条，可保存多条轮换使用。</p>
     <div data-saved-list class="key-saved-list"></div>
     <p data-saved-empty class="credential-note key-saved-empty" hidden>当前没有已保存的 Key。</p>
-    <form data-save-form>
+    <form data-save-form class="key-draft-form">
       <div data-draft-list class="key-draft-list"></div>
-      <div class="run-controls draft-controls"><button type="button" data-action="add" aria-label="新增一行 Key 输入">＋</button>
-      <button type="submit" class="primary" data-action="save">提交新增 Key</button><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
-      <span class="credential-note" data-info="application">正在确认申请链接与打开能力…</span></div>
+      <div class="draft-controls"><button type="button" class="key-add" data-action="add" aria-label="新增一行 Key 输入">＋ 新增 Key</button>
+      <button type="submit" class="primary" data-action="save" hidden>保存新增 Key</button></div>
     </form>
-    <p data-keys-file-note class="credential-note" role="note"></p>
+    <div class="run-controls credential-actions"><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
+      <span class="credential-note" data-info="application">正在确认申请链接与打开能力…</span></div>
     <div class="application-fallback" data-application-fallback hidden><label>固定申请链接（可选择并手动复制）<input type="text" readonly data-application-url spellcheck="false" aria-label="固定申请链接"></label></div>
-    <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
     <p data-info="error" class="error-message"></p>
-    <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div>
-    <details class="config-details"><summary>说明</summary><p class="credential-note">保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details></div>
+    <div class="credential-footer">
+      <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
+      <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div>
+    </div>
+    <details class="config-details"><summary>说明</summary><p data-keys-file-note class="credential-note" role="note"></p><p class="credential-note">保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details></div>
     <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong class="status-text" data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
     <details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? `测试会向对应服务发送外部搜索请求，可能消耗额度。测试使用已保存的值；新增后请先提交。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details></div></div>`;
   root.querySelector('.credential-note').prepend(root.ownerDocument.createTextNode(`${label} `));
@@ -154,8 +156,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   /** @type {string|null} snapshot used as remove guard */
   let readSnapshot = null;
   let readHealthy = false;
-  /** @type {string[]} draft input values; index aligned with draft rows */
-  let drafts = [''];
+  /** @type {string[]} draft input values; index aligned with draft rows. Empty until "新增 Key". */
+  let drafts = [];
   function reportTest(kind, title, message = '') {
     if (disposed) return;
     text('[data-status="test"]', title); text('[data-info="test"]', message);
@@ -186,9 +188,8 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     savedRows.forEach((value, index) => {
       const row = root.ownerDocument.createElement('div');
       row.className = 'key-saved-row'; row.dataset.savedIndex = String(index);
-      row.innerHTML = `<label>Key ${index + 1}<input type="password" readonly data-saved-input aria-label="已保存 Key 第 ${index + 1} 行"></label>
-        <button type="button" data-action="reveal" data-row-index="${index}">显示</button><button type="button" data-action="copy" data-row-index="${index}" disabled>复制</button>
-        <button type="button" data-action="remove" data-remove-index="${index}" aria-label="删除第 ${index + 1} 行 Key">删除</button>
+      row.innerHTML = `<span class="key-row-label" aria-hidden="true">Key ${index + 1}</span><input type="password" readonly data-saved-input aria-label="已保存 Key 第 ${index + 1} 行">
+        <span class="key-row-actions"><button type="button" data-action="reveal" data-row-index="${index}">显示</button><button type="button" data-action="copy" data-row-index="${index}" disabled>复制</button><button type="button" class="key-remove" data-action="remove" data-remove-index="${index}" aria-label="删除第 ${index + 1} 行 Key">删除</button></span>
         <div data-confirm-slot></div>`;
       // Saved value is assigned via .value, never innerHTML, so raw key text
       // cannot break the markup.
@@ -206,12 +207,14 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     drafts.forEach((value, index) => {
       const row = root.ownerDocument.createElement('div');
       row.className = 'key-draft-row'; row.dataset.draftIndex = String(index);
-      row.innerHTML = `<label>新增 Key ${index + 1}<input type="text" data-field="key" data-draft-input autocomplete="off" spellcheck="false" aria-label="新增 Key 第 ${index + 1} 行" placeholder="输入一条 Key"></label>
-        <button type="button" data-action="remove-draft" aria-label="移除该输入行">×</button>`;
+      row.innerHTML = `<span class="key-row-label" aria-hidden="true">新增</span><input type="text" data-field="key" data-draft-input autocomplete="off" spellcheck="false" aria-label="新增 Key 第 ${index + 1} 行" placeholder="粘贴一条 Key">
+        <span class="key-row-actions"><button type="button" data-action="remove-draft" aria-label="移除该输入行">取消</button></span>`;
       const input = row.querySelector('input');
       input.value = value;
       list.append(row);
     });
+    // Save only makes sense while a draft row exists.
+    q('[data-action="save"]').hidden = drafts.length === 0;
     setBusy(busy);
   }
   function render(view) {
@@ -297,7 +300,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     const button = event.target.closest('[data-action="remove-draft"]');
     if (!button || busy || !writesReady() || disposed) return;
     const index = Number(button.closest('[data-draft-index]').dataset.draftIndex);
-    if (drafts.length === 1) drafts[0] = ''; else drafts.splice(index, 1);
+    drafts.splice(index, 1);
     renderDrafts();
   });
   q('[data-saved-list]').addEventListener('click', async event => {
@@ -339,7 +342,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       if (disposed) return;
       // Clear submitted drafts before reading back: a failed read must not turn
       // a successful append into a duplicate retry.
-      drafts = [''];
+      drafts = [];
       q('[data-draft-list]').innerHTML = '';
       renderDrafts();
       try {

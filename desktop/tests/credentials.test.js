@@ -13,7 +13,12 @@ const submit = ({ window, root }) => root.querySelector('form').dispatchEvent(ne
 function api(overrides = {}) { return { credentialStatus: async () => status(), credentialRead: async () => ({ value: '' }), credentialAppend: async () => status(true), credentialRemove: async () => status(), ...overrides }; }
 const coded = (code, message = '') => JSON.stringify({ code, message });
 const savedInputs = root => [...root.querySelectorAll('[data-saved-list] input')].map(input => input.value);
-const draftInputs = root => [...root.querySelectorAll('[data-draft-list] input')];
+const draftRows = root => [...root.querySelectorAll('[data-draft-list] input')];
+// Draft rows only exist after "新增 Key"; open one (when writes allow it) before reading drafts.
+const draftInputs = root => {
+  if (draftRows(root).length === 0) root.querySelector('[data-action="add"]')?.click();
+  return draftRows(root);
+};
 
 test('saved values render one readonly input per line, never through HTML', async () => {
   const ctx = setup(); const seen = [];
@@ -24,7 +29,8 @@ test('saved values render one readonly input per line, never through HTML', asyn
   assert.equal(ctx.root.querySelectorAll('[data-saved-list] input')[0].readOnly, true);
   assert.equal(ctx.root.querySelectorAll('[type="password"]').length, 2);
   assert.ok(!ctx.root.innerHTML.includes(KEY), 'saved values go through .value, not HTML interpolation');
-  assert.equal(ctx.root.querySelectorAll('[data-draft-list] input').length, 1, 'one empty draft row initially');
+  assert.equal(ctx.root.querySelectorAll('[data-draft-list] input').length, 0, 'no draft row until 新增 Key is clicked');
+  assert.equal(ctx.root.querySelector('[data-action="save"]').hidden, true, 'save appears only with a draft row');
   ctx.window.close();
 });
 
@@ -52,7 +58,7 @@ test('append sends only non-empty draft rows, keeps old keys and clears submitte
   submit(ctx); await flush2();
   assert.deepEqual(calls, [['new-key-1', 'new-key-2']]);
   assert.deepEqual(savedInputs(ctx.root), [KEY, 'second-key'], 'readback value unchanged by stub');
-  assert.deepEqual(draftInputs(ctx.root).map(i => i.value), [''], 'submitted drafts cleared');
+  assert.deepEqual(draftRows(ctx.root), [], 'submitted drafts cleared');
   assert.equal(ctx.root.querySelector('[data-status="source"]').textContent, 'Key 文件（~/.multi-search/keys.json）');
   assert.match(ctx.root.querySelector('[data-info="test"]').textContent, /已保存.*尚未测试/);
   ctx.window.close();
@@ -145,13 +151,14 @@ test('read failure disables writes until a refresh succeeds', async () => {
     credentialRead: async () => { if (fail) throw '读取失败'; return { value: KEY }; },
   });
   await mountCredentials(ctx.root, apiMock);
-  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true);
-  assert.equal(draftInputs(ctx.root)[0].disabled, true);
+  assert.equal(ctx.root.querySelector('[data-action="add"]').disabled, true);
+  assert.deepEqual(draftInputs(ctx.root), [], 'a disabled add opens no draft row');
   assert.equal(ctx.root.querySelectorAll('[data-action="remove"]').length, 0, 'no saved rows without a read');
   fail = false;
   ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
-  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
+  assert.equal(ctx.root.querySelector('[data-action="add"]').disabled, false);
   assert.equal(draftInputs(ctx.root)[0].disabled, false);
+  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
   ctx.window.close();
 });
 
@@ -165,7 +172,7 @@ test('write success followed by read failure does not duplicate the append on re
   draftInputs(ctx.root)[0].value = 'new-key';
   submit(ctx); await flush2();
   assert.deepEqual(appended, [['new-key']]);
-  assert.equal(draftInputs(ctx.root)[0].value, '', 'draft cleared so a retry cannot re-append');
+  assert.deepEqual(draftRows(ctx.root), [], 'draft cleared so a retry cannot re-append');
   assert.match(ctx.root.querySelector('[data-info="error"]').textContent, /已保存.*刷新读取失败/);
   assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true, 'mutations disabled until refresh');
   ctx.window.close();
@@ -477,7 +484,7 @@ test('submit is refused after read failure until refresh restores health', async
     credentialRead: async () => { throw '读取失败'; },
     credentialAppend: async (source, keys) => { calls += 1; return status(true); },
   }));
-  draftInputs(ctx.root)[0].value = 'new-key';
+  assert.deepEqual(draftInputs(ctx.root), [], 'no draft row can be opened while reads are unhealthy');
   submit(ctx); await flush2();
   assert.equal(calls, 0, 'no write without a successful read anchor');
   ctx.window.close();
@@ -503,7 +510,9 @@ test('remove-draft is disabled while reads are unhealthy', async () => {
     credentialStatus: async () => status(true),
     credentialRead: async () => { throw '读取失败'; },
   }));
-  assert.equal(ctx.root.querySelector('[data-action="remove-draft"]').disabled, true);
+  assert.equal(ctx.root.querySelector('[data-action="add"]').disabled, true);
+  ctx.root.querySelector('[data-action="add"]').click();
+  assert.equal(ctx.root.querySelector('[data-action="remove-draft"]'), null, 'no draft row to remove');
   ctx.window.close();
 });
 
@@ -685,16 +694,17 @@ test('status failure keeps writes disabled until a status refresh succeeds', asy
     credentialStatus: async () => { if (failStatus) throw '状态读取失败'; return status(true); },
     credentialRead: async () => ({ value: KEY, snapshot: 's' }),
   }));
-  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true);
-  assert.equal(draftInputs(ctx.root)[0].disabled, true);
+  assert.equal(ctx.root.querySelector('[data-action="add"]').disabled, true);
+  assert.deepEqual(draftInputs(ctx.root), []);
   assert.equal(ctx.root.querySelector('[data-info="error"]').textContent, '状态读取失败');
   // Store status is not fabricated as absent/present.
   assert.equal(ctx.root.querySelector('[data-status="store"]').textContent, '');
-  draftInputs(ctx.root)[0].value = KEY;
   failStatus = false;
   ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  draftInputs(ctx.root)[0].value = KEY;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
   assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
-  assert.equal(draftInputs(ctx.root)[0].value, KEY, 'drafts survive the failed attempt and the retry');
+  assert.equal(draftRows(ctx.root)[0].value, KEY, 'drafts survive a refresh');
   ctx.window.close();
 });
 
@@ -707,10 +717,12 @@ test('writes stay disabled while the first status is loading', async () => {
     credentialRead: async () => ({ value: KEY, snapshot: 's' }),
   }));
   await flush();
-  assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, true, 'no brief writable window');
-  assert.equal(draftInputs(ctx.root)[0].disabled, true);
+  assert.equal(ctx.root.querySelector('[data-action="add"]').disabled, true, 'no brief writable window');
+  assert.deepEqual(draftInputs(ctx.root), []);
   resolveStatus(status(true));
   await mounted; await flush2();
+  assert.equal(ctx.root.querySelector('[data-action="add"]').disabled, false);
+  draftInputs(ctx.root);
   assert.equal(ctx.root.querySelector('[data-action="save"]').disabled, false);
   ctx.window.close();
 });
@@ -725,7 +737,7 @@ test('an unreadable keys file shows its reason and keeps writes disabled', async
   }));
   assert.equal(ctx.root.querySelector('[data-status="store"]').textContent, 'Key 文件无法读取');
   assert.match(ctx.root.querySelector('[data-info="error"]').textContent, /请先修复 ~\/\.multi-search\/keys\.json/);
-  draftInputs(ctx.root)[0].value = KEY;
+  assert.deepEqual(draftInputs(ctx.root), [], 'no draft row can be opened for a corrupt file');
   submit(ctx); await flush2();
   assert.deepEqual(calls, [], 'a corrupt file is never written from the UI');
   ctx.window.close();
@@ -762,7 +774,7 @@ test('no write request is issued during a failed status window', async () => {
     credentialRead: async () => ({ value: KEY, snapshot: 's' }),
     credentialAppend: async () => { writes.push('append'); return status(true); },
   }));
-  draftInputs(ctx.root)[0].value = KEY;
+  assert.deepEqual(draftInputs(ctx.root), [], 'no draft row while status is unknown');
   submit(ctx); await flush2();
   assert.equal(writes.length, 0, 'no append while status is unknown');
   fail = false;

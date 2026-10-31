@@ -13,14 +13,16 @@ export async function mountCookies(root, api, { number = '07' } = {}) {
   const doc = root.ownerDocument;
   root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / COOKIES</p><h1 tabindex="-1">Cookie 导入。</h1>
       <p>校验 Twitter / X 的 Cookie 文件后复制到 ${MANAGED_FILE}，并把设置中的 Cookie 文件路径指向它。</p></section>
-    <section class="panel"><div class="section-title"><h2>Twitter / X Cookie</h2><span class="eyebrow">FILE</span></div>
-    <p class="status-text" data-cookie-status role="status" aria-live="polite">正在读取 Cookie 状态…</p>
+    <section class="panel ms-form"><div class="section-title"><div><h2>Twitter / X Cookie</h2><p class="section-sub">当前 Cookie 状态</p></div><span class="eyebrow">FILE</span></div>
+    <div class="cookie-status-card" data-cookie-card><span class="cookie-status-dot" aria-hidden="true"></span>
+      <p class="status-text" data-cookie-status role="status" aria-live="polite">正在读取 Cookie 状态…</p>
+      <button type="button" data-cookie-refresh>刷新状态</button></div>
     <p class="note" data-cookie-configured></p>
     <p class="note">Cookie 以明文保存在 ${MANAGED_FILE}（仅当前用户可读写）。文件需要包含 auth_token 与 ct0。</p>
-    <label>待导入的 Cookie 文件路径<input data-cookie-path type="text" autocomplete="off" spellcheck="false" placeholder="例如 D:/secure/twitter-cookies.json"></label>
-    <div class="run-controls"><button type="button" data-cookie-import disabled>导入 Cookie</button><button type="button" data-cookie-delete disabled>删除</button><button type="button" data-cookie-refresh>刷新状态</button></div>
-    <p class="note">导入不会修改或删除原文件，请自行处理原文件；本页不读取或显示 Cookie 内容。删除只移除 ${MANAGED_FILE}，并在设置指向它时清空 Cookie 文件路径。</p>
-    <p class="error-message" data-cookie-error role="alert"></p><div data-cookie-confirm></div></section>`;
+    <label class="field"><span>待导入的 Cookie 文件路径</span><input data-cookie-path type="text" autocomplete="off" spellcheck="false" placeholder="例如 D:/secure/twitter-cookies.json"></label>
+    <div class="run-controls form-actions"><button type="button" class="primary" data-cookie-import disabled>导入 Cookie</button><button type="button" class="danger-outline" data-cookie-delete disabled>删除</button></div>
+    <p class="error-message" data-cookie-error role="alert"></p><div data-cookie-confirm></div>
+    <p class="note">导入不会修改或删除原文件，请自行处理原文件；本页不读取或显示 Cookie 内容。删除只移除 ${MANAGED_FILE}，并在设置指向它时清空 Cookie 文件路径。</p></section>`;
   const q = selector => /** @type {any} */ (root.querySelector(selector));
   let disposed = false;
   let busy = false;
@@ -43,6 +45,7 @@ export async function mountCookies(root, api, { number = '07' } = {}) {
   function render(view) {
     if (disposed) return;
     status = view;
+    q('[data-cookie-card]').dataset.state = view.present ? 'ready' : 'empty';
     q('[data-cookie-status]').textContent = view.present ? `已导入：${view.path || MANAGED_FILE}` : '尚未导入 Cookie';
     q('[data-cookie-configured]').textContent = view.configured_path
       ? `设置中的 Cookie 文件：${view.configured_path}`
@@ -58,6 +61,7 @@ export async function mountCookies(root, api, { number = '07' } = {}) {
     catch (error) {
       if (!disposed) {
         status = null;
+        q('[data-cookie-card]').dataset.state = 'error';
         q('[data-cookie-status]').textContent = 'Cookie 状态未知。';
         showError(q('[data-cookie-error]'), error, '无法读取 Cookie 状态，请重试。');
       }
