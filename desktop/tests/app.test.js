@@ -98,3 +98,16 @@ test('a missing desktop runtime explains itself without mounting pages', async (
   assert.match(root.textContent, /桌面应用/);
   window.close();
 });
+
+test('the sidebar footer shows the app and bundled CLI versions', async () => {
+  const { showVersion } = await import('../ui/app.js');
+  const window = new Window();
+  const target = window.document.createElement('small');
+  await showVersion(target, { appInfo: async () => ({ app_version: '0.1.0', bundled_cli_version: '0.4.1.dev3' }) });
+  assert.equal(target.textContent, 'v0.1.0 · CLI 0.4.1.dev3');
+  await showVersion(target, { appInfo: async () => ({ app_version: '0.1.0', bundled_cli_version: null }) });
+  assert.equal(target.textContent, 'v0.1.0');
+  await showVersion(target, { appInfo: async () => { throw new Error('boom'); } });
+  assert.equal(target.textContent, '', 'a failed read leaves the line empty');
+  window.close();
+});

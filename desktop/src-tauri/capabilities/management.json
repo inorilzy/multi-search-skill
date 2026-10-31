@@ -10,6 +10,7 @@
     "allow-cookie-import",
     "allow-cookie-delete",
     "allow-detect-cli",
+    "allow-app-info",
     "allow-start-test-search",
     "allow-poll-execution",
     "allow-cancel-test-search",

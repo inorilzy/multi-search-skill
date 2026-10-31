@@ -137,6 +137,15 @@ async fn skill_install(
 struct BundledCli(Option<PathBuf>);
 
 #[tauri::command]
+async fn app_info(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    bundled: tauri::State<'_, BundledCli>,
+) -> Result<crate::install::AppInfo, String> {
+    let manager = manager.inner().clone();
+    let bundled = bundled.0.clone();
+    offload_value(move || manager.app_info_from(bundled.as_deref()), "app_info_failed").await
+}
+#[tauri::command]
 async fn install_plan(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     bundled: tauri::State<'_, BundledCli>,
@@ -554,6 +563,7 @@ pub fn run() {
             cookie_import,
             cookie_delete,
             detect_cli,
+            app_info,
             start_test_search,
             poll_execution,
             cancel_test_search,

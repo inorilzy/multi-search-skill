@@ -102,6 +102,17 @@
     letter-spacing: .8px;
     color: var(--sidebar-muted);
   }
+  .sidebar-footer .app-version {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    letter-spacing: .4px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .sidebar-footer .app-version:empty {
+    display: none;
+  }
   .status-dot {
     display: inline-block;
     background: #97c59b;

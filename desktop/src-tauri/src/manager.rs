@@ -7,7 +7,7 @@
 use crate::credential_commands::{CredentialManager, SourceEntry, TestOutcome};
 use crate::diagnostics::{CliDiscovery, CliStatus};
 use crate::execution::{Execution, ExecutionManager, ExecutionStatus, SearchOptions};
-use crate::install::{InstallManager, InstallOutcome, InstallPlan};
+use crate::install::{AppInfo, InstallManager, InstallOutcome, InstallPlan};
 use crate::skill::{SkillInstall, SkillManager, SkillPlan};
 use crate::skill_manage::{
     RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome,
@@ -169,6 +169,12 @@ impl DesktopManager {
             status: "blocked".into(), steps: vec![], version: None, bin: None, path_hint: String::new(), reason,
         }};
         self.install_view().uninstall()
+    }
+
+    /// App and bundled-CLI versions for the sidebar footer. Read-only; takes no mutation guard.
+    #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
+    pub(crate) fn app_info_from(&self, bundled: Option<&std::path::Path>) -> AppInfo {
+        crate::install::app_info(&self.environment, bundled)
     }
 
     #[cfg_attr(not(feature = "native-window"), allow(dead_code))]

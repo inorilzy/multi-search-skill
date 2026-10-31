@@ -17,6 +17,7 @@ import { expect } from './payloads.js';
 
 const ERROR_MESSAGES = {
   cli_detect_failed: 'CLI 检测失败，请重新检测。',
+  app_info_failed: '版本信息读取失败。',
   search_start_failed: '启动搜索的工作器失败，请重试。',
   execution_poll_failed: '执行状态读取失败，请稍后重试或取消本次执行。',
   execution_cancel_failed: '执行取消工作器失败，请重试。',
@@ -168,6 +169,7 @@ export function managementApi(invoke) {
   return {
     // No call carries an executable path: the backend always runs the managed CLI (then PATH).
     detect: () => call('detect_cli', undefined, 'CliStatus'),
+    appInfo: () => call('app_info', undefined, 'AppInfo'),
     start: async options => {
       const id = await call('start_test_search', { options });
       if (typeof id !== 'number' || !Number.isFinite(id)) {

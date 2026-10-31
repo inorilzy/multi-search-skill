@@ -37,6 +37,7 @@ const schema = (fields) => ({ fields });
 export const schemas = {
   Discovery: schema({ status: 's', path: 'sn', version: 'sn', reason: 's' }),
   CliStatus: schema({ app: 'Discovery', user: 'Discovery', restart_required: 'b', execution: 'Discovery', managed: 'b' }),
+  AppInfo: schema({ app_version: 's', bundled_cli_version: 'sn' }),
   SearchOptions: schema({ query: 's', route: 's', sources: 'sa', timeout: 'n' }),
   ExecutionStatus: schema({ id: 'n', status: 's', exit_code: 'nn', payload: 'xn', error: 's' }),
   InstallPlan: schema({
