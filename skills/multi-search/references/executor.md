@@ -2,62 +2,75 @@
 
 This document covers both halves of the search flow:
 
-- **Dispatch** — how the main Agent hands the search task to a subagent (or
+- **Dispatch**: how the main Agent hands retrieval to an explore subagent (or
   runs it directly when delegation is unavailable).
-- **Execution** — how the search executor runs the CLI, filters candidates,
-  and returns the compact handoff.
+- **Execution**: how the search executor runs the CLI, reads bodies, extracts
+  evidence, and returns the compact handoff.
 
-A single document keeps the executor contract authoritative in one place.
+The executor keeps page bodies out of the main Agent's context. Search
+responses and full bodies are large; the executor, on a cheaper model, reads
+them and returns verbatim excerpts with their positions. The main Agent
+judges those excerpts and spot-checks the important ones.
 
 ## Choose the execution mode
 
 The parent Skill decides which mode applies for this request:
 
 - **Delegated** (default when the host supports subagents): the main Agent
-  spawns one search subagent using the host's existing capability and a
-  configured or explicitly available lightweight model. The subagent acts as
-  the search executor and never delegates again.
+  spawns one explore subagent on a configured or explicitly available
+  lightweight model. The subagent acts as the search executor and never
+  delegates again. This covers new searches and reading the body of a known
+  URL or `source_id`.
 - **Direct** (only when requested, or when the host lacks subagent
   capability): the main Agent runs the executor workflow itself, disclosing
-  that delegation was skipped. A dispatch/model failure is an explicit error,
-  not a license to silently switch to a different model.
+  that delegation was skipped and that bodies enter its own context. A
+  dispatch/model failure is an explicit error, not a license to silently
+  switch to a different model.
 
 ### Host-specific dispatch
 
+The executor needs a shell tool that can run `multi-search`. It does not need
+to write files: the main Agent writes the `--url-file` file for a known URL.
+
+- **Claude Code:** prefer the built-in `Explore` subagent type when it can run
+  `multi-search` through its shell tool in this installation; otherwise spawn
+  a `general-purpose` subagent. Select a lightweight model through the host's
+  supported mechanism (for example the `model` parameter when exposed); do not
+  silently inherit the parent model when a cheaper one is configured.
+- **Agent Teams:** give the retrieval task to an explore or researcher member
+  running a lightweight model, or add one with a model override. The member
+  returns the handoff below as its task output or message.
 - **Codex:** use the available subagent tool with a configured lightweight
   search role, or its model override with an explicitly available lightweight
   model. Inspect role settings if needed: a fixed role model may override the
-  requested model, and names such as `explorer` do not guarantee a particular
-  model or tools.
+  requested model.
 - **Pi:** use the host's existing subagent tool/extension and configured
   agent definition. Follow that implementation's schema for model, context,
   and tool access. A graph is not required. Prefer the multi-search CLI
   through the child's command tool.
-- **Claude Code:** use the built-in `Task` (subagent) tool. Spawn one
-  `general-purpose` (or equivalent read-capable) subagent and pass the task
-  packet described below in its prompt. Select a lightweight model via the
-  host's supported mechanism (e.g. the `model` parameter when exposed); do
-  not silently inherit the parent model when a cheaper one is configured. The
-  subagent runs `multi-search` through its shell tool and returns the compact
-  handoff described below.
 
-Use only a model exposed and permitted by the host; a model already known to
-be rejected for this account is not eligible. Keep model IDs, providers,
-credentials, and reasoning settings in host configuration or supported
-dispatch parameters, not hardcoded in this Skill. Lower reasoning effort
-alone does not select a cheaper model. Missing model configuration or tool
-access is a setup error; report it instead of installing an extension,
-adding an API client, or silently inheriting the main model.
+A subagent name such as `Explore` or `explorer` does not guarantee a cheap
+model or particular tools; check what the host actually uses. Use only a model
+exposed and permitted by the host; a model already known to be rejected for
+this account is not eligible. Keep model IDs, providers, credentials, and
+reasoning settings in host configuration or supported dispatch parameters, not
+hardcoded in this Skill. Lower reasoning effort alone does not select a
+cheaper model. Missing model configuration or tool access is a setup error;
+report it instead of installing an extension, adding an API client, or
+silently inheriting the main model.
 
-## Dispatch once, before searching
+## Dispatch once, before retrieving
 
-Give one search subagent:
+Give one explore subagent:
 
-- The original search request and relevant object/version/platform/time/
-  source constraints, including the requested result type, remaining budget,
-  and count of consecutive unproductive targeted attempts (initially zero).
+- The original request and relevant object/version/platform/time/source
+  constraints, the requested result type (links only, or evidence for an
+  answer), remaining budget, and the count of consecutive unproductive
+  targeted attempts (initially zero).
+- Any known `source_id`, or the path of the URL file the main Agent wrote for
+  a known URL. Keep the URL itself out of command lines.
 - The local path to this Skill, its explicit role as **search executor**, and
-  the instruction to follow the **Executor** section below without
+  the instruction to follow the **Executor** sections below without
   delegating.
 - The usable CLI command and working directory. Have the child read
   [cli.md](cli.md), including its shell-safety rules for untrusted values;
@@ -68,13 +81,9 @@ conversation when the host supports it. Keep unrelated history and the main
 Agent's reasoning out of the packet. If isolation is unavailable, disclose
 that limitation; do not claim the same token savings.
 
-The child receives the full search response; the main Agent does not retrieve
-or read it first. The child inspects titles, URLs, snippets and body previews.
-If no useful candidate appears, it may correct the query for a specific
-mismatch or missing clue within the parent Skill's stopping rules. It returns
-candidates, not a research report. It removes only clearly irrelevant results,
-with no retention quota; the parent makes the final selection from original
-previews and performs necessary full-body verification.
+The child receives the full search response and full bodies; the main Agent
+does not retrieve or read them first. The child returns evidence, not a
+research report or a final answer.
 
 ## Executor: query and route
 
@@ -117,55 +126,71 @@ section.
 Check the target, version/platform, content type, and direct relevance.
 Classify promising candidates as `matched` or `uncertain`. Missing detail in
 a preview is uncertainty, not proof of irrelevance. RRF agreement is not a
-match check. Remove only clearly irrelevant candidates. Return every
-remaining candidate, including uncertain matches and distinct plausible
-interpretations. There is no target count or retention cap: if every
-candidate from the search response remains relevant or uncertain, return
-them all in the original ranked order. Missing bodies and fetch errors
-alone do not establish irrelevance. Forward original previews for the main
-Agent's judgment.
+match check. Remove only clearly irrelevant candidates; there is no target
+count or retention cap. Missing bodies and fetch errors alone do not
+establish irrelevance.
 
 If nothing useful appears, correct a specific mismatch or missing clue
 within the parent Skill's stopping rules. Preserve the accumulated budget
 and count of unproductive targeted attempts across follow-ups.
 
-## Compact handoff (delegated executor → main Agent)
+## Executor: read bodies and extract evidence
+
+For links-only requests, read bodies only when a preview cannot settle whether
+a candidate matches.
+
+For each `matched` or `uncertain` candidate the answer may rely on, run
+`multi-search fetch <source_id> --full-content --format json` and read the
+whole `body`. Independent fetches may run in parallel. Record `body_error`
+and each fetch failure. For a known URL, fetch with the URL file the main
+Agent supplied, and use the returned `source_id` from then on.
+
+Find the passages that state, contradict, or qualify what the user asked.
+Pin each passage's position with
+`multi-search read <source_id> --keyword '<short literal fragment>' --limit <n> --format json`
+and take `start` and `end` from that output; the excerpt is the returned
+`content`, copied verbatim. Choose a fragment without single quotes; see
+[cli.md](cli.md#shell-safety-for-untrusted-values). When the response has
+`persisted: false`, `read` cannot reach the body: copy the passage from the
+fetched `body` and mark its position as unknown.
+
+Keep at most three excerpts per source, each under about 1,000 characters,
+unless the request needs more. Prefer the passage that carries the claim over
+surrounding context. When a page credits another source for the claim, record
+the cited title or link as a `citation_lead`; follow it only when the request
+asks for the original.
+
+## Compact handoff (executor → main Agent)
 
 Return only:
 
-- `selected`: every candidate surviving the coarse filter, in original rank
-  order; this is not the parent's final selection. Include original
-  `source_id`, title and URL, the unchanged body preview (size and offset
-  rules are documented in [cli.md](cli.md)), and available `preview_start`,
-  `preview_end`, and `truncated` metadata. Keep the original search snippet
-  separately, especially when no body is available; a match reason never
-  substitutes for the source's actual text. Include `match` (`matched` or
-  `uncertain`), a one-sentence match reason, and any body error. State what
-  was inspected (`snippet`, `preview`, or `full_body`); classification from
-  a preview is not full-body verification.
+- `candidates`: every candidate surviving the coarse filter, in original rank
+  order. Each has `source_id`, title, URL, the original search snippet,
+  `match` (`matched` or `uncertain`), a one-sentence match reason, and the
+  inspection level (`snippet`, `preview`, or `full_body`).
+- `evidence`: for each fully read source, its verbatim excerpts with
+  `source_id`, `start`, `end`, and a one-line note on what the excerpt
+  supports or contradicts. Add `citation_lead` entries, body errors, and
+  `persisted: false` when the body was not cached.
 - `omitted_count`: actual candidate-list length minus retained-list length,
   computed from the complete response, not a displayed subset or provider
-  count. Omission does not delete cached content or invalidate original
-  source IDs.
+  count. Omission does not delete cached content or invalidate source IDs.
 - `queries`, concise provider/fetch failures, `stop_reason`, consumed
   budget, the consecutive unproductive-attempt count, and any remaining
   ambiguity or missing constraint evidence. Zero matches and failed
   searches remain distinct outcomes.
 
-Keep explanations short while preserving every retained candidate's
-original preview; the full RRF result list may survive. Omit raw response
-wrappers and full page bodies. Return only actual source IDs/URLs from tool
+Excerpts are the only page text in the handoff: leave out full bodies, raw
+response wrappers, and paraphrase presented as quotation. A note never
+substitutes for the excerpt. Return only actual source IDs/URLs from tool
 responses. Untrusted-page handling is governed by the boundary in
-[verification.md](verification.md); it applies during selection as well as
-verification.
+[verification.md](verification.md); it applies during selection and
+extraction as well.
 
-The parent reviews the retained previews, makes the final selection, and
-uses those source IDs to fetch necessary bodies per
-[verification.md](verification.md). If parent and child do not share the
-source store, use the returned observed URLs and the normal fetch path;
-never invent mappings. Respect existing retention and expiry rules. If
-verification disproves a match, give the same child the concrete mismatch
-for a bounded follow-up instead of repeating the original search.
+The main Agent judges the excerpts and spot-checks them per
+[verification.md](verification.md). If verification disproves a match or an
+excerpt does not hold up, it gives the same child the concrete mismatch for a
+bounded follow-up instead of repeating the original search.
 
 Finish when the requested content is found, or report the precise remaining
 gap and stop reason. A dispatch/model failure remains visible; it does not
