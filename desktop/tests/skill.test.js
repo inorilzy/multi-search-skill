@@ -15,8 +15,8 @@ function setup(api) {
 test('install stays disabled until the target is previewed', async () => {
   const calls = [];
   const api = {
-    skillPlan: async (scope, project) => { calls.push(['plan', scope, project]); return { scope, target: 'C:\\home\\.claude\\skills\\multi-search', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
-    skillInstall: async (scope, project) => { calls.push(['install', scope, project]); return { status: 'installed', target: 'C:\\home\\.claude\\skills\\multi-search', reason: 'verified', verified: true }; },
+    skillPlan: async (_host, scope, project) => { calls.push(['plan', scope, project]); return { scope, target: 'C:\\home\\.claude\\skills\\multi-search', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
+    skillInstall: async (_host, scope, project) => { calls.push(['install', scope, project]); return { status: 'installed', target: 'C:\\home\\.claude\\skills\\multi-search', reason: 'verified', verified: true }; },
   };
   const { root, window } = setup(api);
   assert.equal(root.querySelector('[data-action="install"]').disabled, true);
@@ -32,7 +32,7 @@ test('install stays disabled until the target is previewed', async () => {
 });
 
 test('project scope needs a project path and changing scope clears the preview', async () => {
-  const api = { skillPlan: async () => ({ scope: 'project', target: null, files: [], status: 'invalid_scope', reason: 'Select the project directory', can_install: false }), skillInstall: async () => ({}) };
+  const api = { skillPlan: async (_host) => ({ scope: 'project', target: null, files: [], status: 'invalid_scope', reason: 'Select the project directory', can_install: false }), skillInstall: async (_host) => ({}) };
   const { root, window } = setup(api);
   const project = root.querySelector('[data-field="project"]');
   assert.equal(project.disabled, true);
@@ -47,7 +47,7 @@ test('project scope needs a project path and changing scope clears the preview',
 });
 
 test('an incompatible or missing CLI is shown as blocked, not configured', async () => {
-  const api = { skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'cli_incompatible', reason: 'update the CLI', can_install: false }), skillInstall: async () => ({}) };
+  const api = { skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: [], status: 'cli_incompatible', reason: 'update the CLI', can_install: false }), skillInstall: async (_host) => ({}) };
   const { root, window } = setup(api);
   root.querySelector('[data-action="preview"]').click();
   await tick();
@@ -58,8 +58,8 @@ test('an incompatible or missing CLI is shown as blocked, not configured', async
 
 test('a failed write reports the real failure reason', async () => {
   const api = {
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => ({ status: 'failed', target: 'C:\\x', reason: 'Cannot place the skill at the target: access denied', verified: false }),
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => ({ status: 'failed', target: 'C:\\x', reason: 'Cannot place the skill at the target: access denied', verified: false }),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="preview"]').click(); await tick();
@@ -73,9 +73,9 @@ test('a failed write reports the real failure reason', async () => {
 test('update is enabled only for a managed outdated or modified skill, and local edits need the overwrite checkbox', async () => {
   const calls = [];
   const api = {
-    skillStatus: async () => ({ state: 'modified', can_update: true, installed_version: '1', release_version: '1', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited' }),
-    skillUpdate: async (scope, project, confirm) => { calls.push(['update', confirm]); return { status: 'updated', reason: 'verified', backup: 'C:\\b' }; },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'modified', can_update: true, installed_version: '1', release_version: '1', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited' }),
+    skillUpdate: async (_host, scope, project, confirm) => { calls.push(['update', confirm]); return { status: 'updated', reason: 'verified', backup: 'C:\\b' }; },
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   const update = root.querySelector('[data-action="update"]');
@@ -92,10 +92,10 @@ test('update is enabled only for a managed outdated or modified skill, and local
 test('a current skill cannot be updated, and removal requires a preview before its confirm button enables', async () => {
   const removed = [];
   const api = {
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', modified_files: [], unknown_entries: ['notes.md'], reason: 'ok' }),
-    skillUpdate: async () => ({}),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md', '.multi-search-install.json'], will_keep: ['notes.md'], reason: 'only ours' }),
-    skillRemove: async (scope, project, confirmed) => { removed.push(confirmed); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', modified_files: [], unknown_entries: ['notes.md'], reason: 'ok' }),
+    skillUpdate: async (_host) => ({}),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md', '.multi-search-install.json'], will_keep: ['notes.md'], reason: 'only ours' }),
+    skillRemove: async (_host, scope, project, confirmed) => { removed.push(confirmed); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -113,7 +113,7 @@ test('a current skill cannot be updated, and removal requires a preview before i
 });
 
 test('installed target and CLI requirements are visible and incompatible updates stay disabled', async () => {
-  const { root, window } = setup({ skillStatus: async () => ({
+  const { root, window } = setup({ skillStatus: async (_host) => ({
     state: 'outdated', can_update: true, installed_version: '0', release_version: '1', target: 'C:\\isolated\\.claude\\skills\\multi-search',
     modified_files: [], unknown_entries: [], reason: 'old', can_update: false, cli_compatible: false,
     cli_requirements: 'search: --expand; fetch: --full-content', compatibility_reason: 'Missing --expand',
@@ -129,9 +129,9 @@ test('installed target and CLI requirements are visible and incompatible updates
 test('changing scope invalidates a removal confirmation even after switching back', async () => {
   const removed = [];
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', modified_files: [], unknown_entries: [], reason: 'ok' }),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => { removed.push(true); return {status: 'removed', deleted: []}; },
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', modified_files: [], unknown_entries: [], reason: 'ok' }),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => { removed.push(true); return {status: 'removed', deleted: []}; },
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   root.querySelector('[data-action="remove-plan"]').click(); await tick();
@@ -146,7 +146,7 @@ test('changing scope invalidates a removal confirmation even after switching bac
 test('stale removal preview cannot re-enable confirmation after target changes', async () => {
   let resolvePlan;
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', modified_files: [], unknown_entries: [], reason: 'ok' }),
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', modified_files: [], unknown_entries: [], reason: 'ok' }),
     skillRemovePlan: () => new Promise(resolve => { resolvePlan = resolve; }),
   });
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -161,8 +161,8 @@ test('stale removal preview cannot re-enable confirmation after target changes',
 test('confirmed overwrite displays the actual backup and verified outcome', async () => {
   const calls = [];
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'modified', can_update: true, installed_version: '1', release_version: '1', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited' }),
-    skillUpdate: async (scope, project, confirm) => { calls.push(confirm); return { status: 'updated', verified: true, backup: 'C:/backup', reason: 'verified' }; },
+    skillStatus: async (_host) => ({ state: 'modified', can_update: true, installed_version: '1', release_version: '1', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited' }),
+    skillUpdate: async (_host, scope, project, confirm) => { calls.push(confirm); return { status: 'updated', verified: true, backup: 'C:/backup', reason: 'verified' }; },
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   root.querySelector('[data-field="confirm-overwrite"]').click();
@@ -176,10 +176,10 @@ test('a pending update prevents a concurrent removal or refreshed confirmation',
   let finishUpdate;
   const removals = [];
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'modified', can_update: true, installed_version: '1', release_version: '1', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited' }),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillStatus: async (_host) => ({ state: 'modified', can_update: true, installed_version: '1', release_version: '1', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited' }),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
     skillUpdate: () => new Promise(resolve => { finishUpdate = resolve; }),
-    skillRemove: async () => { removals.push(true); return { status: 'removed', deleted: [] }; },
+    skillRemove: async (_host) => { removals.push(true); return { status: 'removed', deleted: [] }; },
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   root.querySelector('[data-action="remove-plan"]').click(); await tick();
@@ -193,9 +193,9 @@ test('a pending update prevents a concurrent removal or refreshed confirmation',
 
 test('a failed update reports that the previous skill was kept', async () => {
   const api = {
-    skillStatus: async () => ({ state: 'outdated', can_update: true, installed_version: '0', release_version: '1', modified_files: [], unknown_entries: [], reason: 'old' }),
-    skillUpdate: async () => ({ status: 'failed', reason: 'Update failed verification; the installed skill was kept.', verified: false, backup: null }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'outdated', can_update: true, installed_version: '0', release_version: '1', modified_files: [], unknown_entries: [], reason: 'old' }),
+    skillUpdate: async (_host) => ({ status: 'failed', reason: 'Update failed verification; the installed skill was kept.', verified: false, backup: null }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -209,15 +209,15 @@ test('a successful install automatically refreshes the manage panel to the insta
   let installed = false;
   const statusCalls = [];
   const api = {
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\isolated\\skills\\multi-search', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => { installed = true; return { status: 'installed', target: 'C:\\isolated\\skills\\multi-search', reason: 'verified', verified: true }; },
-    skillStatus: async (scope) => {
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\isolated\\skills\\multi-search', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => { installed = true; return { status: 'installed', target: 'C:\\isolated\\skills\\multi-search', reason: 'verified', verified: true }; },
+    skillStatus: async (_host, scope) => {
       statusCalls.push(scope);
       return installed
         ? { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\isolated\\skills\\multi-search', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false, cli_requirements: 'search', compatibility_reason: '' }
         : { state: 'absent', installed_version: null, release_version: '1', target: 'C:\\isolated\\skills\\multi-search', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false, cli_requirements: 'search', compatibility_reason: '' };
     },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}), skillUpdate: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -235,10 +235,10 @@ test('a successful install automatically refreshes the manage panel to the insta
 
 test('a failed install re-reads the real state and never reports installed', async () => {
   const api = {
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => ({ status: 'failed', target: 'C:\\x', reason: 'access denied', verified: false }),
-    skillStatus: async () => ({ state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => ({ status: 'failed', target: 'C:\\x', reason: 'access denied', verified: false }),
+    skillStatus: async (_host) => ({ state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}), skillUpdate: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="preview"]').click(); await tick();
@@ -252,14 +252,14 @@ test('a failed install re-reads the real state and never reports installed', asy
 test('a read failure after a successful install reports completion with unconfirmed state, and a later check recovers', async () => {
   let reads = 0;
   const api = {
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => ({ status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }),
-    skillStatus: async () => {
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => ({ status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }),
+    skillStatus: async (_host) => {
       reads += 1;
       if (reads === 1) throw new Error('disk busy');
       return { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false };
     },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}), skillUpdate: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="preview"]').click(); await tick();
@@ -277,12 +277,12 @@ test('a read failure after a successful install reports completion with unconfir
 test('an install clears a previously previewed removal so its confirm button cannot fire', async () => {
   const removed = [];
   const api = {
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => ({ status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }),
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => { removed.push(true); return { status: 'removed', deleted: [] }; },
-    skillUpdate: async () => ({}),
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => ({ status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }),
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => { removed.push(true); return { status: 'removed', deleted: [] }; },
+    skillUpdate: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -299,9 +299,9 @@ test('an install clears a previously previewed removal so its confirm button can
 test('cancelling a removal preview issues no removal request and leaves the state untouched', async () => {
   const removed = [];
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => { removed.push(true); return { status: 'removed', deleted: [] }; },
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => { removed.push(true); return { status: 'removed', deleted: [] }; },
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   root.querySelector('[data-action="remove-plan"]').click(); await tick();
@@ -316,14 +316,14 @@ test('a successful removal clears the stale install success line and refreshes b
   let removedNow = false;
   const removed = [];
   const api = {
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => ({ status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }),
-    skillStatus: async () => removedNow
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => ({ status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }),
+    skillStatus: async (_host) => removedNow
       ? { state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false }
       : { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false },
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => { removed.push(true); removedNow = true; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
-    skillUpdate: async () => ({}),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => { removed.push(true); removedNow = true; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="preview"]').click(); await tick();
@@ -344,9 +344,9 @@ test('a successful removal clears the stale install success line and refreshes b
 
 test('a failed removal reports the real reason and does not claim the skill was removed', async () => {
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => ({ status: 'failed', deleted: [], reason: 'Cannot delete SKILL.md: access denied' }),
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => ({ status: 'failed', deleted: [], reason: 'Cannot delete SKILL.md: access denied' }),
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   root.querySelector('[data-action="remove-plan"]').click(); await tick();
@@ -359,16 +359,16 @@ test('a failed removal reports the real reason and does not claim the skill was 
 test('a removal whose refresh read fails reports completion with unconfirmed state, and a later check recovers', async () => {
   let reads = 0;
   const api = {
-    skillStatus: async () => {
+    skillStatus: async (_host) => {
       reads += 1;
       if (reads === 2) throw new Error('disk busy');
       return reads === 1
         ? { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }
         : { state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false };
     },
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => ({ status: 'removed', deleted: ['SKILL.md'], reason: 'done' }),
-    skillUpdate: async () => ({}),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => ({ status: 'removed', deleted: ['SKILL.md'], reason: 'done' }),
+    skillUpdate: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -386,12 +386,12 @@ test('a successful update re-reads the target so the new version and available a
   let updated = false;
   const updates = [];
   const api = {
-    skillStatus: async () => updated
+    skillStatus: async (_host) => updated
       ? { state: 'current', installed_version: '2', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }
       : { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true },
-    skillUpdate: async (scope, project, confirm) => { updates.push(confirm); updated = true; return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => ({}),
+    skillUpdate: async (_host, scope, project, confirm) => { updates.push(confirm); updated = true; return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -411,11 +411,11 @@ test('updating a modified skill does not carry the overwrite consent into the ne
   let state = 'modified';
   const confirms = [];
   const api = {
-    skillStatus: async () => state === 'modified'
+    skillStatus: async (_host) => state === 'modified'
       ? { state: 'modified', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }
       : { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false },
-    skillUpdate: async (scope, project, confirm) => { confirms.push(confirm); state = 'current'; return { status: 'updated', verified: true, reason: 'verified', backup: 'C:/b' }; },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillUpdate: async (_host, scope, project, confirm) => { confirms.push(confirm); state = 'current'; return { status: 'updated', verified: true, reason: 'verified', backup: 'C:/b' }; },
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -430,9 +430,9 @@ test('updating a modified skill does not carry the overwrite consent into the ne
 
 test('a failed update shows the real failure and the re-read state still offers the update', async () => {
   const api = {
-    skillStatus: async () => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
-    skillUpdate: async () => ({ status: 'failed', reason: 'Update failed verification; the installed skill was kept.', verified: false, backup: null }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async (_host) => ({ status: 'failed', reason: 'Update failed verification; the installed skill was kept.', verified: false, backup: null }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -448,9 +448,9 @@ test('a failed update shows the real failure and the re-read state still offers 
 test('an update reported as unverified does not claim completion even if the re-read fails', async () => {
   let reads = 0;
   const api = {
-    skillStatus: async () => { reads += 1; if (reads === 2) throw new Error('disk busy'); return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
-    skillUpdate: async () => ({ status: 'updated', verified: false, reason: 'unverified', backup: null }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => { reads += 1; if (reads === 2) throw new Error('disk busy'); return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
+    skillUpdate: async (_host) => ({ status: 'updated', verified: false, reason: 'unverified', backup: null }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -463,9 +463,9 @@ test('an update reported as unverified does not claim completion even if the re-
 test('a read failure after a successful update disables stale update actions and does not show the old version', async () => {
   let reads = 0;
   const api = {
-    skillStatus: async () => { reads += 1; if (reads === 2) throw new Error('disk busy'); return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
-    skillUpdate: async () => ({ status: 'updated', verified: true, reason: 'verified', backup: null }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => { reads += 1; if (reads === 2) throw new Error('disk busy'); return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
+    skillUpdate: async (_host) => ({ status: 'updated', verified: true, reason: 'verified', backup: null }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const { root, window } = setup(api);
   root.querySelector('[data-action="check"]').click(); await tick();
@@ -484,16 +484,16 @@ function writeThenReadFailure({ write, reads, readFails }) {
   const statusFor = (state) => ({ state, installed_version: state === 'absent' ? null : '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: state === 'outdated' });
   const current = { state: 'outdated' };
   const api = {
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => { counts.install += 1; current.state = 'current'; return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
-    skillStatus: async () => {
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => { counts.install += 1; current.state = 'current'; return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
+    skillStatus: async (_host) => {
       counts.status += 1; readCount += 1;
       if (readFails(readCount)) throw new Error('disk busy');
       return statusFor(current.state);
     },
-    skillUpdate: async () => { counts.update += 1; current.state = 'current'; return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => { counts.remove += 1; current.state = 'absent'; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async (_host) => { counts.update += 1; current.state = 'current'; return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => { counts.remove += 1; current.state = 'absent'; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
   };
   return { api, counts, current, write };
 }
@@ -586,10 +586,10 @@ function deferred() { let resolve, reject; const promise = new Promise((res, rej
 test('a double click on install sends exactly one install request', async () => {
   let installs = 0; const gate = deferred();
   const { root, window } = setup({
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => { installs += 1; await gate.promise; return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: [], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => { installs += 1; await gate.promise; return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}), skillUpdate: async (_host) => ({}),
   });
   root.querySelector('[data-action="preview"]').click(); await tick();
   const install = root.querySelector('[data-action="install"]');
@@ -603,9 +603,9 @@ test('a double click on install sends exactly one install request', async () => 
 test('a double click on update sends exactly one update request', async () => {
   let updates = 0; const gate = deferred();
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
-    skillUpdate: async () => { updates += 1; await gate.promise; return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async (_host) => { updates += 1; await gate.promise; return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   const update = root.querySelector('[data-action="update"]');
@@ -619,10 +619,10 @@ test('a double click on update sends exactly one update request', async () => {
 test('a double click on remove confirm sends exactly one removal request', async () => {
   let removals = 0; const gate = deferred();
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => { removals += 1; await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
-    skillUpdate: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => { removals += 1; await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async (_host) => ({}),
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   root.querySelector('[data-action="remove-plan"]').click(); await tick();
@@ -638,13 +638,13 @@ test('a slow preview for the old scope cannot enable install after the scope cha
   const gate = deferred();
   const installs = [];
   const { root, window } = setup({
-    skillPlan: async (scope) => {
+    skillPlan: async (_host, scope) => {
       if (scope === 'global') { await gate.promise; return { scope: 'global', target: 'C:\\global', files: [], status: 'ready', reason: 'ok', can_install: true }; }
       return { scope: 'project', target: null, files: [], status: 'invalid_scope', reason: 'Select the project directory', can_install: false };
     },
-    skillInstall: async (scope) => { installs.push(scope); return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
-    skillStatus: async () => ({ state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+    skillInstall: async (_host, scope) => { installs.push(scope); return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
+    skillStatus: async (_host) => ({ state: 'absent', installed_version: null, release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'not installed', can_update: false }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}), skillUpdate: async (_host) => ({}),
   });
   root.querySelector('[data-action="preview"]').click();
   root.querySelector('input[value="project"]').click();
@@ -660,12 +660,12 @@ test('a slow preview for the old scope cannot enable install after the scope cha
 test('a late status response for a previous project does not overwrite the newly selected project', async () => {
   const gates = [];
   const { root, window } = setup({
-    skillStatus: async (scope, project) => {
+    skillStatus: async (_host, scope, project) => {
       const gate = deferred(); gates.push({ project, gate });
       await gate.promise;
       return { state: project === 'B' ? 'current' : 'outdated', installed_version: project === 'B' ? '2' : '1', release_version: '2', target: 'C:\\' + project, modified_files: [], unknown_entries: [], reason: project, can_update: project !== 'B' };
     },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}), skillUpdate: async (_host) => ({}),
   });
   const scopeProject = () => root.querySelector('input[value="project"]').click();
   scopeProject();
@@ -686,13 +686,13 @@ test('a late status response for a previous project does not overwrite the newly
 test('a late failure for a previous target does not overwrite the new target success', async () => {
   const gates = [];
   const { root, window } = setup({
-    skillStatus: async (scope, project) => {
+    skillStatus: async (_host, scope, project) => {
       const gate = deferred(); gates.push({ project, gate });
       await gate.promise;
       if (project === 'A') throw new Error('late failure A');
       return { state: 'current', installed_version: '2', release_version: '2', target: 'C:\\B', modified_files: [], unknown_entries: [], reason: 'B ok', can_update: false };
     },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}), skillUpdate: async (_host) => ({}),
   });
   root.querySelector('input[value="project"]').click();
   root.querySelector('[data-field="project"]').value = 'A';
@@ -711,10 +711,10 @@ test('a write that already started is not redirected when the project changes du
   const gate = deferred();
   const removed = [];
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\A', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async (scope, project) => { removed.push(project); await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
-    skillUpdate: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\A', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host, scope, project) => { removed.push(project); await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async (_host) => ({}),
   });
   root.querySelector('input[value="project"]').click();
   root.querySelector('[data-field="project"]').value = 'A';
@@ -732,8 +732,8 @@ test('a write that already started is not redirected when the project changes du
 test('a late response after leaving the page does not change the page', async () => {
   let statusCalls = 0; const gate = deferred();
   const api = {
-    skillStatus: async () => { statusCalls += 1; await gate.promise; return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}), skillUpdate: async () => ({}),
+    skillStatus: async (_host) => { statusCalls += 1; await gate.promise; return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}), skillUpdate: async (_host) => ({}),
   };
   const window = new Window();
   const root = window.document.createElement('main');
@@ -751,11 +751,11 @@ test('a late response after leaving the page does not change the page', async ()
 // 09: switching the target clears every result shown for the previous target, in both directions.
 test('switching global to project and back clears install and manage results from the old target', async () => {
   const { root, window } = setup({
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\global', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => ({ status: 'installed', target: 'C:\\global', reason: 'verified', verified: true }),
-    skillStatus: async () => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\global', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
-    skillUpdate: async () => ({ status: 'updated', verified: true, reason: 'verified', backup: 'C:\\backup-global' }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\global', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => ({ status: 'installed', target: 'C:\\global', reason: 'verified', verified: true }),
+    skillStatus: async (_host) => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\global', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async (_host) => ({ status: 'updated', verified: true, reason: 'verified', backup: 'C:\\backup-global' }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   });
   root.querySelector('[data-action="preview"]').click(); await tick();
   root.querySelector('[data-action="install"]').click(); await tick(); await tick();
@@ -777,9 +777,9 @@ test('switching global to project and back clears install and manage results fro
 
 test('switching project to global clears the old project failure and backup line', async () => {
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\A', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
-    skillUpdate: async () => ({ status: 'failed', reason: 'Cannot write', verified: false, backup: 'C:\\A-backup' }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\A', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
+    skillUpdate: async (_host) => ({ status: 'failed', reason: 'Cannot write', verified: false, backup: 'C:\\A-backup' }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   });
   root.querySelector('input[value="project"]').click();
   root.querySelector('[data-field="project"]').value = 'A';
@@ -797,9 +797,9 @@ test('switching project to global clears the old project failure and backup line
 test('a same-target manage refresh keeps the successful update line', async () => {
   let reads = 0;
   const { root, window } = setup({
-    skillStatus: async () => { reads += 1; return { state: reads === 1 ? 'outdated' : 'current', installed_version: reads === 1 ? '1' : '2', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: reads === 1 }; },
-    skillUpdate: async () => ({ status: 'updated', verified: true, reason: 'verified', backup: null }),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => { reads += 1; return { state: reads === 1 ? 'outdated' : 'current', installed_version: reads === 1 ? '1' : '2', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: reads === 1 }; },
+    skillUpdate: async (_host) => ({ status: 'updated', verified: true, reason: 'verified', backup: null }),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   root.querySelector('[data-action="update"]').click(); await tick(); await tick();
@@ -812,9 +812,9 @@ test('a same-target manage refresh keeps the successful update line', async () =
 test('a slow update that finishes after the project changed does not write its result onto the new project', async () => {
   const gate = deferred();
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\A', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
-    skillUpdate: async () => { await gate.promise; return { status: 'updated', verified: true, reason: 'verified', backup: 'C:\\A-backup' }; },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\A', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async (_host) => { await gate.promise; return { status: 'updated', verified: true, reason: 'verified', backup: 'C:\\A-backup' }; },
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   });
   root.querySelector('input[value="project"]').click();
   root.querySelector('[data-field="project"]').value = 'A';
@@ -891,12 +891,12 @@ function typeProject(root, value) {
 test('editing project A to B clears A results immediately, and a re-check shows only B', async () => {
   const seen = [];
   const { root, window } = setup({
-    skillPlan: async (scope, project) => { seen.push(['plan', project]); return { scope, target: `C:\\${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
-    skillInstall: async (scope, project) => { seen.push(['install', project]); return { status: 'installed', target: `C:\\${project}`, reason: 'verified', verified: true }; },
-    skillStatus: async (scope, project) => { seen.push(['status', project]); return { state: project === 'B' ? 'current' : 'outdated', installed_version: '1', release_version: '2', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: `at ${project}`, can_update: project !== 'B' }; },
-    skillUpdate: async () => ({ status: 'updated', verified: true, reason: 'verified', backup: 'C:\\A-backup' }),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => ({ status: 'removed', deleted: ['SKILL.md'], reason: 'done' }),
+    skillPlan: async (_host, scope, project) => { seen.push(['plan', project]); return { scope, target: `C:\\${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
+    skillInstall: async (_host, scope, project) => { seen.push(['install', project]); return { status: 'installed', target: `C:\\${project}`, reason: 'verified', verified: true }; },
+    skillStatus: async (_host, scope, project) => { seen.push(['status', project]); return { state: project === 'B' ? 'current' : 'outdated', installed_version: '1', release_version: '2', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: `at ${project}`, can_update: project !== 'B' }; },
+    skillUpdate: async (_host) => ({ status: 'updated', verified: true, reason: 'verified', backup: 'C:\\A-backup' }),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => ({ status: 'removed', deleted: ['SKILL.md'], reason: 'done' }),
   });
   root.querySelector('input[value="project"]').click();
   typeProject(root, 'A');
@@ -928,12 +928,12 @@ test('editing project A to B clears A results immediately, and a re-check shows 
 test('clearing the directory or leaving it incomplete never reuses A state or allows acting on A', async () => {
   const writes = [];
   const { root, window } = setup({
-    skillPlan: async (scope, project) => ({ scope, target: project ? `C:\\${project}` : null, files: [], status: project ? 'ready' : 'invalid_scope', reason: project ? 'ok' : 'Select the project directory', can_install: !!project }),
-    skillInstall: async (scope, project) => { writes.push(['install', project]); return { status: 'installed', target: 'C:\\A', reason: 'verified', verified: true }; },
-    skillStatus: async (scope, project) => ({ state: 'outdated', installed_version: '1', release_version: '2', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
-    skillUpdate: async (scope, project) => { writes.push(['update', project]); return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async (scope, project) => { writes.push(['remove', project]); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillPlan: async (_host, scope, project) => ({ scope, target: project ? `C:\\${project}` : null, files: [], status: project ? 'ready' : 'invalid_scope', reason: project ? 'ok' : 'Select the project directory', can_install: !!project }),
+    skillInstall: async (_host, scope, project) => { writes.push(['install', project]); return { status: 'installed', target: 'C:\\A', reason: 'verified', verified: true }; },
+    skillStatus: async (_host, scope, project) => ({ state: 'outdated', installed_version: '1', release_version: '2', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: 'old', can_update: true }),
+    skillUpdate: async (_host, scope, project) => { writes.push(['update', project]); return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host, scope, project) => { writes.push(['remove', project]); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
   });
   root.querySelector('input[value="project"]').click();
   typeProject(root, 'A');
@@ -962,10 +962,10 @@ test('clearing the directory or leaving it incomplete never reuses A state or al
 
 test('a valid empty-to-new directory is re-checked and shows the real result for that directory only', async () => {
   const { root, window } = setup({
-    skillPlan: async (scope, project) => ({ scope, target: `C:\\${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => ({ status: 'installed', target: 'C:\\C', reason: 'verified', verified: true }),
-    skillStatus: async (scope, project) => ({ state: 'current', installed_version: '1', release_version: '1', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: `dir ${project}`, can_update: false }),
-    skillUpdate: async () => ({}), skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillPlan: async (_host, scope, project) => ({ scope, target: `C:\\${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => ({ status: 'installed', target: 'C:\\C', reason: 'verified', verified: true }),
+    skillStatus: async (_host, scope, project) => ({ state: 'current', installed_version: '1', release_version: '1', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: `dir ${project}`, can_update: false }),
+    skillUpdate: async (_host) => ({}), skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   });
   root.querySelector('input[value="project"]').click();
   typeProject(root, 'A');
@@ -992,10 +992,10 @@ function typeProjectValue(root, value) {
 test('A to B and back to A does not revive a removal preview or its confirm button, and a bypassed confirm writes nothing', async () => {
   const removed = [];
   const { root, window } = setup({
-    skillStatus: async (scope, project) => ({ state: 'current', installed_version: '1', release_version: '1', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
-    skillRemovePlan: async (scope, project) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: `plan ${project}` }),
-    skillRemove: async (scope, project) => { removed.push(project); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
-    skillUpdate: async () => ({}),
+    skillStatus: async (_host, scope, project) => ({ state: 'current', installed_version: '1', release_version: '1', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async (_host, scope, project) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: `plan ${project}` }),
+    skillRemove: async (_host, scope, project) => { removed.push(project); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async (_host) => ({}),
   });
   root.querySelector('input[value="project"]').click();
   typeProjectValue(root, 'A');
@@ -1023,10 +1023,10 @@ test('A to B and back to A does not revive a removal preview or its confirm butt
 test('switching scope global to project and back drops a removal approval and its preview', async () => {
   const removed = [];
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\g', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'global plan' }),
-    skillRemove: async (scope) => { removed.push(scope); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
-    skillUpdate: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'current', installed_version: '1', release_version: '1', target: 'C:\\g', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }),
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'global plan' }),
+    skillRemove: async (_host, scope) => { removed.push(scope); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillUpdate: async (_host) => ({}),
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   root.querySelector('[data-action="remove-plan"]').click(); await tick();
@@ -1042,9 +1042,9 @@ test('switching scope global to project and back drops a removal approval and it
 test('overwrite consent given for A is cleared on A to B to A, and an update then needs a fresh consent', async () => {
   const confirms = [];
   const { root, window } = setup({
-    skillStatus: async (scope, project) => ({ state: 'modified', installed_version: '1', release_version: '2', target: `C:\\${project}`, modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
-    skillUpdate: async (scope, project, confirm) => { confirms.push([project, confirm]); return { status: 'updated', verified: true, reason: 'verified', backup: 'C:\\bk' }; },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host, scope, project) => ({ state: 'modified', installed_version: '1', release_version: '2', target: `C:\\${project}`, modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
+    skillUpdate: async (_host, scope, project, confirm) => { confirms.push([project, confirm]); return { status: 'updated', verified: true, reason: 'verified', backup: 'C:\\bk' }; },
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   });
   root.querySelector('input[value="project"]').click();
   typeProjectValue(root, 'A');
@@ -1068,9 +1068,9 @@ test('overwrite consent given for A is cleared on A to B to A, and an update the
 test('global to project and back also drops overwrite consent', async () => {
   const confirms = [];
   const { root, window } = setup({
-    skillStatus: async () => ({ state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\g', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
-    skillUpdate: async (scope, project, confirm) => { confirms.push(confirm); return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => ({ state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\g', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
+    skillUpdate: async (_host, scope, project, confirm) => { confirms.push(confirm); return { status: 'updated', verified: true, reason: 'verified', backup: null }; },
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   });
   root.querySelector('[data-action="check"]').click(); await tick();
   root.querySelector('[data-field="confirm-overwrite"]').click();
@@ -1089,10 +1089,10 @@ test('a late install response after leaving the page does not paint the old page
   const gate = deferred();
   let statusCalls = 0;
   const api = {
-    skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
-    skillInstall: async () => { await gate.promise; return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
-    skillStatus: async () => { statusCalls += 1; return { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }; },
-    skillUpdate: async () => ({}), skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+    skillInstall: async (_host) => { await gate.promise; return { status: 'installed', target: 'C:\\x', reason: 'verified', verified: true }; },
+    skillStatus: async (_host) => { statusCalls += 1; return { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }; },
+    skillUpdate: async (_host) => ({}), skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const window = new Window();
   const root = window.document.createElement('main');
@@ -1116,9 +1116,9 @@ test('a late update response after leaving the page does not paint the backup li
   const gate = deferred();
   let statusCalls = 0;
   const api = {
-    skillStatus: async () => { statusCalls += 1; return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
-    skillUpdate: async () => { await gate.promise; return { status: 'updated', verified: true, reason: 'verified', backup: 'C:\\x-backup' }; },
-    skillPlan: async () => ({}), skillInstall: async () => ({}), skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillStatus: async (_host) => { statusCalls += 1; return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'old', can_update: true }; },
+    skillUpdate: async (_host) => { await gate.promise; return { status: 'updated', verified: true, reason: 'verified', backup: 'C:\\x-backup' }; },
+    skillPlan: async (_host) => ({}), skillInstall: async (_host) => ({}), skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const window = new Window();
   const root = window.document.createElement('main');
@@ -1140,10 +1140,10 @@ test('a late removal response after leaving the page does not paint the old page
   const gate = deferred();
   let statusCalls = 0;
   const api = {
-    skillStatus: async () => { statusCalls += 1; return { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }; },
-    skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-    skillRemove: async () => { await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
-    skillPlan: async () => ({}), skillInstall: async () => ({}), skillUpdate: async () => ({}),
+    skillStatus: async (_host) => { statusCalls += 1; return { state: 'current', installed_version: '1', release_version: '1', target: 'C:\\x', modified_files: [], unknown_entries: [], reason: 'ok', can_update: false }; },
+    skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+    skillRemove: async (_host) => { await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillPlan: async (_host) => ({}), skillInstall: async (_host) => ({}), skillUpdate: async (_host) => ({}),
   };
   const window = new Window();
   const root = window.document.createElement('main');
@@ -1170,12 +1170,12 @@ test('a late failure after leaving the page writes no error onto the old page, f
     const root = window.document.createElement('main');
     window.document.body.append(root);
     const page = await mountSkill(root, {
-      skillPlan: async () => ({ scope: 'global', target: 'C:\\x', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
-      skillStatus: async () => okStatus,
-      skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-      skillInstall: async () => { await gate.promise; return { status: 'failed', reason: 'nope' }; },
-      skillUpdate: async () => { await gate.promise; return { status: 'updated', verified: true, reason: 'ok', backup: null }; },
-      skillRemove: async () => { await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+      skillPlan: async (_host) => ({ scope: 'global', target: 'C:\\x', files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }),
+      skillStatus: async (_host) => okStatus,
+      skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+      skillInstall: async (_host) => { await gate.promise; return { status: 'failed', reason: 'nope' }; },
+      skillUpdate: async (_host) => { await gate.promise; return { status: 'updated', verified: true, reason: 'ok', backup: null }; },
+      skillRemove: async (_host) => { await gate.promise; return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
       [write]: async () => { await gate.promise; throw new Error('late backend failure'); },
     });
     root.querySelector('[data-action="preview"]').click(); await tick();
@@ -1198,13 +1198,13 @@ test('a late failure after leaving the page writes no error onto the old page, f
 test('a superseded check that fails late leaves the newer same-target result and buttons untouched', async () => {
   const gates = [];
   const api = {
-    skillStatus: async () => {
+    skillStatus: async (_host) => {
       const gate = deferred(); gates.push(gate); await gate.promise;
       if (gates.length === 1) throw new Error('superseded read failure');
       return { state: 'outdated', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'second read', can_update: true };
     },
-    skillPlan: async () => ({}), skillInstall: async () => ({}), skillUpdate: async () => ({}),
-    skillRemovePlan: async () => ({}), skillRemove: async () => ({}),
+    skillPlan: async (_host) => ({}), skillInstall: async (_host) => ({}), skillUpdate: async (_host) => ({}),
+    skillRemovePlan: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const window = new Window();
   const root = window.document.createElement('main');
@@ -1230,12 +1230,12 @@ test('a late removal preview for the previous target cannot re-enable removal on
     field.dispatchEvent(new root.ownerDocument.defaultView.Event('input'));
   };
   const api = {
-    skillStatus: async (scope, project) => ({ state: 'current', installed_version: '1', release_version: '1', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: `at ${project}`, can_update: false }),
-    skillRemovePlan: async (scope, project) => {
+    skillStatus: async (_host, scope, project) => ({ state: 'current', installed_version: '1', release_version: '1', target: `C:\\${project}`, modified_files: [], unknown_entries: [], reason: `at ${project}`, can_update: false }),
+    skillRemovePlan: async (_host, scope, project) => {
       const gate = deferred(); gates.push({ project, gate }); await gate.promise;
       return { can_remove: true, will_delete: [`C:\\${project}\\SKILL.md`], will_keep: [], reason: `plan ${project}` };
     },
-    skillPlan: async () => ({}), skillInstall: async () => ({}), skillUpdate: async () => ({}), skillRemove: async () => ({}),
+    skillPlan: async (_host) => ({}), skillInstall: async (_host) => ({}), skillUpdate: async (_host) => ({}), skillRemove: async (_host) => ({}),
   };
   const window = new Window();
   const root = window.document.createElement('main');
@@ -1259,9 +1259,9 @@ test('a late write response after leaving the page keeps the old page locked ins
   const run = async write => {
     const gate = deferred();
     const api = {
-      skillStatus: async () => ({ state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
-      skillRemovePlan: async () => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
-      skillPlan: async () => ({}), skillInstall: async () => ({}), skillUpdate: async () => ({}), skillRemove: async () => ({}),
+      skillStatus: async (_host) => ({ state: 'modified', installed_version: '1', release_version: '2', target: 'C:\\x', modified_files: ['SKILL.md'], unknown_entries: [], reason: 'edited', can_update: true }),
+      skillRemovePlan: async (_host) => ({ can_remove: true, will_delete: ['SKILL.md'], will_keep: [], reason: 'ours' }),
+      skillPlan: async (_host) => ({}), skillInstall: async (_host) => ({}), skillUpdate: async (_host) => ({}), skillRemove: async (_host) => ({}),
       [write]: async () => { await gate.promise; return { status: 'updated', verified: true, reason: 'ok', backup: null, deleted: ['SKILL.md'], status2: 'removed' }; },
     };
     const window = new Window();
@@ -1286,12 +1286,12 @@ test('a late write response after leaving the page keeps the old page locked ins
 function lifecycleApi(calls, { modifiedFor = () => [], unknownFor = () => [] } = {}) {
   const state = (project) => (project === 'B' ? 'current' : 'modified');
   return {
-    skillPlan: async (scope, project) => { calls.push(['plan', scope, project]); return { scope, target: `C:\\${scope}-${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
-    skillInstall: async (scope, project) => { calls.push(['install', scope, project]); return { status: 'installed', target: `C:\\${scope}-${project}`, reason: 'verified', verified: true }; },
-    skillStatus: async (scope, project) => { calls.push(['status', scope, project]); return { state: state(project), installed_version: '1', release_version: '2', target: `C:\\${scope}-${project}`, modified_files: modifiedFor(project), unknown_entries: unknownFor(project), reason: `status ${project}`, can_update: state(project) !== 'current' }; },
-    skillUpdate: async (scope, project, confirm) => { calls.push(['update', scope, project, confirm]); return { status: 'updated', verified: true, reason: 'verified', backup: `C:\\bk-${project}` }; },
-    skillRemovePlan: async (scope, project) => { calls.push(['remove-plan', scope, project]); return { can_remove: true, will_delete: ['SKILL.md', '.multi-search-install.json'], will_keep: ['notes.md'], reason: `plan ${project}` }; },
-    skillRemove: async (scope, project, confirmed) => { calls.push(['remove', scope, project, confirmed]); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
+    skillPlan: async (_host, scope, project) => { calls.push(['plan', scope, project]); return { scope, target: `C:\\${scope}-${project}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
+    skillInstall: async (_host, scope, project) => { calls.push(['install', scope, project]); return { status: 'installed', target: `C:\\${scope}-${project}`, reason: 'verified', verified: true }; },
+    skillStatus: async (_host, scope, project) => { calls.push(['status', scope, project]); return { state: state(project), installed_version: '1', release_version: '2', target: `C:\\${scope}-${project}`, modified_files: modifiedFor(project), unknown_entries: unknownFor(project), reason: `status ${project}`, can_update: state(project) !== 'current' }; },
+    skillUpdate: async (_host, scope, project, confirm) => { calls.push(['update', scope, project, confirm]); return { status: 'updated', verified: true, reason: 'verified', backup: `C:\\bk-${project}` }; },
+    skillRemovePlan: async (_host, scope, project) => { calls.push(['remove-plan', scope, project]); return { can_remove: true, will_delete: ['SKILL.md', '.multi-search-install.json'], will_keep: ['notes.md'], reason: `plan ${project}` }; },
+    skillRemove: async (_host, scope, project, confirmed) => { calls.push(['remove', scope, project, confirmed]); return { status: 'removed', deleted: ['SKILL.md'], reason: 'done' }; },
   };
 }
 
@@ -1362,5 +1362,33 @@ test('removal after a scope switch previews and confirms the new target; the old
   root.querySelector('[data-action="remove"]').click(); await tick(); await tick();
   assert.deepEqual(calls.filter(c => c[0] === 'remove'), [['remove', 'project', 'B', true]]);
   assert.match(root.querySelector('[data-info="manage-plan"]').textContent, /notes\.md/);
+  window.close();
+});
+
+test('the host choice defaults to the cross-tool Agents folder and is sent with every call', async () => {
+  const calls = [];
+  const api = {
+    skillPlan: async (host, scope, project) => { calls.push(['plan', host, scope, project]); return { host, scope, target: `/home/${host}`, files: ['SKILL.md'], status: 'ready', reason: 'ok', can_install: true }; },
+    skillInstall: async (host, scope, project) => { calls.push(['install', host, scope, project]); return { status: 'installed', target: `/home/${host}`, reason: 'verified', verified: true }; },
+    skillStatus: async (host, scope, project) => { calls.push(['status', host, scope, project]); return { state: 'current', installed_version: '1', release_version: '1', modified_files: [], unknown_entries: [], reason: 'ok', target: `/home/${host}` }; },
+  };
+  const { root, window } = setup(api);
+  const hosts = [...root.querySelectorAll('input[name="host"]')];
+  assert.deepEqual(hosts.map(input => input.value), ['agents', 'claude-code']);
+  assert.equal(hosts.find(input => input.checked).value, 'agents');
+  root.querySelector('[data-action="preview"]').click();
+  await tick();
+  root.querySelector('[data-action="install"]').click();
+  await tick();
+  assert.deepEqual(calls.slice(0, 3).map(c => c.slice(0, 2)), [['plan', 'agents'], ['install', 'agents'], ['status', 'agents']]);
+  // Switching host drops the previous preview: install needs a fresh preview of the new target.
+  const claude = hosts.find(input => input.value === 'claude-code');
+  claude.checked = true;
+  claude.dispatchEvent(new window.Event('change'));
+  assert.equal(root.querySelector('[data-action="install"]').disabled, true);
+  assert.equal(root.querySelector('[data-info="target"]').textContent, '');
+  root.querySelector('[data-action="preview"]').click();
+  await tick();
+  assert.deepEqual(calls.at(-1).slice(0, 2), ['plan', 'claude-code']);
   window.close();
 });

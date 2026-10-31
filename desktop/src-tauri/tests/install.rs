@@ -112,7 +112,7 @@ fn explicit_user_path_consent_enables_discovery_and_skill_without_restarting_app
     // The verified managed install is executable right away, independent of PATH.
     assert!(manager.detect_cli().managed);
     assert_eq!(manager.execution_cli().unwrap(), root.join("bin/multi-search.exe"));
-    assert_eq!(manager.skill_plan("global", None).status, "cli_missing");
+    assert_eq!(manager.skill_plan("claude-code", "global", None).status, "cli_missing");
     assert_eq!(manager.user_path_change(false, false).unwrap().status, "confirmation_required");
     assert_eq!(store.value().text, "%SystemRoot%\\System32");
     assert_eq!(manager.user_path_change(false, true).unwrap().status, "added");
@@ -120,8 +120,8 @@ fn explicit_user_path_consent_enables_discovery_and_skill_without_restarting_app
     assert_eq!(manager.detect_cli().app.status, "missing");
     assert_eq!(manager.execution_cli().unwrap(), root.join("bin/multi-search.exe"));
     assert!(manager.detect_cli().restart_required);
-    assert_eq!(manager.skill_plan("global", None).status, "ready");
-    assert_eq!(manager.skill_install("global", None).status, "installed");
+    assert_eq!(manager.skill_plan("claude-code", "global", None).status, "ready");
+    assert_eq!(manager.skill_install("claude-code", "global", None).status, "installed");
     assert_eq!(manager.user_path_change(true, true).unwrap().status, "removed");
     assert_eq!(store.value().text, "%SystemRoot%\\System32");
     assert_eq!(manager.detect_cli().user.status, "missing");

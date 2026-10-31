@@ -319,9 +319,13 @@ fn row(status: &str, root: &Path, version: Option<String>, reason: &str) -> Inst
     }
 }
 
-/// Skill directory for the current user, the one `skill_common` installs into; `None` without a profile.
+/// The first global Skill directory (Claude Code or `.agents`) that still exists; `None` without one.
 fn kept_skill_directory(environment: &RuntimeEnvironment) -> Option<PathBuf> {
-    crate::skill_common::target_directory(environment, "global", None).ok()
+    crate::skill_common::HOSTS.iter().find_map(|(host, _)| {
+        crate::skill_common::target_directory(environment, host, "global", None)
+            .ok()
+            .filter(|dir| fs::symlink_metadata(dir).is_ok())
+    })
 }
 
 fn outcome(

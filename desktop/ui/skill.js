@@ -5,34 +5,39 @@ const stateLabels = { current: '当前版本', outdated: '有可用更新', modi
 // Known statuses are localized; a raw backend enum is never shown on its own.
 const statusText = (status, fallback) => reasons[status] || fallback || `未知状态（${status ?? '无'}）`;
 export async function mountSkill(root, api, { number = '03' } = {}) {
-  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / CLAUDE CODE SKILL</p><h1 tabindex="-1">让 Claude Code 使用本机 CLI。</h1><p>安装仅写入所选目录中的 multi-search 技能文件，不覆盖已有内容，不使用 MCP。</p></section>
-    <section class="panel skill-install"><div class="section-title"><h2>安装范围</h2><span class="eyebrow">CLAUDE CODE ONLY</span></div>
-      <fieldset><legend>作用范围</legend>
-        <label><input type="radio" name="scope" value="global" checked> 全局（当前用户的所有项目）</label>
-        <label><input type="radio" name="scope" value="project"> 项目（仅所选项目）</label></fieldset>
-      <label class="path-input">项目目录<input data-field="project" placeholder="仅项目范围需要，例如 C:\\…\\my-project" spellcheck="false" disabled></label>
-      <div class="run-controls"><button type="button" data-action="preview">预览目标</button><button type="button" data-action="install" class="primary" disabled>安装 Skill</button></div>
-      <p data-info="target"></p><p data-info="status" aria-live="polite"></p><p data-info="error" role="alert"></p></section>
-    <section class="panel skill-manage"><div class="section-title"><h2>已安装 Skill</h2><span class="eyebrow">UPDATE / REMOVE</span></div>
-      <div class="run-controls"><button type="button" data-action="check">检查已安装版本</button></div>
-      <p data-info="installed" aria-live="polite"></p><p data-info="managed-target"></p><p data-info="compatibility"></p><p data-info="modified"></p>
-      <label class="confirm"><input type="checkbox" data-field="confirm-overwrite"> 我已确认：备份本地修改后再用本版本覆盖</label>
-      <div class="run-controls"><button type="button" data-action="update" disabled>更新 Skill</button><button type="button" data-action="remove-plan" disabled>预览移除</button><button type="button" data-action="remove" class="danger" disabled>确认移除</button></div>
-      <p data-info="manage-plan"></p><p data-info="manage-status" aria-live="polite"></p><p data-info="manage-error" role="alert"></p></section>`;
+  root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / AGENT SKILL</p><h1 tabindex="-1">让 Agent 使用本机 CLI。</h1><p>安装仅写入所选目录中的 multi-search 技能文件，不覆盖已有内容，不使用 MCP。</p></section>
+    <section class="panel skill-install ms-form"><div class="section-title"><div><h2>安装 Skill</h2><p class="section-sub">选择安装目标和作用范围，预览目标目录后再写入。</p></div><span class="eyebrow">CLAUDE CODE / AGENTS</span></div>
+      <fieldset class="choice-group"><legend>安装目标</legend>
+        <label class="choice-card"><input type="radio" name="host" value="agents" checked><span><strong>通用 Agents</strong><small>.agents/skills：Codex、Gemini CLI、OpenCode 等</small></span></label>
+        <label class="choice-card"><input type="radio" name="host" value="claude-code"><span><strong>Claude Code</strong><small>.claude/skills</small></span></label></fieldset>
+      <fieldset class="choice-group"><legend>作用范围</legend>
+        <label class="choice-card"><input type="radio" name="scope" value="global" checked><span><strong>全局</strong><small>当前用户的所有项目</small></span></label>
+        <label class="choice-card"><input type="radio" name="scope" value="project"><span><strong>项目</strong><small>仅所选项目</small></span></label></fieldset>
+      <label class="field path-input"><span>项目目录</span><input data-field="project" placeholder="仅项目范围需要，例如 C:\\…\\my-project" spellcheck="false" disabled></label>
+      <div class="run-controls form-actions"><button type="button" data-action="preview">预览目标</button><button type="button" data-action="install" class="primary" disabled>安装 Skill</button></div>
+      <div class="result-box"><p data-info="target"></p><p data-info="status" aria-live="polite"></p><p data-info="error" role="alert"></p></div></section>
+    <section class="panel skill-manage ms-form"><div class="section-title"><div><h2>已安装 Skill</h2><p class="section-sub">先检查当前目标，再更新或移除。</p></div><button type="button" data-action="check">检查已安装版本</button></div>
+      <div class="result-box"><p data-info="installed" aria-live="polite"></p><p data-info="managed-target"></p><p data-info="compatibility"></p><p data-info="modified"></p></div>
+      <div class="action-row"><div><strong>更新</strong><label class="check-row"><input type="checkbox" data-field="confirm-overwrite"><span>我已确认：备份本地修改后再用本版本覆盖</span></label></div>
+        <div class="run-controls"><button type="button" data-action="update" class="primary" disabled>更新 Skill</button></div></div>
+      <div class="action-row action-row-danger"><div><strong>移除</strong><small>先预览将删除的文件，非本工具管理的文件会保留。</small></div>
+        <div class="run-controls"><button type="button" data-action="remove-plan" disabled>预览移除</button><button type="button" data-action="remove" class="danger" disabled>确认移除</button></div></div>
+      <div class="result-box"><p data-info="manage-plan"></p><p data-info="manage-status" aria-live="polite"></p><p data-info="manage-error" role="alert"></p></div></section>`;
   // Page lifecycle and in-flight state, declared before any handler can read them.
   let disposed = false;
   let busy = false;
   const project = root.querySelector('[data-field="project"]');
   const install = root.querySelector('[data-action="install"]');
-  let plannedScope = null, plannedProject = null, ready = false;
+  let plannedHost = null, plannedScope = null, plannedProject = null, ready = false;
   // Preview token: each preview takes a new value. A scope or project change bumps it, so a slower
   // earlier preview result is discarded.
   let previewToken = 0;
   // Reads the checked property rather than a :checked selector, which can return a stale match in some DOM engines.
   const selectedScope = () => [...root.querySelectorAll('input[name="scope"]')].find(input => input.checked).value;
+  const selectedHost = () => [...root.querySelectorAll('input[name="host"]')].find(input => input.checked).value;
   const projectValue = () => (selectedScope() === 'project' ? project.value.trim() || null : null);
-  const targetKey = () => JSON.stringify([selectedScope(), projectValue()]);
-  const dropPreview = () => { previewToken++; ready = false; install.disabled = true; plannedScope = null; plannedProject = null; };
+  const targetKey = () => JSON.stringify([selectedHost(), selectedScope(), projectValue()]);
+  const dropPreview = () => { previewToken++; ready = false; install.disabled = true; plannedHost = null; plannedScope = null; plannedProject = null; };
   // The key of the target the visible results describe. Only a real change of scope or project clears
   // those results; a same-target refresh or a repeated keystroke with the same effective target keeps them.
   let lastTargetKey = targetKey();
@@ -47,15 +52,16 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     project.disabled = selectedScope() !== 'project';
     onTargetChange();
   }));
+  root.querySelectorAll('input[name="host"]').forEach(input => input.addEventListener('change', onTargetChange));
   project.addEventListener('input', onTargetChange);
   root.querySelector('[data-action="preview"]').addEventListener('click', async () => {
     root.querySelector('[data-info="error"]').textContent = '';
     const request = ++previewToken;
-    const scope = selectedScope(), targetProject = projectValue();
+    const host = selectedHost(), scope = selectedScope(), targetProject = projectValue();
     try {
-      const plan = await api.skillPlan(scope, targetProject);
+      const plan = await api.skillPlan(host, scope, targetProject);
       if (request !== previewToken || disposed) return;
-      plannedScope = plan.scope; plannedProject = targetProject; ready = plan.can_install;
+      plannedHost = host; plannedScope = plan.scope; plannedProject = targetProject; ready = plan.can_install;
       root.querySelector('[data-info="target"]').textContent = plan.target ? `目标目录：${plan.target}\n文件：${plan.files.join('、')}` : '';
       root.querySelector('[data-info="status"]').textContent = `${statusText(plan.status)}：${plan.reason}`;
       install.disabled = !ready;
@@ -63,7 +69,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
   });
   install.addEventListener('click', async () => {
     if (busy || disposed) return;
-    if (!ready || plannedScope !== selectedScope() || plannedProject !== projectValue()) { root.querySelector('[data-info="error"]').textContent = '请先预览目标目录。'; return; }
+    if (!ready || plannedHost !== selectedHost() || plannedScope !== selectedScope() || plannedProject !== projectValue()) { root.querySelector('[data-info="error"]').textContent = '请先预览目标目录。'; return; }
     install.disabled = true;
     // Blocks manage actions and drops any manage plan made before this write.
     setBusy(true);
@@ -72,7 +78,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     let writeSucceeded = false;
     let stale = false;
     try {
-      const result = await api.skillInstall(plannedScope, plannedProject);
+      const result = await api.skillInstall(plannedHost, plannedScope, plannedProject);
       // The write already happened on its own target. If the user moved on, or left the page, its
       // result must not appear on the new target nor on a page that is no longer shown.
       stale = disposed || targetKey() !== key;
@@ -96,14 +102,14 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
   const info = name => root.querySelector(`[data-info="${name}"]`);
   const manageButton = name => root.querySelector(`[data-action="${name}"]`);
   const confirmOverwrite = root.querySelector('[data-field="confirm-overwrite"]');
-  let managedScope = null, managedProject = null, removeReady = false, manageToken = 0;
+  let managedHost = null, managedScope = null, managedProject = null, removeReady = false, manageToken = 0;
   // Set after a verified write whose status read has not yet succeeded. Kept across failed checks so the
   // write is never presented as failed, and cleared only when a read succeeds.
   let unconfirmedWrite = false;
   const setBusy = value => {
     busy = value;
     manageButton('check').disabled = value;
-    root.querySelectorAll('input[name="scope"]').forEach(input => { input.disabled = value; });
+    root.querySelectorAll('input[name="scope"], input[name="host"]').forEach(input => { input.disabled = value; });
     project.disabled = value || selectedScope() !== 'project';
     confirmOverwrite.disabled = value;
     if (value) {
@@ -112,7 +118,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     }
   };
   const invalidateManage = () => {
-    manageToken++; managedScope = null; managedProject = null; removeReady = false;
+    manageToken++; managedHost = null; managedScope = null; managedProject = null; removeReady = false;
     confirmOverwrite.checked = false;
     ['update', 'remove-plan', 'remove'].forEach(name => { manageButton(name).disabled = true; });
     ['installed', 'managed-target', 'compatibility', 'modified', 'manage-plan'].forEach(name => { info(name).textContent = ''; });
@@ -127,7 +133,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
   };
   const manageScope = () => selectedScope();
   const manageProject = () => projectValue();
-  const sameTarget = () => managedScope === manageScope() && managedProject === manageProject();
+  const sameTarget = () => managedHost === selectedHost() && managedScope === manageScope() && managedProject === manageProject();
   const setManageError = text => { info('manage-error').textContent = text; };
   // Reads the real target and rebuilds the manage panel. Obsolete plans are dropped first.
   // `writeSucceeded` is true when a verified write just returned success. A failed read then reports the
@@ -137,12 +143,12 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     if (writeSucceeded) unconfirmedWrite = true;
     invalidateManage();
     setManageError('');
-    const request = manageToken, scope = manageScope(), targetProject = manageProject();
+    const request = manageToken, host = selectedHost(), scope = manageScope(), targetProject = manageProject();
     try {
-      const status = await api.skillStatus(scope, targetProject);
-      if (disposed || request !== manageToken || scope !== manageScope() || targetProject !== manageProject()) return;
+      const status = await api.skillStatus(host, scope, targetProject);
+      if (disposed || request !== manageToken || host !== selectedHost() || scope !== manageScope() || targetProject !== manageProject()) return;
       unconfirmedWrite = false;
-      managedScope = scope; managedProject = targetProject; removeReady = false;
+      managedHost = host; managedScope = scope; managedProject = targetProject; removeReady = false;
       info('installed').textContent = `状态：${stateLabels[status.state] || `未知状态（${status.state}）`}；已装版本：${status.installed_version ?? '无'}；发布版本：${status.release_version}。${status.reason}`;
       info('managed-target').textContent = `目标目录：${status.target ?? '未确认'}`;
       info('compatibility').textContent = `CLI 要求：${status.cli_requirements ?? '请重新检查'}。${status.compatibility_reason ?? ''}`;
@@ -171,7 +177,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     const key = targetKey();
     let stale = false;
     try {
-      const result = await api.skillUpdate(managedScope, managedProject, confirmOverwrite.checked);
+      const result = await api.skillUpdate(managedHost, managedScope, managedProject, confirmOverwrite.checked);
       stale = disposed || targetKey() !== key;
       if (!stale) {
         info('manage-status').textContent = result.status === 'updated' && result.verified === true
@@ -193,7 +199,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     removeReady = false; manageButton('remove').disabled = true;
     const request = ++manageToken;
     try {
-      const plan = await api.skillRemovePlan(managedScope, managedProject);
+      const plan = await api.skillRemovePlan(managedHost, managedScope, managedProject);
       if (disposed || request !== manageToken || !sameTarget()) return;
       removeReady = plan.can_remove;
       info('manage-plan').textContent = plan.can_remove
@@ -211,7 +217,7 @@ export async function mountSkill(root, api, { number = '03' } = {}) {
     const key = targetKey();
     let stale = false;
     try {
-      const result = await api.skillRemove(managedScope, managedProject, true);
+      const result = await api.skillRemove(managedHost, managedScope, managedProject, true);
       stale = disposed || targetKey() !== key;
       removedOk = result.status === 'removed';
       if (!stale) {

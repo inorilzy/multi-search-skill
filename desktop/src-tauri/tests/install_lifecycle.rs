@@ -389,7 +389,7 @@ fn registered_project_skill_and_legacy_v1_requirements_are_checked_before_cli_up
     let project = profile.root.join("project");
     fs::create_dir(&project).unwrap();
     let skill_manager = DesktopManager::new(profile.environment.clone());
-    assert_eq!(skill_manager.skill_install("project", Some(project.clone())).status, "installed");
+    assert_eq!(skill_manager.skill_install("claude-code", "project", Some(project.clone())).status, "installed");
     let marker_path = project.join(".claude/skills/multi-search/.multi-search-install.json");
     let mut marker: serde_json::Value = serde_json::from_slice(&fs::read(&marker_path).unwrap()).unwrap();
     assert_eq!(marker["requirements"]["doctor"], serde_json::json!(["--no-keys", "--format"]));
@@ -409,7 +409,7 @@ fn registered_project_skill_and_legacy_v1_requirements_are_checked_before_cli_up
     fs::write(&marker_path, serde_json::to_vec(&marker).unwrap()).unwrap();
     assert_eq!(next.install_plan().compatibility, "compatible");
     assert_eq!(next.update().status, "installed");
-    assert_eq!(skill_manager.skill_remove("project", Some(project), true).status, "removed");
+    assert_eq!(skill_manager.skill_remove("claude-code", "project", Some(project), true).status, "removed");
     assert_eq!(fs::read_to_string(profile.root.join(".multi-search/managed-skills.json")).unwrap(), "[]");
 }
 

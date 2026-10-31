@@ -16,7 +16,7 @@ fn read(path: &std::path::Path) -> String {
 
 /// Installs through the 06 path so the 07 tests start from a real, verified install.
 fn install_global(profile: &common::Profile) {
-    let result = manager(profile).skill_install("global", None);
+    let result = manager(profile).skill_install("claude-code", "global", None);
     assert_eq!(result.status, "installed", "{}", result.reason);
 }
 
@@ -39,7 +39,7 @@ fn release_06_marker_without_hashes_remains_managed() {
     .unwrap();
     assert_eq!(
         manager(&profile)
-            .skill_status("global", None)
+            .skill_status("claude-code", "global", None)
             .unwrap()
             .state,
         multi_search_desktop::InstallState::Outdated,
@@ -48,7 +48,7 @@ fn release_06_marker_without_hashes_remains_managed() {
     fs::write(target.join("SKILL.md"), "06 local edit").unwrap();
     // Without hashes the local edit cannot be distinguished from the original,
     // so the install is Outdated and updates without a backup.
-    let updated = manager(&profile).skill_update("global", None, true);
+    let updated = manager(&profile).skill_update("claude-code", "global", None, true);
     assert_eq!(updated.status, "updated", "{}", updated.reason);
     assert!(updated.backup.is_none(), "unverifiable install has no backup baseline");
 }
@@ -69,13 +69,13 @@ fn new_marker_records_explicit_schema_version_and_hashes() {
 fn unmodified_install_reports_current_and_update_is_not_needed() {
     let profile = common::Profile::new();
     install_global(&profile);
-    let status = manager(&profile).skill_status("global", None).unwrap();
+    let status = manager(&profile).skill_status("claude-code", "global", None).unwrap();
     assert_eq!(status.state, multi_search_desktop::InstallState::Current);
     assert!(status.modified_files.is_empty());
     assert!(status.unknown_entries.is_empty());
-    let update = manager(&profile).skill_update("global", None, false);
+    let update = manager(&profile).skill_update("claude-code", "global", None, false);
     assert_eq!(update.status, "blocked");
-    assert!(update.reason.contains("up to date"), "{}", update.reason);
+    assert!(update.reason.contains("已是最新"), "{}", update.reason);
 }
 
 #[test]
@@ -86,9 +86,9 @@ fn outdated_skill_updates_without_confirmation_when_unmodified() {
     let marker = skill_dir(&profile.root).join(".multi-search-install.json");
     let text = read(&marker).replace(&format!("\"skill_version\":\"{}\"", skill_version()), "\"skill_version\":\"0\"");
     fs::write(&marker, text).unwrap();
-    let status = manager(&profile).skill_status("global", None).unwrap();
+    let status = manager(&profile).skill_status("claude-code", "global", None).unwrap();
     assert_eq!(status.state, multi_search_desktop::InstallState::Outdated);
-    let update = manager(&profile).skill_update("global", None, false);
+    let update = manager(&profile).skill_update("claude-code", "global", None, false);
     assert_eq!(update.status, "updated", "{}", update.reason);
     assert!(update.verified);
     assert!(update.backup.is_none());
@@ -120,7 +120,7 @@ fn update_preserves_unknown_files_and_nested_user_content() {
         "keep nested notes",
     )
     .unwrap();
-    let update = manager(&profile).skill_update("global", None, true);
+    let update = manager(&profile).skill_update("claude-code", "global", None, true);
     assert_eq!(update.status, "updated", "{}", update.reason);
     assert_eq!(fs::read(target.join("notes.bin")).unwrap(), [0, 255, 19]);
     assert_eq!(
@@ -129,7 +129,7 @@ fn update_preserves_unknown_files_and_nested_user_content() {
     );
     assert_eq!(
         manager(&profile)
-            .skill_status("global", None)
+            .skill_status("claude-code", "global", None)
             .unwrap()
             .state,
         multi_search_desktop::InstallState::Current
@@ -143,22 +143,22 @@ fn local_modification_requires_confirmation_and_is_backed_up_before_overwrite() 
     let target = skill_dir(&profile.root);
     fs::write(target.join("SKILL.md"), "my local customization").unwrap();
 
-    let status = manager(&profile).skill_status("global", None).unwrap();
+    let status = manager(&profile).skill_status("claude-code", "global", None).unwrap();
     assert_eq!(status.state, multi_search_desktop::InstallState::Modified);
     assert_eq!(status.modified_files, vec!["SKILL.md".to_string()]);
 
     // Without confirmation nothing is overwritten.
-    let blocked = manager(&profile).skill_update("global", None, false);
+    let blocked = manager(&profile).skill_update("claude-code", "global", None, false);
     assert_eq!(blocked.status, "blocked");
     assert!(
-        blocked.reason.contains("Confirmation required"),
+        blocked.reason.contains("需要确认"),
         "{}",
         blocked.reason
     );
     assert_eq!(read(&target.join("SKILL.md")), "my local customization");
 
     // With confirmation: the edit is backed up, then replaced by the release.
-    let update = manager(&profile).skill_update("global", None, true);
+    let update = manager(&profile).skill_update("claude-code", "global", None, true);
     assert_eq!(update.status, "updated", "{}", update.reason);
     let backup = PathBuf::from(update.backup.expect("backup path"));
     assert_eq!(read(&backup.join("SKILL.md")), "my local customization");
@@ -188,7 +188,7 @@ fn status_exposes_target_release_requirements_and_blocks_incompatible_update() {
         .insert("FIXTURE_HELP".into(), "stale".into());
     let status = serde_json::to_value(
         DesktopManager::new(environment)
-            .skill_status("global", None)
+            .skill_status("claude-code", "global", None)
             .unwrap(),
     )
     .unwrap();
@@ -223,13 +223,13 @@ fn filesystem_update_failure_keeps_old_skill_and_retry_succeeds() {
         .share_mode(1)
         .open(target.join("SKILL.md"))
         .unwrap();
-    let failed = manager(&profile).skill_update("global", None, false);
+    let failed = manager(&profile).skill_update("claude-code", "global", None, false);
     assert_eq!(failed.status, "failed");
     assert!(!failed.verified);
     assert_eq!(read(&target.join("SKILL.md")), before);
     assert_eq!(
         manager(&profile)
-            .skill_status("global", None)
+            .skill_status("claude-code", "global", None)
             .unwrap()
             .installed_version
             .as_deref(),
@@ -237,7 +237,7 @@ fn filesystem_update_failure_keeps_old_skill_and_retry_succeeds() {
     );
     drop(locked);
     assert_eq!(
-        manager(&profile).skill_update("global", None, false).status,
+        manager(&profile).skill_update("claude-code", "global", None, false).status,
         "updated"
     );
 }
@@ -255,7 +255,7 @@ fn failed_update_keeps_the_old_usable_skill() {
     environment
         .variables
         .insert("FIXTURE_HELP".into(), "stale".into());
-    let blocked = DesktopManager::new(environment).skill_update("global", None, false);
+    let blocked = DesktopManager::new(environment).skill_update("claude-code", "global", None, false);
     assert_eq!(blocked.status, "blocked");
     assert!(blocked.reason.contains("--expand"), "{}", blocked.reason);
     // Old skill is still in place and still usable.
@@ -279,10 +279,10 @@ fn retry_after_failed_update_does_not_misreport_completion() {
     environment
         .variables
         .insert("FIXTURE_HELP".into(), "stale".into());
-    let first = DesktopManager::new(environment).skill_update("global", None, false);
+    let first = DesktopManager::new(environment).skill_update("claude-code", "global", None, false);
     assert_ne!(first.status, "updated");
     // Retry with the compatible CLI: it succeeds for real, not from the earlier attempt.
-    let second = manager(&profile).skill_update("global", None, false);
+    let second = manager(&profile).skill_update("claude-code", "global", None, false);
     assert_eq!(second.status, "updated", "{}", second.reason);
     assert!(second.verified);
 }
@@ -293,11 +293,11 @@ fn unknown_folder_is_never_updated_or_removed() {
     let target = skill_dir(&profile.root);
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("SKILL.md"), "hand written, no marker").unwrap();
-    let status = manager(&profile).skill_status("global", None).unwrap();
+    let status = manager(&profile).skill_status("claude-code", "global", None).unwrap();
     assert_eq!(status.state, multi_search_desktop::InstallState::Unknown);
-    let update = manager(&profile).skill_update("global", None, true);
+    let update = manager(&profile).skill_update("claude-code", "global", None, true);
     assert_eq!(update.status, "blocked");
-    let remove = manager(&profile).skill_remove("global", None, true);
+    let remove = manager(&profile).skill_remove("claude-code", "global", None, true);
     assert_eq!(remove.status, "blocked");
     assert_eq!(read(&target.join("SKILL.md")), "hand written, no marker");
 }
@@ -312,19 +312,19 @@ fn removal_requires_confirmation_and_deletes_only_tool_owned_files() {
     fs::create_dir_all(profile.root.join(".claude/skills/other")).unwrap();
     fs::write(profile.root.join(".claude/skills/other/SKILL.md"), "other").unwrap();
 
-    let plan = manager(&profile).skill_remove_plan("global", None).unwrap();
+    let plan = manager(&profile).skill_remove_plan("claude-code", "global", None).unwrap();
     assert!(plan.will_delete.contains(&"SKILL.md".to_string()));
     assert!(plan.will_keep.contains(&"notes.md".to_string()));
     assert!(!plan.will_delete.iter().any(|n| n == "notes.md"));
 
-    let unconfirmed = manager(&profile).skill_remove("global", None, false);
+    let unconfirmed = manager(&profile).skill_remove("claude-code", "global", None, false);
     assert_eq!(unconfirmed.status, "blocked");
     assert!(
         target.join("SKILL.md").is_file(),
         "nothing deleted without confirmation"
     );
 
-    let removed = manager(&profile).skill_remove("global", None, true);
+    let removed = manager(&profile).skill_remove("claude-code", "global", None, true);
     assert_eq!(removed.status, "removed", "{}", removed.reason);
     assert!(!target.join("SKILL.md").exists());
     assert!(!target.join(".multi-search-install.json").exists());
@@ -341,7 +341,7 @@ fn removal_requires_confirmation_and_deletes_only_tool_owned_files() {
     // The user file keeps the skill folder alive; it is no longer ours, so it
     // is reported as Unknown rather than Absent, and nothing else was deleted.
     assert_eq!(
-        manager(&profile).skill_status("global", None).unwrap().state,
+        manager(&profile).skill_status("claude-code", "global", None).unwrap().state,
         multi_search_desktop::InstallState::Unknown
     );
 }
@@ -355,13 +355,13 @@ fn complete_removal_clears_managed_subfolders_and_reports_absent() {
     install_global(&profile);
     let target = skill_dir(&profile.root);
     assert!(target.join("agents/interface.yaml").is_file());
-    let removed = manager(&profile).skill_remove("global", None, true);
+    let removed = manager(&profile).skill_remove("claude-code", "global", None, true);
     assert_eq!(removed.status, "removed", "{}", removed.reason);
     assert!(!target.join("agents").exists(), "empty agents/ is gone too");
     assert!(!target.exists(), "the skill folder itself is gone");
     assert!(profile.root.join(".claude/skills").is_dir());
     assert_eq!(
-        manager(&profile).skill_status("global", None).unwrap().state,
+        manager(&profile).skill_status("claude-code", "global", None).unwrap().state,
         multi_search_desktop::InstallState::Absent
     );
 }
@@ -371,7 +371,7 @@ fn complete_removal_clears_managed_subfolders_and_reports_absent() {
 fn outcomes_serialize_the_field_names_the_ui_reads() {
     let profile = common::Profile::new();
     let manager = manager(&profile);
-    let status = serde_json::to_value(manager.skill_status("global", None).unwrap()).unwrap();
+    let status = serde_json::to_value(manager.skill_status("claude-code", "global", None).unwrap()).unwrap();
     for key in [
         "state",
         "installed_version",
@@ -386,21 +386,21 @@ fn outcomes_serialize_the_field_names_the_ui_reads() {
             "status is missing {key}: {status}"
         );
     }
-    let update = serde_json::to_value(manager.skill_update("global", None, false)).unwrap();
+    let update = serde_json::to_value(manager.skill_update("claude-code", "global", None, false)).unwrap();
     for key in ["status", "reason", "backup", "verified"] {
         assert!(
             update.get(key).is_some(),
             "update outcome is missing {key}: {update}"
         );
     }
-    let plan = serde_json::to_value(manager.skill_remove_plan("global", None).unwrap()).unwrap();
+    let plan = serde_json::to_value(manager.skill_remove_plan("claude-code", "global", None).unwrap()).unwrap();
     for key in ["will_delete", "will_keep", "can_remove", "reason"] {
         assert!(
             plan.get(key).is_some(),
             "remove plan is missing {key}: {plan}"
         );
     }
-    let removed = serde_json::to_value(manager.skill_remove("global", None, false)).unwrap();
+    let removed = serde_json::to_value(manager.skill_remove("claude-code", "global", None, false)).unwrap();
     for key in ["status", "deleted", "kept", "reason"] {
         assert!(
             removed.get(key).is_some(),
@@ -419,12 +419,12 @@ fn managed_path_replaced_with_user_folder_is_preserved() {
     fs::write(target.join("SKILL.md/user.txt"), "user folder").unwrap();
     assert!(
         !manager(&profile)
-            .skill_remove_plan("global", None)
+            .skill_remove_plan("claude-code", "global", None)
             .unwrap()
             .can_remove
     );
     assert_eq!(
-        manager(&profile).skill_remove("global", None, true).status,
+        manager(&profile).skill_remove("claude-code", "global", None, true).status,
         "blocked"
     );
     assert_eq!(read(&target.join("SKILL.md/user.txt")), "user folder");
@@ -451,8 +451,8 @@ fn linked_references_never_modify_external_files() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    let plan = manager(&profile).skill_remove_plan("global", None).unwrap();
-    let outcome = manager(&profile).skill_remove("global", None, true);
+    let plan = manager(&profile).skill_remove_plan("claude-code", "global", None).unwrap();
+    let outcome = manager(&profile).skill_remove("claude-code", "global", None, true);
     // Remove our junction explicitly before the disposable profile cleanup.
     if fs::symlink_metadata(&link).is_ok() {
         fs::remove_dir(&link).unwrap();
@@ -470,10 +470,10 @@ fn missing_managed_file_can_be_repaired_after_confirmation() {
     let target = skill_dir(&profile.root);
     fs::remove_file(target.join("references/cli.md")).unwrap();
     assert_eq!(
-        manager(&profile).skill_update("global", None, false).status,
+        manager(&profile).skill_update("claude-code", "global", None, false).status,
         "blocked"
     );
-    let repaired = manager(&profile).skill_update("global", None, true);
+    let repaired = manager(&profile).skill_update("claude-code", "global", None, true);
     assert_eq!(repaired.status, "updated", "{}", repaired.reason);
     assert!(target.join("references/cli.md").is_file());
 }
@@ -490,7 +490,7 @@ fn partial_removal_keeps_ownership_for_retry() {
         .share_mode(1)
         .open(target.join("references/cli.md"))
         .unwrap();
-    let failed = manager(&profile).skill_remove("global", None, true);
+    let failed = manager(&profile).skill_remove("claude-code", "global", None, true);
     assert_eq!(failed.status, "failed");
     assert!(
         target.join(".multi-search-install.json").is_file(),
@@ -498,12 +498,12 @@ fn partial_removal_keeps_ownership_for_retry() {
     );
     drop(locked);
     assert_eq!(
-        manager(&profile).skill_remove("global", None, true).status,
+        manager(&profile).skill_remove("claude-code", "global", None, true).status,
         "removed"
     );
     assert_eq!(
         manager(&profile)
-            .skill_status("global", None)
+            .skill_status("claude-code", "global", None)
             .unwrap()
             .state,
         multi_search_desktop::InstallState::Absent
@@ -521,16 +521,16 @@ fn incomplete_ownership_marker_never_authorizes_delete_or_update() {
     fs::write(&marker_path, marker.to_string()).unwrap();
     assert!(
         !manager(&profile)
-            .skill_remove_plan("global", None)
+            .skill_remove_plan("claude-code", "global", None)
             .unwrap()
             .can_remove
     );
     assert_eq!(
-        manager(&profile).skill_remove("global", None, true).status,
+        manager(&profile).skill_remove("claude-code", "global", None, true).status,
         "blocked"
     );
     assert_eq!(
-        manager(&profile).skill_update("global", None, true).status,
+        manager(&profile).skill_update("claude-code", "global", None, true).status,
         "blocked"
     );
     assert!(target.join("SKILL.md").is_file());
@@ -540,9 +540,9 @@ fn incomplete_ownership_marker_never_authorizes_delete_or_update() {
 #[test]
 fn removal_reports_absent_state_without_deleting_anything() {
     let profile = common::Profile::new();
-    let plan = manager(&profile).skill_remove_plan("global", None).unwrap();
+    let plan = manager(&profile).skill_remove_plan("claude-code", "global", None).unwrap();
     assert_eq!(plan.status, "nothing_to_remove");
     assert!(!plan.can_remove);
-    let outcome = manager(&profile).skill_remove("global", None, true);
+    let outcome = manager(&profile).skill_remove("claude-code", "global", None, true);
     assert_eq!(outcome.status, "blocked");
 }

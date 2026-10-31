@@ -110,12 +110,13 @@ async fn cancel_test_search(
 #[tauri::command]
 async fn skill_plan(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    host: String,
     scope: String,
     project: Option<String>,
 ) -> Result<SkillPlan, String> {
     let manager = manager.inner().clone();
     offload_value(
-        move || manager.skill_plan(&scope, project.map(PathBuf::from)),
+        move || manager.skill_plan(&host, &scope, project.map(PathBuf::from)),
         "skill_plan_failed",
     )
     .await
@@ -123,12 +124,13 @@ async fn skill_plan(
 #[tauri::command]
 async fn skill_install(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    host: String,
     scope: String,
     project: Option<String>,
 ) -> Result<SkillInstall, String> {
     let manager = manager.inner().clone();
     offload_value(
-        move || manager.skill_install(&scope, project.map(PathBuf::from)),
+        move || manager.skill_install(&host, &scope, project.map(PathBuf::from)),
         "skill_install_failed",
     )
     .await
@@ -437,12 +439,13 @@ fn provider_list() -> Vec<crate::provider::ProviderInfo> {
 #[tauri::command]
 async fn skill_status(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    host: String,
     scope: String,
     project: Option<String>,
 ) -> Result<crate::SkillStatus, String> {
     let manager = manager.inner().clone();
     offload(
-        move || manager.skill_status(&scope, project.map(PathBuf::from)),
+        move || manager.skill_status(&host, &scope, project.map(PathBuf::from)),
         "skill_status_failed",
     )
     .await
@@ -450,13 +453,14 @@ async fn skill_status(
 #[tauri::command]
 async fn skill_update(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    host: String,
     scope: String,
     project: Option<String>,
     confirm_overwrite: bool,
 ) -> Result<crate::UpdateOutcome, String> {
     let manager = manager.inner().clone();
     offload_value(
-        move || manager.skill_update(&scope, project.map(PathBuf::from), confirm_overwrite),
+        move || manager.skill_update(&host, &scope, project.map(PathBuf::from), confirm_overwrite),
         "skill_update_failed",
     )
     .await
@@ -464,12 +468,13 @@ async fn skill_update(
 #[tauri::command]
 async fn skill_remove_plan(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    host: String,
     scope: String,
     project: Option<String>,
 ) -> Result<crate::RemovePlan, String> {
     let manager = manager.inner().clone();
     offload(
-        move || manager.skill_remove_plan(&scope, project.map(PathBuf::from)),
+        move || manager.skill_remove_plan(&host, &scope, project.map(PathBuf::from)),
         "skill_remove_plan_failed",
     )
     .await
@@ -477,13 +482,14 @@ async fn skill_remove_plan(
 #[tauri::command]
 async fn skill_remove(
     manager: tauri::State<'_, Arc<DesktopManager>>,
+    host: String,
     scope: String,
     project: Option<String>,
     confirmed: bool,
 ) -> Result<crate::RemoveOutcome, String> {
     let manager = manager.inner().clone();
     offload_value(
-        move || manager.skill_remove(&scope, project.map(PathBuf::from), confirmed),
+        move || manager.skill_remove(&host, &scope, project.map(PathBuf::from), confirmed),
         "skill_remove_failed",
     )
     .await
