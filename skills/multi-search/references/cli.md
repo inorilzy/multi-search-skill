@@ -84,9 +84,11 @@ double-quoted strings, so a URL can run a command.
 
 ## Search, select, fetch, verify
 
-In delegated mode, the search subagent runs the search commands and returns the
-handoff from [executor.md](executor.md). The main Agent reviews the retained
-original previews, makes the final selection, and fetches necessary bodies.
+In delegated mode, the explore subagent runs the search, fetch, and read
+commands and returns the handoff from [executor.md](executor.md): candidates
+plus verbatim excerpts with `start` / `end` positions. The main Agent judges
+the excerpts and uses `read` with `--offset` / `--limit` to spot-check a
+slice; it does not fetch full bodies itself.
 
 ```sh
 multi-search doctor --no-keys --format human
@@ -120,7 +122,7 @@ content cache, and site memory for clean test or debug runs.
 user supplies a tighter budget. Inspect `results`, `scrapes` matched by
 `source_id`, `provider_status`, and `errors`, then remove only clearly irrelevant
 candidates. Retain all relevant or uncertain candidates without a count quota,
-in original rank order, with original previews for the main Agent to review.
+in original rank order, as described in [executor.md](executor.md).
 Search previews can start at a matching page title or a paragraph matching the
 complete search snippet to skip leading navigation. Snippet matching requires
 at least 32 non-space characters and allows only whitespace differences.
@@ -187,6 +189,6 @@ Maintenance commands share the same Core state: `multi-search keys status` /
 Prefer these over the legacy Python adapter module, which only forwards to Core.
 
 Completion: the CLI runs, the search outcome is visible, and matching links are
-identified or the bodies needed for the answer were read (or failures recorded).
-Each claim about page contents cites inspected supporting material. Use the
-parent Skill's delegation, evidence and stopping rules.
+identified or the bodies needed for the answer were read by the executor (or
+failures recorded). Each claim about page contents cites an inspected excerpt.
+Use the parent Skill's delegation, evidence and stopping rules.
