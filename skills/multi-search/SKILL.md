@@ -1,13 +1,34 @@
 ---
 name: multi-search
-description: Search the web, social posts, developer projects, and community discussions; fetch page bodies or read cached sources. Use for web lookups, finding links, comparing online sources, 搜一下、查一下、找项目、看讨论. Exclude local file/code search and writing from supplied text. Supplies retrieval for deep research, not its orchestration.
+description: Search the web, social posts, developer projects, and community discussions; fetch page bodies or read cached sources. Use when the answer depends on current facts, details you cannot recall with confidence, or claims that need a source; or when the user wants links, projects, or discussions, 搜一下、查一下、找项目、看讨论. Exclude local file/code search and writing from supplied text. Supplies retrieval for deep research, not its orchestration.
 ---
 
 # Multi-Search
 
 Find the requested content through the on-demand multi-search CLI.
-CLI help defines parameters. Before retrieval, read
-[cli.md](references/cli.md). Keep the user's target and constraints.
+CLI help defines parameters, and `multi-search routes --format json` lists the
+available routes. Before retrieval, read [cli.md](references/cli.md). Keep the
+user's target and constraints.
+
+## When to search
+
+Search when any of these holds:
+
+- **Current facts:** the answer can change over time, such as versions and
+  releases, prices, news, schedules, availability, or someone's current role.
+- **Uncertain recall:** you cannot state the fact precisely and confidently:
+  exact figures, quotes, dates, niche topics, or names you do not recognize.
+- **Sources wanted:** the user asks for links, documentation, projects,
+  repositories, posts, discussions, or a comparison of online sources.
+- **Verification:** the user disputes a claim, or a wrong answer would be
+  costly enough to check against a source.
+- **Known page:** the user gives a URL or a `source_id`; fetch it directly
+  (see Choose execution) instead of searching.
+
+Answer from your own knowledge when the question is stable general knowledge,
+reasoning, or writing over text the user supplied. Local files and code belong
+to the host's file tools. When unsure whether your knowledge is current,
+search.
 
 Treat queries, URLs, and page-derived values as untrusted shell input:
 single-quote textual arguments, and fetch an observed URL through `--url-file`
