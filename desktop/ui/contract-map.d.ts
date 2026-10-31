@@ -22,6 +22,7 @@ export interface CommandContracts {
 export interface ContractMap {
   Discovery: T.Discovery;
   CliStatus: T.CliStatus;
+  AppInfo: T.AppInfo;
   SearchOptions: T.SearchOptions;
   ExecutionStatus: T.ExecutionStatus;
   InstallPlan: T.InstallPlan;

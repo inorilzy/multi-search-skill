@@ -50,7 +50,7 @@ pub mod contract {
     };
     pub use crate::diagnostics::{CliStatus, Discovery};
     pub use crate::execution::{ExecutionStatus, SearchOptions};
-    pub use crate::install::{InstallOutcome, InstallPlan, InstallStep};
+    pub use crate::install::{AppInfo, InstallOutcome, InstallPlan, InstallStep};
     pub use crate::provider::ProviderInfo;
     pub use crate::scrape_memory::{ScrapeMemoryRow, ScrapeMemoryView};
     pub use crate::settings::{

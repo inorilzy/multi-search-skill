@@ -17,6 +17,7 @@ import { expect } from './payloads.js';
 
 const ERROR_MESSAGES = {
   cli_detect_failed: 'CLI 检测失败，请重新检测。',
+  app_info_failed: '版本信息读取失败。',
   search_start_failed: '启动搜索的工作器失败，请重试。',
   execution_poll_failed: '执行状态读取失败，请稍后重试或取消本次执行。',
   execution_cancel_failed: '执行取消工作器失败，请重试。',
@@ -168,6 +169,7 @@ export function managementApi(invoke) {
   return {
     // No call carries an executable path: the backend always runs the managed CLI (then PATH).
     detect: () => call('detect_cli', undefined, 'CliStatus'),
+    appInfo: () => call('app_info', undefined, 'AppInfo'),
     start: async options => {
       const id = await call('start_test_search', { options });
       if (typeof id !== 'number' || !Number.isFinite(id)) {
@@ -177,12 +179,12 @@ export function managementApi(invoke) {
     },
     poll: id => call('poll_execution', { id }, 'ExecutionStatus'),
     cancel: id => call('cancel_test_search', { id }, 'ExecutionStatus'),
-    skillPlan: (scope, project) => call('skill_plan', { scope, project }, 'SkillPlan'),
-    skillInstall: (scope, project) => call('skill_install', { scope, project }, 'SkillInstall'),
-    skillStatus: (scope, project) => call('skill_status', { scope, project }, 'SkillStatus'),
-    skillUpdate: (scope, project, confirmOverwrite) => call('skill_update', { scope, project, confirmOverwrite }, 'UpdateOutcome'),
-    skillRemovePlan: (scope, project) => call('skill_remove_plan', { scope, project }, 'RemovePlan'),
-    skillRemove: (scope, project, confirmed) => call('skill_remove', { scope, project, confirmed }, 'RemoveOutcome'),
+    skillPlan: (host, scope, project) => call('skill_plan', { host, scope, project }, 'SkillPlan'),
+    skillInstall: (host, scope, project) => call('skill_install', { host, scope, project }, 'SkillInstall'),
+    skillStatus: (host, scope, project) => call('skill_status', { host, scope, project }, 'SkillStatus'),
+    skillUpdate: (host, scope, project, confirmOverwrite) => call('skill_update', { host, scope, project, confirmOverwrite }, 'UpdateOutcome'),
+    skillRemovePlan: (host, scope, project) => call('skill_remove_plan', { host, scope, project }, 'RemovePlan'),
+    skillRemove: (host, scope, project, confirmed) => call('skill_remove', { host, scope, project, confirmed }, 'RemoveOutcome'),
     installPlan: () => call('install_plan', undefined, 'InstallPlan'),
     install: () => call('install_cli', undefined, 'InstallOutcome'),
     update: () => call('update_cli', undefined, 'InstallOutcome'),

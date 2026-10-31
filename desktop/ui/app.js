@@ -118,12 +118,27 @@ export function createNavigation(root, nav, invoke, pageList = pages) {
 /// Alias kept for callers written against the accessibility branch's name.
 export const createApp = createNavigation;
 
+/// Sidebar footer version line, e.g. "v0.1.0 · CLI 0.4.1.dev3". Best effort: a failed read
+/// leaves the line empty instead of blocking navigation.
+export async function showVersion(target, api) {
+  if (!target) return;
+  try {
+    const info = await api.appInfo();
+    const cli = info.bundled_cli_version ? ` · CLI ${info.bundled_cli_version}` : '';
+    target.textContent = `v${info.app_version}${cli}`;
+    target.title = `桌面应用 ${info.app_version}${info.bundled_cli_version ? `，内置 CLI ${info.bundled_cli_version}` : '，未内置 CLI'}`;
+  } catch {
+    target.textContent = '';
+  }
+}
+
 export async function start(root = document.querySelector('#page'), nav = document.querySelector('[data-navigation]')) {
   // withGlobalTauri is off: no global Tauri API object is injected. Only the IPC bridge Tauri always
   // injects is used, and the capability file limits it to this app's own typed commands.
   const bridge = /** @type {any} */ (window).__TAURI_INTERNALS__;
   const invoke = typeof bridge?.invoke === 'function' ? (cmd, args) => bridge.invoke(cmd, args) : null;
   const navigation = createNavigation(root, nav, invoke);
+  if (invoke) void showVersion(document.querySelector('[data-app-version]'), managementApi(invoke));
   await navigation.select(pages[0], { moveFocus: false });
   return navigation;
 }

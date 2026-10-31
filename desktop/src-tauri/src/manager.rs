@@ -7,7 +7,7 @@
 use crate::credential_commands::{CredentialManager, SourceEntry, TestOutcome};
 use crate::diagnostics::{CliDiscovery, CliStatus};
 use crate::execution::{Execution, ExecutionManager, ExecutionStatus, SearchOptions};
-use crate::install::{InstallManager, InstallOutcome, InstallPlan};
+use crate::install::{AppInfo, InstallManager, InstallOutcome, InstallPlan};
 use crate::skill::{SkillInstall, SkillManager, SkillPlan};
 use crate::skill_manage::{
     RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome,
@@ -171,6 +171,12 @@ impl DesktopManager {
         self.install_view().uninstall()
     }
 
+    /// App and bundled-CLI versions for the sidebar footer. Read-only; takes no mutation guard.
+    #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
+    pub(crate) fn app_info_from(&self, bundled: Option<&std::path::Path>) -> AppInfo {
+        crate::install::app_info(&self.environment, bundled)
+    }
+
     #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
     pub(crate) fn install_plan_from(&self, bundled: Option<&std::path::Path>) -> InstallPlan {
         self.install_view().install_plan_from(bundled)
@@ -192,19 +198,20 @@ impl DesktopManager {
 
     // ---- skill --------------------------------------------------------
 
-    pub fn skill_plan(&self, scope: &str, project: Option<PathBuf>) -> SkillPlan {
-        self.skills_view().skill_plan(scope, project)
+    pub fn skill_plan(&self, host: &str, scope: &str, project: Option<PathBuf>) -> SkillPlan {
+        self.skills_view().skill_plan(host, scope, project)
     }
 
-    pub fn skill_install(&self, scope: &str, project: Option<PathBuf>) -> SkillInstall {
+    pub fn skill_install(&self, host: &str, scope: &str, project: Option<PathBuf>) -> SkillInstall {
         let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return SkillInstall {
             status: "blocked".into(), target: None, verified: false, files: vec![], reason,
         }};
-        self.skills_view().skill_install(scope, project)
+        self.skills_view().skill_install(host, scope, project)
     }
 
     pub fn skill_update(
         &self,
+        host: &str,
         scope: &str,
         project: Option<PathBuf>,
         confirm_overwrite: bool,
@@ -212,19 +219,21 @@ impl DesktopManager {
         let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return UpdateOutcome {
             status: "blocked".into(), verified: false, backup: None, reason,
         }};
-        self.skills_view().skill_update(scope, project, confirm_overwrite)
+        self.skills_view().skill_update(host, scope, project, confirm_overwrite)
     }
 
     pub fn skill_remove_plan(
         &self,
+        host: &str,
         scope: &str,
         project: Option<PathBuf>,
     ) -> Result<RemovePlan, String> {
-        self.skills_view().skill_remove_plan(scope, project)
+        self.skills_view().skill_remove_plan(host, scope, project)
     }
 
     pub fn skill_remove(
         &self,
+        host: &str,
         scope: &str,
         project: Option<PathBuf>,
         confirmed: bool,
@@ -232,15 +241,16 @@ impl DesktopManager {
         let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return RemoveOutcome {
             status: "blocked".into(), deleted: vec![], kept: vec![], reason,
         }};
-        self.skills_view().skill_remove(scope, project, confirmed)
+        self.skills_view().skill_remove(host, scope, project, confirmed)
     }
 
     pub fn skill_status(
         &self,
+        host: &str,
         scope: &str,
         project: Option<PathBuf>,
     ) -> Result<SkillStatus, String> {
-        self.skills_view().skill_status(scope, project)
+        self.skills_view().skill_status(host, scope, project)
     }
 
     // ---- credentials --------------------------------------------------
@@ -300,9 +310,9 @@ mod tests {
         assert_eq!(manager.install().status, "blocked");
         assert_eq!(manager.update().status, "blocked");
         assert_eq!(manager.uninstall().status, "blocked");
-        assert_eq!(manager.skill_install("global", None).status, "blocked");
-        assert_eq!(manager.skill_update("global", None, true).status, "blocked");
-        assert_eq!(manager.skill_remove("global", None, true).status, "blocked");
+        assert_eq!(manager.skill_install("claude-code", "global", None).status, "blocked");
+        assert_eq!(manager.skill_update("claude-code", "global", None, true).status, "blocked");
+        assert_eq!(manager.skill_remove("claude-code", "global", None, true).status, "blocked");
         assert!(match manager.user_path_change(true, true) {
             Err(reason) => reason.contains("Another management operation"),
             Ok(_) => false,

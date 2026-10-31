@@ -1,6 +1,6 @@
-//! Installs the CLI-only Skill for Claude Code. The CLI stays the only search implementation.
+//! Installs the CLI-only Skill for Claude Code or the cross-tool `.agents/skills` location. The CLI stays the only search implementation.
 use crate::skill_common::{
-    self, home_directory, skill_version, target_directory, Requirements, FILES, MARKER, SKILL_NAME,
+    self, home_directory, reload_hint, skill_version, target_directory, Requirements, FILES, HOSTS, MARKER, SKILL_NAME,
 };
 use crate::diagnostics::CliDiscovery;
 use crate::{process, RuntimeEnvironment};
@@ -29,7 +29,8 @@ fn managed_targets(environment: &RuntimeEnvironment) -> Result<Vec<PathBuf>, Str
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(_) => return Err("unverified: unreadable managed Skill registry".into()),
     };
-    if targets.iter().any(|p| !p.is_absolute() || !p.ends_with(".claude/skills/multi-search")) {
+    let known = |p: &PathBuf| HOSTS.iter().any(|(_, folder)| p.ends_with(Path::new(folder).join("skills").join(SKILL_NAME)));
+    if targets.iter().any(|p| !p.is_absolute() || !known(p)) {
         return Err("unverified: invalid managed Skill target".into());
     }
     Ok(targets)
@@ -49,7 +50,7 @@ pub(crate) fn record_target(environment: &RuntimeEnvironment, target: &Path, pre
 fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requirements, String> {
     let mut targets = managed_targets(environment)?;
     // Legacy global installs predate the registry; inspect this one known location, never scan projects.
-    let global = target_directory(environment, "global", None)?;
+    let global = target_directory(environment, "claude-code", "global", None)?;
     if fs::symlink_metadata(global.join(MARKER)).is_ok() && !targets.contains(&global) { targets.push(global); }
     let mut required = skill_common::requirements();
     for target in targets {
@@ -106,9 +107,9 @@ pub struct SkillInstall {
     pub files: Vec<String>,
 }
 
-fn blocked_plan(scope: &str, status: &str, reason: String, target: Option<String>) -> SkillPlan {
+fn blocked_plan(host: &str, scope: &str, status: &str, reason: String, target: Option<String>) -> SkillPlan {
     SkillPlan {
-        host: "claude-code".into(),
+        host: host.into(),
         scope: scope.into(),
         target,
         status: status.into(),
@@ -126,48 +127,49 @@ pub(crate) struct SkillManager<'a> {
 }
 
 impl SkillManager<'_> {
-    pub fn skill_plan(&self, scope: &str, project: Option<PathBuf>) -> SkillPlan {
-        let target = match target_directory(&self.environment, scope, project.as_deref()) {
+    pub fn skill_plan(&self, host: &str, scope: &str, project: Option<PathBuf>) -> SkillPlan {
+        let target = match target_directory(&self.environment, host, scope, project.as_deref()) {
             Ok(target) => target,
-            Err(reason) => return blocked_plan(scope, "invalid_scope", reason, None),
+            Err(reason) => return blocked_plan(host, scope, "invalid_scope", reason, None),
         };
         let target_text = target.to_string_lossy().into_owned();
         if !skill_common::safe_managed_paths(&target) {
-            return blocked_plan(scope, "invalid_scope", "Unsafe linked managed path".into(), Some(target_text));
+            return blocked_plan(host, scope, "invalid_scope", "目标路径含符号链接或非目录项，已拒绝".into(), Some(target_text));
         }
         // symlink_metadata also sees dangling links, which a rename would not replace either.
         if fs::symlink_metadata(&target).is_ok() {
             return blocked_plan(
+                host,
                 scope,
                 "exists",
-                "A multi-search skill already exists here; this release does not overwrite it.".into(),
+                "这里已有 multi-search Skill；安装不会覆盖，请在下方“已安装 Skill”中检查或更新。".into(),
                 Some(target_text),
             );
         }
         let cli = self.discovery.detect().user;
         if cli.status != "ready" {
             let reason = format!(
-                "The CLI is not discoverable from the user environment ({}). Install the CLI first.",
+                "在用户 PATH 中找不到 multi-search CLI（{}）。请先在“安装 CLI”页安装并加入 PATH，然后重启本应用。",
                 cli.status
             );
-            return blocked_plan(scope, "cli_missing", reason, Some(target_text));
+            return blocked_plan(host, scope, "cli_missing", reason, Some(target_text));
         }
         if let Err(reason) = check_compatibility(self.environment, cli.path.as_deref().unwrap_or_default()) {
-            return blocked_plan(scope, "cli_incompatible", reason, Some(target_text));
+            return blocked_plan(host, scope, "cli_incompatible", reason, Some(target_text));
         }
         SkillPlan {
-            host: "claude-code".into(),
+            host: host.into(),
             scope: scope.into(),
             target: Some(target_text),
             status: "ready".into(),
-            reason: "Ready to install into the target directory shown above.".into(),
+            reason: "可以安装到上面的目标目录。".into(),
             files: file_names(),
             can_install: true,
         }
     }
 
-    pub fn skill_install(&self, scope: &str, project: Option<PathBuf>) -> SkillInstall {
-        let plan = self.skill_plan(scope, project);
+    pub fn skill_install(&self, host: &str, scope: &str, project: Option<PathBuf>) -> SkillInstall {
+        let plan = self.skill_plan(host, scope, project);
         let blocked = |reason: String| SkillInstall {
             status: "blocked".into(),
             target: plan.target.clone(),
@@ -187,11 +189,11 @@ impl SkillManager<'_> {
             files: file_names(),
         };
         if !skill_common::safe_managed_paths(&target) {
-            return blocked("Unsafe linked managed path".into());
+            return blocked("目标路径含符号链接或非目录项，已拒绝".into());
         }
         // Staging sits beside skills/, not inside it, so a half-written folder never appears as a skill.
         let Some(base) = target.parent().and_then(Path::parent) else {
-            return failed("Invalid target directory".into());
+            return failed("目标目录无效".into());
         };
         let staging = base.join(format!(
             ".multi-search-staging-{}-{}",
@@ -199,7 +201,7 @@ impl SkillManager<'_> {
             STAGING_ID.fetch_add(1, Ordering::Relaxed)
         ));
         if let Err(error) = fs::create_dir_all(&staging) {
-            return failed(format!("Cannot prepare the install folder: {error}"));
+            return failed(format!("无法准备安装目录：{error}"));
         }
         if let Err(reason) = write_directory(&staging) {
             let _ = fs::remove_dir_all(&staging);
@@ -207,32 +209,32 @@ impl SkillManager<'_> {
         }
         let Some(skills_dir) = target.parent() else {
             let _ = fs::remove_dir_all(&staging);
-            return failed("Invalid target directory".into());
+            return failed("目标目录无效".into());
         };
         if let Err(error) = fs::create_dir_all(skills_dir) {
             let _ = fs::remove_dir_all(&staging);
-            return failed(format!("Cannot create the skills folder: {error}"));
+            return failed(format!("无法创建 skills 目录：{error}"));
         }
         if fs::symlink_metadata(&target).is_ok() {
             let _ = fs::remove_dir_all(&staging);
-            return blocked("A multi-search skill appeared at the target; nothing was changed.".into());
+            return blocked("目标位置刚出现了 multi-search Skill，未做任何修改。".into());
         }
         if let Err(error) = fs::rename(&staging, &target) {
             let _ = fs::remove_dir_all(&staging);
-            return failed(format!("Cannot place the skill at the target: {error}"));
+            return failed(format!("无法把 Skill 放到目标位置：{error}"));
         }
         match verify_directory(&target).and_then(|()| record_target(&self.environment, &target, true)) {
             Ok(()) => SkillInstall {
                 status: "installed".into(),
                 target: plan.target.clone(),
                 verified: true,
-                reason: "Installed and verified. Start a new Claude Code session to load it.".into(),
+                reason: format!("已安装并校验。{}。", reload_hint(host)),
                 files: file_names(),
             },
             Err(reason) => {
                 // We created this folder with the rename above, so removing it leaves no user content behind.
                 let _ = fs::remove_dir_all(&target);
-                failed(format!("Installed files failed verification and were removed: {reason}"))
+                failed(format!("安装后的文件未通过校验，已删除：{reason}"))
             }
         }
     }
@@ -269,14 +271,14 @@ fn check_requirements(
                 environment,
                 Duration::from_secs(5),
             )
-            .map_err(|_| "The CLI help could not be read".to_string())?;
+            .map_err(|_| "无法读取 CLI 帮助".to_string())?;
             if output.timed_out || output.code != Some(0) {
-                return Err(format!("The CLI `{subcommand} --help` failed; update the CLI."));
+                return Err(format!("CLI `{subcommand} --help` 运行失败，请更新 CLI。"));
             }
             let help_tokens: Vec<_> = output.stdout.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')).collect();
             if let Some(flag) = flags.iter().find(|flag| !help_tokens.contains(&flag.as_str())) {
                 return Err(format!(
-                    "The installed CLI does not support `{subcommand} {flag}`; update the CLI to match this Skill."
+                    "已安装的 CLI 不支持 `{subcommand} {flag}`，请更新 CLI 以匹配本 Skill。"
                 ));
             }
         }

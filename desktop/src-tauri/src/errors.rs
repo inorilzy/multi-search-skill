@@ -34,6 +34,7 @@ impl From<CommandError> for String {
 pub fn backend(code: &str) -> CommandError {
     let message = match code {
         "cli_detect_failed" => "CLI 检测工作器失败",
+        "app_info_failed" => "版本信息读取失败",
         "search_start_failed" => "搜索启动工作器失败",
         "execution_poll_failed" => "执行状态读取工作器失败",
         "execution_cancel_failed" => "执行取消工作器失败",
@@ -109,7 +110,7 @@ mod tests {
     #[test]
     fn every_worker_code_has_a_chinese_message() {
         for code in [
-            "cli_detect_failed", "search_start_failed", "execution_poll_failed",
+            "cli_detect_failed", "app_info_failed", "search_start_failed", "execution_poll_failed",
             "execution_cancel_failed", "skill_plan_failed", "skill_install_failed",
             "install_plan_failed", "install_failed", "update_failed", "uninstall_failed",
             "user_path_check_failed", "user_path_change_failed", "credential_status_failed",

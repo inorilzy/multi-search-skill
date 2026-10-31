@@ -43,6 +43,7 @@ const APP_COMMANDS: &[&str] = &[
     "cookie_import",
     "cookie_delete",
     "detect_cli",
+    "app_info",
     "start_test_search",
     "poll_execution",
     "cancel_test_search",

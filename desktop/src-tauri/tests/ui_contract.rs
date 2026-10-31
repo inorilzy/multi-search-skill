@@ -51,6 +51,7 @@ macro_rules! for_each_contract_type {
             contract::CookieStatus,
             contract::Discovery,
             contract::CliStatus,
+            contract::AppInfo,
             contract::SearchOptions,
             contract::ExecutionStatus,
             contract::InstallPlan,

@@ -126,30 +126,54 @@ pub(crate) fn home_directory(environment: &RuntimeEnvironment) -> Option<PathBuf
         .filter(|p| p.is_absolute())
 }
 
-/// Resolves the skill directory; the parent `.claude` directory is the only
+/// Supported Skill hosts and the hidden folder each one reads skills from.
+/// `claude-code` reads `.claude/skills`; `agents` is the cross-tool Agent Skills
+/// location (`.agents/skills`) read by Codex, Gemini CLI, OpenCode and others.
+pub(crate) const HOSTS: [(&str, &str); 2] = [("claude-code", ".claude"), ("agents", ".agents")];
+
+/// The host folder (`.claude` / `.agents`) for a host id, or an error for anything else.
+pub(crate) fn host_folder(host: &str) -> Result<&'static str, String> {
+    HOSTS
+        .iter()
+        .find(|(id, _)| *id == host)
+        .map(|(_, folder)| *folder)
+        .ok_or_else(|| "安装目标只能是 Claude Code 或通用 Agents 目录".to_string())
+}
+
+/// What a user should do after a write so the host loads the new Skill.
+pub(crate) fn reload_hint(host: &str) -> &'static str {
+    match host {
+        "agents" => "请新开 Codex、Gemini CLI、OpenCode 等 Agent 会话以加载",
+        _ => "请新开 Claude Code 会话以加载",
+    }
+}
+
+/// Resolves the skill directory; the parent host folder (`.claude` / `.agents`) is the only
 /// one this module creates.
 pub(crate) fn target_directory(
     environment: &RuntimeEnvironment,
+    host: &str,
     scope: &str,
     project: Option<&Path>,
 ) -> Result<PathBuf, String> {
+    let folder = host_folder(host)?;
     let base = match scope {
         "global" => home_directory(environment)
-            .ok_or_else(|| "The user profile directory is not available".to_string())?,
+            .ok_or_else(|| "无法确定用户主目录".to_string())?,
         "project" => {
-            let project = project.ok_or_else(|| "Select the project directory".to_string())?;
+            let project = project.ok_or_else(|| "请选择项目目录".to_string())?;
             if !project.is_absolute() || !project.is_dir() {
-                return Err("Select an existing absolute project directory".into());
+                return Err("请选择一个已存在的绝对路径项目目录".into());
             }
             project.to_path_buf()
         }
-        _ => return Err("Scope must be global or project".into()),
+        _ => return Err("作用范围只能是全局或项目".into()),
     };
-    Ok(base.join(".claude").join("skills").join(SKILL_NAME))
+    Ok(base.join(folder).join("skills").join(SKILL_NAME))
 }
 
-/// Ancestors of a Skill target that this tool creates and owns: `<target>`, `skills/`, `.claude/`.
-/// Anything above `.claude/` (the user/project root and its parents) is machine layout.
+/// Ancestors of a Skill target that this tool creates and owns: `<target>`, `skills/`, `.claude/` or `.agents/`.
+/// Anything above that host folder (the user/project root and its parents) is machine layout.
 const MANAGED_ANCESTOR_DEPTH: usize = 3;
 
 /// Every ancestor this tool owns matters: references/ or the target itself may be a junction

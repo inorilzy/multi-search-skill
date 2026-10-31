@@ -82,6 +82,34 @@ pub struct InstallOutcome {
     pub reason: String,
 }
 
+/// Versions shown in the sidebar footer so a screenshot always says which build it came from.
+#[derive(Clone, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct AppInfo {
+    /// The desktop app's own version (Cargo package version, same as `tauri.conf.json`).
+    pub app_version: String,
+    /// Version of the CLI bundle shipped inside this app, when its manifest passes the trust anchor.
+    pub bundled_cli_version: Option<String>,
+}
+
+/// Reads the bundled CLI manifest's version. Only the anchor-checked manifest bytes are parsed;
+/// per-file verification stays with install/update, so this is cheap at startup.
+pub(crate) fn app_info(environment: &RuntimeEnvironment, bundled: Option<&Path>) -> AppInfo {
+    let expected = anchor(environment);
+    let bundled_cli_version = layout(environment, bundled)
+        .ok()
+        .and_then(|lay| lay.source)
+        .filter(|_| !expected.is_empty())
+        .and_then(|source| fs::read(source.join(MANIFEST)).ok())
+        .and_then(|raw| manifest::parse_manifest(&raw, &expected).ok())
+        .map(|parsed| parsed.version);
+    AppInfo {
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        bundled_cli_version,
+    }
+}
+
 struct Layout {
     root: PathBuf,
     source: Option<PathBuf>,
@@ -291,9 +319,13 @@ fn row(status: &str, root: &Path, version: Option<String>, reason: &str) -> Inst
     }
 }
 
-/// Skill directory for the current user, the one `skill_common` installs into; `None` without a profile.
+/// The first global Skill directory (Claude Code or `.agents`) that still exists; `None` without one.
 fn kept_skill_directory(environment: &RuntimeEnvironment) -> Option<PathBuf> {
-    crate::skill_common::target_directory(environment, "global", None).ok()
+    crate::skill_common::HOSTS.iter().find_map(|(host, _)| {
+        crate::skill_common::target_directory(environment, host, "global", None)
+            .ok()
+            .filter(|dir| fs::symlink_metadata(dir).is_ok())
+    })
 }
 
 fn outcome(
