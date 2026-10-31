@@ -22,7 +22,6 @@ from ..support.requests import FetchSourceRequest, ScrapeRequest
 from ..support.url_security import validate_public_http_url
 from ..support.validation import request_int
 from .scrape import scrape_url_smart, uses_delegated_backends, validate_delegated_url
-from .scrapers.reddit import is_reddit_url
 from .scrapers.twitter import is_twitter_url, validate_twitter_url
 from .service import configured_scrape_backends, run_scrape_raw
 
@@ -73,15 +72,13 @@ def run_fetch_source(
         validate_twitter_url(url)
     else:
         chain = ()
-        if (scraper is None or scraper is scrape_url_smart) and not prefetched_body and not is_reddit_url(url):
+        if (scraper is None or scraper is scrape_url_smart) and not prefetched_body:
             if resolved_config is None and not request.backends:
                 resolved_config = runtime.load_config_safe(request.config_path)
             chain = request.backends or configured_scrape_backends(resolved_config)
         if uses_delegated_backends(url, chain, scraper=scraper):
             # The provider resolves its target on its own network.
             url = validate_delegated_url(url, deadline=deadline)
-            if is_reddit_url(url):  # Normalization can reveal a local platform.
-                validate_public_http_url(url, deadline=deadline)
         else:
             # Custom callbacks, local platforms and unknown chains: format checks only.
             validate_public_http_url(url, deadline=deadline)

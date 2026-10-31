@@ -47,7 +47,7 @@ class ReadmeDesktopTests(unittest.TestCase):
         self.assertEqual(len(pages), 7, "pages.js must define the seven management pages")
         self.assertEqual(
             [(page["number"], page["label"]) for page in pages],
-            [("01", "概览与测试"), ("02", "安装 CLI"), ("03", "Claude Code Skill"),
+            [("01", "概览与测试"), ("02", "安装 CLI"), ("03", "Agent Skill"),
              ("04", "搜索源与凭据"), ("05", "搜索设置"), ("06", "抓取设置"),
              ("07", "Cookie 导入")],
         )
@@ -64,7 +64,7 @@ class ReadmeDesktopTests(unittest.TestCase):
         readme = README.read_text(encoding="utf-8")
         for capability in (
             "安装 CLI",
-            "Claude Code Skill",
+            "Agent Skill",
             "搜索源与凭据",
             "搜索设置",
             "Cookie 导入",

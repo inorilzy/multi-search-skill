@@ -26,11 +26,9 @@ class SiteKeyTests(unittest.TestCase):
         self.assertEqual(site_key("https://api.zhihu.com/question/1"), "zhihu.com")
         self.assertEqual(site_key("https://evilzhihu.com/question/1"), "evilzhihu.com")
 
-    def test_existing_www_reddit_and_github_grouping_remains_unchanged(self):
+    def test_existing_www_and_github_grouping_remains_unchanged(self):
         self.assertEqual(site_key("https://www.example.com/article"), "example.com")
-        self.assertEqual(site_key("https://www.reddit.com/r/python"), "reddit.com")
-        self.assertEqual(site_key("https://old.reddit.com/r/python"), "old.reddit.com")
-        self.assertEqual(site_key("https://api.reddit.com/r/python"), "api.reddit.com")
+        self.assertEqual(site_key("https://old.example.com/r/python"), "old.example.com")
         self.assertEqual(site_key("https://github.com/owner/repo"), "github.com/repo")
         self.assertEqual(site_key("https://github.com/owner/repo/issues/1"), "github.com/issues")
         self.assertEqual(site_key("https://github.com/owner/repo/pull/1"), "github.com/pull")

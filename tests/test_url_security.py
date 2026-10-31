@@ -105,7 +105,7 @@ class UrlSecurityTests(unittest.TestCase):
     def test_scrape_url_preflight_never_resolves_the_host(self):
         with self._no_dns():
             for url in (
-                "https://www.reddit.com/r/python/comments/abc123/example/",
+                "https://forum.example/r/python/comments/abc123/example/",
                 "https://evidence.example/article",
             ):
                 with self.subTest(url=url):

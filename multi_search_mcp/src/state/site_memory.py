@@ -58,8 +58,6 @@ def site_key(url: str) -> str:
         if len(path_parts) >= 3 and path_parts[2] in {"issues", "pull", "discussions"}:
             return f"github.com/{path_parts[2]}"
         return "github.com/repo"
-    if host in {"reddit.com", "old.reddit.com"} or host.endswith(".reddit.com"):
-        return host
     if host == "zhihu.com" or host.endswith(".zhihu.com"):
         return "zhihu.com"
     return host or "unknown"

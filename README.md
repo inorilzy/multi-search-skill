@@ -55,10 +55,10 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys stat
 |---|---|
 | 01 概览与测试 | 检测应用继承的 PATH、已登记的用户 PATH（Windows 为注册表，macOS 为本工具追加到登录 Shell 配置的受管区块）中的 CLI（Windows `multi-search.exe`／macOS `multi-search`），显示版本、实际路径和来源；运行或取消一次测试搜索，结果以结构化列表展示，来源错误单列，原始 JSON 折叠保留。新终端可发现不意味着已打开的终端或 Agent 已刷新环境。 |
 | 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI：Windows 到 `%LOCALAPPDATA%\MultiSearch\cli`，macOS 到 `~/Library/Application Support/MultiSearch/cli`；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本。加入用户 PATH 需单独确认：Windows 写当前用户 PATH，macOS 只在登录 Shell 配置末尾追加带标记的区块，新开终端才生效，已运行的宿主需重启。 |
-| 03 Claude Code Skill | 以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
+| 03 Agent Skill | 安装到通用 Agents 目录（`.agents/skills`，Codex、Gemini CLI、OpenCode 等读取）或 Claude Code（`.claude/skills`），以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
 | 04 搜索源与凭据 | 列出 12 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），所有平台都可逐行新增、删除、显式显示，并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。默认只显示掩码，测试可能消耗额度。 |
 | 05 搜索设置 | 读写默认路由、全局超时（1–60 秒）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另有「模型重排」开关（默认关闭）：开启后填写 System One 的 Base URL 与模型名（必填）以及候选数 / 批量 / 超时高级项，写入配置块的 `ranking` 键；非法的已存 `ranking` 块回退默认值并提示。API 密钥单独保存到 `~/.multi-search/keys.json` 的 `systemone` 条目（Unix 上为 0600），不写进设置，也从不回显；环境变量 `SYSTEMONE_API_KEY` 优先。另可填写 Twitter Cookie 文件路径，并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
-| 06 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Reddit / Twitter 按域名固定使用专用抓取器，不受抓取链影响。 |
+| 06 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。 |
 | 07 Cookie 导入 | 用户显式确认后，把选定的 Twitter/X Cookie JSON 校验并复制到 `~/.multi-search/twitter-cookies.json`（0600），同时设置 `twitter_cookies_path`；删除只移除这份副本。原文件不修改也不删除，本页不显示 Cookie 内容。 |
 
 受管 CLI 与 Skill 都以“先校验、再写入”为前提：bundle 的信任锚是 `scripts/build_cli_bundle.py` 生成、由 `desktop/src-tauri/build.rs` 编译进二进制的 manifest SHA-256；Skill 以 `skills/multi-search/` 为唯一权威源，受管版本由打包内容哈希派生。桌面端只运行受管目录（验证通过时优先于 PATH 中的同名文件）或 PATH 中发现的 CLI，前端不能指定可执行路径；子进程只拿到非敏感的基础环境变量和本次所需的 key。取消/关闭只结束本次 Windows Job Object 归属的执行和子进程，独立终端 CLI 不受影响。
@@ -130,9 +130,7 @@ X 搜索只取得候选列表，返回 URL、标题、正文摘要和互动数�
 
 `.full_text` 保留 X 响应已经提供的长推文文本，不代表整串对话或全部评论。评论达到上限、仍有未加载评论或分页失败时，Markdown 会明确标注；`truncated` 仍表示已取得文本的输出裁剪，`full_content=True` 读取全部已取得文本。首次详情请求失败会作为抓取错误返回，并保留搜索候选。
 
-Reddit 帖子抓取使用专用适配器，读取 Reddit 公开的帖子 JSON（`https://www.reddit.com/comments/{id}.json`），不申请 Token、不带 Cookie、不冒充官方客户端，以 `multi-search/1.0` 标识自身。`fetch_source`、`scrape_url` 和搜索后的正文抓取遇到 `reddit.com`（含子域）或 `redd.it` 时自动使用它，返回 `via`/`backend=reddit`；这些 URL 不进入通用后端链，即使抓取计划传入了通用 backends。其他域名沿用原有规则，Reddit 没有重新加入搜索源。
-
-支持帖子/评论永久链接和 `redd.it/{post_id}`，正文与已加载评论输出为 Markdown，评论最多 100 条、8 层，并标注未展开部分。社区列表、wiki 和 `/s/` 分享跳转链接目前会明确报不支持。无需 Reddit 账号、Cookie、API key 或 Token。网络与其他 provider 走同一传输层：代理取自标准 `HTTP(S)_PROXY`/`ALL_PROXY`/`NO_PROXY`，不再读取非标准的 `PROXY`，重定向同样做目标校验。HTTP 拦截、限流或认证错误直接返回错误，不切换到通用 scraper。
+Reddit 没有专用抓取器：Reddit 要求所有 API 访问使用 OAuth 令牌，未认证的公开 JSON 会被拦截，原专用适配器已删除。Reddit 链接和其他网页一样走通用抓取链，结果取决于各后端能否取到页面。
 
 ## Agent 安装和使用
 
@@ -307,7 +305,7 @@ flowchart LR
 
 - 搜索阶段统一获取 RRF 最终前 15 条的正文；有效候选不足 15 条时全部获取。已有可用正文缓存时直接复用。
 - `scrape_top` / `scrape_per_source` 等已失效键已从请求 DTO 移除；示例配置只保留生效键。旧配置文件中的这些键会被忽略，并通过弃用警告（`FutureWarning`）提示。
-- 通用网页抓取按**有序抓取链**依次尝试：设置顶层 `scrape_backends` 数组（`jina`、`exa`、`tavily`、`firecrawl` 的有序子集，重复项只保留首次）决定 fallback 顺序，省略或 `null` 时使用默认 `["jina", "exa", "tavily", "firecrawl"]`，空数组或未知名称是配置错误。前一个失败才尝试下一个，最后一个也失败时返回错误。`fetch --backend` 只覆盖单次调用，不写回设置。Reddit / Twitter 按域名固定使用专用抓取器，不进入抓取链。
+- 通用网页抓取按**有序抓取链**依次尝试：设置顶层 `scrape_backends` 数组（`jina`、`exa`、`tavily`、`firecrawl` 的有序子集，重复项只保留首次）决定 fallback 顺序，省略或 `null` 时使用默认 `["jina", "exa", "tavily", "firecrawl"]`，空数组或未知名称是配置错误。前一个失败才尝试下一个，最后一个也失败时返回错误。`fetch --backend` 只覆盖单次调用，不写回设置。Twitter/X 按域名固定使用专用抓取器，不进入抓取链。
 - **站点抓取记忆**在抓取链之上调整单个站点的顺序：手动固定（`site set-preference`）的后端排到该站点最前，`blocked` / `timeout` 失败的后端进入 1 小时冷却并靠后；成功/失败计数只作统计，不按历史成功率自动重排。`site reset [site]` 按站点或全部清除。
 - 默认链中：Jina 匿名优先；Exa / Tavily 需要 key，缺 key 时运行时跳过；Firecrawl `/v2/scrape` 无 key 也会作为最后 fallback，但匿名额度是 IP 级免费日额度，不参与批量抓取 primary 轮换。抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
 - Jina、Parallel、Exa、Tavily、Firecrawl 等带 key 的 provider/backend 走 SQLite key state：invalid 失败累加 strikes，无既存强状态时前两次进入 `transient_invalid`（15 分钟冷却），第三次升级为 `invalid`。invalid / rate_limit 失败保留已有 invalid、quota_exhausted、disabled；quota_exhausted 失败保留已有 invalid、disabled。rate_limit / quota_exhausted 清零 strikes；timeout/network/未分类失败只记录失败，不改状态、期限或 strikes；target 不写健康结果。success 受 `started_at` 因果门控：迟到成功不清除请求开始后新写入的状态与 strikes。`keys reset` 重置运行态但不解除 `manually_disabled`；当前没有专用的解除手动禁用命令。冷却默认 15 分钟，quota 恢复期默认 24 小时，期限到期只允许重试，不自动改写 status。从未使用过的 key 优先，其次按最久未用（LRU）；`reserve()` 在写事务内复核健康、选取候选并更新使用计数，不是独占租约。精确状态转换见 [术语表](docs/glossary.md#5-key-与状态)。
@@ -323,7 +321,7 @@ flowchart LR
 - `published_at`、`body_available`、`content_ref`、`untrusted_content`
 - 抓取成功时：`body_available`、`body_truncated`、`body_backend`；失败时：`body_error`。正文只在同一 `source_id` 的 `scrapes[].markdown` 中出现一次。
 
-响应同时包含 `response_id`、`provider_status`、`scrapes`、`errors`、`diagnostics`，以及排序元数据 `mode_requested` / `mode_used` / `fallback_reason`（默认三者分别为 `rrf` / `rrf` / `null`；含义见「可选模型重排」）。预览限制不截短已取得并允许缓存的正文。`fetch_source` 返回单页 `body`、cache/retention 状态；`full_content=True` 返回全部已取得文本。这里的全文受现有抓取限制约束，Reddit 包括已加载评论，不会因此加载未展开评论。缓存容量、TTL 和 retention 规则继续生效。`read_source` 只读缓存中的有界片段，用于定向查证。
+响应同时包含 `response_id`、`provider_status`、`scrapes`、`errors`、`diagnostics`，以及排序元数据 `mode_requested` / `mode_used` / `fallback_reason`（默认三者分别为 `rrf` / `rrf` / `null`；含义见「可选模型重排」）。预览限制不截短已取得并允许缓存的正文。`fetch_source` 返回单页 `body`、cache/retention 状态；`full_content=True` 返回全部已取得文本。这里的全文受现有抓取限制约束。缓存容量、TTL 和 retention 规则继续生效。`read_source` 只读缓存中的有界片段，用于定向查证。
 
 抓取失败和 `body_error` 应显式保留。缓存缺失或过期但 `source_id` 有效时，`fetch_source(source_id=..., full_content=True)` 按原 ID 重新抓取。只有来源 ID 本身未知或失效时，Agent 才使用已观察到的 URL 显式调用 `fetch_source(url=..., full_content=True)`，后续使用返回的新 `source_id`。正文始终标记为 untrusted。
 
@@ -386,7 +384,7 @@ CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写�
 | `use_state` | true | 是否使用 SQLite key 状态与站点抓取器记忆 |
 | `ranking` | — | 本次请求的重排配置覆盖（dict，键同配置块 `ranking`）；`None` 时用配置值，默认纯 RRF |
 
-站点抓取记忆使用目标 URL 的标准 `hostname` 作为站点键：忽略 userinfo 和端口，主机名按小写处理；保留完整 IPv6 地址；继续去掉一个 `www.` 前缀，并保留 Reddit 的 host 分组和 GitHub 的路径分组。知乎只有精确的 `zhihu.com` 或真正的 `.zhihu.com` 子域会归入 `zhihu.com`，例如 `evilzhihu.com` 保持独立。CLI 的 `site stats`、`site set-preference` 和 `site reset` 使用该站点键（兼容适配器中的同名函数只是调用同一 Core 操作）；带 `site` 的 reset 只删除该键的统计和抓取尝试，省略时才清空全部站点。修复前由错误键聚合的历史行（例如截断的 IPv6 键）无法可靠还原归属，不自动猜测迁移或全表清理；需要处理时先查看统计，再用既有 reset 定向删除明确的旧键。
+站点抓取记忆使用目标 URL 的标准 `hostname` 作为站点键：忽略 userinfo 和端口，主机名按小写处理；保留完整 IPv6 地址；继续去掉一个 `www.` 前缀，并保留 GitHub 的路径分组。知乎只有精确的 `zhihu.com` 或真正的 `.zhihu.com` 子域会归入 `zhihu.com`，例如 `evilzhihu.com` 保持独立。CLI 的 `site stats`、`site set-preference` 和 `site reset` 使用该站点键（兼容适配器中的同名函数只是调用同一 Core 操作）；带 `site` 的 reset 只删除该键的统计和抓取尝试，省略时才清空全部站点。修复前由错误键聚合的历史行（例如截断的 IPv6 键）无法可靠还原归属，不自动猜测迁移或全表清理；需要处理时先查看统计，再用既有 reset 定向删除明确的旧键。
 
 `fetch_source` 通过 `source_id` 或 `url` 选择一页，支持 `backends`、`max_chars`、`full_content`、`timeout`、`use_state`。`full_content` 默认 `False`，保留现有 `max_chars` 行为（默认 20000，显式值限制在 1–20000）；设为 `True` 时覆盖 `max_chars`，一次返回全部已取得文本。CLI 对应 `fetch --full-content`。`read_source` 通过 `source_id` 读取缓存，支持 `keyword`、`offset`、`limit`；单次最多 8000 字符，用于定向查证。
 
@@ -398,7 +396,7 @@ JSON 配置支持 `disabled_sources`（默认为 `[]`）用来全局关闭某些
 
 `scrape_url` tool 用于单独抓取一个 URL，支持 `backends`、`scrape_chars`、`scrape_timeout`、`use_state` 等参数；默认正文输出上限同为 1200 字符，可通过 `scrape_chars` 覆盖。
 
-四个通用抓取后端（Jina、Exa、Tavily、Firecrawl）及 Reddit、Twitter/X 专用适配器在共享入口统一输出：
+四个通用抓取后端（Jina、Exa、Tavily、Firecrawl）及 Twitter/X 专用适配器在共享入口统一输出：
 
 | 字段 | 含义 |
 |---|---|
@@ -469,7 +467,7 @@ Provider 参考文档和现行/历史文档分类见 [docs/README.md](docs/READM
 - 不要提交 `~/.multi-search/keys.json`、`~/.search-keys.json`、`~/.multi-search/config.sqlite`、`.env`、Cookie 文件或真实 provider key。
 - provider error 输出前会尽量 scrub 可能出现的 key 值。
 - 第三方抓取正文始终按 untrusted data 处理。
-- 出站请求只连接代码里写死的服务商地址（搜索 API、抓取服务、Reddit API、X 接口），靠 HTTPS 证书校验确认对端。外部给定的 URL（`fetch --url`、搜索结果链接）只交给服务商或用于提取 ID，本机不直接连接它们，所以 URL 只做格式检查：协议、主机、无凭据、非 localhost、非公网 IP 字面量。本机不解析域名、不检查解析结果，因此 TUN fake-IP 代理（如 `198.18.0.0/15`）下不需要任何开关。新增在本机直接连接外部 URL 的抓取器，必须重新加入解析结果检查。
+- 出站请求只连接代码里写死的服务商地址（搜索 API、抓取服务、X 接口），靠 HTTPS 证书校验确认对端。外部给定的 URL（`fetch --url`、搜索结果链接）只交给服务商或用于提取 ID，本机不直接连接它们，所以 URL 只做格式检查：协议、主机、无凭据、非 localhost、非公网 IP 字面量。本机不解析域名、不检查解析结果，因此 TUN fake-IP 代理（如 `198.18.0.0/15`）下不需要任何开关。新增在本机直接连接外部 URL 的抓取器，必须重新加入解析结果检查。
 
 ## Troubleshooting
 

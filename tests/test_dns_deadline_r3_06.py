@@ -210,28 +210,6 @@ class DnsDeadlineTests(unittest.TestCase):
         self.assertIn("deadline", result["error"])
         scraper.assert_not_called()
 
-    @_no_local_dns
-    def test_scrape_core_does_not_resolve_reddit_url_locally(self):
-        # Reddit post URLs are parsed for an id; the request goes to fixed
-        # endpoints, so the preflight must never consult local DNS.
-        reddit_result = {
-            "url": "https://www.reddit.com/r/test/comments/abc123/title",
-            "markdown": "post body", "via": "reddit",
-        }
-        with mock.patch(
-            "multi_search_mcp.src.scrape.scrape.scrape_url_reddit",
-            return_value=reddit_result,
-        ) as scraper:
-            result = scrape_url_smart(
-                "https://www.reddit.com/r/test/comments/abc123/title",
-                deadline=time.monotonic() + 5,
-
-            )
-
-        scraper.assert_called_once()
-        self.assertEqual(result["via"], "reddit")
-        self.assertEqual(result["markdown"], "post body")
-
     def test_http_dns_failure_surfaces_as_a_url_error(self):
         with mock.patch.object(
             socket,
@@ -384,7 +362,7 @@ class DnsDeadlineTests(unittest.TestCase):
 
     @_no_local_dns
     def test_fetch_custom_and_local_paths_use_format_checks_only(self):
-        # A caller-supplied scraper, a prefetched body and Reddit never resolve
+        # A caller-supplied scraper and a prefetched body never resolve
         # the URL locally: fake-IP DNS answers must not block them.
 
         custom = mock.Mock(return_value={"markdown": "custom body", "via": "custom"})
@@ -402,19 +380,6 @@ class DnsDeadlineTests(unittest.TestCase):
             prefetched_body="already fetched",
         )
         self.assertEqual(response["body"], "already fetched")
-
-        reddit_result = {"markdown": "reddit body", "via": "reddit"}
-        with mock.patch(
-            "multi_search_mcp.src.scrape.scrape.scrape_url_reddit",
-            return_value=reddit_result,
-        ) as reddit:
-            response = service.run_fetch_source(
-                {"url": "https://www.reddit.com/r/test/comments/abc123/title",
-                 "use_state": False},
-                keys={}, config={},
-            )
-        self.assertEqual(response["body"], "reddit body")
-        reddit.assert_called_once()
 
         # Unknown chains pass the format check too; the configuration error is
         # raised later and the DNS answer is never consulted.

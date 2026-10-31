@@ -24,6 +24,10 @@ def search_firecrawl(
     body = {
         "query": query,
         "limit": count,
+        # Firecrawl now defaults to query highlights, which replace the search
+        # snippet with long page-markdown passages. Ask for the plain snippet
+        # (docs.firecrawl.dev/features/search-highlights).
+        "highlights": False,
     }
     if include_domains:
         body["includeDomains"] = list(include_domains)

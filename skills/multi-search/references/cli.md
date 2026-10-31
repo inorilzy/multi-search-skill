@@ -157,8 +157,7 @@ or an unknown name is a configuration error. Key-requiring backends (Exa and
 Tavily) without a configured key are skipped at runtime; Jina and Firecrawl
 allow anonymous scraping, so the default chain still starts with anonymous Jina.
 `--backend` only overrides the chain for that single `fetch` call and is not
-saved to settings. Reddit and Twitter/X URLs always use their dedicated
-scrapers. Site memory then adjusts the order per site: a pinned backend
+saved to settings. Twitter/X URLs always use their dedicated scraper. Site memory then adjusts the order per site: a pinned backend
 (`site set-preference`) moves first and a cooling backend moves last; success
 counts never reorder the chain.
 

@@ -33,7 +33,6 @@ from .scrapers.jina import (
     scrape_url_jina,
 )
 from .scrapers.tavily import scrape_url_tavily
-from .scrapers.reddit import is_reddit_url, scrape_url_reddit
 from .scrapers.twitter import is_twitter_url, scrape_url_twitter, validate_twitter_url
 from .url_classify import is_zhihu_blocked_text, is_zhihu_url
 
@@ -464,7 +463,7 @@ def uses_delegated_backends(url: str, backends, *, scraper=None) -> bool:
     """
     if scraper is not None and scraper is not scrape_url_smart:
         return False
-    if is_reddit_url(url) or is_twitter_url(url):
+    if is_twitter_url(url):
         return False
     return bool(backends) and all(name in DELEGATED_BACKENDS for name in backends)
 
@@ -667,30 +666,17 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
 
     # Domain dispatch precedes generic key/backend selection, including when
     # callers pass a generic backend list for platform URLs.
-    if is_reddit_url(url) or is_twitter_url(url):
-        backend = "reddit" if is_reddit_url(url) else "twitter"
+    if is_twitter_url(url):
+        backend = "twitter"
         try:
-            if backend == "twitter":
-                safe_url = validate_twitter_url(url)
-            else:
-                # Reddit post URLs are parsed for an id; the request itself goes
-                # to fixed Reddit endpoints. The shared URL policy still runs so
-                # credentials and non-public destinations are rejected.
-                safe_url = validate_scrape_url(
-                    url, deadline=ctx.deadline,
-                )
+            safe_url = validate_twitter_url(url)
         except ValueError as exc:
             return normalize_scrape_result({"error": str(exc)}, url=url, via=backend)
         started = time.monotonic()
-        if backend == "twitter":
-            result = scrape_url_twitter(
-                safe_url, cookies=ctx.twitter_cookies, timeout=ctx.timeout,
-                deadline=ctx.deadline,
-            )
-        else:
-            result = scrape_url_reddit(
-                safe_url, timeout=ctx.timeout, deadline=ctx.deadline,
-            )
+        result = scrape_url_twitter(
+            safe_url, cookies=ctx.twitter_cookies, timeout=ctx.timeout,
+            deadline=ctx.deadline,
+        )
         result = normalize_scrape_result(result, url=safe_url, via=backend)
         if ctx.site_memory is not None:
             ctx.site_memory.record_attempt(ScrapeAttempt(

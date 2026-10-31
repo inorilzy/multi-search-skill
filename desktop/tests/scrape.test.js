@@ -508,13 +508,12 @@ test('platform scrapers show a note instead of a pin button but keep reset', asy
   await mountScrape(root, api({
     scrapeMemoryView: async () => memoryView({
       rows: [
-        memoryRow({ site: 'reddit.com', scraper: 'reddit' }),
         memoryRow({ site: 'x.com', scraper: 'twitter' }),
       ],
     }),
     scrapeMemoryPin: async () => { pins += 1; return memoryView(); },
   }));
-  for (const scraper of ['reddit', 'twitter']) {
+  for (const scraper of ['twitter']) {
     const line = root.querySelector(`[data-memory-row$="|${scraper}"]`);
     assert.ok(line, `${scraper} row must render`);
     assert.equal(line.querySelector('[data-memory-action="pin"]'), null);

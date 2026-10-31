@@ -20,7 +20,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     <form data-scrape-form>
       <section class="panel scrape-chain-panel"><div class="section-title"><div><p class="eyebrow">SCRAPE CHAIN</p><h2>抓取优先级</h2></div><span class="scrape-count" data-chain-count></span><span class="draft-badge" data-dirty hidden>有未保存修改</span></div>
         <p class="route-help scrape-intro">按顺序尝试，成功后即停止。拖动左侧手柄调整优先级。</p>
-        <details class="config-details"><summary>说明</summary><p class="route-help">按顺序尝试，第一个失败才用下一个；最后一个也失败时返回错误。这份顺序只对通用网页抓取生效；Reddit / Twitter 按域名固定使用专用抓取器，不受影响。</p></details>
+        <details class="config-details"><summary>说明</summary><p class="route-help">按顺序尝试，第一个失败才用下一个；最后一个也失败时返回错误。这份顺序只对通用网页抓取生效；Twitter/X 按域名固定使用专用抓取器，不受影响。</p></details>
         <p class="sr-only" id="scrape-sort-instructions" data-sort-instructions>聚焦手柄后按空格或回车拿起，方向键或 Home / End 调整顺序，回车放下，Escape 取消。</p>
         <p class="sr-only" role="status" aria-live="polite" data-sort-status></p>
         <p class="error-message settings-warning scrape-notice" data-info="chain-warning" data-kind="warning" hidden></p>
@@ -558,7 +558,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
       const actions = doc.createElement('div');
       actions.className = 'route-row-actions';
       if (!options.has(row.scraper)) {
-        // 平台专用抓取器（reddit/twitter 等）按域名分派，不参与通用链重排。
+        // 平台专用抓取器（twitter 等）按域名分派，不参与通用链重排。
         const note = doc.createElement('span');
         note.className = 'scrape-muted';
         note.setAttribute('data-memory-pin-note', row.scraper);
