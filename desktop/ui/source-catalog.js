@@ -9,7 +9,8 @@ export const SOURCE_CATALOG = {
     "firecrawl",
     "serpapi",
     "github",
-    "jina"
+    "jina",
+    "stackexchange"
   ],
   "env": {
     "alias_priority": "last_non_empty_wins",
@@ -43,6 +44,9 @@ export const SOURCE_CATALOG = {
       "serpapi": [
         "SERPAPI_API_KEY",
         "SERPAPI_KEY"
+      ],
+      "stackexchange": [
+        "STACKEXCHANGE_KEY"
       ],
       "tavily": [
         "TAVILY_API_KEY"
@@ -135,6 +139,7 @@ export const SOURCE_CATALOG = {
   "source_aliases": {
     "baidu-ai-search": "baidu",
     "github": "github_repos",
+    "github-code": "github_code",
     "github-repos": "github_repos",
     "qianfan": "baidu",
     "v2ex": "sov2ex"
@@ -152,6 +157,7 @@ export const SOURCE_CATALOG = {
         "QIANFAN_API_KEY",
         "APPBUILDER_API_KEY"
       ],
+      "key_optional": false,
       "key_provider": "baidu",
       "keyed": true,
       "kind": "answer_searcher",
@@ -175,6 +181,7 @@ export const SOURCE_CATALOG = {
         "BRAVE_SEARCH_API_KEY",
         "BRAVE_API_KEY"
       ],
+      "key_optional": false,
       "key_provider": "brave",
       "keyed": true,
       "kind": "searcher",
@@ -196,6 +203,7 @@ export const SOURCE_CATALOG = {
       "env": [
         "PARALLEL_API_KEY"
       ],
+      "key_optional": false,
       "key_provider": "parallel",
       "keyed": true,
       "kind": "searcher",
@@ -217,6 +225,7 @@ export const SOURCE_CATALOG = {
       "env": [
         "TAVILY_API_KEY"
       ],
+      "key_optional": false,
       "key_provider": "tavily",
       "keyed": true,
       "kind": "content_searcher",
@@ -239,6 +248,7 @@ export const SOURCE_CATALOG = {
       "env": [
         "EXA_API_KEY"
       ],
+      "key_optional": false,
       "key_provider": "exa",
       "keyed": true,
       "kind": "content_searcher",
@@ -261,6 +271,7 @@ export const SOURCE_CATALOG = {
       "env": [
         "FIRECRAWL_API_KEY"
       ],
+      "key_optional": false,
       "key_provider": "firecrawl",
       "keyed": true,
       "kind": "searcher",
@@ -284,6 +295,7 @@ export const SOURCE_CATALOG = {
         "SERPAPI_API_KEY",
         "SERPAPI_KEY"
       ],
+      "key_optional": false,
       "key_provider": "serpapi",
       "keyed": true,
       "kind": "answer_searcher",
@@ -309,6 +321,7 @@ export const SOURCE_CATALOG = {
         "GITHUB_TOKEN",
         "GH_TOKEN"
       ],
+      "key_optional": true,
       "key_provider": "github",
       "keyed": true,
       "kind": "platform_searcher",
@@ -324,10 +337,33 @@ export const SOURCE_CATALOG = {
       "searchable": true
     },
     {
+      "aliases": [
+        "github-code"
+      ],
+      "cookie": false,
+      "description": "在 GitHub 公开仓库的文件内容中搜索代码，按仓库去重；需要 GitHub Token。",
+      "env": [
+        "GITHUB_TOKEN",
+        "GH_TOKEN"
+      ],
+      "key_optional": false,
+      "key_provider": "github",
+      "keyed": true,
+      "kind": "platform_searcher",
+      "label": "GitHub 代码",
+      "mark": "</>",
+      "max_count": 100,
+      "name": "github_code",
+      "public_name": "github-code",
+      "routes": [],
+      "searchable": true
+    },
+    {
       "aliases": [],
       "cookie": false,
       "description": "搜索技术社区 Hacker News 的讨论。",
       "env": [],
+      "key_optional": false,
       "key_provider": "hackernews",
       "keyed": false,
       "kind": "platform_searcher",
@@ -346,9 +382,12 @@ export const SOURCE_CATALOG = {
       "aliases": [],
       "cookie": false,
       "description": "搜索 Stack Overflow 的技术问答。",
-      "env": [],
-      "key_provider": "stackoverflow",
-      "keyed": false,
+      "env": [
+        "STACKEXCHANGE_KEY"
+      ],
+      "key_optional": true,
+      "key_provider": "stackexchange",
+      "keyed": true,
       "kind": "platform_searcher",
       "label": "Stack Overflow",
       "mark": "≋",
@@ -368,6 +407,7 @@ export const SOURCE_CATALOG = {
       "cookie": false,
       "description": "搜索 V2EX 中文技术社区的讨论。",
       "env": [],
+      "key_optional": false,
       "key_provider": "sov2ex",
       "keyed": false,
       "kind": "platform_searcher",
@@ -388,6 +428,7 @@ export const SOURCE_CATALOG = {
       "env": [
         "TWITTER_COOKIES_PATH"
       ],
+      "key_optional": false,
       "key_provider": "twitter",
       "keyed": false,
       "kind": "platform_searcher",
@@ -410,6 +451,7 @@ export const SOURCE_CATALOG = {
         "JINA_API_KEY",
         "JINA_KEY"
       ],
+      "key_optional": true,
       "key_provider": "jina",
       "keyed": true,
       "kind": "scraper",

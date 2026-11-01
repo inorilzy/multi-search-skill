@@ -27,7 +27,9 @@ def response(body):
 
 
 class SerpAPIDeadlineTests(unittest.TestCase):
-    def test_registry_pages_share_deadline_and_publish_completed_results(self):
+    """SerpAPI fetches one page (Google Light returns 10 results per page)."""
+
+    def test_registry_call_sends_one_request_within_the_shared_deadline(self):
         now = 100.0
         budgets = []
         snapshots = []
@@ -35,9 +37,8 @@ class SerpAPIDeadlineTests(unittest.TestCase):
         def http(url, timeout):
             nonlocal now
             budgets.append(timeout)
-            start = int(parse_qs(urlsplit(url).query).get("start", ["0"])[0])
             now += 6
-            return response(page(start))
+            return response(page(0))
 
         config = SearchRunnerConfig("default", {"serpapi": 40}, 10, "google_light", {})
         context = SearchContext("serpapi", 20, 110, {}, publish_partial=snapshots.append)
@@ -45,92 +46,49 @@ class SerpAPIDeadlineTests(unittest.TestCase):
                 mock.patch.object(serpapi, "urlopen_retry", side_effect=http):
             rows = build_provider_registry()["serpapi"].call("query", config, context, "fixture-key")
 
-        self.assertEqual(budgets, [10, 4])
-        self.assertEqual(len(snapshots[0]), 10)
-        self.assertEqual(len(snapshots[-1]), 20)
-        self.assertEqual(len([row for row in rows if row.get("url")]), 20)
-        self.assertIn("deadline", rows[-1]["error"])
+        self.assertEqual(budgets, [10])
+        self.assertEqual(len(snapshots[-1]), 10)
+        self.assertEqual(len([row for row in rows if row.get("url")]), 10)
+        self.assertFalse(any(row.get("error") for row in rows))
 
-    def test_standalone_call_does_not_reset_timeout_for_each_page(self):
-        now = 100.0
+    def test_standalone_call_caps_the_request_at_timeout(self):
         budgets = []
 
         def http(url, timeout):
-            nonlocal now
             budgets.append(timeout)
-            now += 6
             return response(page())
 
-        with mock.patch.object(serpapi, "time", SimpleNamespace(monotonic=lambda: now)), \
+        with mock.patch.object(serpapi, "time", SimpleNamespace(monotonic=lambda: 100.0)), \
                 mock.patch.object(serpapi, "urlopen_retry", side_effect=http):
             rows = serpapi.search_serpapi("query", "fixture-key", count=40, timeout=10)
 
-        self.assertEqual(budgets, [10, 4])
-        self.assertIn("deadline", rows[-1]["error"])
+        self.assertEqual(budgets, [10])
+        self.assertEqual(len(rows), 10)
 
-    def test_per_request_cap_and_last_page_success_are_preserved(self):
-        now = 100.0
-        budgets = []
+    def test_count_above_one_page_still_sends_the_documented_first_page_query(self):
         queries = []
 
         def http(url, timeout):
-            nonlocal now
-            budgets.append(timeout)
-            query = parse_qs(urlsplit(url).query)
-            queries.append(query)
-            now += 15
-            return response(page(int(query.get("start", ["0"])[0])))
+            queries.append(parse_qs(urlsplit(url).query))
+            return response(page(0))
 
         config = SearchRunnerConfig("default", {"serpapi": 25}, 60, "google_light", {})
         context = SearchContext("serpapi", 20, 160, {})
-        with mock.patch.object(serpapi, "time", SimpleNamespace(monotonic=lambda: now)), \
+        with mock.patch.object(serpapi, "time", SimpleNamespace(monotonic=lambda: 100.0)), \
                 mock.patch.object(serpapi, "urlopen_retry", side_effect=http):
             rows = build_provider_registry()["serpapi"].call("query", config, context, "fixture-key")
 
-        self.assertEqual(budgets, [20, 20, 20])
-        self.assertEqual(len(rows), 25)
-        self.assertFalse(any(row.get("error") for row in rows))
-        self.assertEqual([q.get("start", ["0"])[0] for q in queries], ["0", "10", "20"])
-        self.assertEqual(queries[0], {
+        self.assertEqual(len(rows), 10)
+        self.assertEqual(queries, [{
             "engine": ["google_light"], "q": ["query"], "output": ["json"],
             "api_key": ["fixture-key"], "hl": ["en"], "gl": ["us"],
-        })
+        }])
 
-    def test_runner_timeout_keeps_first_page_and_stops_late_worker_pagination(self):
-        second_started = threading.Event()
-        release = threading.Event()
-        starts = []
-        pool = BoundedDaemonExecutor(max_workers=1, thread_name_prefix="test-serpapi-deadline")
-
-        def http(url, timeout):
-            start = int(parse_qs(urlsplit(url).query).get("start", ["0"])[0])
-            starts.append(start)
-            if start:
-                second_started.set()
-                release.wait(timeout=5)  # outlive the runner deadline until released
-            return response(page(start))
-
-        runner = SearchRunner(
-            SearchRunnerConfig("default", {"serpapi": 40}, 0.3, "google_light", {"serpapi": "fixture-key"}),
-            build_provider_registry(), route_resolver=lambda _: {"serpapi"},
-        )
-        with mock.patch.object(search_runner, "_SEARCH_POOL", pool), \
-                mock.patch.object(serpapi, "urlopen_retry", side_effect=http):
-            try:
-                rows = runner.run("query")
-                self.assertTrue(second_started.is_set())
-                hits = [row for row in rows if row.get("url")]
-                self.assertEqual([row["provider_rank"] for row in hits], list(range(1, 11)))
-                self.assertIn("timeout", rows[-1]["error"])
-            finally:
-                release.set()
-                pool.shutdown(wait=True)
-        # Only the first page and the page that was already in flight may run.
-        # How many further pages the released worker attempts depends on clock
-        # granularity at the exact deadline boundary (Windows reads a few
-        # milliseconds early), so the shared-deadline contract itself is pinned
-        # deterministically by test_registry_pages_share_deadline_*.
-        self.assertEqual(starts[:2], [0, 10])
+    def test_expired_deadline_sends_nothing(self):
+        with mock.patch.object(serpapi, "time", SimpleNamespace(monotonic=lambda: 200.0)), \
+                mock.patch.object(serpapi, "urlopen_retry", side_effect=AssertionError("no call")):
+            rows = serpapi.search_serpapi("query", "fixture-key", deadline=150.0)
+        self.assertIn("deadline", rows[-1]["error"])
 
 
 if __name__ == "__main__":

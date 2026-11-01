@@ -13,7 +13,7 @@ from pathlib import Path
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cli", type=Path, required=True)
-    parser.add_argument("--source", choices=["tavily", "exa", "brave", "parallel", "baidu", "firecrawl", "serpapi", "github-repos"], required=True)
+    parser.add_argument("--source", choices=["tavily", "exa", "brave", "parallel", "baidu", "firecrawl", "serpapi", "github-repos", "github-code", "stackoverflow"], required=True)
     parser.add_argument("--allow-paid-provider", action="store_true", help="Explicitly acknowledge a real request may consume provider quota")
     options = parser.parse_args(argv)
     if not options.allow_paid_provider:

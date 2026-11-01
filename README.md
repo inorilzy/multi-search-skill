@@ -56,7 +56,7 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys stat
 | 01 概览与测试 | 检测应用继承的 PATH、已登记的用户 PATH（Windows 为注册表，macOS 为本工具追加到登录 Shell 配置的受管区块）中的 CLI（Windows `multi-search.exe`／macOS `multi-search`），显示版本、实际路径和来源；运行或取消一次测试搜索，结果以结构化列表展示，来源错误单列，原始 JSON 折叠保留。新终端可发现不意味着已打开的终端或 Agent 已刷新环境。 |
 | 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI：Windows 到 `%LOCALAPPDATA%\MultiSearch\cli`，macOS 到 `~/Library/Application Support/MultiSearch/cli`；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本。加入用户 PATH 需单独确认：Windows 写当前用户 PATH，macOS 只在登录 Shell 配置末尾追加带标记的区块，新开终端才生效，已运行的宿主需重启。 |
 | 03 Agent Skill | 安装到通用 Agents 目录（`.agents/skills`，Codex、Gemini CLI、OpenCode 等读取）或 Claude Code（`.claude/skills`），以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
-| 04 搜索源与凭据 | 列出 12 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），所有平台都可逐行新增、删除、显式显示，并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。默认只显示掩码，测试可能消耗额度。 |
+| 04 搜索源与凭据 | 列出 13 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），所有平台都可逐行新增、删除、显式显示，并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。默认只显示掩码，测试可能消耗额度。 |
 | 05 搜索设置 | 读写默认路由、全局超时（1–60 秒）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另有「模型重排」开关（默认关闭）：开启后填写 System One 的 Base URL 与模型名（必填）以及候选数 / 批量 / 超时高级项，写入配置块的 `ranking` 键；非法的已存 `ranking` 块回退默认值并提示。API 密钥单独保存到 `~/.multi-search/keys.json` 的 `systemone` 条目（Unix 上为 0600），不写进设置，也从不回显；环境变量 `SYSTEMONE_API_KEY` 优先。另可填写 Twitter Cookie 文件路径，并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
 | 06 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。 |
 | 07 Cookie 导入 | 用户显式确认后，把选定的 Twitter/X Cookie JSON 校验并复制到 `~/.multi-search/twitter-cookies.json`（0600），同时设置 `twitter_cookies_path`；删除只移除这份副本。原文件不修改也不删除，本页不显示 Cookie 内容。 |
@@ -148,7 +148,7 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 
 ## 搜索源、注册和免费额度
 
-当前注册 12 个搜索源；`all` 路由包含全部 12 个。Jina 仅负责抓取正文，不计入搜索源。
+当前注册 13 个搜索源；`all` 路由包含其中 12 个，`github_code`（GitHub 代码搜索）不在任何内置路由中，需在桌面端设置页加入自定义路由或用 `sources=["github_code"]` 显式指定。Jina 仅负责抓取正文，不计入搜索源。
 
 源的名称、路由、别名、展示文案和环境变量名只由 Core 的 `multi_search_mcp/src/search/catalog.py` 维护。`multi-search sources --format json` 输出这份目录；桌面端构建时通过 `scripts/export_source_catalog.py` 生成并读取同一份目录，不再各自手抄。
 
@@ -164,13 +164,14 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 | Firecrawl | Web metadata search；抓取 backend | https://firecrawl.dev | 搜索仍需要 API key；`/v2/scrape` 无 key 可匿名使用但有 IP 级免费日额度，配置 key 后额度和限流更高 | 100 |
 | SerpAPI Google Light | Google SERP | https://serpapi.com/users/sign_up?plan=free | 250 次/月；`google_light` 默认更省 | 100 |
 | GitHub Repos | 仓库搜索 | https://github.com/settings/tokens | REST API 常见免费额度：未认证约 60 req/hour，token 约 5,000 req/hour；也可 fallback 到已登录 `gh` CLI | 100 |
+| GitHub Code | 在文件内容中搜索代码，按仓库去重（每仓库保留首个命中），摘要为命中文件路径 + 片段 | https://github.com/settings/tokens | 与 GitHub Repos 共用 token（`GITHUB_TOKEN` / `GH_TOKEN`，keys 名 `github`）；**必须有 token**，无 token 时跳过且不回退 `gh` CLI；认证后 10 req/min，限流时错误行带 `retry_after` 秒数；不在任何内置路由中，计数键 `github_code` | 100 |
 | Hacker News | Hacker News story search | https://hn.algolia.com/api | 匿名可用，使用 Hacker News Algolia 搜索接口 | 100 |
 | Stack Overflow | Stack Overflow question search | https://api.stackexchange.com/docs/advanced-search | 匿名可用，使用 Stack Exchange advanced search | 100 |
 | Twitter/X | 社交讨论、推文和 top replies | https://x.com | 使用 `xkit-py` + cookies，受账号状态和限流影响 | 20 |
 | SOV2EX | V2EX 专用索引搜索 | [SOV2EX API 文档](https://github.com/gexiao/sov2ex/blob/v2/API.md) | 第三方搜索 API，匿名可用，无需 Key、Cookie 或 Firecrawl | 50 |
 | Jina Reader | 额外网页正文抓取 | https://r.jina.ai/docs | 匿名可用，约 20 rpm；key 是固定额度，可作为匿名限流后的 fallback | scrape only |
 
-`sov2ex` 直接请求 SOV2EX `/api/search`，默认按相关性排序（`sort=sumup`），每源默认召回 10 条，上限 50 条。SOV2EX 是第三方 V2EX 专用索引，不是 V2EX 官方 API；收录范围和更新速度取决于该服务。搜索阶段返回标题、URL 和清理后的高亮摘要，忽略 API 的 `_source.content`，主题 URL 指向 `https://www.v2ex.com/t/<id>`。最终入选 RRF 前 15 条后，再统一抓取原帖 URL 或复用此前 URL 抓取的正文缓存。
+`sov2ex` 直接请求 SOV2EX `/api/search`，默认按相关性排序（`sort=sumup`），多个关键词必须全部匹配（`operator=and`），每源默认召回 10 条，上限 50 条。SOV2EX 是第三方 V2EX 专用索引，不是 V2EX 官方 API；收录范围和更新速度取决于该服务。搜索阶段返回标题、URL 和清理后的高亮摘要，忽略 API 的 `_source.content`，主题 URL 指向 `https://www.v2ex.com/t/<id>`。最终入选 RRF 前 15 条后，再统一抓取原帖 URL 或复用此前 URL 抓取的正文缓存。
 
 源列表和搜索响应统一使用 `sov2ex`，没有单独的 V2EX 搜索源。旧 `v2ex` 输入仅作为兼容别名，适用于 `sources`、`disabled_sources` 和计数配置；新计数键优先于旧键。
 
@@ -186,7 +187,7 @@ CLI 是薄入口，agent 按 `skills/multi-search/SKILL.md` 选择工作流；�
 | `fast` | Baidu + Tavily + Firecrawl + Exa | 较小的搜索源集合；排序后同样获取正文 |
 | `social` | Twitter/X | 看社交反馈、口碑、讨论 |
 | `dev` | Stack Overflow + GitHub Repos + Hacker News | 技术问题、仓库、工程讨论 |
-| `all` | default + social + dev + sov2ex（12 源） | 尽可能广的 API 召回 |
+| `all` | default + social + dev + sov2ex（12 源，不含 `github_code`） | 尽可能广的 API 召回 |
 | 指定源 | 通过 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` | 绕过 route，直接指定一个或多个源 |
 
 搜索自动返回正文预览；Agent 选读来源后用 `fetch_source(full_content=True)` 获取已取得全文，`read_source` 用于定向查证缓存片段。已有 URL 无需搜索，直接用 `fetch_source` / `scrape_url`。
@@ -248,6 +249,7 @@ TAVILY_API_KEY
 EXA_API_KEY
 JINA_API_KEY / JINA_KEY
 GITHUB_TOKEN / GH_TOKEN
+STACKEXCHANGE_KEY
 FIRECRAWL_API_KEY
 SERPAPI_API_KEY / SERPAPI_KEY
 TWITTER_COOKIES_PATH
@@ -309,6 +311,8 @@ flowchart LR
 - **站点抓取记忆**在抓取链之上调整单个站点的顺序：手动固定（`site set-preference`）的后端排到该站点最前，`blocked` / `timeout` 失败的后端进入 1 小时冷却并靠后；成功/失败计数只作统计，不按历史成功率自动重排。`site reset [site]` 按站点或全部清除。
 - 默认链中：Jina 匿名优先；Exa / Tavily 需要 key，缺 key 时运行时跳过；Firecrawl `/v2/scrape` 无 key 也会作为最后 fallback，但匿名额度是 IP 级免费日额度，不参与批量抓取 primary 轮换。抓取知乎 URL 时仍会过滤“荒原页 / 登录墙”假正文。Jina 先匿名，匿名限流后才用 Jina key。
 - Jina、Parallel、Exa、Tavily、Firecrawl 等带 key 的 provider/backend 走 SQLite key state：invalid 失败累加 strikes，无既存强状态时前两次进入 `transient_invalid`（15 分钟冷却），第三次升级为 `invalid`。invalid / rate_limit 失败保留已有 invalid、quota_exhausted、disabled；quota_exhausted 失败保留已有 invalid、disabled。rate_limit / quota_exhausted 清零 strikes；timeout/network/未分类失败只记录失败，不改状态、期限或 strikes；target 不写健康结果。success 受 `started_at` 因果门控：迟到成功不清除请求开始后新写入的状态与 strikes。`keys reset` 重置运行态但不解除 `manually_disabled`；当前没有专用的解除手动禁用命令。冷却默认 15 分钟，quota 恢复期默认 24 小时，期限到期只允许重试，不自动改写 status。从未使用过的 key 优先，其次按最久未用（LRU）；`reserve()` 在写事务内复核健康、选取候选并更新使用计数，不是独占租约。精确状态转换见 [术语表](docs/glossary.md#5-key-与状态)。
+- **搜索源错误按服务商文档分类。** 各适配器读取错误响应体和 `Retry-After` 等重置头，分为 key 无效、额度用完、限流、功能或套餐不支持（key 本身没问题，不轮换、不降级）和目标页失败。限流冷却优先使用服务商给的等待时间，没有时才用默认 15 分钟。Stack Exchange 返回 `backoff` 时，冷却记录写入 `~/.multi-search/provider-backoff.json`，跨进程生效，冷却期内直接跳过这个源。
+- **查询长度按服务商上限截断**（Brave 600 字符 / 75 词，Firecrawl 500 字符，GitHub 256 字符 / 5 个运算符），截断时在该源状态里记一条说明。SerpAPI 只请求第一页（最多 10 条），各源都是一次请求取够，不翻页。
 - 每个候选 URL 只走一次完整 fallback 链；失败或 `scrape_timeout` 后记录 Errors，不自动补位。
 - GitHub repo 根 URL 保持原地址，由抓取后端解析仓库页面；不猜测 README 的文件名或位置。
 

@@ -1,12 +1,28 @@
 """SerpAPI (Google) search."""
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
 
 from ...support.http import read_limited, urlopen_retry
+from ...support.http_errors import http_error_row
 from ...support.secrets import scrub_secrets
+
+# Google Light returns a fixed 10 organic results per page. Only the first page
+# is fetched: later pages add little and each costs a search credit.
+SERPAPI_PAGE_SIZE = 10
+# docs/serpapi/api-status-and-error-codes.md
+_SERPAPI_HTTP_ERROR_KINDS = {401: "invalid", 403: "invalid", 429: "rate_limit"}
+
+
+def _serpapi_refine(status: int, data, detail: str) -> str | None:
+    # 429 means either the hourly throughput limit or "Your account has run out
+    # of searches." Only the latter is an exhausted quota.
+    if status == 429 and "run out of searches" in (detail or "").lower():
+        return "quota_exhausted"
+    return None
 
 
 def _scrub(msg: str, api_key: str = "") -> str:
@@ -39,16 +55,16 @@ def search_serpapi(
     Default engine: google_light — 3x faster, 250 searches/month free (vs 100 for regular google).
     Switch to engine='google' for full knowledge_graph / shopping / things_to_know etc.
 
-    Pages share the caller's deadline; timeout caps each HTTP request. Without
-    a caller deadline, timeout is also the total pagination budget.
+    Only the first page (at most 10 results) is requested. The request shares
+    the caller's deadline; timeout caps it.
     """
     if deadline is None:
         deadline = time.monotonic() + timeout
     results = []
     depth = (search_depth or "normal").lower()
     engine = "google_light" if depth == "fast" else engine
-    target_count = max(1, count)
-    page_size = 10
+    target_count = max(1, min(int(count), SERPAPI_PAGE_SIZE))
+    page_size = SERPAPI_PAGE_SIZE
     organic_count = 0
 
     def _return_error(message: str) -> list:
@@ -76,6 +92,12 @@ def search_serpapi(
         try:
             with urlopen_retry(url, timeout=min(timeout, remaining)) as resp:
                 data = json.loads(read_limited(resp))
+        except urllib.error.HTTPError as e:
+            row = http_error_row(
+                "serpapi", e, secret=api_key, kinds=_SERPAPI_HTTP_ERROR_KINDS,
+                refine=_serpapi_refine,
+            )
+            return results + [row] if results else [row]
         except Exception as e:
             return _return_error(str(scrub_secrets(e, api_key)))
         if data.get("error"):
@@ -84,10 +106,19 @@ def search_serpapi(
             # "error" message (serpapi.com/api-status-and-error-codes).
             if (data.get("search_metadata") or {}).get("status") == "Success":
                 break
-            return _return_error(str(data["error"]))
+            message = str(data["error"])
+            kind = _serpapi_refine(429, data, message) or (
+                "invalid" if "invalid api key" in message.lower() else None
+            )
+            if kind is None:
+                return _return_error(message)
+            row = {"source": "serpapi", "error": _scrub(message, api_key), "kind": kind,
+                   "error_type": kind, "origin": "provider", "error_origin": "provider"}
+            return results + [row] if results else [row]
 
         if start == 0:
-            answer_box = data.get("answer_box") or {}
+            # answer_box is only documented for engine=google, not google_light.
+            answer_box = (data.get("answer_box") or {}) if engine == "google" else {}
             answer_text = _answer_box_text(answer_box)
             if answer_text:
                 results.append({

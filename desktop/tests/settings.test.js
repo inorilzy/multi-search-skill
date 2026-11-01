@@ -102,9 +102,10 @@ test('the CLI source list uses canonical underscore names', async () => {
   const { window, root } = setup();
   await mountSettings(root, ({ settingsView: async () => view() }));
   const names = SETTINGS_SOURCES.map(source => source.source);
-  assert.equal(names.length, 12);
+  assert.equal(names.length, 13);
   assert.ok(names.every(name => !name.includes('-')));
   assert.ok(names.includes('github_repos'));
+  assert.ok(names.includes('github_code'));
   assert.equal(root.querySelectorAll('[data-route-row]').length, 5);
   window.close();
 });
@@ -651,18 +652,18 @@ test('bulk source buttons flip every checkbox and keep the applied-count honest'
   const boxes = () => [...editor.querySelectorAll('[data-route-source]')];
   const tool = name => editor.querySelector(`[data-source-action="${name}"]`);
   const count = () => editor.querySelector('[data-source-count]').textContent;
-  assert.equal(count(), '已选 0 / 12');
+  assert.equal(count(), '已选 0 / 13');
   assert.equal(tool('none').disabled, true, 'nothing to clear yet');
   tool('all').click();
-  assert.equal(boxes().filter(box => box.checked).length, 12);
-  assert.equal(count(), '已选 12 / 12');
+  assert.equal(boxes().filter(box => box.checked).length, 13);
+  assert.equal(count(), '已选 13 / 13');
   assert.equal(tool('all').disabled, true, 'every source is already selected');
   tool('none').click();
   assert.equal(boxes().filter(box => box.checked).length, 0);
-  assert.equal(count(), '已选 0 / 12');
+  assert.equal(count(), '已选 0 / 13');
   tool('invert').click();
-  assert.equal(boxes().filter(box => box.checked).length, 12);
-  assert.equal(count(), '已选 12 / 12');
+  assert.equal(boxes().filter(box => box.checked).length, 13);
+  assert.equal(count(), '已选 13 / 13');
   window.close();
 });
 

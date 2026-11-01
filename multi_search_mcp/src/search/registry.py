@@ -8,7 +8,7 @@ from .searchers.baidu import search_baidu
 from .searchers.brave import search_brave
 from .searchers.exa import search_exa
 from .searchers.firecrawl import search_firecrawl
-from .searchers.github import search_github_repos
+from .searchers.github import search_github_code, search_github_repos
 from .searchers.hackernews import search_hackernews
 from .searchers.parallel import search_parallel
 from .searchers.serpapi import search_serpapi
@@ -115,13 +115,24 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
                 deadline=ctx.deadline,
             ),
         ),
+        "github_code": _provider_spec(
+            "github_code",
+            missing_message="missing GITHUB_TOKEN / GH_TOKEN (GitHub code search requires a token)",
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_github_code, q, cfg.counts["github_code"], key or "", timeout=ctx.timeout,
+                deadline=ctx.deadline,
+            ),
+        ),
         "hackernews": _provider_spec(
             "hackernews",
             call=lambda q, cfg, ctx, key: call_optional_timeout(search_hackernews, q, cfg.counts["hackernews"], timeout=ctx.timeout, deadline=ctx.deadline),
         ),
         "stackoverflow": _provider_spec(
             "stackoverflow",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(search_stackoverflow, q, cfg.counts["stackoverflow"], timeout=ctx.timeout, deadline=ctx.deadline),
+            call=lambda q, cfg, ctx, key: call_optional_timeout(
+                search_stackoverflow, q, cfg.counts["stackoverflow"], timeout=ctx.timeout,
+                deadline=ctx.deadline, api_key=key or "",
+            ),
         ),
         "twitter": _provider_spec(
             "twitter",

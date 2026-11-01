@@ -33,6 +33,7 @@ ALL_SOURCE_NAMES = {
 SOURCE_ALIASES = {
     "baidu-ai-search": "baidu",
     "github": "github_repos",
+    "github-code": "github_code",
     "github-repos": "github_repos",
     "qianfan": "baidu",
     "v2ex": "sov2ex",

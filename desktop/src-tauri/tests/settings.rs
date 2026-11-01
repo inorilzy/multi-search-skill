@@ -306,6 +306,8 @@ fn source_names_accepted_by_execution_allowlist() {
         "twitter",
         "v2ex",
         "github-repos",
+        "github_code",
+        "github-code",
     ] {
         assert!(fixture::is_allowed_source(name));
     }
@@ -732,7 +734,9 @@ fn builtin_factory_is_used_only_when_routes_is_missing() {
         builtins["fast"].sources,
         ["baidu", "tavily", "firecrawl", "exa"]
     );
+    // The all route keeps 12 sources; github_code is registered but in no built-in route.
     assert_eq!(builtins["all"].sources.len(), 12);
+    assert!(builtins.values().all(|route| !route.sources.iter().any(|s| s == "github_code")));
     assert!(builtins.values().all(|route| route.timeout.is_none()));
 
     let s = Sandbox::new("explicit-no-backfill");

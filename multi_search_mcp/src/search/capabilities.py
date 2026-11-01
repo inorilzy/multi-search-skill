@@ -110,7 +110,7 @@ class ProviderCapability:
     scrape_policy: ScrapePolicy = ScrapePolicy.NONE
     # ``count_key`` is the key a provider's ProviderSpec actually reads from
     # ``cfg.counts[...]``. It is usually ``name``, but github_repos reads
-    # ``counts["github"]``. Scrapers have no count -> None.
+    # ``counts["github"]`` (github_code has its own ``github_code`` key). Scrapers have no count -> None.
     count_key: str | None = None
     # Per-source search timeout used by the runtime registry. Scrapers do not
     # run in the search registry, so they leave this None.
@@ -276,6 +276,19 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         best_for=("repository discovery", "stars and repo metadata"),
         notes="Repository URLs are later rewritten toward README-friendly scrape targets.",
     ),
+    "github_code": ProviderCapability(
+        name="github_code",
+        public_name="github-code",
+        kind=ProviderKind.PLATFORM_SEARCHER,
+        search=SearchCapability(can_search=True, supports_query_syntax=True, supports_pagination=False, max_count=100),
+        output=OutputCapability(returns_urls=True, returns_snippet=True, returns_platform_metadata=True),
+        operation=_op(AuthMode.API_KEY, "github", rate_limit_sensitive=True),
+        scrape_policy=ScrapePolicy.CANDIDATE,
+        count_key="github_code",
+        timeout_default=20,
+        best_for=("code search across public repositories", "finding projects by file contents"),
+        notes="GET /search/code requires a token (10 req/min); hits are deduped by repository and rows point at the repository.",
+    ),
     "twitter": ProviderCapability(
         name="twitter",
         public_name="twitter",
@@ -320,7 +333,7 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
         kind=ProviderKind.PLATFORM_SEARCHER,
         search=SearchCapability(can_search=True, supports_pagination=True, max_count=100),
         output=OutputCapability(returns_urls=True, returns_snippet=True, returns_platform_metadata=True, returns_scores=True),
-        operation=_op(AuthMode.NONE, rate_limit_sensitive=True),
+        operation=_op(AuthMode.OPTIONAL_API_KEY, "stackexchange", rate_limit_sensitive=True),
         scrape_policy=ScrapePolicy.CANDIDATE,
         count_key="stackoverflow",
         timeout_default=20,

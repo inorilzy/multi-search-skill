@@ -27,14 +27,13 @@ def _jina_anonymous_cooling_down(now: float | None = None) -> bool:
         return current < _JINA_ANON_RATE_LIMITED_UNTIL
 
 
-def _record_jina_anonymous_rate_limit(now: float | None = None) -> None:
+def _record_jina_anonymous_rate_limit(now: float | None = None, seconds: float | None = None) -> None:
+    """Pause anonymous reads; ``seconds`` is the server's retryAfter when given."""
     global _JINA_ANON_RATE_LIMITED_UNTIL
     current = time.monotonic() if now is None else now
+    wait = _JINA_ANON_COOLDOWN_SECONDS if not seconds or seconds <= 0 else min(float(seconds), 3600.0)
     with _JINA_ANON_LOCK:
-        _JINA_ANON_RATE_LIMITED_UNTIL = max(
-            _JINA_ANON_RATE_LIMITED_UNTIL,
-            current + _JINA_ANON_COOLDOWN_SECONDS,
-        )
+        _JINA_ANON_RATE_LIMITED_UNTIL = max(_JINA_ANON_RATE_LIMITED_UNTIL, current + wait)
 
 
 def _reset_jina_anonymous_rate_limit() -> None:
@@ -90,8 +89,19 @@ def _jina_rate_limited(status_code: int | None, message: str) -> bool:
     )
 
 
-def _jina_quota_exhausted(status_code: int | None, message: str) -> bool:
+# docs/jina/openapi.json: 402 is TierFeatureConstraintError (status 40202, a
+# feature the key's tier lacks) or InsufficientBalanceError (40203). Only the
+# latter means the key is out of balance.
+_JINA_TIER_FEATURE_STATUS = 40202
+_JINA_BALANCE_STATUS = 40203
+
+
+def _jina_quota_exhausted(status_code: int | None, message: str, app_status: int | None = None) -> bool:
     """True when the error indicates the *key* is out of quota/balance."""
+    if app_status == _JINA_TIER_FEATURE_STATUS:
+        return False
+    if app_status == _JINA_BALANCE_STATUS:
+        return True
     text = message.lower()
     return (
         status_code == 402
@@ -103,7 +113,8 @@ def _jina_quota_exhausted(status_code: int | None, message: str) -> bool:
     )
 
 
-def _jina_error_message(exc: urllib.error.HTTPError) -> str:
+def _jina_error_payload(exc: urllib.error.HTTPError) -> tuple[str, dict]:
+    """``(message, parsed body)`` for a Jina HTTP error."""
     try:
         body = read_error_body(exc).decode("utf-8", "replace")
     except Exception:
@@ -112,11 +123,15 @@ def _jina_error_message(exc: urllib.error.HTTPError) -> str:
         try:
             data = json.loads(body)
             if isinstance(data, dict):
-                return data.get("message") or data.get("detail") or body
+                return str(data.get("message") or data.get("detail") or body), data
         except Exception:
             pass
-        return body
-    return str(exc)
+        return body, {}
+    return str(exc), {}
+
+
+def _jina_error_message(exc: urllib.error.HTTPError) -> str:
+    return _jina_error_payload(exc)[0]
 
 
 def scrape_url_jina(
@@ -179,18 +194,30 @@ def scrape_url_jina(
                 "via": "jina",
             }
         except urllib.error.HTTPError as exc:
-            message = _jina_error_message(exc)
+            message, body = _jina_error_payload(exc)
+            app_status = body.get("status") if isinstance(body.get("status"), int) else None
             last_error = f"HTTP {exc.code}: {message}"
+            if exc.code == 402 and app_status == _JINA_TIER_FEATURE_STATUS:
+                # A tier/feature restriction: the key is fine, do not rotate it out.
+                kind = "provider"
+                try:
+                    exc.close()
+                except Exception:
+                    pass
+                break
             limited = _jina_rate_limited(exc.code, message)
             if limited:
                 rate_limited = True
                 if not key:
-                    _record_jina_anonymous_rate_limit()
+                    retry_after = body.get("retryAfter")
+                    _record_jina_anonymous_rate_limit(
+                        seconds=float(retry_after) if isinstance(retry_after, (int, float)) else None,
+                    )
                     kind = kind or "rate_limit"
                 # Classify exhaustion from the error itself instead of issuing a
                 # blocking balance-API round-trip; the key-state store (and the
                 # caller) only need to know this key is out of quota.
-                elif _jina_quota_exhausted(exc.code, message):
+                elif _jina_quota_exhausted(exc.code, message, app_status):
                     key_exhausted = True
                     kind = "quota_exhausted"
                 else:

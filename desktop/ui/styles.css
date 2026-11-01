@@ -654,6 +654,11 @@
     font: 700 17px Consolas,monospace;
     letter-spacing: -2px;
   }
+  .icon-github_code {
+    border-radius: 8px;
+    font: 700 15px Consolas,monospace;
+    letter-spacing: -1px;
+  }
   .icon-hackernews {
     background: #ff6b12;
     font-weight: 400;

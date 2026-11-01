@@ -249,6 +249,10 @@ const APPLICATION_URLS: &[(&str, Option<&str>)] = &[
     ("firecrawl", Some("https://www.firecrawl.dev/app/api-keys")),
     ("serpapi", Some("https://serpapi.com/manage-api-key")),
     ("github-repos", Some("https://github.com/settings/tokens")),
+    // github-code shares the `github` token entry with github-repos.
+    ("github-code", Some("https://github.com/settings/tokens")),
+    // Optional: a Stack Apps key only raises the anonymous daily quota.
+    ("stackoverflow", Some("https://stackapps.com/apps/oauth/register")),
 ];
 fn application_url(source: &str) -> Option<&'static str> {
     APPLICATION_URLS
@@ -583,6 +587,8 @@ mod tests {
             "firecrawl",
             "serpapi",
             "github-repos",
+            "github-code",
+            "stackoverflow",
         ] {
             let entry = resolve_source(name).expect("mapped source is keyed");
             let view = overview(&BTreeMap::new(), &entry);

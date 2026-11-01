@@ -16,8 +16,9 @@
 use std::sync::OnceLock;
 
 /// UI/CLI-facing source identifier used on the `--source` flag and the
-/// sources page. Differs from `source` only for `github-repos`: settings and
-/// Python use `github_repos`, while the CLI/UI label uses `github-repos`.
+/// sources page. Differs from `source` only for the GitHub sources: settings
+/// and Python use `github_repos` / `github_code`, while the CLI/UI labels use
+/// `github-repos` / `github-code`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProviderEntry {
     /// Canonical source name used in settings (`disabled_sources`, `routes.sources`).
@@ -25,7 +26,7 @@ pub(crate) struct ProviderEntry {
     /// UI/CLI form for credential commands and `--source` arguments.
     pub cli_source: &'static str,
     /// Credential store primary key. May differ from `source` (`github-repos`
-    /// stores under `github`). `None` for sources that never take a key.
+    /// and `github-code` both store under `github`). `None` for sources that never take a key.
     pub provider: Option<&'static str>,
     /// Aliases that resolve to this entry.
     pub aliases: &'static [&'static str],
@@ -164,6 +165,9 @@ mod tests {
         assert_eq!(resolve("github-repos").unwrap().source, "github_repos");
         assert_eq!(resolve("github").unwrap().source, "github_repos");
         assert_eq!(resolve("github_repos").unwrap().cli_source, "github-repos");
+        assert_eq!(resolve("github-code").unwrap().source, "github_code");
+        assert_eq!(resolve("github_code").unwrap().cli_source, "github-code");
+        assert_eq!(resolve("github_code").unwrap().provider, Some("github"));
         assert_eq!(resolve(" v2ex ").unwrap().source, "sov2ex");
         assert!(resolve("jina").is_err(), "scrape-only providers are not --source values");
         assert!(resolve("nope").is_err());
@@ -171,7 +175,7 @@ mod tests {
 
     #[test]
     fn allowed_source_names_cover_canonical_alias_and_cli() {
-        for name in ["github_repos", "github-repos", "github", "v2ex", "sov2ex"] {
+        for name in ["github_repos", "github-repos", "github", "github_code", "github-code", "v2ex", "sov2ex"] {
             assert!(is_allowed_source(name), "{name}");
         }
         assert!(!is_allowed_source("jina"));

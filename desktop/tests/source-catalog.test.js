@@ -31,7 +31,7 @@ test('catalog has one entry per search source and route with stable aliases', ()
   const names = SEARCH_SOURCES.map(source => source.name);
   assert.deepEqual(names, [
     'baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi',
-    'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter',
+    'github_repos', 'github_code', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter',
   ]);
   assert.equal(new Set(names).size, names.length);
   assert.ok(names.every(name => !name.includes('-')), 'CLI names use underscores');
@@ -43,6 +43,10 @@ test('catalog has one entry per search source and route with stable aliases', ()
   assert.deepEqual(routeSources('web'), routeSources('default'));
   assert.ok(routeSources('default').includes('brave'));
   assert.equal(canonicalSource('github-repos'), 'github_repos');
+  assert.equal(canonicalSource('github-code'), 'github_code');
+  for (const route of ROUTES) {
+    assert.ok(!routeSources(route.name).includes('github_code'), `${route.name} does not include github_code`);
+  }
   assert.equal(canonicalSource('v2ex'), 'sov2ex');
   assert.equal(canonicalSource('qianfan'), 'baidu');
   assert.equal(isAllowedSource('github'), true);
@@ -61,10 +65,13 @@ test('credentials and settings derive from the same catalog', () => {
     ['twitter'],
   );
   assert.equal(sourceLabel('github'), 'GitHub 仓库');
+  assert.equal(sourceLabel('github_code'), 'GitHub 代码');
+  assert.equal(SEARCH_SOURCES.find(source => source.name === 'github_code').key_provider, 'github');
   assert.deepEqual(SETTINGS_SOURCES.map(entry => entry.source), SOURCES.map(entry => entry.source));
   assert.deepEqual(SETTINGS_ROUTES.map(route => route.value), ROUTES.map(route => route.name));
   assert.deepEqual(SOURCE_CATALOG.credential_store_providers, [
     'baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github', 'jina',
+    'stackexchange',
   ]);
   for (const source of SEARCH_SOURCES) {
     assert.ok(source.label && source.description && source.mark, `${source.name} keeps display metadata`);

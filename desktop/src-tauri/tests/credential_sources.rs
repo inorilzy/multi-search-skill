@@ -17,6 +17,8 @@ const ALLOWED: &[&str] = &[
     "firecrawl",
     "serpapi",
     "github-repos",
+    "github-code",
+    "stackoverflow",
 ];
 
 struct Home(PathBuf);
@@ -56,6 +58,9 @@ fn github_repos_maps_to_github_provider_and_unknown_names_are_rejected() {
     assert_eq!(fixture::resolve("github_repos").unwrap(), ("github-repos", "github"));
     // `github` is a documented CLI alias routed to the `github` provider like the CLI does.
     assert_eq!(fixture::resolve("github").unwrap(), ("github-repos", "github"));
+    // github-code shares the same `github` token entry.
+    assert_eq!(fixture::resolve("github-code").unwrap(), ("github-code", "github"));
+    assert_eq!(fixture::resolve("github_code").unwrap(), ("github-code", "github"));
     assert_eq!(fixture::resolve("tavily").unwrap(), ("tavily", "tavily"));
     for bad in ["", "  ", "../tavily", "tavily/../brave", "ns-src/tavily", "TAVILY"] {
         let error = fixture::resolve(bad).unwrap_err();
@@ -178,7 +183,9 @@ fn every_allowlisted_source_reads_only_its_own_provider_entry() {
         assert_eq!(fixture::read_for(&home.vars(), source).unwrap(), format!("{SYNTHETIC_KEY}-{provider}"));
     }
     let providers: std::collections::BTreeSet<&str> = ALLOWED.iter().map(|s| fixture::resolve(s).unwrap().1).collect();
-    assert_eq!(providers.len(), ALLOWED.len());
+    // github-repos and github-code deliberately share the `github` token entry.
+    assert_eq!(providers.len(), ALLOWED.len() - 1);
+    assert_eq!(fixture::resolve("github-code").unwrap().1, fixture::resolve("github-repos").unwrap().1);
 }
 
 #[test]
@@ -210,8 +217,8 @@ fn file_list_is_reported_without_values() {
 }
 
 #[test]
-fn all_twelve_source_tests_use_typed_cli_arguments_and_independent_status() {
-    for source in ALLOWED.iter().copied().chain(["hackernews", "stackoverflow", "sov2ex", "twitter"]) {
+fn all_thirteen_source_tests_use_typed_cli_arguments_and_independent_status() {
+    for source in ALLOWED.iter().copied().chain(["hackernews", "sov2ex", "twitter"]) {
         let payload = json!({"provider_status": [{"source": source.replace('-', "_"), "status": "ok"}]});
         let (args, outcome) = fixture::source_test(source, &payload).unwrap();
         assert_eq!(args[args.iter().position(|arg| arg == "--source").unwrap() + 1], source);

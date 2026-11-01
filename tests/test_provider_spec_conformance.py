@@ -58,7 +58,9 @@ class SerpApiEmptyResultsTests(unittest.TestCase):
         failed = {"search_metadata": {"status": "Error"}, "error": "Invalid API key."}
         with mock.patch.object(serpapi, "urlopen_retry", return_value=response(failed)):
             rows = serpapi.search_serpapi("q", "fixture-key", count=10)
-        self.assertEqual(rows, [{"source": "serpapi", "error": "Invalid API key."}])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["error"], "Invalid API key.")
+        self.assertEqual(rows[0]["kind"], "invalid")
 
 
 class FirecrawlHighlightsTests(unittest.TestCase):

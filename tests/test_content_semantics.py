@@ -220,7 +220,7 @@ class ProviderContentKindTests(unittest.TestCase):
             "multi_search_mcp.src.search.searchers.serpapi.urlopen_retry",
             return_value=_FakeResponse(payload),
         ):
-            rows = search_serpapi("q", "sk")
+            rows = search_serpapi("q", "sk", engine="google")
 
         self.assertEqual(rows[0]["content_kind"], "answer")
         self.assertEqual(rows[1]["content_kind"], "excerpt")

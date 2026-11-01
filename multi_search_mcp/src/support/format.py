@@ -13,6 +13,7 @@ SOURCE_ICONS = {
     "hackernews": "📰",
     "stackoverflow": "🧩",
     "github-repos": "📦",
+    "github-code": "</>",
     "serpapi": "🔎",
     "twitter": "🐦",
     "sov2ex": "SV2",

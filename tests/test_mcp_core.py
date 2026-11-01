@@ -309,14 +309,15 @@ class ProviderMetadataDriftTests(unittest.TestCase):
         "serpapi": "serpapi",
         "firecrawl": "firecrawl",
         "github_repos": "github",
+        "github_code": "github_code",
         "hackernews": "hackernews", "stackoverflow": "stackoverflow",
         "twitter": "twitter", "sov2ex": "sov2ex",
     }
 
     # Frozen snapshot of current count membership, so derivation cannot silently
-    # add/drop a source. Both dicts currently share the same 12 keys.
+    # add/drop a source. Both dicts currently share the same 13 keys.
     COUNT_CAPS_KEYS = {
-        "baidu", "brave", "parallel", "tavily", "exa", "github", "hackernews", "serpapi",
+        "baidu", "brave", "parallel", "tavily", "exa", "github", "github_code", "hackernews", "serpapi",
         "stackoverflow", "firecrawl",
         "twitter", "sov2ex",
     }
@@ -333,7 +334,7 @@ class ProviderMetadataDriftTests(unittest.TestCase):
         from multi_search_mcp.src.search.resolve import COUNT_CAPS, DEFAULT_COUNTS
         expected_caps = {
             "baidu": 50, "brave": 20, "parallel": 20, "tavily": 20, "exa": 100, "github": 100,
-            "hackernews": 100, "serpapi": 100,
+            "github_code": 100, "hackernews": 100, "serpapi": 100,
             "stackoverflow": 100, "firecrawl": 100,
             "twitter": 20, "sov2ex": 50,
         }
@@ -571,7 +572,7 @@ class GeneralSearchDepthTests(unittest.TestCase):
             })
 
         with mock.patch.object(serpapi_searcher, "urlopen_retry", side_effect=fake_urlopen):
-            rows = serpapi_searcher.search_serpapi("coffee", "key", search_depth="fast")
+            rows = serpapi_searcher.search_serpapi("coffee", "key", engine="google")
 
         self.assertEqual(rows[0]["source"], "serpapi_answer")
         self.assertEqual(rows[0]["answer_type"], "answer_box")

@@ -141,8 +141,8 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     rec.kind = kind;
     rec.state.dataset.kind = kind;
     rec.state.textContent = text;
-    rec.summary.textContent = kind === 'configured' ? rec.entry.cookie ? 'Cookie 文件' : '••••••••••••••••••' : rec.entry.cookie ? 'Cookie 路径' : rec.entry.keyed ? '—' : '无需配置';
-    rec.summaryText.textContent = kind === 'configured' ? rec.entry.cookie ? 'Cookie 路径已配置' : 'API Key 已配置（不显示）' : rec.entry.keyed || rec.entry.cookie ? '未配置' : '无需配置';
+    rec.summary.textContent = kind === 'configured' ? rec.entry.cookie ? 'Cookie 文件' : '••••••••••••••••••' : rec.entry.cookie ? 'Cookie 路径' : rec.entry.keyOptional ? '可选' : rec.entry.keyed ? '—' : '无需配置';
+    rec.summaryText.textContent = kind === 'configured' ? rec.entry.cookie ? 'Cookie 路径已配置' : 'API Key 已配置（不显示）' : rec.entry.keyOptional ? '未配置（可选，无 Key 也能用）' : rec.entry.keyed || rec.entry.cookie ? '未配置' : '无需配置';
     refreshStats();
   }
   function updateRow(rec, view) {
@@ -162,7 +162,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     rec.test = { ...result };
     rec.result.dataset.kind = result.kind;
     rec.result.querySelector('strong').textContent = ({ idle: '未测试', running: '正在测试', success: '连接成功', error: '测试失败' })[result.kind];
-    rec.result.querySelector('small').textContent = result.kind === 'success' ? '本次连接已验证' : result.kind === 'error' ? result.title : rec.entry.cookie ? '使用本机 Cookie' : !rec.entry.keyed ? '无需 API Key' : '点击测试验证';
+    rec.result.querySelector('small').textContent = result.kind === 'success' ? '本次连接已验证' : result.kind === 'error' ? result.title : rec.entry.cookie ? '使用本机 Cookie' : !rec.entry.keyed ? '无需 API Key' : rec.entry.keyOptional ? '无需 API Key，可选填 Key 提高额度' : '点击测试验证';
     rec.result.title = [result.title, result.message].filter(Boolean).join('\n');
     rec.testButton.disabled = result.kind === 'running';
     refreshStats();
@@ -177,7 +177,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
       <button type="button" class="source-pick" data-pick="${esc(entry.source)}" aria-expanded="false" aria-controls="detail-${entry.source}"><span class="source-name">${esc(entry.label)}</span><small class="source-desc">${esc(DESCRIPTIONS[entry.source])}</small></button>
       <label class="source-toggle"><input type="checkbox" role="switch" data-toggle="${esc(entry.source)}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>
       <div class="source-key"><span data-key-summary aria-hidden="true">—</span><span class="visually-hidden" data-key-summary-text>未配置</span></div><span class="source-state" data-row-status data-kind="unknown">读取中</span>
-      <div class="source-test-state" data-row-result data-kind="idle"><span class="test-state-symbol" aria-hidden="true"></span><div><strong>未测试</strong><small>${entry.cookie ? '需要 Cookie 文件' : entry.keyed ? '点击测试验证' : '无需 API Key'}</small></div></div>
+      <div class="source-test-state" data-row-result data-kind="idle"><span class="test-state-symbol" aria-hidden="true"></span><div><strong>未测试</strong><small>${entry.cookie ? '需要 Cookie 文件' : entry.keyOptional ? '无需 API Key，可选填 Key 提高额度' : entry.keyed ? '点击测试验证' : '无需 API Key'}</small></div></div>
       <button type="button" class="source-test-button" data-row-test aria-label="测试 ${esc(entry.label)}">${icon('play')}<span>测试</span></button><button type="button" class="source-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
       <p class="row-error" data-row-error role="alert"></p><div id="detail-${esc(entry.source)}" class="source-detail" data-source-detail hidden></div>`;
     const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), summaryText: row.querySelector('[data-key-summary-text]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };

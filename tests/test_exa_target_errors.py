@@ -150,7 +150,9 @@ class ExaTargetErrorTests(unittest.TestCase):
 
     def test_request_status_is_classified_before_misleading_error_text(self):
         for code, expected, retryable in (
-            (401, "invalid", True), (403, "invalid", True),
+            # docs/exa/error-codes.md: 403 is a feature/policy refusal; the key
+            # is healthy, so it is neither "invalid" nor worth rotating.
+            (401, "invalid", True), (403, "provider", False),
             (402, "quota_exhausted", True), (429, "rate_limit", True),
             (500, "error", False),
         ):

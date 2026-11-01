@@ -28,7 +28,8 @@ def search_hackernews(query: str, count: int = 10, timeout: float = 20, deadline
     params = {
         "query": query,
         "tags": "story",
-        "hitsPerPage": max(1, count),
+        # Algolia caps hitsPerPage at 1000.
+        "hitsPerPage": max(1, min(int(count), 1000)),
     }
     url = "https://hn.algolia.com/api/v1/search?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(

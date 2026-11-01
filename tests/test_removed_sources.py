@@ -47,12 +47,15 @@ class RemovedRedditTests(unittest.TestCase):
 
 
 class RemovedFilteredSourceTests(unittest.TestCase):
-    SEARCH_SOURCES = {
+    # The ``all`` route has 12 sources; github_code is registered (13 total)
+    # but belongs to no built-in route.
+    ALL_ROUTE_SOURCES = {
         "baidu", "brave", "exa", "firecrawl", "parallel", "serpapi", "tavily",
         "github_repos", "hackernews", "stackoverflow", "twitter", "sov2ex",
     }
+    SEARCH_SOURCES = ALL_ROUTE_SOURCES | {"github_code"}
 
-    def test_registry_and_advertised_sources_match_current_twelve(self):
+    def test_registry_and_advertised_sources_match_current_thirteen(self):
         self.assertEqual(set(build_provider_registry()), self.SEARCH_SOURCES)
         self.assertEqual(ALL_SOURCE_NAMES, self.SEARCH_SOURCES)
         searchable = {
@@ -63,7 +66,7 @@ class RemovedFilteredSourceTests(unittest.TestCase):
         advertised = list_sources()
         self.assertEqual(set(advertised["sources"]), self.SEARCH_SOURCES)
         self.assertNotIn("cn-community", advertised["routes"])
-        self.assertEqual(resolve_route("all"), self.SEARCH_SOURCES)
+        self.assertEqual(resolve_route("all"), self.ALL_ROUTE_SOURCES)
 
     def test_removed_source_names_and_aliases_are_rejected(self):
         for name in ("linuxdo", "linux-do", "linuxdo_api", "linuxdo-api", "zhihu"):
