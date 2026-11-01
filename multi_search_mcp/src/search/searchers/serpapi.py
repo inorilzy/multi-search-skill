@@ -79,6 +79,11 @@ def search_serpapi(
         except Exception as e:
             return _return_error(str(scrub_secrets(e, api_key)))
         if data.get("error"):
+            # A query Google answers with nothing is still a successful search:
+            # SerpApi reports search_metadata.status == "Success" alongside an
+            # "error" message (serpapi.com/api-status-and-error-codes).
+            if (data.get("search_metadata") or {}).get("status") == "Success":
+                break
             return _return_error(str(data["error"]))
 
         if start == 0:

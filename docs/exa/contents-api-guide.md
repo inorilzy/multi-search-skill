@@ -1,164 +1,338 @@
-> ## Documentation Index
-> Fetch the complete documentation index at: https://exa.ai/docs/llms.txt
-> Use this file to discover all available pages before exploring further.
+> Source: https://exa.ai/docs/contents/quickstart.md
+> Retrieved: 2026-10-31
+> Covers: POST https://api.exa.ai/contents (guide)
+> Note: https://exa.ai/docs/reference/contents-api-guide.md now redirects here
 
 # Contents API
 
-> Extract clean, LLM-ready web content.
+> Extract text, highlights, and summaries from any URL.
 
-<div className="callout-box not-prose">
-  <p className="callout-title">Just want working code?</p>
+Exa Contents is a content extraction API that returns clean page content from URLs, handling JavaScript-rendered pages, PDFs, and complex layouts automatically.
 
-  <p className="callout-body">
-    Stop reading. Visit [contents coding agent reference](/reference/contents-api-guide-for-coding-agents)
-    and copy paste to your agent.
-  </p>
-</div>
+All contents features are also available in [Exa Search](https://exa.ai/docs/search/quickstart.md) for returned URLs, at no extra charge up to 10 results per search (\$1/1000 pages afterwards). We recommend using Search in this way instead of Contents for web search tool use cases.
 
-## What it is
+> [!TIP]
+>
+> For search results feeding AI context, request `contents: { highlights: true }` on `/search` —
+> Exa sizes each result's excerpts to its relevance. See [Highlights](https://exa.ai/docs/search/highlights.md).
 
-`/contents` returns clean, structured content from any URL, handling JavaScript-rendered pages, PDFs, and complex layouts automatically. You pass in URLs and get back full page text, targeted highlights, LLM-generated summaries, or all three. It can also be used to crawl linked subpages to pull content from entire site sections in a single request.
+## Make your first request
 
-All contents features are also available in `/search` for returned URLs, at no extra charge up to 10 results per search (\$1/1000 pages afterwards). We recommend using `/search` in this way instead of `/contents` for web search tool use cases.
+Pass one or more URLs or document IDs and request highlights for the parts relevant to your task. In HTTP requests, provide them in `ids`:
 
-<Info>
-  Use `/contents` when you already know the URLs. If you are starting from a query and want Exa to
-  find the pages first, start with [Search](/reference/search-api-guide).
-</Info>
+```python Python theme={null}
+from exa_py import Exa
 
-## Key Capabilities
+exa = Exa()
 
-### Content Modes
+result = exa.get_contents(
+    ["https://exa.ai/blog/dynamic-highlights"],
+    highlights={"query": "token efficiency and quality results"},
+)
 
-Choose how you receive content, or combine them in a single request:
+print(result.results[0].highlights)
+```
 
-| Mode           | What You Get                        | Best For                                                |
-| -------------- | ----------------------------------- | ------------------------------------------------------- |
-| **Text**       | Full page content as clean markdown | Deep analysis, full context research                    |
-| **Highlights** | Key excerpts relevant to your query | Agent workflows, factual lookups (10x fewer tokens)     |
-| **Summary**    | LLM-generated abstract              | Quick overviews, structured extraction with JSON schema |
+```javascript JavaScript theme={null}
+import Exa from "exa-js";
 
-### Subpage crawling
+const exa = new Exa();
 
-Automatically discover and extract content from linked pages within a site. Pass `subpages: 10` and optionally `subpageTarget: ["docs", "about"]` to focus on relevant sections.
-
-### Content freshness
-
-Control whether results come from cache or are freshly crawled with `maxAgeHours`:
-
-| Setting        | Behavior                                          |
-| -------------- | ------------------------------------------------- |
-| Omit (default) | Livecrawl only when no cache exists               |
-| `24`           | Use cache if \< 24 hours old, otherwise livecrawl |
-| `0`            | Always livecrawl (slowest, freshest)              |
-| `-1`           | Cache only (fastest, may be stale)                |
-
-## Common use cases
-
-<Accordion title="Token-efficient info from an article">
-  Get the most relevant excerpts without needing the full page.
-
-  ```python theme={null}
-  result = exa.get_contents(
-    ["https://example.com/research-paper"],
-    highlights={"query": "methodology and results"}
-  )
-  ```
-</Accordion>
-
-<Accordion title="Structured outputs using summaries">
-  Extract specific fields from any page using a JSON schema.
-
-  ```python theme={null}
-  result = exa.get_contents(
-    ["https://example.com/company-page"],
-    summary={
-      "query": "Extract company information",
-      "schema": {
-        "type": "object",
-        "properties": {
-          "name": {"type": "string"},
-          "industry": {"type": "string"},
-          "founded": {"type": "number"}
-        },
-        "required": ["name", "industry"]
-      }
+const result = await exa.getContents(
+  ["https://exa.ai/blog/dynamic-highlights"],
+  {
+    highlights: {
+      query: "token efficiency and quality results"
     }
-  )
-  ```
-</Accordion>
+  }
+);
 
-<Accordion title="Crawl many pages from a website">
-  Pull content from a docs site, targeting specific sections.
+console.log(result.results[0].highlights);
+```
 
-  ```python theme={null}
-  result = exa.get_contents(
+```bash cURL theme={null}
+curl -s -X POST "https://api.exa.ai/contents" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $EXA_API_KEY" \
+  -d '{
+    "ids": ["https://exa.ai/blog/dynamic-highlights"],
+    "highlights": {
+      "query": "token efficiency and quality results"
+    }
+  }'
+```
+
+> [accordion] Example response
+>
+> ```json theme={null}
+> {
+>   "requestId": "e492118ccdedcba5088bfc4357a8a125",
+>   "results": [
+>     {
+>       "id": "https://exa.ai/blog/dynamic-highlights",
+>       "title": "Dynamic Highlights",
+>       "url": "https://exa.ai/blog/dynamic-highlights",
+>       "highlights": [
+>         "With a 12k character budget, relative to existing highlights, Dynamic Highlights achieves a 40% average token efficiency gain with a notable quality increase..."
+>       ]
+>     }
+>   ],
+>   "statuses": [
+>     {
+>       "id": "https://exa.ai/blog/dynamic-highlights",
+>       "status": "success",
+>       "source": "cached"
+>     }
+>   ],
+>   "costDollars": {
+>     "total": 0.001
+>   }
+> }
+> ```
+
+Each item in `results` includes page metadata and the content view you requested. Check `statuses` for the success or failure of every URL.
+
+## Output shapes
+
+> [tab] Highlights
+>
+> Highlights return relevant passages copied from the page. Start here for agents, RAG, and
+> factual lookups because highlights keep context smaller than full text.
+>
+> Set `highlights: true` to enable highlights. An additional `query` parameter is recommended when using Contents to focus content extraction from the page:
+>
+> ```python Python theme={null}
+> result = exa.get_contents(
+>     ["https://example.com/research-paper"],
+>     highlights={"query": "methodology and results"},
+> )
+> ```
+>
+> ```javascript JavaScript theme={null}
+> const result = await exa.getContents(
+>   ["https://example.com/research-paper"],
+>   {
+>     highlights: {
+>       query: "methodology and results"
+>     }
+>   }
+> );
+> ```
+>
+> ```bash cURL theme={null}
+> curl -s -X POST "https://api.exa.ai/contents" \
+>   -H "Content-Type: application/json" \
+>   -H "Authorization: Bearer $EXA_API_KEY" \
+>   -d '{
+>     "ids": ["https://example.com/research-paper"],
+>     "highlights": {
+>       "query": "methodology and results"
+>     }
+>   }'
+> ```
+>
+> See [Highlights](https://exa.ai/docs/search/highlights.md) for Dynamic Highlights and guidance on allocating context
+> across several pages.
+
+> [tab] Full text
+>
+> Full text returns the clean page body as markdown. Use it when the task depends on broad context,
+> document structure, or details that highlights may leave out.
+>
+> Full pages can be large, so use `maxCharacters` when you need a limit:
+>
+> ```python Python theme={null}
+> result = exa.get_contents(
+>     ["https://example.com/technical-report"],
+>     text={"max_characters": 10000},
+> )
+> ```
+>
+> ```javascript JavaScript theme={null}
+> const result = await exa.getContents(
+>   ["https://example.com/technical-report"],
+>   {
+>     text: {
+>       maxCharacters: 10000
+>     }
+>   }
+> );
+> ```
+>
+> ```bash cURL theme={null}
+> curl -s -X POST "https://api.exa.ai/contents" \
+>   -H "Content-Type: application/json" \
+>   -H "Authorization: Bearer $EXA_API_KEY" \
+>   -d '{
+>     "ids": ["https://example.com/technical-report"],
+>     "text": {
+>       "maxCharacters": 10000
+>     }
+>   }'
+> ```
+
+> [tab] Summary
+>
+> Summary makes a language model call for each page. Use it when you need a generated overview or
+> fields extracted into a JSON schema.
+>
+> ```python Python theme={null}
+> result = exa.get_contents(
+>     ["https://example.com/company"],
+>     summary={"query": "Summarize the product, customers, and pricing"},
+> )
+> ```
+>
+> ```javascript JavaScript theme={null}
+> const result = await exa.getContents(
+>   ["https://example.com/company"],
+>   {
+>     summary: {
+>       query: "Summarize the product, customers, and pricing"
+>     }
+>   }
+> );
+> ```
+>
+> ```bash cURL theme={null}
+> curl -s -X POST "https://api.exa.ai/contents" \
+>   -H "Content-Type: application/json" \
+>   -H "Authorization: Bearer $EXA_API_KEY" \
+>   -d '{
+>     "ids": ["https://example.com/company"],
+>     "summary": {
+>       "query": "Summarize the product, customers, and pricing"
+>     }
+>   }'
+> ```
+>
+> To extract fields instead of prose, pass a JSON schema in `summary.schema`. The summary comes
+> back as a JSON string matching the schema; parse it to read the fields:
+>
+> ```json theme={null}
+> {
+>   "ids": ["https://example.com/company"],
+>   "summary": {
+>     "schema": {
+>       "$schema": "https://json-schema.org/draft/2020-12/schema",
+>       "title": "Company Information",
+>       "type": "object",
+>       "properties": {
+>         "name": { "type": "string", "description": "The company name" },
+>         "industry": { "type": "string", "description": "Primary industry" },
+>         "foundedYear": { "type": "number", "description": "Year the company was founded" }
+>       },
+>       "required": ["name"]
+>     }
+>   }
+> }
+> ```
+
+Pick one content view per request. Requesting highlights, text, and summary together returns and bills each view separately.
+
+## Content freshness
+
+`maxAgeHours` controls how fresh the extracted page content must be.
+
+| Value | Behavior |
+| - | - |
+| Omit | Use cached content when available and fetch the page when needed |
+| Positive integer | Use cached content if it is newer than this many hours, otherwise fetch the page |
+| `0` | Always fetch fresh content |
+| `-1` | Only use cached content |
+
+Most requests should omit this field. Set it when stale page content would be unusable, such as for prices, availability, or frequently updated pages. Pair a low `maxAgeHours` with `livecrawlTimeout` (milliseconds) to cap how long a fresh fetch may take.
+
+> [accordion] Migrate from the deprecated livecrawl parameter
+>
+> The `livecrawl` string parameter (`"always"`, `"preferred"`, `"fallback"`, `"never"`) is
+> deprecated in favor of `maxAgeHours`:
+>
+> | Old `livecrawl` value | Equivalent |
+> | - | - |
+> | `"always"` | `maxAgeHours: 0` |
+> | `"never"` | `maxAgeHours: -1` |
+> | `"fallback"` | Omit `maxAgeHours` |
+> | `"preferred"` | No direct equivalent; use a low value such as `maxAgeHours: 1` |
+
+## Crawl subpages
+
+Set `subpages` to follow links from each starting URL. Add `subpageTarget` when you want Exa to prioritize particular site sections:
+
+```python Python theme={null}
+result = exa.get_contents(
     ["https://docs.example.com"],
-    subpages=15,
-    subpage_target=["api", "models", "embeddings"],
-    max_age_hours=24,
-    text={"max_characters": 5000}
-  )
-  ```
-</Accordion>
+    subpages=10,
+    subpage_target=["api", "reference", "guides"],
+    highlights=True,
+)
+```
 
-## Human Quickstart
+```javascript JavaScript theme={null}
+const result = await exa.getContents(
+  ["https://docs.example.com"],
+  {
+    subpages: 10,
+    subpageTarget: ["api", "reference", "guides"],
+    highlights: true
+  }
+);
+```
 
-Get your API key from the [Exa Dashboard](https://dashboard.exa.ai/api-keys).
+```bash cURL theme={null}
+curl -s -X POST "https://api.exa.ai/contents" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $EXA_API_KEY" \
+  -d '{
+    "ids": ["https://docs.example.com"],
+    "subpages": 10,
+    "subpageTarget": ["api", "reference", "guides"],
+    "highlights": true
+  }'
+```
 
-<Tabs>
-  <Tab title="Python">
-    ```bash theme={null}
-    pip install exa-py
-    ```
+## Images and favicons
 
-    ```python theme={null}
-    from exa_py import Exa
+Set `extras.imageLinks` to the number of image URLs you want from each page. Results also include
+the site's `favicon` and a representative `image` URL when available. On `/search`, this option
+sits at `contents.extras.imageLinks`.
 
-    exa = Exa(api_key="your-api-key")
+## Common mistakes
 
-    result = exa.get_contents(
-      ["https://example.com/article"],
-      highlights=True
-    )
-    ```
-  </Tab>
+`/contents` shares most of its options with `/search` but places them differently, and requests copied from older examples often carry parameters this endpoint never had. The [API reference](https://exa.ai/docs/reference/get-contents.md) is the source of truth for the current schema.
 
-  <Tab title="JavaScript">
-    ```bash theme={null}
-    npm install exa-js
-    ```
+| Instead of | Use |
+| - | - |
+| `contents: { text: ... }` | Top-level `text`, `highlights`, and `summary`. Unlike `/search`, `/contents` has no `contents` wrapper. |
+| `useAutoprompt` | Nothing. There is no query to rewrite on `/contents`; remove the field. |
+| `stream: true` | A normal request. `/contents` does not support streaming. |
+| `numSentences`, `highlightsPerUrl` | `highlights: true`. Exa sizes highlights to each page; set `highlights.maxCharacters` only for a fixed excerpt limit. |
+| `tokensNum` | `text.maxCharacters`. |
+| `livecrawl: "always"` | `maxAgeHours: 0`. Do not send `livecrawl` and `maxAgeHours` together. |
+| `crawledBeforeDate` | `snapshotAsOf`. |
+| `context: true` | `highlights` or `text`; build the context string from `results[]`. |
 
-    ```javascript theme={null}
-    import Exa from "exa-js";
+A few behaviors that are easy to miss:
 
-    const exa = new Exa("your-api-key");
+* `urls` and `ids` are interchangeable. Pass either the page URLs or the `id` values from a search response.
+* A fresh fetch (`maxAgeHours: 0` or a low value) waits up to `livecrawlTimeout` milliseconds (default 10000). Raise it to 12000–15000 for slow sites, or lower it when latency matters more than freshness.
+* The Python SDK uses snake\_case for every key: `exa.get_contents(urls, highlights=True, max_age_hours=24)`.
+* To attribute a request to one of your end users, send `userIdentifier` at the top level, as on `/search`. See [Attribute requests to your end users](https://exa.ai/docs/search/best-practices.md#user-identifier).
 
-    const result = await exa.getContents(
-      ["https://example.com/article"],
-      {
-        highlights: true
-      }
-    );
-    ```
-  </Tab>
+## Next steps
 
-  <Tab title="cURL">
-    ```bash theme={null}
-    curl -X POST "https://api.exa.ai/contents" \
-      -H "Content-Type: application/json" \
-      -H "x-api-key: YOUR_API_KEY" \
-      -d '{
-        "urls": ["https://example.com/article"],
-        "highlights": true
-      }'
-    ```
-  </Tab>
-</Tabs>
+> [card] [API reference](https://exa.ai/docs/reference/get-contents.md)
+>
+> See every request parameter and response field.
 
-## Next
+> [card] [Highlights](https://exa.ai/docs/search/highlights.md)
+>
+> Compare regular and Dynamic Highlights for agent and RAG context.
 
-* [**Search API**](/reference/search-api-guide) - Find content on the web with natural language
-* [**Contents API Reference**](/reference/get-contents) - Full API reference with all parameters
-* [**MCP Setup**](/reference/exa-mcp) - Connect your AI assistant to Exa
-* [**SDKs**](/sdks/python-sdk) - Python and JavaScript SDK docs
+> [card] [Search API](https://exa.ai/docs/search/quickstart.md)
+>
+> Find relevant pages before extracting their content.
+
+> [card] [SDKs](https://exa.ai/docs/sdks/quickstart.md)
+>
+> Use Exa from Python or JavaScript.

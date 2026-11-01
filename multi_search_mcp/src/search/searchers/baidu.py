@@ -42,7 +42,8 @@ def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float,
         f"{QIANFAN_BASE}{path}",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={
-            "X-Appbuilder-Authorization": f"Bearer {api_key}",
+            # Documented Qianfan public header (cloud.baidu.com/doc/qianfan-api/s/3m9b5lqft).
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
         method="POST",

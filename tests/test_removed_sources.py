@@ -89,3 +89,24 @@ class RemovedFilteredSourceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RemovedRedditScraperTests(unittest.TestCase):
+    """Reddit's public JSON needs OAuth now; the dedicated scraper is gone."""
+
+    def test_reddit_scraper_modules_are_gone(self):
+        import importlib.util
+        for module in ("multi_search_mcp.src.scrape.scrapers.reddit",
+                       "multi_search_mcp.src.scrape.scrapers._reddit_transport"):
+            with self.subTest(module=module):
+                self.assertIsNone(importlib.util.find_spec(module))
+
+    def test_reddit_urls_use_the_generic_scrape_chain(self):
+        from unittest import mock
+        from multi_search_mcp.src.scrape import scrape
+        url = "https://www.reddit.com/r/python/comments/abc123/example/"
+        self.assertTrue(scrape.uses_delegated_backends(url, ["jina"]))
+        with mock.patch.object(scrape, "scrape_url_jina", return_value={"markdown": "body"}) as jina:
+            result = scrape.scrape_url_smart(url, backends=["jina"])
+        jina.assert_called_once()
+        self.assertEqual(result["via"], "jina")

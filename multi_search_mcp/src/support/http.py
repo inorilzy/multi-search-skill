@@ -1,7 +1,7 @@
 """HTTP requests with safe redirects and a shared retry/read deadline.
 
 Trust model: every outbound target is a provider address fixed in code (search
-APIs, scrape backends, the Reddit API, the X API), while externally supplied
+APIs, scrape backends, the X API), while externally supplied
 URLs are only handed to those providers as parameters. The HTTP layer therefore
 never resolves a target name itself and never checks resolved addresses: name
 resolution and dialing are left to the standard library socket connect, so a

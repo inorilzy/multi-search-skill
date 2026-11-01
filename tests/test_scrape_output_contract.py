@@ -106,10 +106,9 @@ class SingleMarkdownResponseTests(unittest.TestCase):
 
 class ScraperContractTests(unittest.TestCase):
     def _scrape(self, backend, payload):
-        url = "https://www.reddit.com/r/test/comments/abc123/post/" if backend == "reddit" else URL
         with mock.patch.object(scrape, f"scrape_url_{backend}", return_value=copy.deepcopy(payload)):
             return scrape.scrape_url_smart(
-                url, backends=None if backend == "reddit" else [backend],
+                URL, backends=[backend],
                 exa_keys=["fixture-key"], tavily_keys=["fixture-key"],
 
             )
@@ -123,8 +122,8 @@ class ScraperContractTests(unittest.TestCase):
         self.assertEqual(result["via"], "exa")
         self.assertFalse(result["truncated"])
 
-    def test_all_five_backends_share_success_fields_and_preserve_markdown(self):
-        for backend in ("jina", "exa", "tavily", "firecrawl", "reddit"):
+    def test_all_four_backends_share_success_fields_and_preserve_markdown(self):
+        for backend in ("jina", "exa", "tavily", "firecrawl"):
             with self.subTest(backend=backend):
                 markdown = "# Title\n\n`literal &amp;`\n\n正文 **bold**"
                 result = self._scrape(backend, {"markdown": markdown, "raw_provider_dump": "not public"})
@@ -136,8 +135,8 @@ class ScraperContractTests(unittest.TestCase):
                 self.assertNotIn("error", result)
                 self.assertNotIn("raw_provider_dump", result)
 
-    def test_all_five_backends_share_error_fields(self):
-        for backend in ("jina", "exa", "tavily", "firecrawl", "reddit"):
+    def test_all_four_backends_share_error_fields(self):
+        for backend in ("jina", "exa", "tavily", "firecrawl"):
             with self.subTest(backend=backend):
                 result = self._scrape(backend, {"error": "unavailable"})
                 self.assertTrue(FIELDS <= result.keys())
@@ -149,7 +148,7 @@ class ScraperContractTests(unittest.TestCase):
     def test_invalid_payload_and_empty_markdown_are_explicit_errors(self):
         for value in (None, [], {"markdown": ["bad"]}, {"markdown": "  "}, {"body": "wrong field"}):
             with self.subTest(payload=value):
-                result = self._scrape("reddit", value)
+                result = self._scrape("jina", value)
                 self.assertTrue(FIELDS <= result.keys())
                 self.assertIn("error", result)
                 self.assertEqual(result["markdown"], "")

@@ -42,9 +42,8 @@ your file-writing tool and give the executor its path for
 splice that URL into a command line; see
 [cli.md](cli.md#shell-safety-for-untrusted-values).
 
-Full content means the backend's acquired text, including Reddit's loaded
-comments. Acquisition limits, cache capacity, and retention still apply;
-unloaded comments stay unloaded. Do not claim original-page completeness.
+Full content means the backend's acquired text. Acquisition limits, cache
+capacity, and retention still apply. Do not claim original-page completeness.
 
 ## Check attribution
 
