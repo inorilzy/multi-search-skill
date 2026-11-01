@@ -31,6 +31,8 @@ class LinuxPackaging(unittest.TestCase):
                 ("lib/libpython3.12.so.1.0", b"ELF library", 0o755),
                 ("lib/python3.12/os.py", b"# stdlib", 0o644),
                 ("licenses/LICENSE.cpython.txt", b"CPython license", 0o644),
+                # Real PBS Linux archives have case-colliding names in this unused database.
+                ("share/terminfo/2/2621A", b"terminal database", 0o644),
             ):
                 info = tarfile.TarInfo("python/" + name)
                 info.size, info.mode = len(data), mode

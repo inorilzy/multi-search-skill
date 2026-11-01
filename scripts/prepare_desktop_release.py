@@ -36,7 +36,7 @@ def main() -> None:
     archive = inputs / spec["python"]["archive"]
     urllib.request.urlretrieve(spec["python"]["url"], archive)
     verify_file(archive, spec["python"]["sha256"], "CPython archive")
-    wheel_dir = ROOT / "dist" / "wheel"
+    wheel_dir = ROOT / "dist" / "wheel" / version
     # Build through a fresh sdist so an old build/lib tree cannot reintroduce deleted modules.
     subprocess.run([sys.executable, "-m", "build", "--outdir", str(wheel_dir)], cwd=ROOT, check=True)
     wheels = list(wheel_dir.glob("*.whl"))
@@ -61,6 +61,16 @@ def main() -> None:
     if not result.stdout.strip().endswith(version):
         raise SystemExit(f"bundled CLI version mismatch: {result.stdout!r}")
     print(result.stdout.strip())
+    if args.target == "windows":
+        # NSIS embeds this command inside !uninstfinalize. Inline Python containing
+        # quotes breaks its grammar; pass a script path as an ordinary argument.
+        # Without a certificate, omit the hook entirely instead of a no-op signer.
+        sign_command = None
+        if os.environ.get("WINDOWS_SIGN_CERT_BASE64", "").strip():
+            sign_command = {"cmd": "python", "args": [str(ROOT / "scripts/sign_windows.py"), "%1"]}
+        overlay = {"bundle": {"windows": {"signCommand": sign_command}}}
+        (ROOT / "dist/windows-bundle.conf.json").write_text(
+            json.dumps(overlay, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

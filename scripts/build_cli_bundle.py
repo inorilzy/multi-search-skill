@@ -138,6 +138,13 @@ def build(runtime: Path, launcher: Path, version: str, out: Path, anchor_out: Pa
     launcher_rel = spec["launcher_rel"]
     shutil.copy2(launcher, out / launcher_rel)
     _copytree_no_symlinks(runtime, out / "runtime")
+    if target == "linux":
+        # PBS ships terminal databases with names such as 2621A/2621a. The CLI does
+        # not use curses; exclude this optional data rather than weaken manifest
+        # path validation shared with the installer. The copied tree has no links.
+        terminfo = out / "runtime" / "share" / "terminfo"
+        if terminfo.is_dir():
+            shutil.rmtree(terminfo)
     _prune_runtime(out / "runtime")
 
     files = {launcher_rel: out / launcher_rel, **collect_runtime(out / "runtime")}

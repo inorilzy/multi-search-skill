@@ -8,6 +8,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [desktop-release-0.4.1.md](desktop-release-0.4.1.md) | 三平台桌面版 0.4.1 的安装、打包修复与验证边界。 |
 | [desktop-release-0.4.0.md](desktop-release-0.4.0.md) | 三平台桌面版 0.4.0 的安装包、签名状态与验证边界。 |
 | [glossary.md](glossary.md) | 搜索、来源、路由、正文、缓存、Key 状态的术语和接口约定；「代码出处」列由 `scripts/check_glossary_paths.py` 在 CI 中逐项校验。 |
 | [route-capability-table.md](route-capability-table.md) | 路由发现、路由组 JSON / id / description 规则与超时优先级；内置搜索源组合与能力。 |

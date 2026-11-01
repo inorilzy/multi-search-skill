@@ -110,8 +110,7 @@ jobs:
         working-directory: desktop
         shell: pwsh
         run: |
-          $env:MULTI_SEARCH_SIGN_SCRIPT = (Resolve-Path ../scripts/sign_windows.py).Path
-          npm run tauri -- build --bundles nsis -- --locked
+          npm run tauri -- build --config ../dist/windows-bundle.conf.json --bundles nsis -- --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build macOS application
         if: matrix.target == 'macos'
