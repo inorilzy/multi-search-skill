@@ -22,6 +22,17 @@
       },
       "rust_target": "aarch64-apple-darwin",
       "strip_symlinks": ["bin/python", "bin/python3"]
+    },
+    "linux": {
+      "python": {
+        "version": "3.12.15",
+        "archive": "cpython-3.12.15+20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.12.15%2B20261021-x86_64-unknown-linux-gnu-install_only.tar.gz",
+        "sha256": "5ff9f0602ce964a529ed1e8555d3abab6341926d724402ba9a15e9e877191124",
+        "provenance": "SHA-256 verified against both the GitHub API asset digest (asset 663544373) and SHA256SUMS (asset 663552379) of astral-sh/python-build-standalone release 20261021. Baseline x86_64 GNU/Linux install_only archive; bundled headers and licenses are retained."
+      },
+      "rust_target": "x86_64-unknown-linux-gnu",
+      "strip_symlinks": ["bin/python", "bin/python3"]
     }
   }
 }

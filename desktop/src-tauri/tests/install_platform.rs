@@ -1,15 +1,14 @@
 //! Platform-specific managed install behavior.
 //!
-//! macOS installs the in-app managed bundle as `bin/multi-search` plus its
-//! bundled runtime; Windows keeps its own lifecycle tests. Linux remains
-//! unsupported and must refuse without inventing paths. Every fixture here is
+//! macOS and Linux install `bin/multi-search` plus its bundled runtime;
+//! Windows keeps its own lifecycle tests. Every fixture here is
 //! isolated behind `install-test-boundary` and uses the disposable
 //! `common::Profile`, never the real home directory.
 #![cfg(not(windows))]
 mod common;
 
-#[cfg(target_os = "macos")]
-mod macos {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod unix_bundle {
     use super::common;
     use multi_search_desktop::{DesktopManager, RuntimeEnvironment, CLI_FILE_NAME};
     use sha2::{Digest, Sha256};
@@ -36,7 +35,7 @@ mod macos {
         hex(&source.join("manifest.json")).0
     }
 
-    /// A macOS-shaped bundle: executable launcher, executable bundled
+    /// A Unix-shaped bundle: executable launcher, executable bundled
     /// interpreter, and non-executable runtime data. `fs::copy` must retain
     /// the modes and the installer must refuse a source that is not executable.
     fn bundle(profile: &common::Profile, name: &str, version: &str) -> PathBuf {
@@ -518,6 +517,7 @@ mod macos {
         assert!(!root.exists());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn platform_root_uses_absolute_home_or_userprofile_and_rejects_relative_values() {
         let profile = common::Profile::new();
@@ -608,6 +608,7 @@ mod macos {
         let mut environment = profile.environment.clone();
         environment.variables.remove("HOME");
         environment.variables.remove("USERPROFILE");
+        environment.variables.remove("XDG_DATA_HOME");
         let manager = DesktopManager::new(environment);
 
         let plan = manager.install_plan();
@@ -625,50 +626,59 @@ mod macos {
 mod linux {
     use super::common;
     use multi_search_desktop::DesktopManager;
-    use std::fs;
+    use std::path::PathBuf;
 
     #[test]
-    fn bundled_installer_reports_linux_unsupported_without_invented_paths() {
+    fn platform_root_uses_xdg_data_home_and_falls_back_for_empty_or_relative_values() {
         let profile = common::Profile::new();
-        let manager = DesktopManager::new(profile.environment.clone());
-        let plan = manager.install_plan();
-        assert_eq!(plan.status, "unsupported", "{}", plan.reason);
-        assert!(plan.reason.contains("Linux"), "{}", plan.reason);
-        assert!(
-            plan.root.is_empty(),
-            "no install root is invented: {}",
-            plan.root
-        );
-        assert!(
-            plan.bin.is_empty(),
-            "no artifact path is invented: {}",
-            plan.bin
-        );
-        assert!(!plan.bin.contains(".exe"));
-        assert!(
-            plan.path_hint.is_empty(),
-            "no PATH hint for a bundle that is not installed"
-        );
-        assert_eq!(plan.compatibility, "unknown");
+        let custom = profile.root.join("custom-data");
+        let fallback = profile.root.join(".local/share");
+        for (xdg, expected) in [
+            (Some(custom.to_string_lossy().into_owned()), custom),
+            (None, fallback.clone()),
+            (Some(String::new()), fallback.clone()),
+            (Some("relative/data".into()), fallback),
+        ] {
+            let mut environment = profile.environment.clone();
+            if let Some(value) = xdg {
+                environment.variables.insert("XDG_DATA_HOME".into(), value);
+            }
+            let manager = DesktopManager::new(environment);
+            let plan = manager.install_plan();
+            let root = expected.join("MultiSearch/cli");
+            assert_eq!(plan.status, "prerequisite_missing", "{}", plan.reason);
+            assert_eq!(PathBuf::from(&plan.root), root);
+            assert_eq!(PathBuf::from(&plan.bin), root.join("bin/multi-search"));
+            assert_eq!(manager.install().status, "prerequisite_missing");
+            assert!(!root.exists(), "missing bundle must not create a root");
+        }
     }
 
     #[test]
-    fn install_update_and_uninstall_refuse_instead_of_touching_files() {
+    fn absolute_xdg_data_home_works_without_home() {
         let profile = common::Profile::new();
-        let manager = DesktopManager::new(profile.environment.clone());
-        for outcome in [manager.install(), manager.update(), manager.uninstall()] {
-            assert_eq!(outcome.status, "unsupported", "{}", outcome.reason);
-            assert!(
-                outcome.steps.is_empty(),
-                "nothing is attempted: {:?}",
-                outcome.steps
-            );
+        let mut environment = profile.environment.clone();
+        environment.variables.remove("HOME");
+        let data = profile.root.join("data");
+        environment.variables.insert("XDG_DATA_HOME".into(), data.to_string_lossy().into_owned());
+        let plan = DesktopManager::new(environment).install_plan();
+        assert_eq!(plan.status, "prerequisite_missing", "{}", plan.reason);
+        assert_eq!(PathBuf::from(plan.root), data.join("MultiSearch/cli"));
+    }
+
+    #[test]
+    fn invalid_data_and_home_paths_cannot_create_a_relative_install() {
+        let profile = common::Profile::new();
+        for home in ["", "relative/home"] {
+            let mut environment = profile.environment.clone();
+            environment.variables.insert("HOME".into(), home.into());
+            environment.variables.insert("XDG_DATA_HOME".into(), "relative/data".into());
+            let manager = DesktopManager::new(environment);
+            let plan = manager.install_plan();
+            assert_eq!(plan.status, "unavailable", "{}", plan.reason);
+            assert!(plan.root.is_empty());
+            assert!(plan.bin.is_empty());
+            assert!(manager.install().steps.is_empty());
         }
-        // The isolated profile only ever receives the fixture CLI copied by common::Profile.
-        assert_eq!(
-            fs::read_dir(&profile.root).unwrap().count(),
-            1,
-            "no install directory was created"
-        );
     }
 }

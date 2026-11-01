@@ -49,7 +49,7 @@ class LockedInputs(unittest.TestCase):
         self.archive = self.root / "python-3.12.10-embed-amd64.zip"
         self.sha = make_archive(self.archive, {"python.exe": b"PY", "python312._pth": PTH.encode()})
 
-    def test_repository_lock_is_valid_and_pins_official_archives_for_both_targets(self):
+    def test_repository_lock_is_valid_and_pins_official_archives_for_all_targets(self):
         lock = load_lock()
         windows = lock_target(lock, "windows")["python"]
         self.assertTrue(windows["archive"].endswith("-embed-amd64.zip"))
@@ -59,6 +59,10 @@ class LockedInputs(unittest.TestCase):
         self.assertIn("aarch64-apple-darwin-install_only", macos["archive"])
         self.assertRegex(macos["sha256"], r"^[0-9a-f]{64}$")
         self.assertIn("astral-sh/python-build-standalone", macos["url"])
+        linux = lock_target(lock, "linux")["python"]
+        self.assertIn("x86_64-unknown-linux-gnu-install_only", linux["archive"])
+        self.assertRegex(linux["sha256"], r"^[0-9a-f]{64}$")
+        self.assertIn("astral-sh/python-build-standalone", linux["url"])
 
     def test_locked_archive_is_extracted_and_its_path_file_points_at_site_packages(self):
         runtime = extract_python(self.archive, self.root / "runtime", lock_for(self.archive, self.sha))
@@ -258,7 +262,7 @@ class ReleaseWiring(unittest.TestCase):
         self.assertEqual(result.returncode, 2, "an arbitrary --python-tree is no longer accepted")
         self.assertIn("--python-archive", result.stderr)
         self.assertIn("--wheel-sha256", result.stderr)
-        for target in ("windows", "macos"):
+        for target in ("windows", "macos", "linux"):
             listed = subprocess.run([sys.executable, str(release), "--target", target, "--help"],
                                     capture_output=True, text=True)
             self.assertEqual(listed.returncode, 0, target)

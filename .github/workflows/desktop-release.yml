@@ -1,0 +1,148 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Validate tag and create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import os, re, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('pyproject.toml').read_text())['project']['version']
+          tag = os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+', tag) or tag != f'v{version}':
+              raise SystemExit('Run this workflow on the matching version tag')
+          PY
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true || {
+              echo "Refusing to replace assets of an already published release" >&2
+              exit 1
+            }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Multi Search $RELEASE_TAG" --notes-file "docs/desktop-release-${RELEASE_TAG#v}.md"
+          fi
+
+  build:
+    needs: prepare
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos
+            os: macos-15
+          - target: windows
+            os: windows-latest
+          - target: linux
+            os: ubuntu-22.04
+    env:
+      WINDOWS_SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
+      WINDOWS_SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+      WINDOWS_SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_SIGN_TIMESTAMP_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+      - name: Install Linux desktop dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf libfuse2
+      - name: Prepare pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Install Python wheel builder
+        run: python -m pip install build
+      - name: Verify macOS runner architecture
+        if: matrix.target == 'macos'
+        run: test "$(uname -m)" = arm64
+      - name: Locate Windows signing tools when configured
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          if ($env:WINDOWS_SIGN_CERT_BASE64) {
+            $tool = Get-ChildItem "${env:ProgramFiles(x86)}/Windows Kits/10/bin/*/x64/signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $tool) { throw 'Windows SDK signtool is required for the configured certificate' }
+            $tool.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      - name: Build and verify bundled CLI
+        run: python scripts/prepare_desktop_release.py --target ${{ matrix.target }}
+      - name: Verify Linux managed installation
+        if: matrix.target == 'linux'
+        run: |
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --no-default-features --features test-fixtures,install-test-boundary --test install_platform
+          cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml --no-default-features --features test-fixtures,install-test-boundary --test install_production_path -- --ignored
+      - name: Install locked desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Check desktop types
+        working-directory: desktop
+        run: npm run typecheck
+      - name: Build Windows installer
+        if: matrix.target == 'windows'
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $env:MULTI_SEARCH_SIGN_SCRIPT = (Resolve-Path ../scripts/sign_windows.py).Path
+          npm run tauri -- build --bundles nsis -- --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build macOS application
+        if: matrix.target == 'macos'
+        working-directory: desktop
+        run: npm run tauri -- build --config src-tauri/tauri.macos.conf.json --bundles app -- --locked
+      - name: Verify and package macOS application
+        if: matrix.target == 'macos'
+        run: |
+          python scripts/verify_macos_app.py "desktop/src-tauri/target/release/bundle/macos/Multi Search.app" --sign --expect-version "${RELEASE_TAG#v}"
+          mkdir -p dist/dmg
+          ditto "desktop/src-tauri/target/release/bundle/macos/Multi Search.app" "dist/dmg/Multi Search.app"
+          ln -s /Applications dist/dmg/Applications
+          hdiutil create -volname "Multi Search" -srcfolder dist/dmg -ov -format UDZO "dist/Multi.Search_${RELEASE_TAG#v}_aarch64.dmg"
+      - name: Build Linux packages
+        if: matrix.target == 'linux'
+        working-directory: desktop
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npm run tauri -- build --bundles deb,appimage -- --locked
+      - name: Upload packages and checksums to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: python scripts/upload_desktop_release.py
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the completed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "$RELEASE_TAG" --draft=false

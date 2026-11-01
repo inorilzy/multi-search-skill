@@ -1,13 +1,13 @@
 //! Release boundary: without `install-test-boundary`, the test keys must have no effect.
 //!
-//! The managed install is supported on Windows and macOS. These tests verify
+//! The managed install is supported on Windows, macOS and Linux. These tests verify
 //! that a default build derives the real platform root and never adopts the
 //! disposable acceptance keys. The root is derived from `common::Profile`'s
 //! disposable environment, so the real home directory is never touched.
 #![cfg(not(feature = "install-test-boundary"))]
 mod common;
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 mod managed {
     use super::common;
     use multi_search_desktop::{DesktopManager, RuntimeEnvironment, CLI_FILE_NAME};
@@ -35,6 +35,14 @@ mod managed {
             .join("MultiSearch")
             .join("cli");
         (environment, root)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn platform_environment(profile: &common::Profile) -> (RuntimeEnvironment, PathBuf) {
+        let mut environment = profile.environment.clone();
+        let data = profile.root.join("xdg-data");
+        environment.variables.insert("XDG_DATA_HOME".into(), data.to_string_lossy().into_owned());
+        (environment, data.join("MultiSearch/cli"))
     }
 
     #[test]

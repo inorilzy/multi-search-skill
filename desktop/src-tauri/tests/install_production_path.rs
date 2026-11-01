@@ -26,7 +26,7 @@ fn shipped_bundle() -> PathBuf {
         });
     assert!(
         dir.join("manifest.json").is_file(),
-        "build the bundle first: python scripts/build_cli_release.py --target macos ..."
+        "build the bundle first: python scripts/build_cli_release.py --target <macos|linux> ..."
     );
     dir
 }
@@ -51,11 +51,15 @@ fn compiled_anchor_accepts_the_shipped_bundle_at_the_real_platform_root() {
     let bundle = shipped_bundle();
     let profile = common::Profile::new();
     let environment = production_environment(&profile);
+    #[cfg(target_os = "macos")]
     let expected_root = PathBuf::from(environment.variables["HOME"].as_str())
         .join("Library")
         .join("Application Support")
         .join("MultiSearch")
         .join("cli");
+    #[cfg(target_os = "linux")]
+    let expected_root = PathBuf::from(environment.variables["HOME"].as_str())
+        .join(".local/share/MultiSearch/cli");
     let other = DesktopManager::new(environment.clone());
 
     // -- plan against the real root, trusting only the compiled anchor ---
@@ -64,7 +68,7 @@ fn compiled_anchor_accepts_the_shipped_bundle_at_the_real_platform_root() {
     assert_eq!(plan.root, expected_root.to_string_lossy());
     assert!(
         plan.bin.ends_with("bin/multi-search"),
-        "macOS artifact name: {}",
+        "Unix artifact name: {}",
         plan.bin
     );
     assert_eq!(

@@ -11,7 +11,7 @@ Steps (each fails explicitly; nothing is copied from an old dist binary):
   3. extract the verified CPython archive (safe tar/zip extraction, internal symlinks
      materialised) and install the pinned runtime requirements
      (scripts/cli-bundle-requirements.txt, hashed) offline from the uv cache. The per-target
-     lock names convenience aliases to drop while extracting (macOS ``bin/python`` and
+     lock names convenience aliases to drop while extracting (Unix ``bin/python`` and
      ``bin/python3``): the launcher only executes ``bin/python3.12``, and materialising the
      aliases would copy the 18 MB interpreter three times;
   4. build the bundle with build_cli_bundle.build (manifest + anchor), so the anchor covers the
@@ -22,7 +22,8 @@ Steps (each fails explicitly; nothing is copied from an old dist binary):
 
 ``--target windows`` reproduces the original Windows bundle; ``--target macos`` builds the
 aarch64-apple-darwin bundle with ``bin/multi-search`` and the interpreter at
-``runtime/bin/python3.12``. ``--require-signing`` makes a missing Windows certificate a hard
+``runtime/bin/python3.12``. ``--target linux`` builds the x86_64-unknown-linux-gnu
+bundle with the same Unix layout. ``--require-signing`` makes a missing Windows certificate a hard
 failure; release CI sets it. On macOS ad-hoc codesigning is mandatory and runs locally.
 
 The output goes to desktop/src-tauri/resources/cli-bundle (gitignored) so the Tauri resource
@@ -126,12 +127,15 @@ def install_runtime(runtime: Path, requirements: Path, wheel: Path, xkit_source:
     for path, label in required:
         if not path.exists():
             raise BundleError(f"{label} missing: {path}")
-    if target == "macos":
+    if target in ("macos", "linux"):
         site = runtime / "lib" / f"python{PYTHON_VERSION}" / "site-packages"
-        platform_tag = "aarch64-apple-darwin"
-    else:
+        platform_tag = ("aarch64-apple-darwin" if target == "macos"
+                        else "x86_64-unknown-linux-gnu")
+    elif target == "windows":
         site = runtime / "Lib" / "site-packages"
         platform_tag = "x86_64-pc-windows-msvc"
+    else:
+        raise BundleError(f"unknown bundle target: {target!r}")
     if site.exists():
         shutil.rmtree(site)
     site.mkdir(parents=True)
@@ -142,7 +146,7 @@ def install_runtime(runtime: Path, requirements: Path, wheel: Path, xkit_source:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--target", choices=sorted(TARGETS), default="windows",
-                        help="bundle target: windows (embeddable zip) or macos (arm64 install_only tar.gz)")
+                        help="bundle target: windows (x64 zip), macos (arm64 tar.gz), or linux (x64 GNU tar.gz)")
     parser.add_argument("--python-archive", type=Path, required=True,
                         help="official CPython archive locked in scripts/build-inputs.lock.json for --target")
     parser.add_argument("--wheel", type=Path, required=True, help="built multi_search_mcp wheel")

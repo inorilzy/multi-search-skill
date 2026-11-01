@@ -1,14 +1,14 @@
 """Assemble the relocatable CLI bundle, its manifest, and the compiled trust anchor.
 
 Inputs are explicit so the build never depends on implicit machine state:
-  --runtime   a prepared CPython tree (Windows: python.exe, Lib/, DLLs/; macOS: bin/python3.12,
+  --runtime   a prepared CPython tree (Windows: python.exe, Lib/, DLLs/; macOS/Linux: bin/python3.12,
               lib/, ...) built only from the locked, hash-verified archive
   --launcher  the compiled relocatable launcher (Windows: bin/multi-search.exe,
-              macOS: bin/multi-search)
+              macOS/Linux: bin/multi-search)
   --version   the CLI version that the bundle's probe must report
   --out       the bundle directory to create (must not exist)
   --anchor-out where the 64-hex anchor is written for the desktop build
-  --target    ``windows`` or ``macos``; selects the expected runtime layout and launcher name
+  --target    ``windows``, ``macos`` or ``linux``; selects the expected runtime layout and launcher name
 
 The output contains bundle files only; the manifest is written beside them but the
 installer trusts it solely through the anchor compiled into the desktop binary. On Unix
@@ -36,6 +36,10 @@ TARGETS = {
         "python_rel": "python.exe",
     },
     "macos": {
+        "launcher_rel": "bin/multi-search",
+        "python_rel": "bin/python3.12",
+    },
+    "linux": {
         "launcher_rel": "bin/multi-search",
         "python_rel": "bin/python3.12",
     },

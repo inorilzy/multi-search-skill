@@ -6,7 +6,7 @@ bundle:
 
 * the CPython tree is accepted only as the official archive whose SHA-256 is locked in
   ``scripts/build-inputs.lock.json`` for the requested target; the archive is hashed, then
-  extracted into a fresh directory (a Windows ``.zip`` or a macOS ``.tar.gz``);
+  extracted into a fresh directory (a Windows ``.zip`` or a macOS/Linux ``.tar.gz``);
 * the project wheel must match the SHA-256 recorded for it in the same pipeline (``--wheel-sha256``
   from the step that built it), so a swapped ``dist/`` file is refused;
 * the launcher compiler must be the pinned ``rustc`` (``rust-toolchain.toml``).
@@ -274,9 +274,9 @@ def extract_python(archive: Path, dest: Path, lock: dict, target: str = "windows
 
     An arbitrary pre-existing directory is never accepted as the runtime: only bytes that hash to
     the locked value become the bundle's Python. ``target`` selects which locked archive is
-    required (``windows``: the python.org embeddable zip; ``macos``: the python-build-standalone
+    required (``windows``: the python.org embeddable zip; ``macos``/``linux``: python-build-standalone
     install_only tar.gz). A target may also name archive symlinks to drop (``strip_symlinks``),
-    such as the macOS ``bin/python``/``bin/python3`` aliases that would triple the interpreter.
+    such as the Unix ``bin/python``/``bin/python3`` aliases that would triple the interpreter.
     """
     spec = lock_target(lock, target)
     python = spec["python"]

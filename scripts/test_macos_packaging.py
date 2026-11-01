@@ -242,7 +242,7 @@ class MacosBundle(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with self.assertRaisesRegex(BundleError, "target"):
-                build(root / "r", root / "l", "0.4.0", root / "o", root / "a", target="linux")
+                build(root / "r", root / "l", "0.4.0", root / "o", root / "a", target="plan9")
 
 
 class MacosSigning(unittest.TestCase):
