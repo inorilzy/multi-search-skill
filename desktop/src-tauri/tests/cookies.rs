@@ -13,8 +13,8 @@ impl Sandbox {
     fn env(&self) -> RuntimeEnvironment {
         RuntimeEnvironment { app_path: vec![], user_path: vec![], cwd: self.0.clone(), variables: BTreeMap::from([("HOME".into(), self.0.to_string_lossy().into_owned())]) }
     }
-    fn db(&self) -> PathBuf { self.0.join(".multi-search/config.sqlite") }
-    fn managed(&self) -> PathBuf { self.0.join(".multi-search/twitter-cookies.json") }
+    fn db(&self) -> PathBuf { self.0.join(".multi-search").join("config.sqlite") }
+    fn managed(&self) -> PathBuf { self.0.join(".multi-search").join("twitter-cookies.json") }
     fn source(&self) -> PathBuf { self.0.join("cookies.json") }
     fn seed(&self) -> Vec<u8> {
         let raw = b"\xef\xbb\xbf{\"auth_token\":\"synthetic-auth-0123456789\",\"ct0\":\"synthetic-csrf-0123456789\",\"guest_id\":\"guest\"}".to_vec();
