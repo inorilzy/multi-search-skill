@@ -93,6 +93,8 @@ class KeyOutcome:
     retryable: bool
     error_type: str = ""
     error_message: str = ""
+    # Server-requested wait (Retry-After / reset headers) for a rate limit.
+    retry_after: int | None = None
 
 
 class BasicKeyManager:
@@ -128,7 +130,15 @@ class BasicKeyManager:
             )
             if kind in error_types
         ), error_types[0])
-        return KeyOutcome(False, is_key_retryable_error(error_rows), error_type, message)
+        hints = [
+            int(row["retry_after"]) for row in error_rows
+            if isinstance(row.get("retry_after"), (int, float)) and not isinstance(row.get("retry_after"), bool)
+            and row["retry_after"] >= 0
+        ]
+        return KeyOutcome(
+            False, is_key_retryable_error(error_rows), error_type, message,
+            retry_after=max(hints) if hints else None,
+        )
 
     def record_result(
         self, provider: str, candidate: KeyCandidate, outcome: KeyOutcome,
@@ -347,7 +357,13 @@ class SQLiteKeyManager(BasicKeyManager):
             cooldown_until = _iso(_now() + INVALID_COOLDOWN)
         elif error_type == ERROR_KIND_RATE_LIMIT:
             status = COOLDOWN
-            cooldown_until = _iso(_now() + timedelta(minutes=15))
+            # Honour the server's own wait when it sent one (bounded to
+            # 1 s – 24 h); otherwise keep the conservative 15-minute default.
+            wait = (
+                timedelta(seconds=max(1, min(int(outcome.retry_after), 24 * 3600)))
+                if outcome.retry_after is not None else timedelta(minutes=15)
+            )
+            cooldown_until = _iso(_now() + wait)
             rate_inc = 1
             status_sql = f"CASE WHEN {stronger} THEN status ELSE ? END"
             cooldown_sql = f"CASE WHEN {stronger} THEN cooldown_until ELSE ? END"

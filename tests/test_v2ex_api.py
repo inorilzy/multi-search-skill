@@ -47,6 +47,7 @@ class V2exApiTests(unittest.TestCase):
         self.assertEqual((url.scheme, url.netloc, url.path), ("https", "www.sov2ex.com", "/api/search"))
         self.assertEqual(urllib.parse.parse_qs(url.query), {
             "q": ["Python 中文 & async"], "from": ["0"], "size": ["10"], "sort": ["sumup"],
+            "operator": ["and"],
         })
         self.assertEqual(request.call_args.kwargs, {"timeout": 3.5, "deadline": None})
         self.assertEqual({name.lower() for name, _ in req.header_items()}, {"user-agent", "accept"})

@@ -209,10 +209,14 @@ class CatalogCoreParityTests(unittest.TestCase):
         self.assertEqual(
             keyed,
             {
-                "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github_repos", "jina",
+                "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github_repos",
+                "github_code", "jina", "stackoverflow",
             },
         )
+        # Optional key: Stack Exchange works anonymously; a key only raises the quota.
+        self.assertEqual(self.sources["stackoverflow"]["key_provider"], "stackexchange")
         self.assertEqual(self.sources["github_repos"]["key_provider"], "github")
+        self.assertEqual(self.sources["github_code"]["key_provider"], "github")
         self.assertEqual(self.sources["twitter"]["env"], ["TWITTER_COOKIES_PATH"])
         self.assertTrue(self.sources["twitter"]["cookie"])
         self.assertFalse(self.sources["jina"]["searchable"])

@@ -14,7 +14,7 @@ use std::{
 pub const CONFIG_ENV: &str = crate::config_db::DB_ENV;
 
 /// Canonical source name lookup; routes and disabled_sources are stored under
-/// the underscore form (`github_repos`, `sov2ex`). Aliases accepted on save
+/// the underscore form (`github_repos`, `github_code`, `sov2ex`). Aliases accepted on save
 /// are owned by `provider::PROVIDERS` — adding an alias only requires editing
 /// that table.
 fn source_name(raw: &str) -> Result<&'static str, String> {

@@ -2,15 +2,30 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.request
 from typing import Any
 
 from ...support.http import read_limited, urlopen_retry
+from ...support.http_errors import http_error_row
 from ...support.secrets import scrub_secrets
 from ...support.models import empty_result_row
 
 
 QIANFAN_BASE = "https://qianfan.baidubce.com"
+# docs/baidu/error-codes.md: 401 IAM/key failures, 429 rate_limit_exceeded or
+# quota_exceeded (distinguished by error.type).
+_BAIDU_HTTP_ERROR_KINDS = {401: "invalid", 403: "invalid", 429: "rate_limit"}
+
+
+def _baidu_refine(status: int, data, detail: str) -> str | None:
+    error = data.get("error") if isinstance(data, dict) else None
+    error_type = (error.get("type") or "") if isinstance(error, dict) else ""
+    if error_type == "quota_exceeded":
+        return "quota_exhausted"
+    if error_type == "rate_limit_exceeded":
+        return "rate_limit"
+    return None
 
 
 def search_baidu(query: str, api_key: str, count: int = 10,
@@ -50,20 +65,43 @@ def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float,
     )
     try:
         with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
-            return json.loads(read_limited(resp).decode("utf-8"))
+            headers = getattr(resp, "headers", None)
+            request_id = headers.get("X-Request-Id") if headers is not None else None
+            data = json.loads(read_limited(resp).decode("utf-8"))
+            if isinstance(data, dict) and request_id and not data.get("request_id"):
+                data["request_id"] = request_id
+            return data
+    except urllib.error.HTTPError as exc:
+        headers = getattr(exc, "headers", None)
+        request_id = headers.get("X-Request-Id") if headers is not None else None
+        row = http_error_row(
+            "baidu", exc, secret=api_key, kinds=_BAIDU_HTTP_ERROR_KINDS, refine=_baidu_refine,
+        )
+        if request_id:
+            row["request_id"] = request_id
+        return {"_error_row": row}
     except Exception as exc:
         return {"error": scrub_secrets(exc, api_key)}
 
 
 def _rows_from_response(data: dict[str, Any], *, endpoint: str,
                         max_references: int) -> list[dict[str, Any]]:
-    if data.get("error"):
-        return [{"source": "baidu", "error": str(data["error"])}]
+    if data.get("_error_row"):
+        return [data["_error_row"]]
+    error = data.get("error")
+    if isinstance(error, dict):
+        text = " ".join(str(error.get(k)) for k in ("code", "message") if error.get(k))
+        return [{
+            "source": "baidu", "error": text or json.dumps(error, ensure_ascii=False),
+            "request_id": data.get("id") or data.get("request_id"),
+        }]
+    if error:
+        return [{"source": "baidu", "error": str(error)}]
     if data.get("code") or data.get("message"):
         return [{
             "source": "baidu",
             "error": f"{data.get('code', '')} {data.get('message', '')}".strip(),
-            "request_id": data.get("request_id") or data.get("requestId"),
+            "request_id": data.get("request_id") or data.get("requestId") or data.get("id"),
         }]
 
     rows: list[dict[str, Any]] = []
@@ -82,7 +120,6 @@ def _rows_from_response(data: dict[str, Any], *, endpoint: str,
     for ref in references:
         content = ref.get("content") or ""
         snippet = ref.get("snippet") or content
-        markdown_text = ref.get("markdown_text") or ""
         row = {
             "source": "baidu",
             "title": ref.get("title", ""),
@@ -96,10 +133,7 @@ def _rows_from_response(data: dict[str, Any], *, endpoint: str,
             "website": ref.get("website") or ref.get("web_anchor"),
             "authority_score": ref.get("authority_score"),
         }
-        if markdown_text:
-            row["scraped_content"] = markdown_text
-            row["content_kind"] = "body"
-        elif snippet:
+        if snippet:
             # This request does not enable full content: content is a summary,
             # just like snippet, and must not bypass the page-body fetch.
             row["content_kind"] = "excerpt"

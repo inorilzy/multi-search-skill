@@ -17,6 +17,7 @@ MATRIX = [
     ("brave", "search_brave"),
     ("exa", "search_exa"),
     ("firecrawl", "search_firecrawl"),
+    ("github_code", "search_github_code"),
     ("github_repos", "search_github_repos"),
     ("hackernews", "search_hackernews"),
     ("parallel", "search_parallel"),
@@ -58,7 +59,7 @@ def _search(request: dict, keys: dict) -> dict:
 class SearchSourceMatrixTests(unittest.TestCase):
     def test_matrix_covers_every_searchable_source(self):
         self.assertEqual(sorted(name for name, _ in MATRIX), sorted(ALL_SOURCE_NAMES))
-        self.assertEqual(len(MATRIX), 12)
+        self.assertEqual(len(MATRIX), 13)
 
     def test_every_source_reaches_its_own_searcher_with_controlled_fake(self):
         for name, searcher in MATRIX:

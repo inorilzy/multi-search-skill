@@ -9,6 +9,7 @@ from unittest import mock
 from urllib.error import HTTPError
 
 from multi_search_mcp.src import service
+from multi_search_mcp.src.support.auth import is_key_retryable_error
 from multi_search_mcp.src.scrape.scrapers import firecrawl as firecrawl_scraper
 from multi_search_mcp.src.state.key_state import (
     ACTIVE,
@@ -171,7 +172,6 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
     def test_provider_http_status_errors_rotate_and_keep_provider_classification(self):
         cases = (
             (401, "invalid", TRANSIENT_INVALID),
-            (403, "invalid", TRANSIENT_INVALID),
             (402, "quota_exhausted", QUOTA_EXHAUSTED),
             (429, "rate_limit", COOLDOWN),
         )
@@ -211,6 +211,17 @@ class FirecrawlTargetErrorTests(unittest.TestCase):
                 self.assertEqual(failed["status"], expected_status)
                 self.assertEqual(failed["last_error_type"], expected_type)
                 self.assertNotEqual(result.get("error_origin"), "target")
+
+    def test_forbidden_is_a_provider_refusal_that_keeps_the_key_healthy(self):
+        # docs/firecrawl/errors.md: 403 Forbidden = key lacks a feature/scope.
+        error = HTTPError(
+            "https://api.firecrawl.dev/v2/scrape", 403, "forbidden", {},
+            response({"success": False, "error": "Forbidden"}),
+        )
+        with mock.patch.object(firecrawl_scraper, "urlopen_retry", side_effect=error):
+            result = firecrawl_scraper.scrape_url_firecrawl(URL, KEY)
+        self.assertEqual(result["error_type"], "provider")
+        self.assertFalse(is_key_retryable_error(result))
 
     def test_unknown_codes_and_malformed_error_bodies_are_not_target(self):
         normal_payloads = (

@@ -5,7 +5,7 @@ import urllib.request
 
 from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
-from ...providers.tavily import tavily_http_error
+from ...providers.tavily import tavily_http_error, tavily_retry_after
 
 
 def search_tavily(
@@ -44,13 +44,17 @@ def search_tavily(
         with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(read_limited(resp))
     except urllib.error.HTTPError as e:
+        retry_after = tavily_retry_after(e)
         message, error_type = tavily_http_error(e, api_key)
-        return [{
+        row = {
             "source": "tavily",
             "error": message,
             "error_origin": "provider",
             "error_type": error_type,
-        }]
+        }
+        if retry_after is not None:
+            row["retry_after"] = retry_after
+        return [row]
     except Exception as e:
         return [{"source": "tavily", "error": scrub_secrets(e, api_key)}]
 

@@ -30,10 +30,11 @@ class BaiduContentTests(unittest.TestCase):
                 self.assertNotIn("scraped_content", row)
                 self.assertEqual(row["description"], (reference.get("snippet") or reference["content"])[:300])
 
-    def test_explicit_markdown_keeps_its_body_contract(self):
+    def test_undocumented_markdown_text_is_ignored(self):
+        # docs/baidu/web_summary.md: references have no markdown_text field.
         row = rows({"content": SUMMARY, "snippet": SUMMARY, "markdown_text": "# Full page\nBody text."})[0]
-        self.assertEqual(row["content_kind"], "body")
-        self.assertEqual(row["scraped_content"], "# Full page\nBody text.")
+        self.assertEqual(row["content_kind"], "excerpt")
+        self.assertNotIn("scraped_content", row)
 
     def test_summary_requires_fetch_and_only_fetched_body_is_cached(self):
         body = "# TaskGroup\n\nThe full article includes examples omitted from the summary."

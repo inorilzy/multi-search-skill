@@ -5,16 +5,18 @@ import urllib.error
 import urllib.request
 
 from ...support.http import read_limited, urlopen_retry
+from ...support.http_errors import http_error_row
 from ...support.secrets import scrub_secrets
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url, error_fields
 
 
 _EXA_DEFAULT_MAX_CHARS = 8000
 
+# docs/exa/error-codes.md: 403 is a feature/policy refusal, never a bad key.
 _EXA_HTTP_ERROR_KINDS = {
     401: "invalid",
-    403: "invalid",
     402: "quota_exhausted",
+    403: "provider",
     429: "rate_limit",
 }
 
@@ -30,7 +32,6 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
     payload = json.dumps({
         "urls": [url],
         "text": {"maxCharacters": char_cap},
-        "maxAgeHours": 0,
         "livecrawlTimeout": int(max(1.0, min(float(timeout), 60.0)) * 1000),
     }).encode()
     req = urllib.request.Request(
@@ -48,7 +49,7 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
             error = statuses[0].get("error") or {}
             detail = ""
             if isinstance(error, dict):
-                detail = error.get("tag") or error.get("message") or ""
+                detail = error.get("tag") or ""
                 if error.get("httpStatusCode"):
                     detail = f"{detail} ({error['httpStatusCode']})" if detail else str(error["httpStatusCode"])
             elif error:
@@ -74,12 +75,8 @@ def scrape_url_exa(url: str, api_key: str, timeout: int = _DEFAULT_SCRAPE_TIMEOU
             "via": "exa",
         }
     except urllib.error.HTTPError as exc:
-        return {
-            "url": url, "error": f"Exa: {scrub_secrets(exc, api_key)}",
-            **error_fields(
-                kind=_EXA_HTTP_ERROR_KINDS.get(exc.code, "error"),
-                origin="provider",
-            ),
-        }
+        row = http_error_row("exa", exc, secret=api_key, kinds=_EXA_HTTP_ERROR_KINDS, prefix="Exa: ")
+        row.pop("source", None)
+        return {"url": url, **row}
     except Exception as exc:
         return {"url": url, "error": f"Exa: {scrub_secrets(exc, api_key)}"}

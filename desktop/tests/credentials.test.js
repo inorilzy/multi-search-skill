@@ -35,7 +35,7 @@ test('saved values render one readonly input per line, never through HTML', asyn
 });
 
 test('all keyed sources query their own overview and read command', async () => {
-  assert.equal(SOURCES.filter(s => s.keyed).length, 8);
+  assert.equal(SOURCES.filter(s => s.keyed).length, 10);
   for (const entry of SOURCES.filter(s => s.keyed)) {
     const ctx = setup(), calls = [];
     await mountCredentials(ctx.root, api({ credentialStatus: async s => { calls.push(['status', s]); return status(); }, credentialRead: async s => { calls.push(['read', s]); return { value: '' }; } }), { source: entry.source });
@@ -539,7 +539,7 @@ test('masked keys reveal only on demand and copy is disabled until revealed', as
 test('catalog drives the source list: labels are literal text and scrape-only providers come from the catalog', async () => {
   assert.deepEqual(SOURCES.map(entry => entry.source), [
     'baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi',
-    'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter',
+    'github_repos', 'github_code', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter',
   ]);
   // Jina is the only scrape-only provider that owns a keyed credential, so it appears here
   // from the catalog alone; nothing in this list is hardcoded by the UI.

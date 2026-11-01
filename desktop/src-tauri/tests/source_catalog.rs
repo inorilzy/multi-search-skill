@@ -10,11 +10,11 @@ use multi_search_desktop::source_catalog_fixture as fixture;
 
 const SEARCH_SOURCE_ORDER: &[&str] = &[
     "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi",
-    "github_repos", "hackernews", "stackoverflow", "sov2ex", "twitter",
+    "github_repos", "github_code", "hackernews", "stackoverflow", "sov2ex", "twitter",
 ];
 const SOURCE_ORDER: &[&str] = &[
     "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi",
-    "github_repos", "hackernews", "stackoverflow", "sov2ex", "twitter", "jina",
+    "github_repos", "github_code", "hackernews", "stackoverflow", "sov2ex", "twitter", "jina",
 ];
 
 #[test]
@@ -33,13 +33,16 @@ fn catalog_shape_and_shared_metadata_are_stable() {
     assert_eq!(names, SOURCE_ORDER, "catalog display order is stable");
     let searchable: Vec<&str> = catalog.search_sources().map(|source| source.name.as_str()).collect();
     assert_eq!(searchable, SEARCH_SOURCE_ORDER);
-    // Eight keyed search sources plus Jina (reader/scrape backend keys, not a search source).
-    assert_eq!(catalog.credential_sources().count(), 9);
-    assert_eq!(catalog.test_sources().count(), 12);
-    assert_eq!(catalog.credential_store_providers.len(), 9);
+    // Ten keyed search sources (stackoverflow takes an optional Stack Exchange key)
+    // plus Jina (reader/scrape backend keys, not a search source). github_repos and
+    // github_code share the `github` store entry, so the store has ten providers.
+    assert_eq!(catalog.credential_sources().count(), 11);
+    assert_eq!(catalog.test_sources().count(), 13);
+    assert_eq!(catalog.credential_store_providers.len(), 10);
+    assert!(catalog.credential_store_providers.iter().any(|provider| provider == "stackexchange"));
     assert!(catalog.credential_store_providers.iter().any(|provider| provider == "jina"));
 
-    assert_eq!(catalog.source_aliases.len(), 5);
+    assert_eq!(catalog.source_aliases.len(), 6);
     for (alias, canonical) in &catalog.source_aliases {
         let source = catalog.source(alias).unwrap_or_else(|| panic!("alias {alias} must resolve"));
         assert_eq!(&source.name, canonical, "alias {alias}");
@@ -165,6 +168,9 @@ fn credentials_use_catalog_key_provider_env_and_label() {
         fixture::credential_source("github_repos").expect("canonical name").0,
         "github-repos",
     );
+    let (name, provider, env, label) = fixture::credential_source("github_code").expect("github_code");
+    assert_eq!((name, provider, label), ("github-code", "github", "GitHub 代码"));
+    assert_eq!(env.to_vec(), vec!["GITHUB_TOKEN".to_string(), "GH_TOKEN".to_string()]);
     // Jina is a stored key (reader/scrape backend) but never a search or test source.
     assert_eq!(fixture::credential_source("jina").expect("jina keys are stored").1, "jina");
     assert!(fixture::credential_source("hackernews").is_err());

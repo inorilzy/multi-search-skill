@@ -36,6 +36,14 @@ def _error_body_text(raw: bytes) -> str:
     return str(detail) if detail else text
 
 
+def tavily_retry_after(exc: urllib.error.HTTPError) -> int | None:
+    """Seconds from the documented 429 ``Retry-After`` header, if any."""
+    from ..support.http_errors import parse_retry_after
+
+    headers = getattr(exc, "headers", None)
+    return parse_retry_after(headers.get("Retry-After")) if headers is not None else None
+
+
 def tavily_http_error(exc: urllib.error.HTTPError, api_key: str = "") -> tuple[str, str]:
     """Return a bounded, redacted message and status-driven error type."""
     body = ""

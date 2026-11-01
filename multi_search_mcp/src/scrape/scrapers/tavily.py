@@ -8,7 +8,7 @@ from ...support.http import read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
 from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url, error_fields
 
-from ...providers.tavily import tavily_http_error
+from ...providers.tavily import tavily_http_error, tavily_retry_after
 
 
 def scrape_url_tavily(
@@ -92,11 +92,15 @@ def scrape_url_tavily(
             merged.update(error_fields(kind="target", origin="target"))
         return merged
     except urllib.error.HTTPError as exc:
+        retry_after = tavily_retry_after(exc)
         message, kind = tavily_http_error(exc, api_key)
-        return {
+        row = {
             "url": url,
             "error": f"Tavily: {message}",
             **error_fields(kind=kind, origin="provider"),
         }
+        if retry_after is not None:
+            row["retry_after"] = retry_after
+        return row
     except Exception as exc:
         return {"url": url, "error": f"Tavily: {scrub_secrets(exc, api_key)}"}

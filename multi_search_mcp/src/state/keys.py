@@ -85,6 +85,7 @@ KEY_ENV_PAIRS = (
     ("JINA_KEY", "jina"),
     ("GITHUB_TOKEN", "github"),
     ("GH_TOKEN", "github"),
+    ("STACKEXCHANGE_KEY", "stackexchange"),
     ("FIRECRAWL_API_KEY", "firecrawl"),
     ("SERPAPI_API_KEY", "serpapi"),
     ("SERPAPI_KEY", "serpapi"),
@@ -176,6 +177,7 @@ def count_jina_keys(value) -> tuple[int, int]:
 # Environment variables always win so automation can override a saved key.
 CREDENTIAL_STORE_PROVIDERS = (
     "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi", "github", "jina",
+    "stackexchange",
 )
 
 KEYS_DIR_NAME = ".multi-search"

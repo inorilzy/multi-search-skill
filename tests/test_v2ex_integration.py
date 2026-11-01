@@ -51,10 +51,13 @@ def api_response(hits):
 class SOV2EXSourceNameTests(unittest.TestCase):
     def test_only_sov2ex_is_advertised_as_a_search_source(self):
         advertised = list_sources()
-        for names in (advertised["sources"], build_provider_registry(), resolve_route("all")):
+        # 13 registered sources; the ``all`` route excludes github_code (12).
+        for names, expected in (
+            (advertised["sources"], 13), (build_provider_registry(), 13), (resolve_route("all"), 12),
+        ):
             self.assertIn("sov2ex", names)
             self.assertNotIn("v2ex", names)
-            self.assertEqual(len(names), 12)
+            self.assertEqual(len(names), expected)
 
     def test_old_and_new_source_inputs_select_one_provider(self):
         self.assertEqual(_resolve_sources("default", ["v2ex", "sov2ex"]), {"sov2ex"})

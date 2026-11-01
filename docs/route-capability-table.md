@@ -85,6 +85,7 @@
 | Provider | `summary` | `content` | `title/url` | 搜索器正文能力 | 原始返回策略 | 认证方式 | 当前 key 轮换 | 建议路由 | 说明 |
 |---|---:|---:|---:|---:|---|---|---|---|---|
 | github-repos | 否 | 是 | 是 | 否 | candidate | 可选 api_key | 已配置 token 使用共享 key 池与健康状态（`github`） | 发现、技术 | 无 token 时使用既有 gh 认证；已配置但全部不可用时报错。repo description/metadata 进 `content`，README 正文靠后续 scrape。 |
+| github-code | 否 | 是 | 是 | 否 | candidate | api_key（必需） | 与 github-repos 共用 `github` key 池与健康状态 | 不在内置路由；自定义路由或 `sources=["github_code"]` | `GET /search/code`（text-match），按仓库去重，`content` 为「文件路径: 首个片段」。无 token 时跳过，不回退 gh CLI；10 req/min，限流行带 `retry_after`。计数键 `github_code`，上限 100。 |
 | twitter | 否 | 是 | 是 | 否 | candidate | cookie | 不接入 SQLite key 轮换 | 讨论 | 搜索只返回 URL、标题、正文摘要和互动数据；入选后由 XKit 专用 scraper 读取 `.full_text` 与最多 20 条已加载评论，并注明评论缺失。 |
 | hackernews | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 讨论、技术 | HN 标题、URL、points/comments 适合发现讨论源。 |
 | stackoverflow | 否 | 是 | 是 | 否 | candidate | 无 | 无 key | 技术 | Q&A 发现源，正文靠 scrape 或 StackExchange API 扩展。 |
@@ -115,7 +116,7 @@
 | `social` | `twitter` | 15 | 社交反馈、用户评价、讨论热度。 |
 | `dev` | `github_repos`, `stackoverflow`, `hackernews` | 15 | 技术资料、项目、实现方案搜索。默认不要混入纯社交源。 |
 
-当前共 12 个搜索源，`all` 包含全部 12 个。单 provider 调用不再放进 `ROUTE_PROFILES`，统一走 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` 或 `sources=["sov2ex"]`。
+当前共注册 13 个搜索源，`all` 包含其中 12 个；`github_code` 不属于任何内置路由，需在设置页加入路由或用 `sources=["github_code"]` 指定。单 provider 调用不再放进 `ROUTE_PROFILES`，统一走 `sources` 参数，例如 `sources=["brave"]`、`sources=["github"]` 或 `sources=["sov2ex"]`。
 
 上表同时适用于 `search_web` 与 `multi_search`。`count` 仅控制每源召回；`scrape_top` / `scrape_per_source` 等失效键已从请求移除；旧配置中的同名键会被忽略并给出弃用警告。
 

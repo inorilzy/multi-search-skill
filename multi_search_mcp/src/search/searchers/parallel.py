@@ -1,9 +1,14 @@
 """Parallel Search API."""
 import json
+import urllib.error
 import urllib.request
 
 from ...support.http import read_limited, urlopen_retry
+from ...support.http_errors import http_error_row
 from ...support.secrets import scrub_secrets
+
+# docs/parallel/api-reference-search.md: ErrorResponse {type, error:{ref_id, message}}.
+_PARALLEL_HTTP_ERROR_KINDS = {401: "invalid", 402: "quota_exhausted", 403: "invalid", 429: "rate_limit"}
 
 
 PARALLEL_SEARCH_URL = "https://api.parallel.ai/v1/search"
@@ -23,6 +28,10 @@ def search_parallel(
     stay in ``description`` and remain eligible for the normal scrape stage.
     """
     normalized_query = query.strip()
+    if not normalized_query:
+        # search_queries needs at least one non-empty query; the API would 422.
+        return [{"source": "parallel", "error": "empty query", "kind": "target",
+                 "error_type": "target", "origin": "target", "error_origin": "target"}]
     max_results = max(1, min(int(count), 20))
     payload = json.dumps({
         "objective": normalized_query[:5000],
@@ -42,6 +51,9 @@ def search_parallel(
     try:
         with urlopen_retry(req, timeout=timeout, deadline=deadline) as resp:
             data = json.loads(read_limited(resp))
+    except urllib.error.HTTPError as exc:
+        row = http_error_row("parallel", exc, secret=api_key, kinds=_PARALLEL_HTTP_ERROR_KINDS)
+        return [row]
     except Exception as exc:
         return [{"source": "parallel", "error": scrub_secrets(exc, api_key)}]
 
@@ -76,4 +88,11 @@ def search_parallel(
             result["publish_date"] = item.get("publish_date")
             result["published_at"] = item.get("publish_date")
         results.append(result)
+    for warning in (data.get("warnings") or []) if isinstance(data, dict) else []:
+        # input_validation_warning entries (e.g. a clamped max_results).
+        text = warning.get("message") if isinstance(warning, dict) else str(warning)
+        if text:
+            results.append({"source": "parallel", "error": f"Parallel warning: {text}"[:300],
+                            "kind": "target", "error_type": "target",
+                            "origin": "target", "error_origin": "target"})
     return results

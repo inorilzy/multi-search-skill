@@ -6,10 +6,11 @@ import { SOURCE_CATALOG } from './source-catalog.js';
 // Search sources come from the catalog generated from Python core metadata (one source of truth for
 // the CLI and this UI). Scraper-only providers also live there: they have credentials but no search
 // endpoint, so they get a credential panel without a connectivity test.
-export const SOURCES = SEARCH_SOURCES.map(({ name, label, keyed, cookie, description, mark }) => ({
+export const SOURCES = SEARCH_SOURCES.map(({ name, label, keyed, key_optional: keyOptional, cookie, description, mark }) => ({
   source: name,
   label,
   keyed,
+  keyOptional: Boolean(keyOptional),
   cookie,
   description,
   mark,
@@ -57,7 +58,7 @@ function testText(result, label, provenance) {
   };
   return labels[result] || '测试失败';
 }
-/** @typedef {{ source: string, label: string, keyed: boolean, cookie?: boolean, search?: boolean }} CredentialEntry */
+/** @typedef {{ source: string, label: string, keyed: boolean, keyOptional?: boolean, cookie?: boolean, search?: boolean }} CredentialEntry */
 /** @param {string} source @returns {CredentialEntry} */
 const sourceEntry = source => SOURCES.find(item => item.source === source)
   || SCRAPE_PROVIDERS.find(item => item.source === source)
@@ -77,10 +78,11 @@ export async function mountCredentials(root, api, options = {}) {
 /** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void}} [options] */
 export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest } = {}) {
   root = pageRoot(root);
-  const { label, search } = sourceEntry(source);
+  const { label, search, keyOptional } = sourceEntry(source);
   const searchTest = search !== false;
   root.innerHTML = `<div class="credential-editor"><div class="credential-fields">
     <p class="credential-note credential-intro">API Key：每行一条，可保存多条轮换使用。</p>
+    <p class="credential-note" data-key-optional hidden>无需 API Key 也能使用；填写 Key 只用于提高每日额度。</p>
     <div data-saved-list class="key-saved-list"></div>
     <p data-saved-empty class="credential-note key-saved-empty" hidden>当前没有已保存的 Key。</p>
     <form data-save-form class="key-draft-form">
@@ -99,6 +101,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     <details class="config-details"><summary>说明</summary><p data-keys-file-note class="credential-note" role="note"></p><p class="credential-note">保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details></div>
     <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong class="status-text" data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
     <details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? `测试会向对应服务发送外部搜索请求，可能消耗额度。测试使用已保存的值；新增后请先提交。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details></div></div>`;
+  if (keyOptional) root.querySelector('[data-key-optional]').hidden = false;
   root.querySelector('.credential-note').prepend(root.ownerDocument.createTextNode(`${label} `));
   const q = selector => /** @type {any} */ (root.querySelector(selector));
   const text = (selector, value) => { q(selector).textContent = value; };

@@ -10,16 +10,33 @@ from . import _DEFAULT_SCRAPE_TIMEOUT_SECONDS, _safe_http_url, error_fields
 
 
 _FIRECRAWL_ERROR_BODY_LIMIT = 4096
-# Firecrawl documents SCRAPE_SSL_ERROR as a target-page certificate failure.
-# Keep this set narrow: broad site/infrastructure codes do not prove that the
-# provider key is healthy, but they also do not prove that the target failed.
-_FIRECRAWL_TARGET_ERROR_CODES = frozenset({"SCRAPE_SSL_ERROR"})
-_FIRECRAWL_HTTP_ERROR_KINDS = {
+# Target-page failures that say nothing about the key. SCRAPE_SSL_ERROR is
+# still returned in practice for broken target certificates although the
+# current errors page (docs/firecrawl/errors.md) no longer lists it;
+# UNSUPPORTED_SITE is the documented 403 for sites Firecrawl will not scrape.
+_FIRECRAWL_TARGET_ERROR_CODES = frozenset({"SCRAPE_SSL_ERROR", "UNSUPPORTED_SITE"})
+# docs/firecrawl/errors.md. 403 is a permission/feature refusal (or an
+# unsupported site, handled by code/message below), not a bad key; 408 is the
+# target page taking longer than the requested timeout.
+FIRECRAWL_HTTP_ERROR_KINDS = {
     401: "invalid",
-    403: "invalid",
     402: "quota_exhausted",
+    403: "provider",
+    408: "target",
     429: "rate_limit",
 }
+_FIRECRAWL_HTTP_ERROR_KINDS = FIRECRAWL_HTTP_ERROR_KINDS
+
+
+def firecrawl_error_kind(status_code: int | None, data, detail: str = "") -> str | None:
+    """Kind from Firecrawl's documented status codes and error ``code`` values."""
+    code = _error_code(data)
+    text = (detail or "").lower()
+    if code in _FIRECRAWL_TARGET_ERROR_CODES or "do not support this site" in text:
+        return "target"
+    if status_code is None:
+        return None
+    return _FIRECRAWL_HTTP_ERROR_KINDS.get(status_code)
 
 
 def _error_code(data: dict | None) -> str:
@@ -51,10 +68,11 @@ def _error_result(
     if status_code is not None and isinstance(data, dict):
         detail = f"HTTP {status_code}: {detail}"
     result = {"url": url, "error": f"Firecrawl: {scrub_secrets(detail, api_key)}"}
-    if status_code in _FIRECRAWL_HTTP_ERROR_KINDS:
-        result.update(error_fields(kind=_FIRECRAWL_HTTP_ERROR_KINDS[status_code], origin="provider"))
-    elif code in _FIRECRAWL_TARGET_ERROR_CODES:
+    kind = firecrawl_error_kind(status_code, data, detail)
+    if kind == "target":
         result.update(error_fields(kind="target", origin="target"))
+    elif kind:
+        result.update(error_fields(kind=kind, origin="provider"))
     elif status_code is not None:
         result.update(error_fields(kind="error", origin="provider"))
     return result
@@ -111,12 +129,20 @@ def scrape_url_firecrawl(url: str, api_key: str = "", timeout: int = _DEFAULT_SC
         page = data.get("data")
         if not isinstance(page, dict):
             return {"url": url, "error": "Firecrawl: invalid response"}
-        markdown = page.get("markdown") or page.get("content") or page.get("text") or ""
+        markdown = page.get("markdown") or ""
+        metadata = page.get("metadata") if isinstance(page.get("metadata"), dict) else {}
+        target_status = metadata.get("statusCode")
+        if isinstance(target_status, int) and target_status >= 400:
+            # The scrape ran but the target page itself answered with an error.
+            detail = metadata.get("error") or f"target page returned HTTP {target_status}"
+            return {
+                "url": url, "error": f"Firecrawl: {scrub_secrets(detail, api_key)}",
+                **error_fields(kind="target", origin="target"),
+            }
         if not markdown.strip():
             warning = page.get("warning") or "empty content"
             return {"url": url, "error": f"Firecrawl: {scrub_secrets(warning, api_key)}"}
-        metadata = page.get("metadata") if isinstance(page.get("metadata"), dict) else {}
-        title = page.get("title") or metadata.get("title") or metadata.get("ogTitle") or url
+        title = metadata.get("title") or metadata.get("ogTitle") or url
         return {
             "url": url,
             "title": title,
