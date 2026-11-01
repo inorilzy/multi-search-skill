@@ -384,6 +384,26 @@ fn corrupt_or_unknown_managed_skill_blocks_update_and_preview() {
 }
 
 #[test]
+fn an_older_release_of_our_skill_does_not_block_a_cli_update() {
+    let mut profile = common::Profile::new();
+    let skill_manager = DesktopManager::new(profile.environment.clone());
+    assert_eq!(skill_manager.skill_install("agents", "global", None).status, "installed");
+    let marker_path = profile.root.join(".agents/skills/multi-search/.multi-search-install.json");
+    let mut marker: serde_json::Value = serde_json::from_slice(&fs::read(&marker_path).unwrap()).unwrap();
+    // Simulate a Skill installed by a previous app release.
+    marker["skill_version"] = serde_json::json!("0000000000000000");
+    fs::write(&marker_path, serde_json::to_vec(&marker).unwrap()).unwrap();
+    let root = profile.root.join("managed");
+    let v1 = runtime_source(&profile, "v1", "0.4.0");
+    assert_eq!(DesktopManager::new(env(&profile, &root, &v1)).install().status, "installed");
+    let v2 = runtime_source(&profile, "v2", "0.5.0");
+    profile.environment.variables.insert("FIXTURE_VERSION".into(), "0.5.0".into());
+    let next = DesktopManager::new(env(&profile, &root, &v2));
+    assert_eq!(next.install_plan().compatibility, "compatible", "{}", next.install_plan().compatibility_reason);
+    assert_eq!(next.update().status, "installed");
+}
+
+#[test]
 fn registered_project_skill_and_legacy_v1_requirements_are_checked_before_cli_update() {
     let mut profile = common::Profile::new();
     let project = profile.root.join("project");

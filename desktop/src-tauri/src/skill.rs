@@ -1,6 +1,6 @@
 //! Installs the CLI-only Skill for Claude Code or the cross-tool `.agents/skills` location. The CLI stays the only search implementation.
 use crate::skill_common::{
-    self, home_directory, reload_hint, skill_version, target_directory, Requirements, FILES, HOSTS, MARKER, SKILL_NAME,
+    self, home_directory, reload_hint, target_directory, Requirements, FILES, HOSTS, MARKER, SKILL_NAME,
 };
 use crate::diagnostics::CliDiscovery;
 use crate::{process, RuntimeEnvironment};
@@ -59,7 +59,12 @@ fn installed_requirements(environment: &RuntimeEnvironment) -> Result<Requiremen
         }
         let raw = fs::read(target.join(MARKER)).map_err(|_| format!("unverified: missing managed Skill record {}", target.display()))?;
         let value: serde_json::Value = serde_json::from_slice(&raw).map_err(|_| "unverified: corrupt managed Skill record")?;
-        if value["managed_by"] != "multi-search-desktop" || value["skill"] != SKILL_NAME || value["skill_version"] != skill_version() {
+        // Ownership is managed_by + skill name. An older release of our own Skill is
+        // still a known record: its recorded `requirements` (or the legacy full set)
+        // is exactly what a new CLI must keep supporting, so a version that merely
+        // differs from this build must not block a CLI update.
+        let version_ok = value["skill_version"].as_str().is_some_and(|v| !v.trim().is_empty());
+        if value["managed_by"] != "multi-search-desktop" || value["skill"] != SKILL_NAME || !version_ok {
             return Err("unverified: unknown managed Skill record or version".into());
         }
         let files = value["files"].as_array().ok_or("unverified: missing Skill file inventory")?;
@@ -283,4 +288,44 @@ fn check_requirements(
             }
         }
         Ok(())
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn older_managed_skill_preserves_requirements_and_rejects_invalid_records() {
+        let root = std::env::temp_dir().join(format!("skill-compat-{}-{}", std::process::id(), STAGING_ID.fetch_add(1, Ordering::Relaxed)));
+        fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let env = RuntimeEnvironment {
+            app_path: vec![], user_path: vec![], cwd: root.clone(),
+            variables: [("HOME".into(), root.to_string_lossy().into_owned()),
+                        ("USERPROFILE".into(), root.to_string_lossy().into_owned())].into(),
+        };
+        let target = root.join(".agents/skills/multi-search");
+        fs::create_dir_all(&target).unwrap();
+        record_target(&env, &target, true).unwrap();
+        let mut marker = serde_json::json!({
+            "managed_by": "multi-search-desktop", "skill": SKILL_NAME,
+            "skill_version": "2b87d243e3033adb",
+            "files": FILES.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            "requirements": {"search": ["--old-skill-required"]}
+        });
+        fs::write(target.join(MARKER), serde_json::to_vec(&marker).unwrap()).unwrap();
+        let required = installed_requirements(&env).expect("an older managed Skill is still verifiable");
+        assert!(required["search"].contains(&"--old-skill-required".to_string()));
+        assert!(required.contains_key("doctor"));
+        marker["requirements"] = serde_json::json!({"search": ["invalid-flag"]});
+        fs::write(target.join(MARKER), serde_json::to_vec(&marker).unwrap()).unwrap();
+        assert!(installed_requirements(&env).unwrap_err().contains("capability contract"));
+        marker.as_object_mut().unwrap().remove("requirements");
+        fs::write(target.join(MARKER), serde_json::to_vec(&marker).unwrap()).unwrap();
+        assert_eq!(installed_requirements(&env).unwrap(), skill_common::requirements());
+        marker["managed_by"] = serde_json::json!("another-app");
+        fs::write(target.join(MARKER), serde_json::to_vec(&marker).unwrap()).unwrap();
+        assert!(installed_requirements(&env).unwrap_err().contains("unknown managed Skill"));
+        fs::remove_dir_all(&root).unwrap();
+    }
 }
