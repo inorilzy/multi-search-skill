@@ -105,6 +105,36 @@ fn tree_hashing(root: &Path) -> Vec<(PathBuf, String)> {
 }
 
 #[test]
+#[ignore = "requires both old and new real CLI bundles"]
+fn real_cross_version_upgrade_activates_new_cli() {
+    let old_source = PathBuf::from(std::env::var_os("MULTI_SEARCH_ACCEPTANCE_OLD_BUNDLE").expect("old bundle path required"));
+    let source = shipped_bundle().expect("new bundle required");
+    let profile = common::Profile::new();
+    let root = profile.root.join("Library/Application Support/MultiSearch/cli");
+    let old = DesktopManager::new(isolated(&profile, &root, &old_source, &anchor_of(&old_source)));
+    let installed = old.install();
+    assert_eq!(installed.status, "installed", "{}", installed.reason);
+    // Previous buggy upgrades left empty metadata trees (including licenses/).
+    let old_manifest: serde_json::Value = serde_json::from_slice(&fs::read(old_source.join("manifest.json")).unwrap()).unwrap();
+    let metadata = old_manifest["files"].as_array().unwrap().iter()
+        .filter_map(|entry| entry["path"].as_str())
+        .find(|path| path.contains("multi_search_mcp-") && path.ends_with("/METADATA")).unwrap();
+    let site_packages = root.join(metadata).parent().unwrap().parent().unwrap().to_path_buf();
+    for version in ["0.4.0", "0.4.1.dev2", "0.4.1.dev4"] {
+        fs::create_dir_all(site_packages.join(format!("multi_search_mcp-{version}.dist-info/licenses"))).unwrap();
+    }
+    let next = DesktopManager::new(isolated(&profile, &root, &source, &anchor_of(&source)));
+    let plan = next.install_plan();
+    assert_eq!(plan.status, "update_available", "{}", plan.reason);
+    let updated = next.update();
+    assert_eq!(updated.status, "installed", "{}", updated.reason);
+    let version = run_installed(&root.join("bin/multi-search"), &profile.root, &["--version"]);
+    assert!(version.status.success(), "{}", String::from_utf8_lossy(&version.stderr));
+    assert!(String::from_utf8_lossy(&version.stdout).contains(plan.version.as_deref().unwrap()));
+    assert_eq!(next.install_plan().status, "installed");
+}
+
+#[test]
 #[ignore = "needs a built resources/cli-bundle; run with --ignored after building it"]
 fn shipped_bundle_installs_probes_updates_and_uninstalls_standalone() {
     let Some(source) = shipped_bundle() else {

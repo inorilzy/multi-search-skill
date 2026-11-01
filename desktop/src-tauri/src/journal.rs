@@ -106,6 +106,48 @@ pub(crate) fn prune_empty_parents(root: &Path, names: &[String]) {
     }
 }
 
+/// Older installers moved metadata files but left empty .dist-info trees.
+/// Python still discovers those trees and may report version None. Restrict
+/// cleanup to distribution names and parent paths present in our manifest.
+pub(crate) fn prune_empty_metadata_siblings(root: &Path, names: &[String]) {
+    let mut distributions = std::collections::BTreeSet::new();
+    for name in names {
+        let Some((metadata, _)) = name.split_once(".dist-info/") else { continue };
+        let Some((parent, directory)) = metadata.rsplit_once('/') else { continue };
+        let Some((distribution, _)) = directory.split_once('-') else { continue };
+        distributions.insert((parent, format!("{distribution}-")));
+    }
+    for (parent, prefix) in distributions {
+        let Ok(parent) = destination(root, parent) else { continue };
+        let Ok(entries) = fs::read_dir(parent) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&prefix) && name.ends_with(".dist-info") {
+                prune_empty_tree(&entry.path());
+            }
+        }
+    }
+}
+
+fn is_empty_tree(path: &Path) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else { return false };
+    if !metadata.is_dir() || windows_util::is_link(&metadata) { return false; }
+    let Ok(mut entries) = fs::read_dir(path) else { return false };
+    entries.all(|entry| entry.is_ok_and(|entry| is_empty_tree(&entry.path())))
+}
+
+fn prune_empty_tree(path: &Path) {
+    if !is_empty_tree(path) { return; }
+    let Ok(entries) = fs::read_dir(path) else { return };
+    for entry in entries.flatten() {
+        prune_empty_tree(&entry.path());
+    }
+    // remove_dir never removes files or nonempty directories, even if content
+    // appeared after the empty-tree check. Do not use remove_dir_all here.
+    let _ = fs::remove_dir(path);
+}
+
 pub(crate) fn check_destinations(
     root: &Path,
     names: &[String],
@@ -205,6 +247,9 @@ pub(crate) fn restore_backup(
             errors.push(reason);
         }
     }
+    // A failed version must not leave empty package metadata directories that
+    // shadow the restored runtime. Never remove directories with other content.
+    prune_empty_parents(root, activated);
     for name in moved.iter().rev() {
         if let Err((_, reason)) = move_file(backup, root, name) {
             errors.push(reason);

@@ -491,6 +491,11 @@ fn perform_update(
         }
         moved.push(name.clone());
     }
+    // Empty old .dist-info directories are still discoverable by Python and
+    // can shadow the new distribution with version None. Remove only empty
+    // parents of files we just backed up; rollback recreates them as needed.
+    journal::prune_empty_parents(root, &old_names);
+    journal::prune_empty_metadata_siblings(root, &old_names);
     let next = Active {
         version: version.clone(),
         manifest_sha256: expected,

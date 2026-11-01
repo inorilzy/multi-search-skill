@@ -201,7 +201,9 @@ mod macos {
     fn update_replaces_the_bundle_and_keeps_executable_modes() {
         let profile = common::Profile::new();
         let root = profile.root.join("managed-update");
-        let v1 = bundle(&profile, "src-update-v1", "0.4.0");
+        let old_metadata = "runtime/lib/site-packages/demo-0.4.0.dist-info/METADATA";
+        let new_metadata = "runtime/lib/site-packages/demo-0.5.0.dist-info/METADATA";
+        let v1 = bundle_with_extra_file(&profile, "src-update-v1", "0.4.0", old_metadata, b"Version: 0.4.0");
         assert_eq!(
             DesktopManager::new(env(&profile, &root, Some(&v1)))
                 .install()
@@ -209,7 +211,20 @@ mod macos {
             "installed"
         );
 
-        let v2 = bundle(&profile, "src-update-v2", "0.5.0");
+        let stale = root.join("runtime/lib/site-packages/demo-0.3.0.dist-info");
+        fs::create_dir_all(stale.join("licenses")).unwrap();
+        let unrelated = root.join("runtime/lib/site-packages/other-0.1.dist-info");
+        fs::create_dir_all(&unrelated).unwrap();
+        let nonempty = root.join("runtime/lib/site-packages/demo-0.2.0.dist-info");
+        fs::create_dir_all(&nonempty).unwrap();
+        fs::write(nonempty.join("user-notes"), b"keep metadata notes").unwrap();
+        let outside = profile.root.join("user-directory");
+        fs::create_dir_all(outside.join("empty-child")).unwrap();
+        let linked = root.join("runtime/lib/site-packages/demo-0.1.0.dist-info");
+        std::os::unix::fs::symlink(&outside, &linked).unwrap();
+        let user_file = root.join("runtime/lib/user-notes.txt");
+        fs::write(&user_file, b"keep me").unwrap();
+        let v2 = bundle_with_extra_file(&profile, "src-update-v2", "0.5.0", new_metadata, b"Version: 0.5.0");
         let mut environment = env(&profile, &root, Some(&v2));
         environment
             .variables
@@ -225,6 +240,14 @@ mod macos {
         assert_eq!(outcome.status, "installed", "{}", outcome.reason);
         assert_eq!(outcome.version.as_deref(), Some("0.5.0"));
         assert_installed_bundle(&root, "0.5.0");
+        assert!(!root.join(old_metadata).parent().unwrap().exists(), "empty old metadata must not shadow the new package");
+        assert!(root.join(new_metadata).is_file());
+        assert_eq!(fs::read(user_file).unwrap(), b"keep me");
+        assert!(!stale.exists(), "historical empty metadata must also be removed");
+        assert!(unrelated.is_dir(), "other distributions must remain untouched");
+        assert_eq!(fs::read(nonempty.join("user-notes")).unwrap(), b"keep metadata notes");
+        assert!(linked.is_symlink());
+        assert!(outside.join("empty-child").is_dir());
         let active: serde_json::Value =
             serde_json::from_slice(&fs::read(root.join("active.json")).unwrap()).unwrap();
         assert_eq!(active["version"], "0.5.0");
@@ -242,12 +265,14 @@ mod macos {
     fn failed_activation_rolls_back_to_the_exact_previous_bundle() {
         let profile = common::Profile::new();
         let root = profile.root.join("managed-rollback");
-        let v1 = bundle(&profile, "src-rollback-v1", "0.4.0");
+        let old_metadata = "runtime/lib/site-packages/demo-0.4.0.dist-info/METADATA";
+        let new_metadata = "runtime/lib/site-packages/demo-0.5.0.dist-info/METADATA";
+        let v1 = bundle_with_extra_file(&profile, "src-rollback-v1", "0.4.0", old_metadata, b"Version: 0.4.0");
         let old = DesktopManager::new(env(&profile, &root, Some(&v1)));
         assert_eq!(old.install().status, "installed");
         let before = snapshot(&root);
 
-        let v2 = bundle(&profile, "src-rollback-v2", "0.5.0");
+        let v2 = bundle_with_extra_file(&profile, "src-rollback-v2", "0.5.0", new_metadata, b"Version: 0.5.0");
         let mut environment = env(&profile, &root, Some(&v2));
         environment
             .variables
@@ -266,6 +291,8 @@ mod macos {
             "every old file and mode is restored"
         );
         assert_eq!(old.install_plan().status, "installed");
+        assert_eq!(fs::read(root.join(old_metadata)).unwrap(), b"Version: 0.4.0");
+        assert!(!root.join(new_metadata).parent().unwrap().exists(), "failed version must not shadow restored metadata");
 
         environment.variables.remove("FIXTURE_FAIL_ACTIVE_ROOT");
         let retried = DesktopManager::new(environment).update();
