@@ -6,6 +6,7 @@ import io
 import importlib.metadata
 import json
 import sys
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, TextIO
@@ -26,6 +27,7 @@ from .src.state.operations import (
     set_site_scraper_preference,
     site_scraper_stats,
 )
+from .src.support import debug_log
 from .src.support.backends import KNOWN_BACKENDS
 from .src.support.format import format_scrapes, ranking_mode_label
 from .src.support.secrets import scrub_secrets
@@ -49,6 +51,18 @@ def _add_format_argument(parser: argparse.ArgumentParser) -> None:
         choices=OUTPUT_FORMATS,
         default="json",
         help="output format (default: json)",
+    )
+
+
+def _add_debug_log_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--debug-log", metavar="PATH",
+        help=(
+            "append a detailed JSONL trace of this run (parameters, query plan, "
+            "route, per-provider timings and results, fetch chain) to PATH; "
+            f"{debug_log.ENV_VAR}=1 (~/.multi-search/logs/debug.jsonl) or "
+            f"{debug_log.ENV_VAR}=<path> enables it without the flag"
+        ),
     )
 
 
@@ -122,6 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-state", action="store_true",
         help="skip SQLite key rotation, content cache, and site memory (clean test/debug runs)",
     )
+    _add_debug_log_argument(search_parser)
     _add_format_argument(search_parser)
     search_parser.set_defaults(handler=_handle_search)
 
@@ -147,6 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-state", action="store_true",
         help="skip SQLite key rotation and the content cache (clean test/debug runs)",
     )
+    _add_debug_log_argument(fetch_parser)
     _add_format_argument(fetch_parser)
     fetch_parser.set_defaults(handler=_handle_fetch)
 
@@ -254,10 +270,31 @@ def main(
     stderr = stderr or sys.stderr
     parser = build_parser()
     args = None
+    started = time.monotonic()
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
     try:
-        args = parser.parse_args(list(argv) if argv is not None else None)
+        args = parser.parse_args(raw_argv)
+        if args.command in {"search", "fetch"}:
+            debug_log.configure(getattr(args, "debug_log", None))
+        else:
+            debug_log.disable()
+        debug_log.event(
+            "cli_request", command=args.command, argv=raw_argv,
+            parameters={
+                key: value for key, value in vars(args).items()
+                if key not in {"handler", "debug_log"}
+            },
+        )
         payload = args.handler(args)
         _write_payload(payload, args.format, stdout)
+        if args.command == "search":
+            debug_log.event(
+                "cli_exit", elapsed_ms=debug_log.elapsed_ms(started),
+                outcome=payload.get("outcome"),
+                exit_code=1 if payload.get("outcome") == "failed" else 0,
+            )
+        elif args.command == "fetch":
+            debug_log.event("cli_exit", elapsed_ms=debug_log.elapsed_ms(started), exit_code=0)
         if args.command == "search" and payload.get("outcome") == "failed":
             stderr.write("error: all selected search providers failed\n")
             return 1
@@ -275,6 +312,10 @@ def main(
         # The last line of defence for secrets: a provider or store error that
         # embeds a key, token, or cookie is redacted before it reaches stdout/stderr.
         message = scrub_secrets(exc, limit=2000)
+        debug_log.event(
+            "cli_exit", elapsed_ms=debug_log.elapsed_ms(started), exit_code=1,
+            error=message, error_class=type(exc).__name__,
+        )
         if args is not None:
             _write_payload({
                 "error": message,

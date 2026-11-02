@@ -17,6 +17,7 @@ from ..state.content_store import (
 )
 from ..state.source_registry import SourceRegistry
 from ..state.state_store import StateStore
+from ..support import debug_log
 from ..support.config import resolve_nonnegative
 from ..support.requests import FetchSourceRequest, ScrapeRequest
 from ..support.url_security import validate_public_http_url
@@ -41,6 +42,7 @@ def run_fetch_source(
     """Fetch one registered source and persist its untrusted body briefly."""
     if isinstance(request, dict):
         request = FetchSourceRequest(**request)
+    fetch_started = time.monotonic()
     if bool(request.source_id) == bool(request.url):
         raise ValueError("provide exactly one of source_id or url")
     # Validate before any network or state access, so bad input is reported as such.
@@ -138,6 +140,10 @@ def run_fetch_source(
                     source_id, canonical_url=canonicalize_url(url), cache_scope=cache_scope,
                 )
     if cached is not None:
+        debug_log.log_fetch(
+            source_id, url, fetch_started, how="cache_hit", backend="content-store",
+            body=str(cached["content"]),
+        )
         return {
             "source_id": source_id,
             "url": url,
@@ -158,6 +164,8 @@ def run_fetch_source(
     if prefetched_body:
         result = {"markdown": prefetched_body, "via": "provider:prefetch"}
     else:
+        if runtime_keys:
+            debug_log.add_secrets(runtime_keys)
         result, updates, _scrape_chars = run_scrape_raw(
             ScrapeRequest(
                 url=url,
@@ -177,9 +185,13 @@ def run_fetch_source(
             runtime_timeout=runtime_timeout,
         )
     if result.get("error"):
+        debug_log.log_fetch(source_id, url, fetch_started, how="scrape", backend=result.get("via"),
+                              error=str(result["error"]))
         raise ValueError(str(result["error"]))
     body = str(result.get("markdown") or "")
     if not body:
+        debug_log.log_fetch(source_id, url, fetch_started, how="scrape", backend=result.get("via"),
+                              error="fetch_source returned empty body")
         raise ValueError("fetch_source returned empty body")
     acquisition_truncated = bool(result.get("truncated"))  # Before max_chars preview.
     stored = None
@@ -222,6 +234,13 @@ def run_fetch_source(
     }
     if persist_error is not None:
         response["persist_error"] = persist_error
+    debug_log.log_fetch(
+        source_id, url, fetch_started,
+        # The provider already returned this body inline with its search result.
+        how="search_provider_body" if prefetched_body else "scrape",
+        backend=response["backend"], body=body,
+        truncated=response["truncated"], persisted=response["persisted"],
+    )
     return response
 
 

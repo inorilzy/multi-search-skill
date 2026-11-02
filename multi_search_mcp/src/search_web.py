@@ -9,6 +9,7 @@ from .search.candidate import SEARCH_RESULT_LIMIT
 from .search.candidates import run_search_candidates, search_outcome
 from .state import runtime
 from .state.state_store import StateStore
+from .support import debug_log
 from .support.config import resolve_int, resolve_nonnegative
 from .support.format import body_preview_start
 from .support.models import normalize_scrape_result
@@ -37,6 +38,7 @@ def run_search_web(
     """
     if isinstance(request, dict):
         request = SearchWebRequest(**request)
+    flow_started = time.monotonic()
     resolved_config = runtime.load_config_safe(request.config_path) if config is None else dict(config)
     # Candidate planning also validates scrape defaults. Preserve explicit
     # overrides there, before provider calls, as well as in the fetch stage.
@@ -51,6 +53,7 @@ def run_search_web(
         runtime_keys, runtime_key_errors = loaded.keys, loaded.errors
     else:
         runtime_keys, runtime_key_errors = dict(keys), {}
+    debug_log.add_secrets(runtime_keys)
     store = (state_store or StateStore()) if request.use_state else None
     prefetched = {}
     response = run_search_candidates(
@@ -73,13 +76,20 @@ def run_search_web(
             body_failures=[],
             body_fetch_mode="candidates",
         )
+        debug_log.log_search_response(response, flow_started)
         return response
     max_chars = max(1, min(resolve_int(scrape_chars, resolved_config, "scrape_chars", 1200), 20_000))
     body_timeout = resolve_nonnegative(scrape_timeout, resolved_config, "scrape_timeout", 60)
     concurrency = max(1, resolve_int(scrape_concurrency, resolved_config, "scrape_concurrency", 5))
     body_deadline = time.monotonic() + body_timeout
+    fetch_stage_started = time.monotonic()
+    debug_log.event(
+        "fetch_stage_start", hit_count=len(response["results"]),
+        timeout_s=body_timeout, concurrency=concurrency, preview_chars=max_chars,
+    )
 
     def fetch(hit, remaining):
+        started = time.monotonic()
         try:
             return run_fetch_source(
                 FetchSourceRequest(
@@ -93,8 +103,12 @@ def run_search_web(
                 runtime_timeout=remaining,
             )
         except Exception as exc:
-            return {"source_id": hit["source_id"], "url": hit["url"],
-                    "error": scrub_secrets(exc, runtime_keys)}
+            error = scrub_secrets(exc, runtime_keys)
+            debug_log.event(
+                "fetch_failed", source_id=hit["source_id"], url=hit["url"],
+                elapsed_ms=debug_log.elapsed_ms(started), error=error,
+            )
+            return {"source_id": hit["source_id"], "url": hit["url"], "error": error}
 
     fetched = run_ranked_fetch_stage(
         response["results"], fetch=fetch, timeout=body_timeout, concurrency=concurrency,
@@ -137,6 +151,14 @@ def run_search_web(
                 **body_result["persist_error"],
             })
     response["scrapes"] = scrapes
+    debug_log.event(
+        "fetch_stage_done", elapsed_ms=debug_log.elapsed_ms(fetch_stage_started),
+        success_count=sum(not row.get("error") for row in scrapes),
+        failures=[
+            {"url": row.get("url"), "error": row.get("error")}
+            for row in scrapes if row.get("error")
+        ],
+    )
     response["site_scraper_updates"] = [
         update for result in fetched["results"]
         for update in result.get("site_scraper_updates", [])
@@ -156,4 +178,5 @@ def run_search_web(
         body_failures=body_errors,
         body_persist_failures=persist_failures,
     )
+    debug_log.log_search_response(response, flow_started)
     return response

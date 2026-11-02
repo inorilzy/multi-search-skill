@@ -16,6 +16,7 @@ from ..support.concurrency import (
     BoundedDaemonExecutor,
     pool_saturated_message,
 )
+from ..support import debug_log
 from ..support.auth import is_key_retryable_error
 from ..state.key_state import BasicKeyManager, KeyCandidate
 from ..state.keys import key_pool
@@ -381,6 +382,41 @@ def run_keyed_source(
     return _merge_partial_rows(source, partial_rows, [error]) if partial_rows else [error]
 
 
+def _log_provider_results(
+    query: str, results: list[dict], timings: dict[str, int], total_ms: int,
+) -> None:
+    """One event per source: wall time (all key attempts), status, and its rows."""
+    timings = dict(timings)  # abandoned workers may still write late timings
+    by_source: dict[str, list[dict]] = {}
+    for row in as_dicts(results):
+        by_source.setdefault(str(row.get("source") or "?"), []).append(row)
+    for source, rows in by_source.items():
+        errors = [row for row in rows if row.get("error")]
+        hits = [row for row in rows if row.get("url") and not row.get("error")]
+        debug_log.event(
+            "provider_result",
+            query=query,
+            source=source,
+            # None: never ran (skipped, missing key) or still running at the deadline.
+            elapsed_ms=timings.get(source),
+            status="error" if errors and not hits else "partial" if errors else (
+                "ok" if hits else "empty"
+            ),
+            hit_count=len(hits),
+            errors=[
+                {"error": str(row.get("error")), "error_type": row.get("error_type")}
+                for row in errors
+            ],
+            rows=[
+                summary for summary in (
+                    debug_log.row_summary(row) for row in rows if not row.get("error")
+                ) if set(summary) - {"source"}
+            ],
+        )
+    debug_log.event("query_providers_done", query=query, elapsed_ms=total_ms,
+                    source_timings_ms=timings)
+
+
 def _search_pool_workers() -> int:
     """Worker budget for the shared search pool, tunable per process.
 
@@ -414,6 +450,16 @@ class SearchRunner:
         self.executor = executor
 
     def run(self, query: str, *, deadline: float | None = None) -> list[dict]:
+        started = time.monotonic()
+        timings: dict[str, int] = {}
+        results = self._run(query, deadline=deadline, timings=timings)
+        if debug_log.enabled():
+            _log_provider_results(query, results, timings, debug_log.elapsed_ms(started))
+        return results
+
+    def _run(
+        self, query: str, *, deadline: float | None, timings: dict[str, int],
+    ) -> list[dict]:
         results: list[dict] = []
         jobs: list[tuple[str, Callable[[], list]]] = []
         source_names = self.route_resolver(self.config.route)
@@ -448,7 +494,27 @@ class SearchRunner:
                 keys=self.config.keys,
                 publish_partial=publish_partial,
             )
-            return spec.call(query, self.config, ctx, api_key)
+            attempt_started = time.monotonic()
+            try:
+                rows = spec.call(query, self.config, ctx, api_key)
+            except Exception as exc:
+                debug_log.event(
+                    "provider_attempt", query=query, source=spec.public_name,
+                    keyed=api_key is not None, timeout_s=ctx.timeout,
+                    elapsed_ms=debug_log.elapsed_ms(attempt_started),
+                    error=scrub_secrets(exc, self.config.keys),
+                )
+                raise
+            if debug_log.enabled():
+                row_dicts = as_dicts(rows or [])
+                debug_log.event(
+                    "provider_attempt", query=query, source=spec.public_name,
+                    keyed=api_key is not None, timeout_s=ctx.timeout,
+                    elapsed_ms=debug_log.elapsed_ms(attempt_started),
+                    row_count=len(row_dicts),
+                    errors=[str(row["error"]) for row in row_dicts if row.get("error")],
+                )
+            return rows
 
         for source in source_names:
             spec = self.providers.get(source)
@@ -488,10 +554,19 @@ class SearchRunner:
         pending = {name for name, _ in jobs}
         future_sources: dict[Future, str] = {}
         saturated: set[str] = set()
+        def timed(name: str, call: Callable[[], list]) -> Callable[[], list]:
+            def run_timed() -> list:
+                job_started = time.monotonic()
+                try:
+                    return call()
+                finally:
+                    timings[name] = debug_log.elapsed_ms(job_started)
+            return run_timed
+
         for name, call in jobs:
             had_budget = source_deadline - time.monotonic() > 0
             executor = self.executor or _SEARCH_POOL
-            future = executor.submit_before(source_deadline, call)
+            future = executor.submit_before(source_deadline, timed(name, call))
             if future is not None:
                 future_sources[future] = name
             elif had_budget:

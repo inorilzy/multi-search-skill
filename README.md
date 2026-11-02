@@ -479,6 +479,23 @@ Provider 参考文档和现行/历史文档分类见 [docs/README.md](docs/READM
 
 先运行 `multi-search doctor` 检查依赖和 Key。缺 Key、quota 用完、网络超时都会在 `Source Status` 和 `Errors` 中显示，不会静默吞掉。
 
+### 想看一次搜索内部到底发生了什么？
+
+`search` 和 `fetch` 支持调试日志，默认关闭：`--debug-log PATH` 只对本次调用生效；设置环境变量 `MULTI_SEARCH_DEBUG_LOG=1` 写入 `~/.multi-search/logs/debug.jsonl`，设为其他值则视为日志路径（Agent 通过 Skill 调用 CLI 时用这种方式）。日志按行追加 JSON，同一次调用共享 `run_id`，主要事件：
+
+| 事件 | 内容 |
+| --- | --- |
+| `cli_request` | 原始 argv 与解析后的参数 |
+| `query_plan` | 传入的 `query` 与 `expand`（Agent 改写后的查询），去重/去空后实际执行的查询及融合权重 |
+| `route` | 请求的路由、解析后的路由、路由源、禁用源、实际参与源、每源条数和超时 |
+| `provider_attempt` / `provider_result` | 每个查询 × 每个源的耗时（含每次 key 尝试）、状态、错误和返回的标题/URL/摘要 |
+| `query_done` / `search_stage_done` / `fusion` / `rerank` | 每个查询和整个搜索阶段的耗时，RRF 融合后的候选与重排结果 |
+| `scrape_chain` / `scrape_attempt` / `scrape_key_attempt` | 每个 URL 的抓取策略、站点记忆调整前后的后端顺序、每个后端（及每把 key / 匿名通道）的耗时、成败和正文开头 |
+| `fetch_source` / `fetch_failed` / `fetch_stage_done` | 每个 URL 正文的来源（缓存命中、搜索源自带正文或抓取）、耗时、长度和正文预览 |
+| `search_response` / `cli_exit` | 最终返回的结果、正文预览、错误和总耗时 |
+
+正文预览默认截取 2000 字符，可用 `MULTI_SEARCH_DEBUG_LOG_BODY_CHARS` 调整。Key 不会写入日志，错误文本按与输出相同的规则脱敏；但日志包含查询词和网页内容，分享前请自行检查。日志不会自动轮转或清理。
+
 ## 开发验证
 
 回归测试统一放在 `tests/`。新增测试也放入该目录；运行单个模块时使用 `python -m unittest tests.test_cli_process -v` 这样的包路径。

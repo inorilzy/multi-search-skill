@@ -7,6 +7,7 @@ and snapshot capture use the same entry point.
 from __future__ import annotations
 
 import concurrent.futures
+import functools
 import time
 import uuid
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from ..state.key_state import BasicKeyManager, SQLiteKeyManager, classify_error,
 from ..state.source_registry import SourceRegistry
 from ..state.state_store import StateStore
 from ..scrape.scrapers.twitter import is_twitter_url
+from ..support import debug_log
 from ..support.concurrency import BoundedDaemonExecutor
 from ..support.config import config_list
 from ..support.models import ANSWER_SOURCES, is_empty_result, search_content
@@ -65,6 +67,7 @@ def run_search_candidates(
         request = SearchWebRequest(**request)
     if not request.query:
         raise ValueError("query is required")
+    stage_started = time.monotonic()
     resolved_config = (
         runtime.load_config_safe(request.config_path) if config is None else dict(config)
     )
@@ -82,6 +85,7 @@ def run_search_candidates(
     query_policy = QueryFusionPolicy.from_config(resolved_config)
     # Validate and allocate against the complete plan, before any query can fail.
     query_weights = query_policy.weights(queries, query_plan.primary_query)
+    debug_log.log_query_plan(request, expand, query_plan, query_policy, query_weights)
 
     plan = resolve_search_plan(
         SearchPlanRequest(
@@ -108,6 +112,7 @@ def run_search_candidates(
     base_sources, active_sources = resolve_active_sources(
         plan.route, plan.sources, plan.disabled_sources, plan.route_sources
     )
+    debug_log.log_route(request, plan, base_sources, active_sources)
     if base_sources and not active_sources:
         raise ValueError(
             f"all selected sources are disabled: {', '.join(sorted(base_sources))}"
@@ -134,15 +139,16 @@ def run_search_candidates(
     )
     query_results: dict[str, list[dict]] = {}
     search_deadline = time.monotonic() + plan.timeout
+    run_query = functools.partial(debug_log.timed_query, runner.run)
     if len(queries) == 1:
-        query_results[queries[0]] = runner.run(queries[0], deadline=search_deadline)
+        query_results[queries[0]] = run_query(queries[0], deadline=search_deadline)
     else:
         # The expansion pool bounds *admission*, not each query's runtime: a
         # queued variant that never gets a slot still reports through its own
         # deadline-bounded runner call, which keeps error accounting identical
         # to a plain bounded executor.
         futures = {
-            _EXPAND_POOL.submit_before(search_deadline, runner.run, query, deadline=search_deadline): query
+            _EXPAND_POOL.submit_before(search_deadline, run_query, query, deadline=search_deadline): query
             for query in queries
         }
         futures = {future: query for future, query in futures.items() if future is not None}
@@ -192,6 +198,7 @@ def run_search_candidates(
         query_runs, response_id=response_id, limit=limit,
         primary_query=query_plan.primary_query, query_policy=query_policy,
     )
+    debug_log.log_fusion(hits, len(rows), stage_started)
     # Optional model rerank sits between fusion and the fetch stage so the
     # body budget is spent on the reranked order, not the RRF order.
     if rerank_policy.enabled:
@@ -201,11 +208,13 @@ def run_search_candidates(
         # reranker (tests, offline replay) takes precedence.
         if reranker is None:
             reranker = build_reranker(rerank_policy)
+        rerank_started = time.monotonic()
         hits, rerank_meta = apply_rerank(
             hits, request.query, reranker, policy=rerank_policy,
             deadline=time.monotonic() + rerank_policy.rerank_timeout,
         )
         hits = hits[:SEARCH_RESULT_LIMIT]
+        debug_log.log_rerank(hits, rerank_meta, rerank_started)
     else:
         for hit in hits:
             hit["relevance_score"] = None

@@ -18,6 +18,7 @@ from typing import Any
 
 from ..state.key_state import KeyCandidate, key_fingerprint, key_id_for
 from ..state.site_memory import ScrapeAttempt
+from ..support import debug_log
 from ..support.auth import is_key_retryable_error
 from ..support.models import normalize_scrape_result
 from ..support.url_security import (
@@ -237,9 +238,15 @@ def _scrape_with_key_candidates(
             break
         if key_manager is not None:
             key_manager.record_use(provider, candidate)
+        attempt_started = time.monotonic()
         result = call(candidate.key)
         if not isinstance(result, dict):
             return result
+        debug_log.event(
+            "scrape_key_attempt", backend=provider, key_id=candidate.key_id,
+            elapsed_ms=debug_log.elapsed_ms(attempt_started),
+            error=result.get("error"), url=result.get("url"),
+        )
         _record_key_result(provider, candidate, result, key_manager)
         last = result
         if "error" not in result:
@@ -497,9 +504,16 @@ def _scrape_jina(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
             }
         # scrape_url_jina records an anonymous rate limit itself; record it in
         # exactly one place so a cooldown is never applied twice.
-        return scrape_url_jina(
+        attempt_started = time.monotonic()
+        result = scrape_url_jina(
             target, "", timeout=call_timeout, **policy["jina"],
         )
+        debug_log.event(
+            "scrape_key_attempt", backend="jina", key_id="anonymous", url=target,
+            elapsed_ms=debug_log.elapsed_ms(attempt_started),
+            error=result.get("error") if isinstance(result, dict) else None,
+        )
+        return result
 
     def _scrape_keyed(key: str) -> dict:
         call_timeout = ctx.remaining_timeout()
@@ -678,6 +692,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
             deadline=ctx.deadline,
         )
         result = normalize_scrape_result(result, url=safe_url, via=backend)
+        _log_attempt(safe_url, backend, started, result)
         if ctx.site_memory is not None:
             ctx.site_memory.record_attempt(ScrapeAttempt(
                 url=safe_url, scraper=backend, success="error" not in result,
@@ -714,9 +729,18 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
     # order remains authoritative.
     if ctx.primary in enabled:
         enabled = [ctx.primary] + [backend for backend in enabled if backend != ctx.primary]
+    before_memory = list(enabled)
     if ctx.site_memory is not None:
         enabled = ctx.site_memory.reorder_backends(url, enabled)
     order = list(enabled)
+    debug_log.event(
+        "scrape_chain", url=safe_url, policy=policy["name"],
+        requested_backends=backends, strict=ctx.strict_backends, primary=ctx.primary,
+        order_before_site_memory=before_memory, order=order,
+        site_memory=ctx.site_memory is not None,
+        keyed_backends={name: len(ctx.keys_for(name)) for name in order},
+        timeout_s=ctx.remaining_timeout(),
+    )
     last: dict | None = None
     for backend in order:
         if ctx.deadline is not None and time.monotonic() >= ctx.deadline:
@@ -727,6 +751,11 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
             continue
         result = dispatch(safe_url, ctx, policy)
         if result is None:
+            debug_log.event(
+                "scrape_attempt", url=safe_url, backend=backend, status="skipped",
+                reason="no usable key or deadline reached",
+                elapsed_ms=debug_log.elapsed_ms(started),
+            )
             continue
         result = normalize_scrape_result(result, url=safe_url, via=backend)
         elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -736,6 +765,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
             last = normalize_scrape_result({
                 "error": f"{backend}: {policy['name'].title()} blocked content fetch",
             }, url=safe_url, via=backend)
+            _log_attempt(safe_url, backend, started, last, status="blocked")
             if ctx.site_memory is not None:
                 ctx.site_memory.record_attempt(ScrapeAttempt(
                     url=safe_url,
@@ -747,6 +777,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                     elapsed_ms=elapsed_ms,
                 ))
             continue
+        _log_attempt(safe_url, backend, started, result)
         if "error" not in result:
             result["url"] = safe_url
             if ctx.site_memory is not None:
@@ -768,3 +799,16 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                 elapsed_ms=elapsed_ms,
             ))
     return last or normalize_scrape_result({"error": "no scrape backend available"}, url=safe_url)
+
+
+def _log_attempt(url: str, backend: str, started: float, result: dict, status: str | None = None) -> None:
+    body = result.get("markdown") or ""
+    debug_log.event(
+        "scrape_attempt", url=url, backend=backend,
+        status=status or ("error" if result.get("error") else "ok"),
+        elapsed_ms=debug_log.elapsed_ms(started),
+        error=result.get("error"),
+        content_length=len(body),
+        truncated=result.get("truncated"),
+        body_preview=debug_log.clip(body, 300) if body else None,
+    )
