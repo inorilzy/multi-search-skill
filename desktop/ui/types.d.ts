@@ -140,6 +140,16 @@ export type InstallState = "absent" | "current" | "outdated" | "modified" | "unk
 
 export type InstallStep = { name: string, ok: boolean, detail: string, };
 
+export type LogViewerInfo = { 
+/**
+ * 固定为 `http://127.0.0.1:<port>/`。
+ */
+url: string, 
+/**
+ * true 表示复用了本窗口之前启动、仍在运行的服务。
+ */
+reused: boolean, };
+
 export type PathPlan = { 
 /**
  * owned | existing | absent | added | removed | unchanged | blocked | failed, or a new value added later; UI must fall back to a raw string.
@@ -297,6 +307,11 @@ ranking_candidate_limit_min: number, ranking_candidate_limit_max: number, rankin
  * System One 密钥的来源；值本身永不进入 SettingsView。
  */
 rerank_key: RerankKeyStatus, 
+/**
+ * 「记录搜索详情」开关（设置键 `debug_log`，缺失或非布尔视为关闭）。开启后 CLI 把每次
+ * search/fetch 的详细过程写到 `~/.multi-search/logs/runs/`，供日志页面查看。
+ */
+debug_log: boolean, 
 /**
  * ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
  */

@@ -107,6 +107,12 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
         </div>
       </section>
 
+      <section class="panel debug-log-panel"><div class="section-title"><div><p class="eyebrow">TRACE</p><h2>搜索详情记录</h2></div></div>
+        <label class="ranking-toggle"><input type="checkbox" data-field="debug-log" disabled><span>记录搜索详情<small>开启后，每次搜索（包括 Agent 发起的）都会把查询词、路由、各搜索源的耗时和结果、排序和抓取过程写到 ~/.multi-search/logs/runs/（仅你本人可读，最多保留 200 次、7 天）。不含 API 密钥，但含查询词和网页正文片段。只在排查问题时打开。</small></span></label>
+        <div class="run-controls"><button type="button" data-action="open-log-viewer">打开日志页面</button></div>
+        <p class="note" data-status="debug-log" role="status"></p>
+      </section>
+
       <section class="panel settings-other"><div class="section-title"><div><p class="eyebrow">OTHER</p><h2>其他设置</h2></div></div>
         <label>Twitter Cookie 文件兼容路径（仅 file 模式读取明文）<input data-field="twitter" type="text" autocomplete="off" spellcheck="false" maxlength="1024" placeholder="例如 D:/secure/twitter-cookies.json" disabled></label>
         <details class="config-details"><summary>配置数据库信息</summary><dl class="cred-status"><dt>配置数据库</dt><dd class="status-text" data-status="path"></dd><dt>路径来源</dt><dd class="status-text" data-status="path-source"></dd></dl><p class="note" data-info="env" role="status"></p></details>
@@ -137,6 +143,9 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   let rankingBounds = JSON.parse(JSON.stringify(RANKING_BOUNDS));
   let rerankKey = { source: 'none', keys_file: null, env_var: 'SYSTEMONE_API_KEY' };
   let keySaving = false;
+  let debugLog = false;
+  let debugLogBusy = false;
+  let viewerBusy = false;
   let loadedView = null;
   let dirty = false;
   let editorDirty = false;
@@ -520,12 +529,59 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     }
   }
 
+  function renderDebugLog() {
+    const toggle = q('[data-field="debug-log"]');
+    toggle.checked = debugLog;
+    toggle.disabled = debugLogBusy || !loadedView || loadedView.status === 'config_unreadable';
+    q('[data-action="open-log-viewer"]').disabled = viewerBusy;
+  }
+
+  // 开关单独、立即保存：只改 debug_log，不进入也不打断路由草稿。
+  async function saveDebugLog(enabled) {
+    if (debugLogBusy) return;
+    debugLogBusy = true;
+    renderDebugLog();
+    text('[data-info="error"]', '');
+    try {
+      const view = await api.debugLogSave(enabled);
+      if (disposed) return;
+      debugLog = view.debug_log === true;
+      text('[data-status="debug-log"]', debugLog ? '已开启：之后的搜索会被记录。' : '已关闭：之后的搜索不再记录，已有记录保留。');
+    } catch (error) {
+      if (!disposed) showError(q('[data-info="error"]'), error, '搜索详情开关保存失败，原设置未改变。');
+    } finally {
+      debugLogBusy = false;
+      if (!disposed) renderDebugLog();
+    }
+  }
+
+  async function openLogViewer() {
+    if (viewerBusy) return;
+    viewerBusy = true;
+    renderDebugLog();
+    text('[data-status="debug-log"]', '正在启动日志页面…');
+    try {
+      const info = await api.logViewerOpen();
+      if (disposed) return;
+      text('[data-status="debug-log"]', `日志页面已在浏览器打开：${info.url}（关闭本应用时停止）。`);
+    } catch (error) {
+      if (!disposed) {
+        text('[data-status="debug-log"]', '');
+        showError(q('[data-info="error"]'), error, '日志页面打开失败。');
+      }
+    } finally {
+      viewerBusy = false;
+      if (!disposed) renderDebugLog();
+    }
+  }
+
   function renderAll() {
     renderRouteSelect();
     q('[data-field="route"]').value = selectedRoute;
     renderRoutes();
     renderSummary();
     renderRanking();
+    renderDebugLog();
   }
 
   function openRestoreConfirm() {
@@ -562,6 +618,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     rankingEnabled = ranking.mode === 'rrf_model';
     rankingInvalid = view.ranking_invalid === true;
     rerankKey = view.rerank_key ?? { source: 'none', keys_file: null, env_var: 'SYSTEMONE_API_KEY' };
+    debugLog = view.debug_log === true;
     rankingBounds = {
       candidate_limit: [Number(view.ranking_candidate_limit_min ?? RANKING_BOUNDS.candidate_limit[0]), Number(view.ranking_candidate_limit_max ?? RANKING_BOUNDS.candidate_limit[1])],
       batch_size: [Number(view.ranking_batch_size_min ?? RANKING_BOUNDS.batch_size[0]), Number(view.ranking_batch_size_max ?? RANKING_BOUNDS.batch_size[1])],
@@ -751,6 +808,8 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   for (const [key, selector] of Object.entries({ candidate_limit: '[data-field="candidate-limit"]', batch_size: '[data-field="batch-size"]', rerank_timeout: '[data-field="rerank-timeout"]' })) {
     q(selector).addEventListener('input', event => { ranking[key] = Number(event.target.value); setDirty(); });
   }
+  q('[data-field="debug-log"]').addEventListener('change', event => { void saveDebugLog(event.target.checked); });
+  q('[data-action="open-log-viewer"]').addEventListener('click', () => { void openLogViewer(); });
   q('[data-action="new-route"]').addEventListener('click', () => requestOpenEditor('new'));
   q('[data-action="restore"]').addEventListener('click', openRestoreConfirm);
   q('[data-action="refresh"]').addEventListener('click', () => { void refresh(); });

@@ -39,6 +39,8 @@
     "allow-settings-save",
     "allow-scrape-settings-save",
     "allow-rerank-key-save",
+    "allow-debug-log-save",
+    "allow-log-viewer-open",
     "allow-provider-list",
     "allow-scrape-memory-view",
     "allow-scrape-memory-pin",

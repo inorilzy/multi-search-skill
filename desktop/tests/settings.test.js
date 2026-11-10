@@ -64,6 +64,7 @@ function view(overrides = {}) {
     ranking_invalid: false,
     ...RANKING_BOUNDS_FIELDS,
     rerank_key: clone(KEY_NONE),
+    debug_log: false,
     status: 'ok',
     message: '',
     ...overrides,
@@ -811,6 +812,74 @@ test('the API key is saved on its own, cleared from the field and never echoed',
   await flush();
   assert.deepEqual(keys, ['sk-secret', '']);
   assert.match(root.querySelector('[data-status="rerank-key"]').textContent, /未设置/);
+  window.close();
+});
+
+test('the search trace switch saves immediately and leaves the settings draft alone', async () => {
+  const { window, root } = setup();
+  const sent = [];
+  let settingsSaves = 0;
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    settingsSave: async input => { settingsSaves += 1; return savedView(input); },
+    debugLogSave: async enabled => { sent.push(enabled); return view({ debug_log: enabled }); },
+  }));
+  const toggle = root.querySelector('[data-field="debug-log"]');
+  assert.equal(toggle.checked, false, 'off by default');
+  assert.equal(toggle.disabled, false);
+  toggle.checked = true;
+  toggle.dispatchEvent(new window.Event('change'));
+  await flush();
+  assert.deepEqual(sent, [true]);
+  assert.equal(settingsSaves, 0);
+  assert.equal(root.querySelector('[data-dirty]').hidden, true, 'no unsaved draft');
+  assert.match(root.querySelector('[data-status="debug-log"]').textContent, /已开启/);
+  toggle.checked = false;
+  toggle.dispatchEvent(new window.Event('change'));
+  await flush();
+  assert.deepEqual(sent, [true, false]);
+  assert.match(root.querySelector('[data-status="debug-log"]').textContent, /已关闭/);
+  window.close();
+});
+
+test('a saved switch state is shown and a failed save keeps the stored value', async () => {
+  const { window, root } = setup();
+  await mountSettings(root, ({
+    settingsView: async () => view({ debug_log: true }),
+    debugLogSave: async () => { throw coded('operation_failed', '保存失败，原设置未改变'); },
+  }));
+  const toggle = root.querySelector('[data-field="debug-log"]');
+  assert.equal(toggle.checked, true);
+  toggle.checked = false;
+  toggle.dispatchEvent(new window.Event('change'));
+  await flush();
+  assert.equal(toggle.checked, true, 'reverts to the stored value');
+  assert.match(root.querySelector('[data-info="error"]').textContent, /保存失败/);
+  window.close();
+});
+
+test('the log page button starts the viewer and reports its address or the reason it failed', async () => {
+  const { window, root } = setup();
+  let opens = 0;
+  let fail = false;
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    logViewerOpen: async () => {
+      opens += 1;
+      if (fail) throw coded('operation_failed', '当前安装的 CLI 版本不支持日志页面，请先到「02 安装 CLI」更新。');
+      return { url: 'http://127.0.0.1:50123/', reused: false };
+    },
+  }));
+  const button = root.querySelector('[data-action="open-log-viewer"]');
+  button.click();
+  await flush();
+  assert.equal(opens, 1);
+  assert.match(root.querySelector('[data-status="debug-log"]').textContent, /http:\/\/127\.0\.0\.1:50123\//);
+  assert.equal(button.disabled, false);
+  fail = true;
+  button.click();
+  await flush();
+  assert.match(root.querySelector('[data-info="error"]').textContent, /02 安装 CLI/);
   window.close();
 });
 

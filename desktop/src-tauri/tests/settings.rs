@@ -980,6 +980,33 @@ fn scrape_patch_and_other_settings_writes_preserve_each_other() {
 
 
 #[test]
+fn debug_log_switch_patches_only_its_own_key() {
+    let sandbox = Sandbox::new("debug-log-switch");
+    let env = sandbox.env(&[]);
+    assert!(!fixture::view(&env).debug_log, "off when the key is absent");
+    fixture::save(&env, &input("default", 20, &[])).unwrap();
+    assert!(!fixture::view(&env).debug_log, "a plain save does not turn it on");
+    sandbox.replace(r#"{"type":"dev","timeout":37,"scrape_backends":["exa"],"future":{"keep":true}}"#);
+    let view = fixture::save_debug_log(&env, true).unwrap();
+    assert!(view.debug_log);
+    let object = sandbox.object();
+    assert_eq!(object["debug_log"], true);
+    assert_eq!(object["type"], "dev");
+    assert_eq!(object["timeout"], 37);
+    assert_eq!(object["scrape_backends"], serde_json::json!(["exa"]));
+    assert_eq!(object["future"], serde_json::json!({"keep":true}));
+    // A full settings save from page 05 leaves the switch as it is.
+    fixture::save(&env, &input("default", 20, &[])).unwrap();
+    assert_eq!(sandbox.object()["debug_log"], true);
+    assert!(!fixture::save_debug_log(&env, false).unwrap().debug_log);
+    assert_eq!(sandbox.object()["debug_log"], false);
+    // A non-boolean stored value reads as off instead of failing the page.
+    sandbox.replace(r#"{"type":"default","debug_log":"yes"}"#);
+    assert!(!fixture::view(&env).debug_log);
+}
+
+
+#[test]
 fn timeout_range_covers_every_cli_route_default() {
     // ROUTE_META in search_runner.py: default/social/dev 60, fast 45, all 90.
     for (route, expected) in [("default", 60), ("fast", 45), ("all", 90), ("social", 60), ("dev", 60)] {

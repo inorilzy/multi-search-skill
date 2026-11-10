@@ -29,6 +29,7 @@ pub struct DesktopManager {
     pub(crate) next_id: AtomicU64,
     pub(crate) closed: AtomicBool,
     mutation: Mutex<()>,
+    log_viewer: crate::log_viewer::LogViewerSlot,
 }
 
 impl DesktopManager {
@@ -40,6 +41,7 @@ impl DesktopManager {
             next_id: AtomicU64::new(1),
             closed: AtomicBool::new(false),
             mutation: Mutex::new(()),
+            log_viewer: Default::default(),
         }
     }
 
@@ -147,7 +149,16 @@ impl DesktopManager {
     }
 
     pub fn shutdown(&self) {
-        self.execution_view().shutdown()
+        self.execution_view().shutdown();
+        self.log_viewer.stop();
+    }
+
+    // ---- log viewer ---------------------------------------------------
+
+    /// Start (or reuse) `multi-search logs serve` with the same CLI the test search uses.
+    pub fn log_viewer(&self) -> Result<crate::log_viewer::LogViewerInfo, String> {
+        let cli = self.execution_cli()?;
+        self.log_viewer.ensure(&cli, &self.environment)
     }
 
     // ---- install ------------------------------------------------------

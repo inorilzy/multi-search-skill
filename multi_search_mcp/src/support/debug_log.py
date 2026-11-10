@@ -1,8 +1,12 @@
-"""Opt-in JSONL debug log for one CLI invocation (search, fetch, read).
+"""JSONL debug log for one CLI invocation (search, fetch).
 
-Disabled unless ``--debug-log PATH`` or ``MULTI_SEARCH_DEBUG_LOG`` is set, so
-normal runs never write it. ``MULTI_SEARCH_DEBUG_LOG=1`` uses
-``~/.multi-search/logs/debug.jsonl``; any other non-false value is a path.
+Off unless the ``debug_log`` setting is true (the desktop's "记录搜索详情"
+switch on page 05) or ``MULTI_SEARCH_DEBUG_LOG`` asks for it. When on, each run
+writes its own file under ``~/.multi-search/logs/runs`` (read by
+``multi-search logs serve``), and only the newest ``KEEP_RUNS`` files younger
+than ``KEEP_DAYS`` are kept. Precedence: ``--debug-log PATH`` > the environment
+variable (``0`` off, ``1`` on, anything else a file path that is appended to and
+never pruned) > the setting.
 
 Each line is one event tagged with ``run_id``. Writes are best effort: a log
 failure must never change a search result. Every string is scrubbed with the
@@ -13,6 +17,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sys
 import threading
 import time
 import uuid
@@ -27,8 +33,10 @@ ENV_VAR = "MULTI_SEARCH_DEBUG_LOG"
 BODY_CHARS_ENV_VAR = "MULTI_SEARCH_DEBUG_LOG_BODY_CHARS"
 DEFAULT_BODY_CHARS = 2_000
 SNIPPET_CHARS = 500
+KEEP_RUNS = 200
+KEEP_DAYS = 7
 _TRUE = {"1", "true", "yes", "on"}
-_FALSE = {"", "0", "false", "no", "off"}
+_FALSE = {"0", "false", "no", "off"}
 
 _lock = threading.Lock()
 _path: Path | None = None
@@ -37,26 +45,58 @@ _started = 0.0
 _secrets: set[str] = set()
 
 
-def default_path() -> Path:
-    return Path.home() / ".multi-search" / "logs" / "debug.jsonl"
+def runs_dir() -> Path:
+    return Path.home() / ".multi-search" / "logs" / "runs"
 
 
-def configure(path: str | None = None) -> Path | None:
-    """Start a new run; an explicit path wins over the environment."""
+def configure(path: str | None = None, *, setting: bool = False) -> Path | None:
+    """Start a new run: ``path`` > ``MULTI_SEARCH_DEBUG_LOG`` > the ``debug_log`` setting."""
     global _path, _run_id, _started
     raw = path if path is not None else os.environ.get(ENV_VAR, "")
     value = str(raw).strip()
+    if not value:
+        value = "1" if setting else "0"
+    run_id = f"run_{uuid.uuid4().hex[:12]}"
+    if value.lower() in _FALSE:
+        target = None
+    elif value.lower() in _TRUE:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = runs_dir() / f"{stamp}-{run_id}.jsonl"
+        prune(runs_dir())
+    else:
+        target = Path(value).expanduser()
     with _lock:
-        if value.lower() in _FALSE:
-            _path = None
-        elif value.lower() in _TRUE:
-            _path = default_path()
-        else:
-            _path = Path(value).expanduser()
-        _run_id = f"run_{uuid.uuid4().hex[:12]}"
+        _path = target
+        _run_id = run_id
         _started = time.monotonic()
         _secrets.clear()
         return _path
+
+
+def prune(directory: Path, *, keep: int = KEEP_RUNS, max_age_days: float = KEEP_DAYS) -> None:
+    """Delete old per-run files; only ``*.jsonl`` directly inside ``directory``."""
+    # Retention is best effort, like every other log write. Another CLI process
+    # may delete a file between listing and stat, so each file is handled alone.
+    stamped = []
+    try:
+        candidates = list(directory.glob("*.jsonl"))
+    except OSError:
+        return
+    for item in candidates:
+        try:
+            if item.is_file():
+                stamped.append((item.stat().st_mtime, item))
+        except OSError:
+            continue
+    stamped.sort(key=lambda pair: pair[0], reverse=True)
+    cutoff = time.time() - max_age_days * 86_400
+    # Leave room for the run that is about to start.
+    for index, (mtime, item) in enumerate(stamped):
+        if index >= keep - 1 or mtime < cutoff:
+            try:
+                item.unlink(missing_ok=True)
+            except OSError:
+                continue
 
 
 def disable() -> None:
@@ -113,18 +153,25 @@ def event(kind: str, **fields: Any) -> None:
             secrets = tuple(_secrets)
         line = json.dumps(_scrub(record, secrets), ensure_ascii=False, default=str)
         with _lock:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as stream:
+            # Queries and page text are private: owner-only, like keys.json.
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as stream:
                 stream.write(line + "\n")
     except Exception:  # noqa: BLE001 - diagnostics must never break a search
         pass
 
 
+_URL_USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]+@")
+
+
 def _scrub(value: Any, secrets: tuple[str, ...]) -> Any:
     # Scrub each string, not the serialized line: the redaction regexes could
-    # otherwise consume JSON quotes and corrupt the record.
+    # otherwise consume JSON quotes and corrupt the record. Redaction may make a
+    # string longer, so it is never truncated here; previews are clipped earlier.
     if isinstance(value, str):
-        return scrub_secrets(value, secrets, limit=len(value) + 64)
+        text = _URL_USERINFO_RE.sub(r"\1<redacted>@", value)
+        return scrub_secrets(text, secrets, limit=sys.maxsize)
     if isinstance(value, dict):
         return {str(key): _scrub(item, secrets) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):

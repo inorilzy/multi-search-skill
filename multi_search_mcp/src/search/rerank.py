@@ -53,6 +53,7 @@ from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from ..support import debug_log
 from ..support.concurrency import BoundedDaemonExecutor
 from ..support.config import ConfigError
 from ..support.http import read_limited
@@ -429,6 +430,7 @@ class SystemOneReranker:
     ) -> dict[str, float]:
         # Resolved per call so the key is read lazily and the loader is patchable.
         api_key = self._api_key or (self._key_loader or load_systemone_key)()
+        debug_log.add_secrets(api_key)
         if not api_key:
             raise RerankError("auth")
         remaining = deadline - time.monotonic()

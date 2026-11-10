@@ -1,5 +1,8 @@
+import http.client
 import json
 import os
+import threading
+import time
 import unittest
 from contextlib import ExitStack
 from io import StringIO
@@ -8,6 +11,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from multi_search_mcp import cli
+from multi_search_mcp.src import log_viewer
 from multi_search_mcp.src.scrape import scrape
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state import state_store
@@ -41,14 +45,23 @@ class DebugLogTests(unittest.TestCase):
         self.addCleanup(debug_log.disable)
         temp = Path(self.stack.enter_context(TemporaryDirectory(prefix="debug-log-")))
         self.log_path = temp / "trace.jsonl"
+        self.runs_dir = temp / "runs"
+        # Traces must never reach the real home directory.
+        self.stack.enter_context(mock.patch.object(debug_log, "runs_dir", return_value=self.runs_dir))
         self.stack.enter_context(mock.patch.object(state_store, "DEFAULT_STATE_PATH", temp / "state.sqlite"))
-        self.stack.enter_context(mock.patch("multi_search_mcp.src.state.runtime.load_config", return_value={}))
+        # The desktop's page-05 switch, as stored in the shared settings.
+        self.config = {"debug_log": True}
+        self.stack.enter_context(mock.patch(
+            "multi_search_mcp.src.state.runtime.load_config", side_effect=lambda *_a, **_k: dict(self.config),
+        ))
         self.stack.enter_context(mock.patch(
             "multi_search_mcp.src.state.runtime.load_keys", return_value={"brave": SECRET},
         ))
         self.stack.enter_context(mock.patch.dict(os.environ, {debug_log.ENV_VAR: ""}))
-        self.stack.enter_context(mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")))
-        self.stack.enter_context(mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected connection")))
+        self.network_guard = ExitStack()
+        self.addCleanup(self.network_guard.close)
+        self.network_guard.enter_context(mock.patch("socket.getaddrinfo", side_effect=AssertionError("unexpected DNS")))
+        self.network_guard.enter_context(mock.patch("socket.socket.connect", side_effect=AssertionError("unexpected connection")))
         providers = {
             "brave": _provider("brave", {
                 "primary": [_row("brave", "one")],
@@ -139,11 +152,131 @@ class DebugLogTests(unittest.TestCase):
             self._search()
         self.assertIn("search_response", [event["event"] for event in self._events()])
 
-    def test_no_trace_is_written_unless_enabled(self):
-        with mock.patch.object(debug_log, "default_path", return_value=self.log_path):
-            payload = self._search()
-        self.assertFalse(self.log_path.exists())
+    def test_no_trace_unless_the_setting_or_environment_asks(self):
+        self.config = {}
+        self._search()
+        self.assertFalse(self.runs_dir.exists())
+        self.config = {"debug_log": False}
+        self._search()
+        self.assertFalse(self.runs_dir.exists())
+        with mock.patch.dict(os.environ, {debug_log.ENV_VAR: "1"}):
+            self._search()
+        self.assertEqual(len(list(self.runs_dir.glob("*.jsonl"))), 1)
+
+    def test_trace_state_ends_with_the_cli_invocation(self):
+        self._search()
+        self.assertFalse(debug_log.enabled())
+        debug_log.event("late", note="written after main returned")
+        text = "".join(path.read_text(encoding="utf-8") for path in self.runs_dir.glob("*.jsonl"))
+        self.assertNotIn("written after main returned", text)
+
+    def test_url_credentials_are_redacted(self):
+        # The request is rejected (no model), but its parameters are logged first.
+        cli.main(["search", "--debug-log", str(self.log_path), "--rerank",
+                  "--rerank-base-url", "http://user:hunter2@rank.example/v1", "--", "primary"],
+                 stdout=StringIO(), stderr=StringIO())
+        text = self.log_path.read_text(encoding="utf-8")
+        self.assertNotIn("hunter2", text)
+        self.assertIn("http://<redacted>@rank.example/v1", text)
+
+    def test_setting_on_writes_one_private_file_per_run(self):
+        payload = self._search()
+        self._search()
+        files = sorted(self.runs_dir.glob("*.jsonl"))
+        self.assertEqual(len(files), 2)
         self.assertNotIn("debug_log", json.dumps(payload))
+        if os.name == "posix":
+            self.assertEqual(files[0].stat().st_mode & 0o777, 0o600)
+            self.assertEqual(self.runs_dir.stat().st_mode & 0o777, 0o700)
+        run_ids = {json.loads(line)["run_id"] for line in files[0].read_text(encoding="utf-8").splitlines()}
+        self.assertEqual(len(run_ids), 1)
+
+    def test_zero_overrides_the_setting(self):
+        with mock.patch.dict(os.environ, {debug_log.ENV_VAR: "0"}):
+            self._search()
+        self.assertFalse(self.runs_dir.exists())
+
+    def test_retention_keeps_newest_runs_and_drops_old_ones(self):
+        self.runs_dir.mkdir()
+        now = time.time()
+        for index in range(5):
+            path = self.runs_dir / f"run-{index}.jsonl"
+            path.write_text("{}\n", encoding="utf-8")
+            os.utime(path, (now - index, now - index))
+        stale = self.runs_dir / "stale.jsonl"
+        stale.write_text("{}\n", encoding="utf-8")
+        os.utime(stale, (now - 30 * 86_400,) * 2)
+        keep = self.runs_dir / "notes.txt"
+        keep.write_text("not a run", encoding="utf-8")
+        debug_log.prune(self.runs_dir, keep=4, max_age_days=7)
+        self.assertEqual(sorted(path.name for path in self.runs_dir.iterdir()),
+                         ["notes.txt", "run-0.jsonl", "run-1.jsonl", "run-2.jsonl"])
+
+    def test_viewer_detail_answers_route_queries_providers_ranking_and_pages(self):
+        self._search()
+        runs = log_viewer.load_runs([self.runs_dir])
+        self.assertEqual(len(runs), 1)
+        run_id, events = next(iter(runs.items()))
+        summary = log_viewer.list_runs(runs)[0]
+        self.assertEqual((summary["query"], summary["route"], summary["outcome"]), ("primary", "default", "partial"))
+        detail = log_viewer.build_detail(run_id, events)
+        self.assertEqual(detail["route"]["active_sources"], ["brave", "exa"])
+        self.assertEqual(detail["query_plan"]["executed_queries"], ["primary", "variant"])
+        self.assertEqual({(row["query"], row["source"]) for row in detail["providers"]},
+                         {("primary", "brave"), ("primary", "exa"), ("variant", "brave"), ("variant", "exa")})
+        self.assertTrue(all(row["attempts"] for row in detail["providers"]))
+        self.assertEqual([row["final_rank"] for row in detail["ranking"]["rows"]], [1, 2])
+        self.assertEqual(detail["ranking"]["rows"][0]["provider_ranks"][0]["provider"], "brave")
+        page = detail["fetches"][0]
+        self.assertEqual(page["url"], detail["ranking"]["rows"][0]["url"])
+        self.assertEqual([(a["backend"], a["status"]) for a in page["attempts"]],
+                         [("jina", "error"), ("exa", "skipped"), ("tavily", "skipped"), ("firecrawl", "ok")])
+        self.assertEqual(page["result"]["backend"], "firecrawl")
+
+    def test_abandoned_fetch_is_reported_as_a_timeout(self):
+        events = [
+            {"run_id": "run_000000000000", "event": "scrape_chain", "url": "https://a.example/", "t_ms": 10,
+             "order": ["jina", "exa"]},
+            {"run_id": "run_000000000000", "event": "scrape_key_attempt", "url": "https://a.example/",
+             "backend": "jina", "key_id": "anonymous", "elapsed_ms": 400, "error": "HTTP 403", "t_ms": 420},
+            {"run_id": "run_000000000000", "event": "fetch_stage_done", "t_ms": 1010,
+             "failures": [{"url": "https://a.example/", "error": "fetch timeout after 1s"}]},
+        ]
+        page = log_viewer.build_detail("run_000000000000", events)["fetches"][0]
+        self.assertEqual(page["attempts"], [{"backend": "jina", "status": "timeout", "elapsed_ms": 400,
+                                             "error": "HTTP 403"}])
+        self.assertEqual((page["result"]["event"], page["result"]["elapsed_ms"], page["result"]["error"]),
+                         ("fetch_timeout", 1000, "fetch timeout after 1s"))
+
+    def test_viewer_server_is_loopback_only_and_serves_runs(self):
+        self._search()
+        self.network_guard.close()  # The viewer is reached over loopback HTTP.
+        server = log_viewer.make_server([self.runs_dir], port=0)
+        self.addCleanup(server.server_close)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.shutdown)
+        self.assertEqual(server.server_address[0], "127.0.0.1")
+        port = server.server_address[1]
+
+        def get(path, host=f"127.0.0.1:{port}"):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            connection.request("GET", path, headers={"Host": host})
+            response = connection.getresponse()
+            body = response.read()
+            connection.close()
+            return response, body
+
+        response, body = get("/")
+        self.assertEqual(response.status, 200)
+        self.assertIn("script-src 'self'", response.getheader("Content-Security-Policy"))
+        self.assertIn(b"/app.js", body)
+        runs = json.loads(get("/api/runs")[1])["runs"]
+        self.assertEqual(len(runs), 1)
+        detail = json.loads(get("/api/runs/" + runs[0]["run_id"])[1])
+        self.assertEqual(detail["summary"]["query"], "primary")
+        self.assertEqual(get("/api/runs/../../etc/passwd")[0].status, 404)
+        self.assertEqual(get("/api/runs", host="attacker.example")[0].status, 403)
 
     def test_unwritable_log_never_breaks_the_search(self):
         blocker = self.log_path.parent / "not-a-dir"

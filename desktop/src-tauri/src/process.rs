@@ -314,6 +314,11 @@ impl OwnedProcess {
             let _ = self.child.kill();
         }
     }
+    /// What the child has written to stderr so far (a long-running child reports its URL there).
+    pub(crate) fn stderr_text(&self) -> String {
+        String::from_utf8_lossy(&self.stderr.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+            .into_owned()
+    }
     pub(crate) fn poll(&mut self) -> io::Result<Option<i32>> {
         Ok(self.child.try_wait()?.map(|s| s.code().unwrap_or(1)))
     }

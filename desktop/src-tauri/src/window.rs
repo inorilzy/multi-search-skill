@@ -376,6 +376,37 @@ async fn scrape_settings_save(
     .await
 }
 
+/// 「记录搜索详情」开关：只改设置里的 `debug_log`，立即生效。
+#[tauri::command]
+async fn debug_log_save(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    enabled: bool,
+) -> Result<crate::settings::SettingsView, String> {
+    let manager = manager.inner().clone();
+    offload(
+        move || crate::settings::save_debug_log(&manager.environment, enabled),
+        "debug_log_save_failed",
+    )
+    .await
+}
+
+/// 启动（或复用）本机日志页面服务，并用系统浏览器打开它。URL 只来自 CLI 的输出，不接受前端参数。
+#[tauri::command]
+async fn log_viewer_open(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+) -> Result<crate::log_viewer::LogViewerInfo, String> {
+    let manager = manager.inner().clone();
+    offload(
+        move || {
+            let info = manager.log_viewer()?;
+            crate::credential_commands::open_browser(&info.url)?;
+            Ok(info)
+        },
+        "log_viewer_open_failed",
+    )
+    .await
+}
+
 /// 写入或清空 `~/.multi-search/keys.json` 的 System One 密钥；值从不进入设置数据库或返回值。
 #[tauri::command]
 async fn rerank_key_save(
@@ -598,6 +629,8 @@ pub fn run() {
             settings_save,
             scrape_settings_save,
             rerank_key_save,
+            debug_log_save,
+            log_viewer_open,
             provider_list,
             scrape_memory_view,
             scrape_memory_pin,

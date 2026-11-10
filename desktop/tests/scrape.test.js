@@ -68,6 +68,7 @@ function settingsView(overrides = {}) {
     ranking_rerank_timeout_min: 1,
     ranking_rerank_timeout_max: 60,
     rerank_key: { source: 'none', keys_file: null, env_var: 'SYSTEMONE_API_KEY' },
+    debug_log: false,
     status: 'ok',
     message: '',
     ...overrides,

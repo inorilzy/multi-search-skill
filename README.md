@@ -78,7 +78,7 @@ npm --prefix desktop run typecheck
 
 **子进程环境边界。** 桌面进程不会把自身环境变量原样传给 CLI。`desktop/src-tauri/src/process.rs` 只放行系统基础变量（`PATH`、`SYSTEMROOT`、`USERPROFILE`/`HOME`、`TEMP`/`TMP` 等）、编码相关变量以及桌面自有的 `MULTI_SEARCH_*` 选择器，再加上本次调用所需的那一个 key；其余命中 `API_KEY`/`TOKEN`/`SECRET`/`PASSWORD` 等敏感标记的变量都不会下传。
 
-**query 的命令行暴露面（已知取舍）。** 测试搜索通过 `multi-search search [options] -- <query>` 调用，query 因此出现在 CLI 进程的命令行参数中，本机同一用户或其他具备进程列表读取权限的程序可以看到它。当前保留 argv 传递而不是改为 stdin：CLI 的公开入口和现有脚本/测试都以位置参数定义 query，改为 stdin 需要新增协议。桌面端不记录日志，输出展示仍会脱敏，但这不改变 argv 对同机进程可见这一事实。
+**query 的命令行暴露面（已知取舍）。** 测试搜索通过 `multi-search search [options] -- <query>` 调用，query 因此出现在 CLI 进程的命令行参数中，本机同一用户或其他具备进程列表读取权限的程序可以看到它。当前保留 argv 传递而不是改为 stdin：CLI 的公开入口和现有脚本/测试都以位置参数定义 query，改为 stdin 需要新增协议。桌面端自身不记录日志；在「05 搜索设置」打开「记录搜索详情」后，它调用的 CLI 会把每次搜索写入本机调试日志（见 Troubleshooting），输出展示仍会脱敏，但这不改变 argv 对同机进程可见这一事实。
 
 ## 适用场景
 
@@ -367,7 +367,7 @@ search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
 search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，以及站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`，以及列出当前路由的 `routes`。`search --no-fetch` 只返回融合排序的候选，不抓正文、不写正文缓存；`--no-state` 跳过 SQLite key 轮换、正文缓存与站点记忆。`search --rerank [--rerank-base-url URL] [--rerank-model MODEL]` 对本次请求启用模型重排（ranking 覆盖，默认仍纯 RRF；未给的端点取配置里的值），用法与回退语义见「配置和参数 → 可选模型重排」。
+CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，以及站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`，以及列出当前路由的 `routes`；`logs serve` 在本机网页里查看每次搜索的详细记录，`logs list` 列出记录。`search --no-fetch` 只返回融合排序的候选，不抓正文、不写正文缓存；`--no-state` 跳过 SQLite key 轮换、正文缓存与站点记忆。`search --rerank [--rerank-base-url URL] [--rerank-model MODEL]` 对本次请求启用模型重排（ranking 覆盖，默认仍纯 RRF；未给的端点取配置里的值），用法与回退语义见「配置和参数 → 可选模型重排」。
 
 ## 配置和参数
 
@@ -481,7 +481,9 @@ Provider 参考文档和现行/历史文档分类见 [docs/README.md](docs/READM
 
 ### 想看一次搜索内部到底发生了什么？
 
-`search` 和 `fetch` 支持调试日志，默认关闭：`--debug-log PATH` 只对本次调用生效；设置环境变量 `MULTI_SEARCH_DEBUG_LOG=1` 写入 `~/.multi-search/logs/debug.jsonl`，设为其他值则视为日志路径（Agent 通过 Skill 调用 CLI 时用这种方式）。日志按行追加 JSON，同一次调用共享 `run_id`，主要事件：
+在桌面端「05 搜索设置 → 搜索详情记录」打开「记录搜索详情」（默认关闭），之后的搜索（包括 Agent 发起的）都会被记录；点「打开日志页面」，桌面端用受管 CLI 在后台启动日志服务并打开浏览器，关闭桌面端时服务停止。不用桌面端时，也可以运行 `multi-search logs serve --open`（默认端口 8765，`--port` 可换）。左侧是搜索记录，点进一次搜索能看到时间线、用了哪条路由、执行了哪些搜索词、调用了哪些搜索器及其耗时和返回结果、结果如何排序（各源排名、RRF 分、重排分），以及每个页面依次试了哪些抓取后端。服务只监听 127.0.0.1、只读日志，只接受本机 Host 头。
+
+开关保存为设置里的 `debug_log`。开启时 `search` 和 `fetch` 每次调用单独写一个文件到 `~/.multi-search/logs/runs/`（目录 0700、文件 0600），只保留最近 200 次且不超过 7 天。环境变量 `MULTI_SEARCH_DEBUG_LOG=1`/`0` 可临时覆盖设置；`--debug-log PATH` 或 `MULTI_SEARCH_DEBUG_LOG=<path>` 改为追加到指定文件，不参与自动清理，可用 `logs serve --path <文件或目录>` 查看。记录里的查询词是调用方（通常是 Agent）交给 CLI 的查询和 `--expand` 改写；用户最初的提问不会传给 CLI，所以记录不到。日志是逐行 JSON，同一次调用共享 `run_id`，主要事件：
 
 | 事件 | 内容 |
 | --- | --- |
@@ -494,7 +496,7 @@ Provider 参考文档和现行/历史文档分类见 [docs/README.md](docs/READM
 | `fetch_source` / `fetch_failed` / `fetch_stage_done` | 每个 URL 正文的来源（缓存命中、搜索源自带正文或抓取）、耗时、长度和正文预览 |
 | `search_response` / `cli_exit` | 最终返回的结果、正文预览、错误和总耗时 |
 
-正文预览默认截取 2000 字符，可用 `MULTI_SEARCH_DEBUG_LOG_BODY_CHARS` 调整。Key 不会写入日志，错误文本按与输出相同的规则脱敏；但日志包含查询词和网页内容，分享前请自行检查。日志不会自动轮转或清理。
+正文预览默认截取 2000 字符，可用 `MULTI_SEARCH_DEBUG_LOG_BODY_CHARS` 调整。Key 不会写入日志，错误文本按与输出相同的规则脱敏；但日志包含查询词和网页内容，分享前请自行检查。
 
 ## 开发验证
 

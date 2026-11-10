@@ -10,6 +10,7 @@ pub mod execution;
 pub mod install;
 mod journal;
 mod keys_file;
+pub mod log_viewer;
 #[cfg(target_os = "macos")]
 pub mod macos_path;
 mod manager;
@@ -51,6 +52,7 @@ pub mod contract {
     pub use crate::diagnostics::{CliStatus, Discovery};
     pub use crate::execution::{ExecutionStatus, SearchOptions};
     pub use crate::install::{AppInfo, InstallOutcome, InstallPlan, InstallStep};
+    pub use crate::log_viewer::LogViewerInfo;
     pub use crate::provider::ProviderInfo;
     pub use crate::scrape_memory::{ScrapeMemoryRow, ScrapeMemoryView};
     pub use crate::settings::{
@@ -71,7 +73,7 @@ pub mod contract {
 pub mod settings_fixture {
     pub use crate::settings::{
         builtin_routes, config_path, route_default_timeout, save, save_with_dev, validate, view,
-        view_with_dev, keys_file_path, rerank_key_status, save_systemone_key, RankingInput, RouteConfig, RouteMap, SettingsInput, SettingsView, Validated,
+        view_with_dev, keys_file_path, rerank_key_status, save_systemone_key, save_debug_log, RankingInput, RouteConfig, RouteMap, SettingsInput, SettingsView, Validated,
         TIMEOUT_MAX, TIMEOUT_MIN,
     };
     /// Dev fallback location for the real app: the repo-root file the CLI reads when no user file exists.

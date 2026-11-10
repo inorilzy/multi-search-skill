@@ -424,6 +424,9 @@ pub struct SettingsView {
     pub ranking_rerank_timeout_max: u32,
     /// System One 密钥的来源；值本身永不进入 SettingsView。
     pub rerank_key: RerankKeyStatus,
+    /// 「记录搜索详情」开关（设置键 `debug_log`，缺失或非布尔视为关闭）。开启后 CLI 把每次
+    /// search/fetch 的详细过程写到 `~/.multi-search/logs/runs/`，供日志页面查看。
+    pub debug_log: bool,
     /// ok | config_unreadable | no_active_source, or a new value added later; UI must fall back to a raw string.
     pub status: String,
     pub message: String,
@@ -823,6 +826,22 @@ pub fn save_scrape_backends(environment: &RuntimeEnvironment, backends: &[String
     Ok(view(environment))
 }
 
+/// 只改 `debug_log` 一个键（持有数据库写锁），其余设置原样保留；开关立即生效，不进草稿。
+pub fn save_debug_log(environment: &RuntimeEnvironment, enabled: bool) -> Result<SettingsView, String> {
+    let path = config_path(environment).ok_or("无法定位配置数据库")?;
+    let mut connection = crate::config_db::open(&path)?;
+    let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|_| "配置数据库事务失败".to_string())?;
+    let mut existing = read_object(&transaction)?;
+    config_routes(&existing)?;
+    existing.insert("debug_log".into(), Value::Bool(enabled));
+    let body = serde_json::to_string(&existing).map_err(|_| "无法序列化设置".to_string())?;
+    transaction.execute("INSERT INTO settings(id,data) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data", [body])
+        .map_err(|_| "保存失败，原设置未改变".to_string())?;
+    transaction.commit().map_err(|_| "保存失败，原设置未改变".to_string())?;
+    Ok(view(environment))
+}
+
 // 保留测试注入缝；旧开发 JSON 路径不参与正常解析。
 pub fn save_with_dev(
     environment: &RuntimeEnvironment,
@@ -879,6 +898,7 @@ fn unreadable_view(path: Option<PathBuf>, environment: &RuntimeEnvironment) -> S
         ranking_rerank_timeout_min: RANKING_RERANK_TIMEOUT_MIN,
         ranking_rerank_timeout_max: RANKING_RERANK_TIMEOUT_MAX,
         rerank_key: rerank_key_status(environment),
+        debug_log: false,
         status: "config_unreadable".into(),
         message: "配置数据库无法读取，或 routes/type 不是有效配置；保存已被阻止。".into(),
     }
@@ -1010,6 +1030,7 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
         ranking_rerank_timeout_min: RANKING_RERANK_TIMEOUT_MIN,
         ranking_rerank_timeout_max: RANKING_RERANK_TIMEOUT_MAX,
         rerank_key: rerank_key_status(environment),
+        debug_log: object.get("debug_log").and_then(Value::as_bool).unwrap_or(false),
         status: status.into(),
         message,
     }

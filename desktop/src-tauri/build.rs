@@ -72,6 +72,8 @@ const APP_COMMANDS: &[&str] = &[
     "settings_save",
     "scrape_settings_save",
     "rerank_key_save",
+    "debug_log_save",
+    "log_viewer_open",
     "provider_list",
     "scrape_memory_view",
     "scrape_memory_pin",

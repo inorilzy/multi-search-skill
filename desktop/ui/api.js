@@ -43,6 +43,8 @@ const ERROR_MESSAGES = {
   cookie_delete_failed: 'Cookie 删除失败，请重试。',
   scrape_settings_save_failed: '抓取设置保存失败，原配置未改变。',
   rerank_key_save_failed: '重排 API 密钥保存失败，原密钥文件未改变。',
+  debug_log_save_failed: '搜索详情开关保存失败，原设置未改变。',
+  log_viewer_open_failed: '日志页面打开失败。',
   scrape_memory_view_failed: '站点抓取记忆读取失败，请重试。',
   scrape_memory_pin_failed: '固定的抓取后端没有保存，请重试。',
   scrape_memory_reset_failed: '站点抓取记忆清除失败，请重试。',
@@ -223,6 +225,12 @@ export function managementApi(invoke) {
       if (typeof key !== 'string') throw new ApiError(new TypeError('rerank key must be a string'), 'INVALID_ARGUMENT');
       return call('rerank_key_save', { key }, 'SettingsView');
     },
+    debugLogSave: async enabled => {
+      if (typeof enabled !== 'boolean') throw new ApiError(new TypeError('debug log switch must be a boolean'), 'INVALID_ARGUMENT');
+      return call('debug_log_save', { enabled }, 'SettingsView');
+    },
+    // No argument: the backend starts the managed CLI's own viewer and opens only the URL it printed.
+    logViewerOpen: () => call('log_viewer_open', undefined, 'LogViewerInfo'),
     scrapeMemoryView: site => call('scrape_memory_view', { site }, 'ScrapeMemoryView'),
     scrapeMemoryPin: (site, scraper) => call('scrape_memory_pin', { site, scraper }, 'ScrapeMemoryView'),
     scrapeMemoryReset: async site => {

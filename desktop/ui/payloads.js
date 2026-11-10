@@ -120,8 +120,9 @@ export const schemas = {
     ranking_candidate_limit_min: 'n', ranking_candidate_limit_max: 'n',
     ranking_batch_size_min: 'n', ranking_batch_size_max: 'n',
     ranking_rerank_timeout_min: 'n', ranking_rerank_timeout_max: 'n',
-    rerank_key: 'RerankKeyStatus', status: 's', message: 's',
+    rerank_key: 'RerankKeyStatus', debug_log: 'b', status: 's', message: 's',
   }),
+  LogViewerInfo: schema({ url: 's', reused: 'b' }),
 };
 
 // Map<T> helpers for `BTreeMap<String, _>` payloads.

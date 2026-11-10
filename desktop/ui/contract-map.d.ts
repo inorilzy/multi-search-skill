@@ -11,12 +11,16 @@ import type * as T from './types';
 export interface ScrapeSettingsSaveArgs { backends: string[] }
 // The key goes straight to ~/.multi-search/keys.json; it is never echoed back.
 export interface RerankKeySaveArgs { key: string }
+// Only the `debug_log` setting changes; the switch never goes through the settings draft.
+export interface DebugLogSaveArgs { enabled: boolean }
 export interface CommandContracts {
   cookie_status: { args: Record<string, never>; result: T.CookieStatus };
   cookie_import: { args: { path: string; confirmed: boolean }; result: T.CookieStatus };
   cookie_delete: { args: { confirmed: boolean }; result: T.CookieStatus };
   scrape_settings_save: { args: ScrapeSettingsSaveArgs; result: T.SettingsView };
   rerank_key_save: { args: RerankKeySaveArgs; result: T.SettingsView };
+  debug_log_save: { args: DebugLogSaveArgs; result: T.SettingsView };
+  log_viewer_open: { args: Record<string, never>; result: T.LogViewerInfo };
 }
 
 export interface ContractMap {
@@ -54,4 +58,5 @@ export interface ContractMap {
   ScrapeMemoryView: T.ScrapeMemoryView;
   SettingsInput: T.SettingsInput;
   SettingsView: T.SettingsView;
+  LogViewerInfo: T.LogViewerInfo;
 }

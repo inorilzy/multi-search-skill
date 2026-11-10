@@ -292,7 +292,7 @@ pub(crate) fn open_application(source: &str) -> Result<(), String> {
     )
 }
 #[cfg(windows)]
-fn open_browser(url: &str) -> Result<(), String> {
+pub(crate) fn open_browser(url: &str) -> Result<(), String> {
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
     let target: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
@@ -315,7 +315,7 @@ fn open_browser(url: &str) -> Result<(), String> {
 /// macOS hands the already-validated HTTPS URL to LaunchServices through the absolute
 /// `/usr/bin/open` binary. The URL is one argv entry, never interpreted by a shell.
 #[cfg(target_os = "macos")]
-fn open_browser(url: &str) -> Result<(), String> {
+pub(crate) fn open_browser(url: &str) -> Result<(), String> {
     let status = std::process::Command::new("/usr/bin/open")
         .arg(url)
         .status()
@@ -327,7 +327,7 @@ fn open_browser(url: &str) -> Result<(), String> {
     }
 }
 #[cfg(not(any(windows, target_os = "macos")))]
-fn open_browser(_: &str) -> Result<(), String> {
+pub(crate) fn open_browser(_: &str) -> Result<(), String> {
     Err("系统浏览器入口仅支持 Windows 和 macOS".into())
 }
 

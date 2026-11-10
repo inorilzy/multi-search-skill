@@ -82,6 +82,7 @@ macro_rules! for_each_contract_type {
             contract::ScrapeMemoryView,
             contract::SettingsInput,
             contract::SettingsView,
+            contract::LogViewerInfo,
         );
     };
 }

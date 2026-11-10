@@ -58,10 +58,11 @@ def _add_debug_log_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--debug-log", metavar="PATH",
         help=(
-            "append a detailed JSONL trace of this run (parameters, query plan, "
-            "route, per-provider timings and results, fetch chain) to PATH; "
-            f"{debug_log.ENV_VAR}=1 (~/.multi-search/logs/debug.jsonl) or "
-            f"{debug_log.ENV_VAR}=<path> enables it without the flag"
+            "append this run's detailed JSONL trace (parameters, query plan, "
+            "route, per-provider timings and results, fetch chain) to PATH "
+            "even when the debug_log setting is off; the desktop switch writes "
+            "~/.multi-search/logs/runs/ files read by `logs serve`; "
+            f"{debug_log.ENV_VAR}=1/0 overrides the setting"
         ),
     )
 
@@ -257,6 +258,28 @@ def build_parser() -> argparse.ArgumentParser:
     _add_format_argument(site_reset_parser)
     site_reset_parser.set_defaults(handler=_handle_site_reset)
 
+    logs_parser = subparsers.add_parser(
+        "logs", help="browse the per-run search traces in a local web page",
+    )
+    logs_subparsers = logs_parser.add_subparsers(dest="logs_command", required=True)
+    logs_serve_parser = logs_subparsers.add_parser(
+        "serve", help="serve a read-only trace viewer on 127.0.0.1 until Ctrl+C",
+    )
+    logs_serve_parser.add_argument("--port", type=_bounded_int(0, 65535), default=8765,
+                                   help="local port (default 8765; 0 picks a free port)")
+    logs_serve_parser.add_argument(
+        "--path", action="append", default=None, metavar="PATH",
+        help="trace file or directory to read instead of ~/.multi-search/logs/runs (repeatable)",
+    )
+    logs_serve_parser.add_argument("--open", action="store_true", help="open the page in the browser")
+    _add_format_argument(logs_serve_parser)
+    logs_serve_parser.set_defaults(handler=_handle_logs_serve)
+    logs_list_parser = logs_subparsers.add_parser("list", help="list recorded runs, newest first")
+    logs_list_parser.add_argument("--limit", type=_bounded_int(1, None), default=20)
+    logs_list_parser.add_argument("--path", action="append", default=None, metavar="PATH")
+    _add_format_argument(logs_list_parser)
+    logs_list_parser.set_defaults(handler=_handle_logs_list)
+
     return parser
 
 
@@ -275,7 +298,7 @@ def main(
     try:
         args = parser.parse_args(raw_argv)
         if args.command in {"search", "fetch"}:
-            debug_log.configure(getattr(args, "debug_log", None))
+            debug_log.configure(getattr(args, "debug_log", None), setting=_debug_log_setting())
         else:
             debug_log.disable()
         debug_log.event(
@@ -323,6 +346,20 @@ def main(
             }, args.format, stdout)
         stderr.write(f"error: {message}\n")
         return 1
+    finally:
+        # The trace belongs to this one invocation; a later in-process call
+        # (tests, Python callers) must not append to it.
+        debug_log.disable()
+
+
+def _debug_log_setting() -> bool:
+    """The desktop's "记录搜索详情" switch (`debug_log` in the shared settings)."""
+    from .src.state import runtime
+
+    try:
+        return runtime.load_config_safe(None).get("debug_log") is True
+    except Exception:  # noqa: BLE001 - the command itself reports a broken config
+        return False
 
 
 def entrypoint() -> None:
@@ -490,6 +527,44 @@ def _handle_site_set_preference(args: argparse.Namespace) -> dict[str, Any]:
 
 def _handle_site_reset(args: argparse.Namespace) -> dict[str, Any]:
     return {"deleted": reset_site_scraper_stats(args.site)}
+
+
+def _log_sources(args: argparse.Namespace) -> list[Path]:
+    from .src.log_viewer import default_sources
+
+    return [Path(item).expanduser() for item in args.path] if args.path else default_sources()
+
+
+def _handle_logs_list(args: argparse.Namespace) -> dict[str, Any]:
+    from .src.log_viewer import list_runs, load_runs
+
+    sources = _log_sources(args)
+    return {"sources": [str(item) for item in sources],
+            "runs": list_runs(load_runs(sources), limit=args.limit)}
+
+
+def _handle_logs_serve(args: argparse.Namespace) -> dict[str, Any]:
+    from .src.log_viewer import make_server
+
+    sources = _log_sources(args)
+    try:
+        server = make_server(sources, args.port)
+    except OSError as exc:
+        raise RuntimeError(f"cannot listen on 127.0.0.1:{args.port}: {exc}") from exc
+    url = f"http://127.0.0.1:{server.server_address[1]}/"
+    sys.stderr.write(f"multi-search logs: serving {url} (Ctrl+C to stop)\n")
+    sys.stderr.flush()
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return {"url": url, "stopped": True}
 
 
 def _write_payload(payload: Any, output_format: str, stream: TextIO) -> None:
