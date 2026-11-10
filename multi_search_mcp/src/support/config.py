@@ -187,6 +187,21 @@ def resolve_nonnegative(request_value: Any, config: dict, key: str, default: int
     return max(0, resolve_int(request_value, config, key, default))
 
 
+SCRAPE_BACKEND_TIMEOUT_DEFAULT = 10
+# Keep equal to the desktop's SCRAPE_BACKEND_TIMEOUT_MAX (page 06 editor bound).
+SCRAPE_BACKEND_TIMEOUT_MAX = 60
+
+
+def resolve_backend_timeout(config: dict | None) -> int:
+    """Seconds one scrape backend call may take before the chain moves on."""
+    value = resolve_int(None, config or {}, "scrape_backend_timeout", SCRAPE_BACKEND_TIMEOUT_DEFAULT)
+    if isinstance((config or {}).get("scrape_backend_timeout"), bool) or not (
+        1 <= value <= SCRAPE_BACKEND_TIMEOUT_MAX
+    ):
+        raise ConfigError(f"scrape_backend_timeout must be 1-{SCRAPE_BACKEND_TIMEOUT_MAX} seconds")
+    return value
+
+
 def config_bool(config: dict, key: str, default: bool = False) -> bool:
     if key not in config:
         return default

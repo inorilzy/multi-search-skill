@@ -8,7 +8,9 @@ from ..state.key_state import BasicKeyManager, SQLiteKeyManager
 from ..state.keys import jina_config_keys
 from ..state.site_memory import SiteScraperMemory
 from ..state.state_store import StateStore
-from ..support.config import ConfigError, config_list, resolve_int, resolve_nonnegative
+from ..support.config import (
+    ConfigError, config_list, resolve_backend_timeout, resolve_int, resolve_nonnegative,
+)
 from ..support.format import format_scrapes
 from ..support.models import normalize_scrape_result
 from ..support.requests import ScrapeRequest
@@ -100,6 +102,7 @@ def run_scrape_raw(
         deadline=deadline,
         backends=backends,
         strict_backends=explicit_backends is not None,
+        backend_timeout=resolve_backend_timeout(resolved_config),
         jina_keys=[
             candidate.key
             for candidate in key_manager.candidates(

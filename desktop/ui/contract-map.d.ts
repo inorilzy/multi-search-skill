@@ -13,6 +13,8 @@ export interface ScrapeSettingsSaveArgs { backends: string[] }
 export interface RerankKeySaveArgs { key: string }
 // Only the `debug_log` setting changes; the switch never goes through the settings draft.
 export interface DebugLogSaveArgs { enabled: boolean }
+// Only `scrape_backend_timeout` changes; the scrape-chain draft is not touched.
+export interface ScrapeBackendTimeoutSaveArgs { seconds: number }
 export interface CommandContracts {
   cookie_status: { args: Record<string, never>; result: T.CookieStatus };
   cookie_import: { args: { path: string; confirmed: boolean }; result: T.CookieStatus };
@@ -21,6 +23,7 @@ export interface CommandContracts {
   rerank_key_save: { args: RerankKeySaveArgs; result: T.SettingsView };
   debug_log_save: { args: DebugLogSaveArgs; result: T.SettingsView };
   log_viewer_open: { args: Record<string, never>; result: T.LogViewerInfo };
+  scrape_backend_timeout_save: { args: ScrapeBackendTimeoutSaveArgs; result: T.SettingsView };
 }
 
 export interface ContractMap {

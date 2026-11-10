@@ -41,6 +41,7 @@
     "allow-rerank-key-save",
     "allow-debug-log-save",
     "allow-log-viewer-open",
+    "allow-scrape-backend-timeout-save",
     "allow-provider-list",
     "allow-scrape-memory-view",
     "allow-scrape-memory-pin",

@@ -67,6 +67,7 @@ pub fn backend(code: &str) -> CommandError {
         "rerank_key_save_failed" => "重排 API 密钥保存工作器失败",
         "debug_log_save_failed" => "搜索详情开关保存工作器失败",
         "log_viewer_open_failed" => "日志页面启动工作器失败",
+        "scrape_backend_timeout_save_failed" => "抓取后端时限保存工作器失败",
         "scrape_memory_view_failed" => "站点抓取记忆读取失败",
         "scrape_memory_pin_failed" => "站点抓取记忆固定失败",
         "scrape_memory_reset_failed" => "站点抓取记忆重置失败",
@@ -124,7 +125,7 @@ mod tests {
             "credential_append_failed", "credential_remove_failed", "credential_application_failed",
             "scrape_settings_save_failed", "scrape_memory_view_failed", "scrape_memory_pin_failed",
             "scrape_memory_reset_failed", "rerank_key_save_failed", "debug_log_save_failed",
-            "log_viewer_open_failed",
+            "log_viewer_open_failed", "scrape_backend_timeout_save_failed",
         ] {
             let error = backend(code);
             assert_eq!(error.code, code);

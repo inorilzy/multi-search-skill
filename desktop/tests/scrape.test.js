@@ -58,6 +58,10 @@ function settingsView(overrides = {}) {
     scrape_backends_invalid: false,
     builtin_scrape_backends: [...BUILTIN],
     scrape_backend_options: OPTIONS.map(option => ({ ...option })),
+    scrape_backend_timeout: 10,
+    scrape_backend_timeout_invalid: false,
+    scrape_backend_timeout_min: 1,
+    scrape_backend_timeout_max: 60,
     active_sources: ['brave'],
     ranking: { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10 },
     ranking_invalid: false,
@@ -127,6 +131,48 @@ function api(overrides = {}) {
     ...overrides,
   };
 }
+
+test('the backend timeout shows the saved value and saves on its own without touching the chain', async () => {
+  const { window, root } = setup();
+  const sent = [];
+  let chainSaves = 0;
+  await mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backend_timeout: 15 }),
+    scrapeSettingsSave: async input => { chainSaves += 1; return settingsView({ scrape_backends: input }); },
+    scrapeBackendTimeoutSave: async seconds => { sent.push(seconds); return settingsView({ scrape_backend_timeout: seconds }); },
+  }));
+  const field = root.querySelector('[data-field="backend-timeout"]');
+  const save = root.querySelector('[data-action="save-backend-timeout"]');
+  assert.equal(field.value, '15');
+  assert.equal(field.disabled, false);
+  for (const bad of ['0', '61', '2.5', '']) {
+    field.value = bad;
+    save.click();
+    await flush();
+    assert.match(root.querySelector('[data-info="backend-timeout-error"]').textContent, /1 到 60 秒/, bad);
+  }
+  assert.deepEqual(sent, []);
+  field.value = '8';
+  save.click();
+  await flush();
+  assert.deepEqual(sent, [8]);
+  assert.equal(chainSaves, 0);
+  assert.equal(root.querySelector('[data-dirty]').hidden, true);
+  assert.match(root.querySelector('[data-status="backend-timeout"]').textContent, /8 秒/);
+  window.close();
+});
+
+test('an invalid saved backend timeout is reported and unreadable settings lock the field', async () => {
+  const { window, root } = setup();
+  await mountScrape(root, api({ settingsView: async () => settingsView({ scrape_backend_timeout_invalid: true }) }));
+  assert.match(root.querySelector('[data-status="backend-timeout"]').textContent, /无效/);
+  window.close();
+  const second = setup();
+  await mountScrape(second.root, api({ settingsView: async () => settingsView({ status: 'config_unreadable', message: '坏配置' }) }));
+  assert.equal(second.root.querySelector('[data-field="backend-timeout"]').disabled, true);
+  assert.equal(second.root.querySelector('[data-action="save-backend-timeout"]').disabled, true);
+  second.window.close();
+});
 
 test('renders the saved chain in order with labels and backend ids', async () => {
   const { window, root } = setup();

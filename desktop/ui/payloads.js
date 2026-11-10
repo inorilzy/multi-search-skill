@@ -116,6 +116,8 @@ export const schemas = {
     twitter_cookies_path: 'sn', scrape_backends: 'sa',
     scrape_backends_invalid: 'b',
     builtin_scrape_backends: 'sa', scrape_backend_options: 'ScrapeBackendOption[]',
+    scrape_backend_timeout: 'n', scrape_backend_timeout_invalid: 'b',
+    scrape_backend_timeout_min: 'n', scrape_backend_timeout_max: 'n',
     active_sources: 'sa', ranking: 'RankingState', ranking_invalid: 'b',
     ranking_candidate_limit_min: 'n', ranking_candidate_limit_max: 'n',
     ranking_batch_size_min: 'n', ranking_batch_size_max: 'n',

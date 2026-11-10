@@ -424,6 +424,8 @@ function renderFetches(d) {
       steps.push(h("span", { class: "step-box " + status, title: a && a.error ? a.error : (a && a.reason) || STATUS[status] },
         backend + "  " + (STATUS[status] || status) + (a && a.elapsed_ms !== undefined && status !== "skipped" ? "  " + ms(a.elapsed_ms) : "")));
     });
+    const cutOff = f.attempts.some((a, i) => a.status === "timeout" && i < f.attempts.length - 1);
+    const cap = f.chain && f.chain.backend_timeout_s;
     const reordered = f.chain && JSON.stringify(f.chain.order) !== JSON.stringify(f.chain.order_before_site_memory);
     const keys = f.key_attempts.map((k) => k.backend + " " + (k.key_id === "anonymous" ? "匿名" : k.key_id) +
       " " + ms(k.elapsed_ms) + (k.error ? " 失败：" + k.error : " 成功"));
@@ -437,6 +439,7 @@ function renderFetches(d) {
           result.content_length ? result.content_length + " 字符" : ""].filter(Boolean).join("，"))),
       result.error ? h("p", { class: "err small" }, result.error) : null,
       steps.length ? h("div", { class: "steps" }, steps) : null,
+      cutOff ? h("p", { class: "muted small" }, "有后端超时" + (cap ? "（单个后端最多 " + cap + " 秒）" : "") + "，已切换到下一个后端。") : null,
       reordered ? h("p", { class: "muted small" }, "站点抓取记忆调整了顺序，原顺序：" + f.chain.order_before_site_memory.join(" › ")) : null,
       keys.length ? h("p", { class: "muted small" }, "Key 尝试：" + keys.join("；")) : null,
       result.body_preview ? h("details", {}, h("summary", {}, "正文预览"), h("pre", {}, result.body_preview)) : null);

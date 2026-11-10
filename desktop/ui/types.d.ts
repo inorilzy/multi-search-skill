@@ -289,7 +289,15 @@ scrape_backends: Array<string>,
  * 已保存的 `scrape_backends` 非法（空数组、非数组、含非字符串或未知后端）；
  * 此时 `scrape_backends` 是回退值，CLI 会报配置错误，UI 必须提示。
  */
-scrape_backends_invalid: boolean, builtin_scrape_backends: Array<string>, scrape_backend_options: Array<ScrapeBackendOption>, active_sources: Array<string>, 
+scrape_backends_invalid: boolean, builtin_scrape_backends: Array<string>, scrape_backend_options: Array<ScrapeBackendOption>, 
+/**
+ * 单个抓取后端一次调用最多等待的秒数；缺失时为出厂值 10。
+ */
+scrape_backend_timeout: number, 
+/**
+ * 已保存的值不是 1–60 的整数；此时 `scrape_backend_timeout` 是出厂值，CLI 会报配置错误。
+ */
+scrape_backend_timeout_invalid: boolean, scrape_backend_timeout_min: number, scrape_backend_timeout_max: number, active_sources: Array<string>, 
 /**
  * 当前生效的 `ranking` 块（缺失/非法时回退出厂默认）。
  */

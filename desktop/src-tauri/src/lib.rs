@@ -73,7 +73,7 @@ pub mod contract {
 pub mod settings_fixture {
     pub use crate::settings::{
         builtin_routes, config_path, route_default_timeout, save, save_with_dev, validate, view,
-        view_with_dev, keys_file_path, rerank_key_status, save_systemone_key, save_debug_log, RankingInput, RouteConfig, RouteMap, SettingsInput, SettingsView, Validated,
+        view_with_dev, keys_file_path, rerank_key_status, save_systemone_key, save_debug_log, save_scrape_backend_timeout, RankingInput, RouteConfig, RouteMap, SettingsInput, SettingsView, Validated,
         TIMEOUT_MAX, TIMEOUT_MIN,
     };
     /// Dev fallback location for the real app: the repo-root file the CLI reads when no user file exists.

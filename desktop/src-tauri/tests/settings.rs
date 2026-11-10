@@ -1006,6 +1006,33 @@ fn debug_log_switch_patches_only_its_own_key() {
 }
 
 
+
+#[test]
+fn scrape_backend_timeout_patches_only_its_key_and_rejects_out_of_range() {
+    let sandbox = Sandbox::new("backend-timeout");
+    let env = sandbox.env(&[]);
+    let first = fixture::view(&env);
+    assert_eq!((first.scrape_backend_timeout, first.scrape_backend_timeout_invalid), (10, false));
+    assert_eq!((first.scrape_backend_timeout_min, first.scrape_backend_timeout_max), (1, 60));
+    fixture::save(&env, &input("default", 20, &[])).unwrap();
+    sandbox.replace(r#"{"type":"dev","scrape_backends":["exa"],"debug_log":true}"#);
+    assert_eq!(fixture::save_scrape_backend_timeout(&env, 7).unwrap().scrape_backend_timeout, 7);
+    let object = sandbox.object();
+    assert_eq!(object["scrape_backend_timeout"], 7);
+    assert_eq!(object["scrape_backends"], serde_json::json!(["exa"]));
+    assert_eq!(object["debug_log"], true);
+    for bad in [0, 61] {
+        assert!(fixture::save_scrape_backend_timeout(&env, bad).is_err());
+        assert_eq!(sandbox.object()["scrape_backend_timeout"], 7);
+    }
+    // A full page-05 save leaves the cap untouched.
+    fixture::save(&env, &input("default", 20, &[])).unwrap();
+    assert_eq!(sandbox.object()["scrape_backend_timeout"], 7);
+    sandbox.replace(r#"{"type":"default","scrape_backend_timeout":"slow"}"#);
+    let view = fixture::view(&env);
+    assert_eq!((view.scrape_backend_timeout, view.scrape_backend_timeout_invalid), (10, true));
+}
+
 #[test]
 fn timeout_range_covers_every_cli_route_default() {
     // ROUTE_META in search_runner.py: default/social/dev 60, fast 45, all 90.

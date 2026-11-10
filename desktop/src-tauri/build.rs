@@ -74,6 +74,7 @@ const APP_COMMANDS: &[&str] = &[
     "rerank_key_save",
     "debug_log_save",
     "log_viewer_open",
+    "scrape_backend_timeout_save",
     "provider_list",
     "scrape_memory_view",
     "scrape_memory_pin",

@@ -376,6 +376,20 @@ async fn scrape_settings_save(
     .await
 }
 
+/// 「06 抓取设置」的单个后端时限：只改设置里的 `scrape_backend_timeout`。
+#[tauri::command]
+async fn scrape_backend_timeout_save(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    seconds: u32,
+) -> Result<crate::settings::SettingsView, String> {
+    let manager = manager.inner().clone();
+    offload(
+        move || crate::settings::save_scrape_backend_timeout(&manager.environment, seconds),
+        "scrape_backend_timeout_save_failed",
+    )
+    .await
+}
+
 /// 「记录搜索详情」开关：只改设置里的 `debug_log`，立即生效。
 #[tauri::command]
 async fn debug_log_save(
@@ -631,6 +645,7 @@ pub fn run() {
             rerank_key_save,
             debug_log_save,
             log_viewer_open,
+            scrape_backend_timeout_save,
             provider_list,
             scrape_memory_view,
             scrape_memory_pin,

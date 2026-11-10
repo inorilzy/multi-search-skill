@@ -31,6 +31,11 @@ pub const TIMEOUT_MAX: u32 = 90;
 
 /// 通用网页抓取后端的出厂 fallback 链；顺序即默认尝试顺序。
 pub const SCRAPE_BACKENDS: &[&str] = &["jina", "exa", "tavily", "firecrawl"];
+/// 单个抓取后端一次调用的时限（秒，设置键 `scrape_backend_timeout`）；与 core 的
+/// `SCRAPE_BACKEND_TIMEOUT_DEFAULT` / `SCRAPE_BACKEND_TIMEOUT_MAX` 保持一致。
+pub const SCRAPE_BACKEND_TIMEOUT_DEFAULT: u32 = 10;
+pub const SCRAPE_BACKEND_TIMEOUT_MIN: u32 = 1;
+pub const SCRAPE_BACKEND_TIMEOUT_MAX: u32 = 60;
 
 /// 模型重排的可编辑边界（与 core 的 `ranking` 配置键一致）。
 /// mode 只允许 "rrf" / "rrf_model"；开启时必须同时配置 System One 的 base_url 与 model。
@@ -409,6 +414,12 @@ pub struct SettingsView {
     pub scrape_backends_invalid: bool,
     pub builtin_scrape_backends: Vec<String>,
     pub scrape_backend_options: Vec<ScrapeBackendOption>,
+    /// 单个抓取后端一次调用最多等待的秒数；缺失时为出厂值 10。
+    pub scrape_backend_timeout: u32,
+    /// 已保存的值不是 1–60 的整数；此时 `scrape_backend_timeout` 是出厂值，CLI 会报配置错误。
+    pub scrape_backend_timeout_invalid: bool,
+    pub scrape_backend_timeout_min: u32,
+    pub scrape_backend_timeout_max: u32,
     pub active_sources: Vec<String>,
     /// 当前生效的 `ranking` 块（缺失/非法时回退出厂默认）。
     pub ranking: RankingState,
@@ -826,6 +837,39 @@ pub fn save_scrape_backends(environment: &RuntimeEnvironment, backends: &[String
     Ok(view(environment))
 }
 
+fn backend_timeout_state(object: &Map<String, Value>) -> (u32, bool) {
+    match object.get("scrape_backend_timeout") {
+        None | Some(Value::Null) => (SCRAPE_BACKEND_TIMEOUT_DEFAULT, false),
+        Some(value) => match value.as_u64() {
+            Some(seconds) if (SCRAPE_BACKEND_TIMEOUT_MIN as u64..=SCRAPE_BACKEND_TIMEOUT_MAX as u64).contains(&seconds) => {
+                (seconds as u32, false)
+            }
+            _ => (SCRAPE_BACKEND_TIMEOUT_DEFAULT, true),
+        },
+    }
+}
+
+/// 只改 `scrape_backend_timeout` 一个键（持有数据库写锁），抓取顺序等其余设置原样保留。
+pub fn save_scrape_backend_timeout(environment: &RuntimeEnvironment, seconds: u32) -> Result<SettingsView, String> {
+    if !(SCRAPE_BACKEND_TIMEOUT_MIN..=SCRAPE_BACKEND_TIMEOUT_MAX).contains(&seconds) {
+        return Err(format!(
+            "单个后端时限需为 {SCRAPE_BACKEND_TIMEOUT_MIN} 到 {SCRAPE_BACKEND_TIMEOUT_MAX} 秒之间的整数"
+        ));
+    }
+    let path = config_path(environment).ok_or("无法定位配置数据库")?;
+    let mut connection = crate::config_db::open(&path)?;
+    let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|_| "配置数据库事务失败".to_string())?;
+    let mut existing = read_object(&transaction)?;
+    config_routes(&existing)?;
+    existing.insert("scrape_backend_timeout".into(), Value::from(seconds));
+    let body = serde_json::to_string(&existing).map_err(|_| "无法序列化设置".to_string())?;
+    transaction.execute("INSERT INTO settings(id,data) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data", [body])
+        .map_err(|_| "保存失败，原设置未改变".to_string())?;
+    transaction.commit().map_err(|_| "保存失败，原设置未改变".to_string())?;
+    Ok(view(environment))
+}
+
 /// 只改 `debug_log` 一个键（持有数据库写锁），其余设置原样保留；开关立即生效，不进草稿。
 pub fn save_debug_log(environment: &RuntimeEnvironment, enabled: bool) -> Result<SettingsView, String> {
     let path = config_path(environment).ok_or("无法定位配置数据库")?;
@@ -888,6 +932,10 @@ fn unreadable_view(path: Option<PathBuf>, environment: &RuntimeEnvironment) -> S
         scrape_backends_invalid: false,
         builtin_scrape_backends: default_scrape_backends(),
         scrape_backend_options: scrape_backend_options(),
+        scrape_backend_timeout: SCRAPE_BACKEND_TIMEOUT_DEFAULT,
+        scrape_backend_timeout_invalid: false,
+        scrape_backend_timeout_min: SCRAPE_BACKEND_TIMEOUT_MIN,
+        scrape_backend_timeout_max: SCRAPE_BACKEND_TIMEOUT_MAX,
         active_sources: vec![],
         ranking: default_ranking(),
         ranking_invalid: false,
@@ -985,6 +1033,7 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
     };
     let (scrape_backends, scrape_backends_invalid) = scrape_chain(&object);
     let (ranking, ranking_invalid) = ranking_state(&object);
+    let (scrape_backend_timeout, scrape_backend_timeout_invalid) = backend_timeout_state(&object);
     SettingsView {
         config_path: path.map(|path| path.to_string_lossy().into_owned()),
         path_source: if environment
@@ -1020,6 +1069,10 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
         scrape_backends_invalid,
         builtin_scrape_backends: default_scrape_backends(),
         scrape_backend_options: scrape_backend_options(),
+        scrape_backend_timeout,
+        scrape_backend_timeout_invalid,
+        scrape_backend_timeout_min: SCRAPE_BACKEND_TIMEOUT_MIN,
+        scrape_backend_timeout_max: SCRAPE_BACKEND_TIMEOUT_MAX,
         active_sources,
         ranking,
         ranking_invalid,

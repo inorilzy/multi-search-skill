@@ -34,6 +34,13 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
       <div class="settings-savebar scrape-savebar"><div class="scrape-save-copy"><strong class="status-text" data-status="save" aria-live="polite"></strong><small class="status-text" data-status="draft">尚未读取设置</small></div><button type="submit" class="primary" data-action="save" disabled>保存抓取设置</button></div>
     </form>
 
+    <section class="panel scrape-timeout-panel"><div class="section-title"><div><p class="eyebrow">TIMEOUT</p><h2>单个后端时限</h2></div></div>
+      <p class="route-help">一个后端一次调用最多等多少秒，超时就换下一个后端，避免一个卡住的后端用完整个页面的抓取时间。默认 10 秒；整次搜索的抓取总时限不变。</p>
+      <div class="run-controls"><label>秒数<input data-field="backend-timeout" type="number" step="1" inputmode="numeric" disabled></label><button type="button" data-action="save-backend-timeout" disabled>保存时限</button></div>
+      <p class="note" data-status="backend-timeout" role="status"></p>
+      <p class="error-message" data-info="backend-timeout-error"></p>
+    </section>
+
     <section class="panel scrape-memory-panel"><div class="section-title"><div><p class="eyebrow">SITE MEMORY</p><h2>站点记忆</h2></div><div class="route-actions"><button type="button" data-action="refresh-memory">刷新</button></div></div>
       <p class="route-help">记录每个站点上各后端的成功/失败、冷却与手动偏好。手动固定的后端会排到该站点最前；自动冷却只会让失败后端靠后。</p>
       <p data-info="memory-error" class="error-message"></p>
@@ -62,6 +69,8 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   let filter = '';
   let confirmState = null; // { kind: 'pin'|'reset', site, scraper, token }
   let sorter = null;
+  let timeoutBusy = false;
+  let timeoutBounds = [1, 60];
 
   const labelOf = name => options.get(name) || name;
   const PROVIDER_MARKS = { jina: 'J', exa: 'E', tavily: 'T', firecrawl: 'F' };
@@ -374,8 +383,54 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     });
   }
 
+  function renderBackendTimeout() {
+    const field = q('[data-field="backend-timeout"]');
+    const off = timeoutBusy || !loadedView || loadedView.status === 'config_unreadable';
+    field.disabled = off;
+    q('[data-action="save-backend-timeout"]').disabled = off;
+  }
+
+  function fillBackendTimeout(view) {
+    timeoutBounds = [Number(view.scrape_backend_timeout_min ?? 1), Number(view.scrape_backend_timeout_max ?? 60)];
+    const field = q('[data-field="backend-timeout"]');
+    field.min = String(timeoutBounds[0]);
+    field.max = String(timeoutBounds[1]);
+    field.value = String(view.scrape_backend_timeout ?? 10);
+    text('[data-status="backend-timeout"]', view.scrape_backend_timeout_invalid
+      ? `已保存的时限无效，当前按默认 ${view.scrape_backend_timeout ?? 10} 秒显示；重新保存可修复。` : '');
+    renderBackendTimeout();
+  }
+
+  // 时限单独、立即保存：只改 scrape_backend_timeout，不进入也不打断抓取顺序草稿。
+  async function saveBackendTimeout() {
+    if (timeoutBusy) return;
+    const raw = q('[data-field="backend-timeout"]').value.trim();
+    const seconds = Number(raw);
+    const [min, max] = timeoutBounds;
+    text('[data-info="backend-timeout-error"]', '');
+    if (!raw || !Number.isInteger(seconds) || seconds < min || seconds > max) {
+      text('[data-info="backend-timeout-error"]', `时限需为 ${min} 到 ${max} 秒之间的整数。`);
+      return;
+    }
+    timeoutBusy = true;
+    renderBackendTimeout();
+    try {
+      const view = await api.scrapeBackendTimeoutSave(seconds);
+      if (disposed) return;
+      fillBackendTimeout(view);
+      if (loadedView) loadedView = { ...loadedView, scrape_backend_timeout: view.scrape_backend_timeout, scrape_backend_timeout_invalid: view.scrape_backend_timeout_invalid };
+      text('[data-status="backend-timeout"]', `已保存：单个后端最多等 ${view.scrape_backend_timeout} 秒。`);
+    } catch (error) {
+      if (!disposed) showError(q('[data-info="backend-timeout-error"]'), error, '单个后端时限保存失败，原设置未改变。');
+    } finally {
+      timeoutBusy = false;
+      if (!disposed) renderBackendTimeout();
+    }
+  }
+
   function fillChain(view) {
     loadedView = view;
+    fillBackendTimeout(view);
     options = new Map((view.scrape_backend_options || []).map(option => [option.name, option.label]));
     optionOrder = (view.scrape_backend_options || []).map(option => option.name);
     chain = cloneChain(view.scrape_backends).filter(name => options.has(name));
@@ -685,6 +740,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     announce: announceSort,
   });
 
+  q('[data-action="save-backend-timeout"]').addEventListener('click', () => { void saveBackendTimeout(); });
   q('[data-action="restore-chain"]').addEventListener('click', openRestoreConfirm);
   q('[data-action="refresh-chain"]').addEventListener('click', () => { void refreshChain(); });
   q('[data-action="refresh-memory"]').addEventListener('click', () => { void refreshMemory(); });

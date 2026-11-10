@@ -190,6 +190,10 @@ class ScrapeContext:
     # True only for caller-forced backend lists (``--backend``): configuration
     # chains skip keyless backends at runtime instead of failing eagerly.
     strict_backends: bool = False
+    # Wall-clock cap for one backend call (one key, or Jina's anonymous
+    # channel). Without it a single hung call could spend the whole page
+    # budget and starve every fallback after it. ``None`` means no cap.
+    backend_timeout: float | None = None
 
     def keys_for(self, backend: str) -> list[KeyCandidate]:
         return list(self.keys_by_backend.get(backend) or [])
@@ -201,6 +205,13 @@ class ScrapeContext:
         if remaining <= 0:
             return 0.0
         return min(float(self.timeout), remaining)
+
+    def attempt_timeout(self) -> float:
+        """Budget for one backend call: the page budget, capped by ``backend_timeout``."""
+        remaining = self.remaining_timeout()
+        if self.backend_timeout is None:
+            return remaining
+        return min(remaining, float(self.backend_timeout))
 
 
 def _is_target_failure(result: dict) -> bool:
@@ -491,7 +502,7 @@ def _scrape_jina(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
     candidates = ctx.keys_for("jina")
 
     def _scrape_anonymous() -> dict:
-        call_timeout = ctx.remaining_timeout()
+        call_timeout = ctx.attempt_timeout()
         if call_timeout <= 0:
             return {"url": target, "error": "scrape deadline exceeded"}
         if _jina_anonymous_cooling_down():
@@ -516,7 +527,7 @@ def _scrape_jina(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
         return result
 
     def _scrape_keyed(key: str) -> dict:
-        call_timeout = ctx.remaining_timeout()
+        call_timeout = ctx.attempt_timeout()
         if call_timeout <= 0:
             return {"url": target, "error": "scrape deadline exceeded"}
         return scrape_url_jina(
@@ -555,15 +566,17 @@ def _scrape_tavily(target: str, ctx: ScrapeContext, policy: dict) -> dict | None
     candidates = ctx.keys_for("tavily")
 
     def _call_one(key: str) -> dict:
-        call_timeout = ctx.remaining_timeout()
+        call_timeout = ctx.attempt_timeout()
         if call_timeout <= 0:
             return {"url": target, "error": "scrape deadline exceeded"}
         options = policy["tavily"]
+        # Tavily may retry inside one call; the cap covers the whole attempt.
+        attempt_deadline = time.monotonic() + call_timeout
         if options:
             return scrape_url_tavily(
-                target, key, timeout=call_timeout, deadline=ctx.deadline, **options,
+                target, key, timeout=call_timeout, deadline=attempt_deadline, **options,
             )
-        return scrape_url_tavily(target, key, timeout=call_timeout, deadline=ctx.deadline)
+        return scrape_url_tavily(target, key, timeout=call_timeout, deadline=attempt_deadline)
 
     return _scrape_with_key_candidates(
         "tavily", candidates, _call_one,
@@ -575,7 +588,7 @@ def _scrape_exa(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
     candidates = ctx.keys_for("exa")
 
     def _call_one(key: str) -> dict:
-        call_timeout = ctx.remaining_timeout()
+        call_timeout = ctx.attempt_timeout()
         if call_timeout <= 0:
             return {"url": target, "error": "scrape deadline exceeded"}
         return scrape_url_exa(
@@ -592,7 +605,7 @@ def _scrape_firecrawl(target: str, ctx: ScrapeContext, policy: dict) -> dict | N
     candidates = ctx.keys_for("firecrawl")
 
     def _call_one(key: str) -> dict:
-        call_timeout = ctx.remaining_timeout()
+        call_timeout = ctx.attempt_timeout()
         if call_timeout <= 0:
             return {"url": target, "error": "scrape deadline exceeded"}
         return scrape_url_firecrawl(target, key, timeout=call_timeout)
@@ -616,6 +629,7 @@ _LEGACY_OPTION_KEYS = frozenset({
     "scrape_chars", "jina_prefer_keyed", "twitter_cookies",
     "jina_key", "jina_keys", "exa_key", "exa_keys", "firecrawl_key",
     "firecrawl_keys", "tavily_key", "tavily_keys", "strict_backends",
+    "backend_timeout",
 })
 
 
@@ -654,6 +668,7 @@ def _legacy_context(options: dict) -> ScrapeContext:
         # A caller-forced backend list must fail eagerly on a missing key; a
         # configured fallback chain skips keyless backends at runtime instead.
         strict_backends=bool(options.get("strict_backends", backends is not None)),
+        backend_timeout=options.get("backend_timeout"),
     )
 
 
@@ -740,6 +755,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
         site_memory=ctx.site_memory is not None,
         keyed_backends={name: len(ctx.keys_for(name)) for name in order},
         timeout_s=ctx.remaining_timeout(),
+        backend_timeout_s=ctx.backend_timeout,
     )
     last: dict | None = None
     for backend in order:

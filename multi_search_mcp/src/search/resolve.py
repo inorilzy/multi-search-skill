@@ -10,6 +10,7 @@ from ..support.config import (
     ConfigError,
     config_int,
     config_list,
+    resolve_backend_timeout,
     resolve_int,
     resolve_nonnegative,
 )
@@ -140,6 +141,8 @@ def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSea
     )
     scrape_timeout = resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
     scrape_timeout = resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
+    # Reject a bad per-backend cap before any provider is called.
+    resolve_backend_timeout(config)
 
     return ResolvedSearchPlan(
         route=route,

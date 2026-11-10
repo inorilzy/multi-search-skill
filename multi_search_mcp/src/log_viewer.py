@@ -21,6 +21,9 @@ from .support import debug_log
 DEFAULT_PORT = 8765
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _RUN_ID_RE = re.compile(r"^run_[0-9a-f]{12}$")
+# Backend errors that mean "gave up waiting" (the per-backend cap or the page
+# budget), shown as a timeout so the chain's move to the next backend reads clearly.
+_TIMEOUT_ERROR_RE = re.compile(r"timed out|timeout|deadline exceeded", re.I)
 
 
 def default_sources() -> list[Path]:
@@ -156,7 +159,10 @@ def _fetches(events: list[dict], order: list[str]) -> list[dict]:
         if kind == "scrape_chain":
             page(event.get("url"))["chain"] = event
         elif kind == "scrape_attempt":
-            page(event.get("url"))["attempts"].append(event)
+            attempt = dict(event)
+            if attempt.get("status") == "error" and _TIMEOUT_ERROR_RE.search(str(attempt.get("error") or "")):
+                attempt["status"] = "timeout"
+            page(event.get("url"))["attempts"].append(attempt)
         elif kind == "scrape_key_attempt":
             page(event.get("url"))["key_attempts"].append(event)
         elif kind in {"fetch_source", "fetch_failed"}:
