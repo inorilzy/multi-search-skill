@@ -17,6 +17,27 @@ QIANFAN_BASE = "https://qianfan.baidubce.com"
 # quota_exceeded (distinguished by error.type).
 _BAIDU_HTTP_ERROR_KINDS = {401: "invalid", 403: "invalid", 429: "rate_limit"}
 
+# The web_summary endpoint can report a provider error inside HTTP 200. Its
+# ``error.type``/``error.code`` distinguish authentication, quota and rate
+# limits; Chinese messages carry the same signals when no type is present.
+_BAIDU_QUOTA_TOKENS = (
+    "quota", "额度", "配额", "欠费", "余额", "overdue", "insufficient balance",
+    "out of credits", "billing",
+)
+_BAIDU_RATE_LIMIT_TOKENS = (
+    "rate_limit", "rate limit", "throttl", "too many requests", "限流",
+    "频率", "qps", "rpm",
+)
+_BAIDU_AUTH_TOKENS = (
+    "invalid_iam", "invalid_appid", "invalid_api_key", "invalid api key",
+    "invalid_access_token", "invalid token", "token invalid", "invalid key",
+    "token expired", "access token invalid",
+    "key expired", "access_token_required", "authentication", "authorization",
+    "unauthorized", "forbidden", "access denied", "access_denied",
+    "permission denied", "no permission", "bearer token", "鉴权", "认证",
+    "密钥", "权限", "令牌无效", "token 无效", "token无效",
+)
+
 
 def _baidu_refine(status: int, data, detail: str) -> str | None:
     error = data.get("error") if isinstance(data, dict) else None
@@ -26,6 +47,43 @@ def _baidu_refine(status: int, data, detail: str) -> str | None:
     if error_type == "rate_limit_exceeded":
         return "rate_limit"
     return None
+
+
+def _baidu_error_kind(error: Any) -> str:
+    """Classify a documented Qianfan error object or message.
+
+    Only credential-relevant categories are returned so a malformed request
+    does not rotate keys.
+    """
+    if isinstance(error, dict):
+        code = str(error.get("code") or "")
+        error_type = str(error.get("type") or "")
+        message = str(error.get("message") or error.get("detail") or "")
+    else:
+        code = error_type = ""
+        message = str(error or "")
+    text = f"{code} {error_type} {message}".lower()
+    if any(token in text for token in _BAIDU_QUOTA_TOKENS):
+        return "quota_exhausted"
+    if any(token in text for token in _BAIDU_RATE_LIMIT_TOKENS):
+        return "rate_limit"
+    if any(token in text for token in _BAIDU_AUTH_TOKENS):
+        return "invalid"
+    return ""
+
+
+def _baidu_error_row(message: Any, *, api_key: str, request_id: Any = None,
+                     kind: str = "") -> dict[str, Any]:
+    text = scrub_secrets(str(message or ""), api_key)[:300] or "Baidu API error"
+    row: dict[str, Any] = {"source": "baidu", "error": text}
+    if request_id:
+        row["request_id"] = request_id
+    if kind:
+        row.update({
+            "kind": kind, "error_type": kind,
+            "origin": "provider", "error_origin": "provider",
+        })
+    return row
 
 
 def search_baidu(query: str, api_key: str, count: int = 10,
@@ -48,7 +106,9 @@ def _search_baidu_summary(query: str, api_key: str, count: int, timeout: float,
         "top_p": 0.5,
     }
     data = _post_json("/v2/ai_search/web_summary", api_key, payload, timeout, deadline)
-    return _rows_from_response(data, endpoint="/v2/ai_search/web_summary", max_references=count)
+    return _rows_from_response(
+        data, endpoint="/v2/ai_search/web_summary", max_references=count, api_key=api_key,
+    )
 
 
 def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float,
@@ -85,24 +145,28 @@ def _post_json(path: str, api_key: str, payload: dict[str, Any], timeout: float,
 
 
 def _rows_from_response(data: dict[str, Any], *, endpoint: str,
-                        max_references: int) -> list[dict[str, Any]]:
+                        max_references: int, api_key: str = "") -> list[dict[str, Any]]:
     if data.get("_error_row"):
         return [data["_error_row"]]
     error = data.get("error")
+    request_id = data.get("id") or data.get("request_id") or data.get("requestId")
     if isinstance(error, dict):
         text = " ".join(str(error.get(k)) for k in ("code", "message") if error.get(k))
-        return [{
-            "source": "baidu", "error": text or json.dumps(error, ensure_ascii=False),
-            "request_id": data.get("id") or data.get("request_id"),
-        }]
+        return [_baidu_error_row(
+            text or json.dumps(error, ensure_ascii=False),
+            api_key=api_key, request_id=request_id, kind=_baidu_error_kind(error),
+        )]
     if error:
-        return [{"source": "baidu", "error": str(error)}]
+        return [_baidu_error_row(
+            error, api_key=api_key, request_id=request_id,
+            kind=_baidu_error_kind(error),
+        )]
     if data.get("code") or data.get("message"):
-        return [{
-            "source": "baidu",
-            "error": f"{data.get('code', '')} {data.get('message', '')}".strip(),
-            "request_id": data.get("request_id") or data.get("requestId") or data.get("id"),
-        }]
+        detail = {"code": data.get("code"), "message": data.get("message")}
+        return [_baidu_error_row(
+            f"{data.get('code', '')} {data.get('message', '')}".strip(),
+            api_key=api_key, request_id=request_id, kind=_baidu_error_kind(detail),
+        )]
 
     rows: list[dict[str, Any]] = []
     answer = _answer_text(data)

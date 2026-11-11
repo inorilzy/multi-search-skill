@@ -141,6 +141,11 @@ def is_key_retryable_error(results: list | dict | None) -> bool:
     for row in error_rows:
         if row_origin(row) == ERROR_ORIGIN_TARGET:
             continue
+        # A provider may record a credential verdict yet ask that this attempt
+        # not be replayed against another key (e.g. a successful last response
+        # that reports quota_remaining=0).
+        if row.get("retryable") is False:
+            continue
         kind = row_kind(row)
         if kind:
             if kind in KEY_RETRY_ERROR_KINDS:
