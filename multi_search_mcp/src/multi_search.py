@@ -63,6 +63,7 @@ def run_multi_search(request: MultiSearchRequest | dict, *, reranker=None) -> di
         config=config,
         query_runs_observer=query_runs.extend,
         reranker=reranker,
+        plan=plan,
         scrape_chars=request.scrape_chars, scrape_timeout=request.scrape_timeout,
         scrape_concurrency=request.scrape_concurrency,
     )
@@ -97,6 +98,9 @@ def run_multi_search(request: MultiSearchRequest | dict, *, reranker=None) -> di
             request.query, raw_counts=raw_counts,
             show_answer=plan.show_answer, show_snippet=plan.show_snippet,
             degradation=response["diagnostics"]["route_degradation"],
+            # The core reports the ranking mode it actually applied; forwarding
+            # it keeps Markdown's 排序 line consistent with JSON on RRF fallback.
+            ranking=response,
         ) + format_scrapes(response["scrapes"], max_chars=plan.scrape_chars)
         # Rendered Markdown owns the bodies in these modes; JSON rows retain
         # source references and fetch metadata without another copy of the text.

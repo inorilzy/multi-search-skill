@@ -197,7 +197,8 @@ class QueryLimitAndPagingTests(unittest.TestCase):
     def test_limit_query_truncates_and_reports(self):
         text, notes = limit_query("brave", " ".join(["word"] * 100), max_chars=600, max_words=75)
         self.assertEqual(len(text.split()), 75)
-        self.assertEqual(notes[0]["error_type"], "target")
+        self.assertEqual(notes[0]["notice"], "query truncated to the provider limit (600 characters / 75 words)")
+        self.assertNotIn("error", notes[0])
         self.assertEqual(limit_query("brave", "short", max_chars=600)[1], [])
 
     def test_brave_and_firecrawl_send_truncated_queries(self):
@@ -209,7 +210,8 @@ class QueryLimitAndPagingTests(unittest.TestCase):
         with mock.patch.object(brave, "urlopen_retry", side_effect=capture):
             rows = brave.search_brave(long_query, "k")
         self.assertLessEqual(len(dict(__import__("urllib.parse").parse.parse_qsl(sent[0].full_url.split("?", 1)[1]))["q"]), 600)
-        self.assertEqual(rows[-1]["error_type"], "target")
+        self.assertIn("notice", rows[-1])
+        self.assertNotIn("error", rows[-1])
         with mock.patch.object(firecrawl, "urlopen_retry", side_effect=capture):
             firecrawl.search_firecrawl(long_query, "k", count=500)
         body = json.loads(sent[-1].data)

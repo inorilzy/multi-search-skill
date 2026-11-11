@@ -151,14 +151,24 @@ impl SkillManager<'_> {
                 Some(target_text),
             );
         }
-        let cli = self.discovery.detect().user;
-        if cli.status != "ready" {
+        let status = self.discovery.detect();
+        // A verified managed install is the CLI the desktop itself executes. Platforms without a
+        // user-PATH registration backend (Linux) cannot make the user row ready, so requiring a
+        // PATH entry there would leave a just-installed CLI unusable.
+        let cli = if status.user.status == "ready" {
+            status.user
+        } else if status.managed
+            && status.execution.status == "ready"
+            && !self.discovery.user_path_store_readable()
+        {
+            status.execution
+        } else {
             let reason = format!(
                 "在用户 PATH 中找不到 multi-search CLI（{}）。请先在“安装 CLI”页安装并加入 PATH，然后重启本应用。",
-                cli.status
+                status.user.status
             );
             return blocked_plan(host, scope, "cli_missing", reason, Some(target_text));
-        }
+        };
         if let Err(reason) = check_compatibility(self.environment, cli.path.as_deref().unwrap_or_default()) {
             return blocked_plan(host, scope, "cli_incompatible", reason, Some(target_text));
         }

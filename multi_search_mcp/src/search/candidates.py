@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Callable
 
 from ..state import runtime
-from ..state.content_store import ContentStore, ContentStoreError
+from ..state.content_store import ContentStore, ContentStoreError, ContentTooLargeError
 from ..state.key_state import BasicKeyManager, SQLiteKeyManager, classify_error, summarize_status_rows
 from ..state.source_registry import SourceRegistry
 from ..state.state_store import StateStore
@@ -25,9 +25,10 @@ from ..support.models import ANSWER_SOURCES, is_empty_result, search_content
 from ..support.requests import SearchWebRequest
 from ..support.secrets import scrub_secrets
 from .candidate import (
-    DIVERSITY_POOL_LIMIT, SEARCH_RESULT_LIMIT, canonicalize_url, diversify_by_site, fuse_search_results,
+    DIVERSITY_POOL_LIMIT, SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_results,
 )
 from .capabilities import retention_policy_for_sources
+from .notices import collect_notices, finalize_results, search_outcome
 from .query_plan import build_query_plan
 from .query_policy import QueryFusionPolicy
 from .rerank import RerankPolicy, apply_rerank, build_reranker
@@ -63,8 +64,13 @@ def run_search_candidates(
     prefetched_bodies: dict[str, str] | None = None,
     persist_bodies: bool = True,
     reranker=None,
+    plan=None,
 ) -> dict:
-    """Return compact SearchHits and optionally fill the selected-body map."""
+    """Return compact SearchHits and optionally fill the selected-body map.
+
+    ``plan`` is an already resolved plan for this request; callers that need
+    the same plan for presentation reuse it so one request resolves it once.
+    """
     if isinstance(request, dict):
         request = SearchWebRequest(**request)
     if not request.query:
@@ -89,17 +95,11 @@ def run_search_candidates(
     query_weights = query_policy.weights(queries, query_plan.primary_query)
     debug_log.log_query_plan(request, expand, query_plan, query_policy, query_weights)
 
-    plan = resolve_search_plan(
-        SearchPlanRequest(
-            route=request.route,
-            count=request.count,
-            sources=request.sources,
-            timeout=request.timeout,
-            output="json",
-            ranking=request.ranking,
-        ),
-        resolved_config,
-    )
+    if plan is None:
+        plan = resolve_search_plan(SearchPlanRequest(
+            route=request.route, count=request.count, sources=request.sources,
+            timeout=request.timeout, output="json", ranking=request.ranking,
+        ), resolved_config)
     rerank_policy = RerankPolicy.from_config(resolved_config, request.ranking)  # fail before provider budget
     if keys is None:
         loaded = runtime.load_runtime_key_context(resolved_config)
@@ -191,9 +191,10 @@ def run_search_candidates(
         key=lambda row: (row["query"], row["source"], row["error"]),
     )
     query_failure_rows = query_failures(query_runs)
+    notices = collect_notices(query_runs)
     response_id = f"resp_{uuid.uuid4().hex}"
     limit = (
-        max(rerank_policy.candidate_limit, SEARCH_RESULT_LIMIT)
+        max(rerank_policy.candidate_limit, DIVERSITY_POOL_LIMIT)
         if rerank_policy.enabled
         else DIVERSITY_POOL_LIMIT
     )
@@ -223,7 +224,7 @@ def run_search_candidates(
         rerank_meta = {
             "mode_requested": "rrf", "mode_used": "rrf", "fallback_reason": None,
         }
-    hits = diversify_by_site(hits, SEARCH_RESULT_LIMIT)
+    hits = finalize_results(hits, SEARCH_RESULT_LIMIT)
     primary_rows = query_results[query_plan.primary_query]
     primary_has_candidates = bool(fuse_search_results(
         [(query_plan.primary_query, primary_rows)], response_id=response_id, limit=1,
@@ -278,6 +279,11 @@ def run_search_candidates(
                 ContentStore(
                     store, ttl_seconds=retention.max_ttl_seconds
                 ).put(str(hit["source_id"]), body)
+            except ContentTooLargeError:
+                # The fetch stage reports the same oversize body through
+                # ``persist_error``; reporting it here as well would duplicate
+                # one persistence failure within a single search call.
+                continue
             except ContentStoreError as exc:
                 content_store_errors.append({
                     "source_id": hit["source_id"],
@@ -293,6 +299,7 @@ def run_search_candidates(
         "provider_status": provider_status,
         "key_status_summary": summarize_key_status(key_manager.status_rows()),
         "errors": failures,
+        "notices": notices,
         **rerank_meta,
         "diagnostics": {
             "raw_result_count": len(rows),
@@ -316,16 +323,6 @@ def run_search_candidates(
             "state_path": str(store.path) if store else None,
         },
     }
-
-
-
-def search_outcome(provider_status: list[dict], errors: list[dict], results: list[dict]) -> str:
-    """Business outcome shared by the CLI, service and desktop adapters."""
-    if provider_status and all(row.get("status") == "error" for row in provider_status):
-        return "failed"
-    if errors:
-        return "partial"
-    return "success" if results else "empty"
 
 
 def query_provider_status(

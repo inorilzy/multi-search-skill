@@ -125,7 +125,7 @@ class GitHubCodeSearchTests(unittest.TestCase):
         self.assertEqual(rows[2]["content_kind"], "metadata")
         self.assertEqual(rows[2]["path"], "empty.md")
 
-    def test_incomplete_results_appends_target_warning(self):
+    def test_incomplete_results_appends_notice(self):
         rows, _ = self.run_code({
             "incomplete_results": True,
             "items": [code_item("a/one", "README.md", "hit")],
@@ -133,11 +133,10 @@ class GitHubCodeSearchTests(unittest.TestCase):
         self.assertEqual(rows[0]["title"], "a/one")
         self.assertEqual(rows[-1], {
             "source": "github-code",
-            "error": "GitHub search timed out; results may be incomplete",
-            "error_type": "target",
+            "notice": "GitHub search timed out; results may be incomplete",
         })
 
-    def test_repos_incomplete_results_appends_target_warning(self):
+    def test_repos_incomplete_results_appends_notice(self):
         payload = {
             "incomplete_results": True,
             "items": [{"full_name": "a/one", "html_url": "https://github.com/a/one", "description": "d"}],
@@ -145,8 +144,10 @@ class GitHubCodeSearchTests(unittest.TestCase):
         with mock.patch.object(github, "urlopen_retry", return_value=response(payload)):
             rows = github.search_github_repos("fixture", token=TOKEN, timeout=1)
         self.assertEqual(rows[0]["title"], "a/one")
-        self.assertEqual(rows[-1]["source"], "github-repos")
-        self.assertEqual(rows[-1]["error_type"], "target")
+        self.assertEqual(rows[-1], {
+            "source": "github-repos",
+            "notice": "GitHub search timed out; results may be incomplete",
+        })
 
     def test_query_truncated_to_github_limits(self):
         long_query = " ".join(["word"] * 80) + " language:lua"
@@ -157,8 +158,7 @@ class GitHubCodeSearchTests(unittest.TestCase):
         self.assertLessEqual(len(text), 256)
         self.assertEqual(rows[-1], {
             "source": "github-code",
-            "error": "query truncated to GitHub's 256-character / 5-operator limit",
-            "error_type": "target",
+            "notice": "query truncated to GitHub's 256-character / 5-operator limit",
         })
 
     def test_operators_beyond_fifth_are_dropped(self):
