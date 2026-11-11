@@ -140,10 +140,15 @@ def _unsupported_report(
 
 
 def _needs_credential_report(plugin: ProviderPlugin, entry: str | None, now: Any) -> BalanceReport:
+    message = f"未配置凭据：{entry}。" if entry else "未配置凭据。"
+    # A separate balance-only credential (Exa admin key, Parallel account token)
+    # needs its own acquisition instructions; the search key does not explain it.
+    if plugin.balance_note and entry != plugin.key_provider:
+        message += plugin.balance_note
     return BalanceReport(
         provider=plugin.id,
         status="needs_credential",
-        message=f"未配置凭据：{entry}" if entry else "未配置凭据。",
+        message=message,
         fetched_at=_fetched_at(now),
     )
 

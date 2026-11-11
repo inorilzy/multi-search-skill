@@ -209,6 +209,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     balance_parser.set_defaults(handler=_handle_balance)
 
+    login_parser = subparsers.add_parser(
+        "login",
+        help="save a provider API key read from stdin",
+    )
+    login_parser.add_argument("provider", help="provider (plugin) id")
+    login_parser.add_argument(
+        "--method",
+        default="api",
+        help="login method: api (oauth is not supported yet)",
+    )
+    login_parser.add_argument(
+        "--credential",
+        help="credential entry declared by the plugin (default: the plugin key provider)",
+    )
+    _add_format_argument(login_parser)
+    login_parser.set_defaults(handler=_handle_login)
+
+    logout_parser = subparsers.add_parser(
+        "logout",
+        help="delete a saved provider credential entry",
+    )
+    logout_parser.add_argument("provider", help="provider (plugin) id")
+    logout_parser.add_argument(
+        "--credential",
+        help="credential entry declared by the plugin (default: the plugin key provider)",
+    )
+    _add_format_argument(logout_parser)
+    logout_parser.set_defaults(handler=_handle_logout)
+
     sources_parser = subparsers.add_parser(
         "sources",
         help="print the shared source, route, alias, and env catalog (JSON by default)",
@@ -509,6 +538,24 @@ def _handle_balance(args: argparse.Namespace) -> dict[str, Any]:
             refresh=args.refresh,
         )
     except UnknownProviderError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
+def _handle_login(args: argparse.Namespace) -> dict[str, Any]:
+    from .src.plugins.login import LoginError, login
+
+    try:
+        return login(args.provider, args.credential, method=args.method)
+    except LoginError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
+def _handle_logout(args: argparse.Namespace) -> dict[str, Any]:
+    from .src.plugins.login import LoginError, logout
+
+    try:
+        return logout(args.provider, args.credential)
+    except LoginError as exc:
         raise CLIUsageError(str(exc)) from exc
 
 
