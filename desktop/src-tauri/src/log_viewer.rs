@@ -96,6 +96,37 @@ impl LogViewerSlot {
     }
 }
 
+/// Hand the started viewer's URL to the system browser. A failed launch must not stop the
+/// service: the address is repeated in the error so the page can show it for manual copying,
+/// and the service still stops with the window through `DesktopManager::shutdown`.
+pub(crate) fn open_in_browser(
+    info: LogViewerInfo,
+    open: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<LogViewerInfo, String> {
+    match open(&info.url) {
+        Ok(()) => Ok(info),
+        Err(reason) => Err(format!(
+            "日志页面已启动，但无法打开系统浏览器：{reason}。请手动访问 {}（关闭本应用时停止）。",
+            info.url
+        )),
+    }
+}
+
+/// Test seam for the open flow. Not a supported public API.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub mod log_viewer_fixture {
+    use super::*;
+
+    /// Exercise the same start-then-open contract as the `log_viewer_open` command.
+    pub fn open(
+        info: LogViewerInfo,
+        opener: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<LogViewerInfo, String> {
+        super::open_in_browser(info, opener)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

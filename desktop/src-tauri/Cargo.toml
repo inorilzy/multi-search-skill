@@ -30,6 +30,11 @@ path = "tests/test_search_credentials.rs"
 required-features = ["test-fixtures"]
 
 [[test]]
+name = "log_viewer_open"
+path = "tests/log_viewer_open.rs"
+required-features = ["test-fixtures"]
+
+[[test]]
 name = "install"
 path = "tests/install.rs"
 required-features = ["install-test-boundary", "test-fixtures"]
