@@ -780,10 +780,13 @@ def _render_key_rows(rows: list[dict[str, Any]], *, markdown: bool) -> list[str]
         provider = row.get("provider")
         key_id = row.get("key_id")
         status = row.get("status")
+        # Manual opt-out is independent of the health status: an ``active`` row
+        # can still be unusable, so the human line must say why.
+        marker = '（手动禁用）' if row.get("manually_disabled") else ''
         if markdown:
-            rendered.append(f"- {provider} {key_id}: {status}")
+            rendered.append(f"- {provider} {key_id}: {status}{marker}")
         else:
-            rendered.append(f"- {provider} {key_id}: {status}")
+            rendered.append(f"- {provider} {key_id}: {status}{marker}")
     return rendered
 
 
