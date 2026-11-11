@@ -1,4 +1,5 @@
-//! 桌面搜索设置只保存在 config.sqlite 的 settings JSON 中；旧 JSON/env/dev 文件不参与日常读取。
+//! 桌面搜索设置只保存在 config.sqlite 的 settings JSON 中；仅首次写入设置记录时
+//! 以可解析的用户级 JSON 配置为底，之后不再读取旧 JSON/env/dev 文件。
 //! 保存前完整校验动态路由，并在 Immediate 事务内保留所有未知字段。
 
 use crate::provider;
@@ -12,6 +13,8 @@ use std::{
 };
 
 pub const CONFIG_ENV: &str = crate::config_db::DB_ENV;
+/// CLI 的显式 JSON 配置选择器；桌面端只用于提示，绝不把它写进 SQLite。
+pub const CLI_CONFIG_ENV: &str = "MULTI_SEARCH_CONFIG";
 
 /// Canonical source name lookup; routes and disabled_sources are stored under
 /// the underscore form (`github_repos`, `github_code`, `sov2ex`). Aliases accepted on save
@@ -447,6 +450,28 @@ pub fn config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
     crate::config_db::path(&environment.variables)
 }
 
+/// 用户级 JSON 配置的位置，与 CLI 的 `USER_CONFIG_PATH` 一致；只在首次写入前导入。
+pub fn user_config_path(environment: &RuntimeEnvironment) -> Option<PathBuf> {
+    crate::config_db::home_directory(&environment.variables)
+        .map(|home| home.join(".multi-search/multi-search-config.json"))
+}
+
+/// 当前生效配置的读取来源：`cli_env` 表示 CLI 被 `MULTI_SEARCH_CONFIG` 指向单独的 JSON 文件，
+/// `sqlite` 表示共享配置数据库，`defaults` 表示尚无落盘配置。
+fn read_source(environment: &RuntimeEnvironment, present: bool) -> &'static str {
+    if environment
+        .variables
+        .get(CLI_CONFIG_ENV)
+        .is_some_and(|value| !value.is_empty())
+    {
+        "cli_env"
+    } else if present {
+        "sqlite"
+    } else {
+        "defaults"
+    }
+}
+
 fn route_id_valid(id: &str) -> bool {
     (1..=64).contains(&id.len())
         && id != "web"
@@ -724,6 +749,30 @@ fn read_object(connection: &rusqlite::Connection) -> Result<Map<String, Value>, 
     }
 }
 
+/// 用户级 JSON 配置作为首次写入的底稿。只接受可解析的 JSON 对象；文件缺失、不可读或
+/// 不是对象时静默忽略，桌面端不能因为一份 CLI 旧配置而无法保存。
+fn read_legacy_object(environment: &RuntimeEnvironment) -> Option<Map<String, Value>> {
+    let path = user_config_path(environment)?;
+    let text = std::fs::read_to_string(path).ok()?;
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(map)) => Some(map),
+        _ => None,
+    }
+}
+
+/// 写事务内读取底稿：设置记录尚不存在时先导入用户 JSON 配置，再合并本次编辑；
+/// 记录一旦存在，JSON 就永不再参与。
+fn read_write_base(
+    connection: &rusqlite::Connection,
+    environment: &RuntimeEnvironment,
+) -> Result<Map<String, Value>, String> {
+    if crate::config_db::settings_record_exists(connection)? {
+        read_object(connection)
+    } else {
+        Ok(read_legacy_object(environment).unwrap_or_default())
+    }
+}
+
 fn merge(mut map: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
     map.insert("type".into(), Value::String(valid.route.clone()));
     if let Some(timeout) = valid.timeout {
@@ -788,7 +837,7 @@ pub fn save(
     let transaction = connection
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|_| "配置数据库事务失败".to_string())?;
-    let existing = read_object(&transaction)?;
+    let existing = read_write_base(&transaction, environment)?;
     let (existing_routes, _) = config_routes(&existing)?;
     let selected_routes = valid.routes.as_ref().unwrap_or(&existing_routes);
     if !selected_routes.contains_key(&valid.route) {
@@ -821,7 +870,7 @@ pub fn save_scrape_backends(environment: &RuntimeEnvironment, backends: &[String
     let mut connection = crate::config_db::open(&path)?;
     let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|_| "配置数据库事务失败".to_string())?;
-    let mut existing = read_object(&transaction)?;
+    let mut existing = read_write_base(&transaction, environment)?;
     config_routes(&existing)?;
     existing.insert("scrape_backends".into(), serde_json::json!(chain));
     let body = serde_json::to_string(&existing).map_err(|_| "无法序列化设置".to_string())?;
@@ -854,7 +903,7 @@ pub fn save_scrape_backend_timeout(environment: &RuntimeEnvironment, seconds: u3
     let mut connection = crate::config_db::open(&path)?;
     let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|_| "配置数据库事务失败".to_string())?;
-    let mut existing = read_object(&transaction)?;
+    let mut existing = read_write_base(&transaction, environment)?;
     config_routes(&existing)?;
     existing.insert("scrape_backend_timeout".into(), Value::from(seconds));
     let body = serde_json::to_string(&existing).map_err(|_| "无法序列化设置".to_string())?;
@@ -870,7 +919,7 @@ pub fn save_debug_log(environment: &RuntimeEnvironment, enabled: bool) -> Result
     let mut connection = crate::config_db::open(&path)?;
     let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|_| "配置数据库事务失败".to_string())?;
-    let mut existing = read_object(&transaction)?;
+    let mut existing = read_write_base(&transaction, environment)?;
     config_routes(&existing)?;
     existing.insert("debug_log".into(), Value::Bool(enabled));
     let body = serde_json::to_string(&existing).map_err(|_| "无法序列化设置".to_string())?;
@@ -908,7 +957,7 @@ fn unreadable_view(path: Option<PathBuf>, environment: &RuntimeEnvironment) -> S
         }
         .into(),
         file_present: present,
-        read_source: if present { "sqlite" } else { "defaults" }.into(),
+        read_source: read_source(environment, present).into(),
         route: String::new(),
         timeout: 60,
         timeout_configured: false,
@@ -1041,7 +1090,7 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
         }
         .into(),
         file_present: present,
-        read_source: if present { "sqlite" } else { "defaults" }.into(),
+        read_source: read_source(environment, present).into(),
         timeout_min: TIMEOUT_MIN,
         timeout_max: TIMEOUT_MAX,
         timeout_out_of_range: !(TIMEOUT_MIN..=TIMEOUT_MAX).contains(&timeout),
