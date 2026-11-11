@@ -506,6 +506,9 @@ def _isolated_environment_changes(paths: IsolationPaths, *, pythonpath: str) -> 
         # path.  Tests that inject MULTI_SEARCH_CONFIG remain free to do so.
         "MULTI_SEARCH_CONFIG": "",
         "MULTI_SEARCH_CONFIG_DB": str(paths.home / ".multi-search" / "config.sqlite"),
+        # Both the CLI and the desktop honour this shared state selector; clear
+        # it so a developer shell cannot point tests at a real state database.
+        "MULTI_SEARCH_STATE_DB": "",
         ISOLATION_ENV: "1",
         REPORT_ENV: str(paths.report),
         "PYTHONPATH": pythonpath,

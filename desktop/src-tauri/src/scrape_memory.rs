@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 仅用于桌面测试隔离的 state.sqlite 覆盖入口；Python 侧不读取该变量。
+/// state.sqlite 的路径覆盖入口；Python CLI 与桌面读取同一变量、同一字面路径。
 const STATE_DB_ENV: &str = "MULTI_SEARCH_STATE_DB";
 
 #[derive(Clone, Debug, Serialize)]

@@ -6,7 +6,6 @@ from typing import Any
 
 
 CONFIG_ENV_VAR = "MULTI_SEARCH_CONFIG"
-USER_CONFIG_PATH = Path.home() / ".multi-search" / "multi-search-config.json"
 # Repo root when running from a source checkout. In an installed package this points at
 # site-packages; the dev fallback below is only enabled for an actual source checkout.
 _SOURCE_ROOT = Path(__file__).resolve().parents[3]
@@ -37,13 +36,14 @@ CONFIG_DB_ENV = "MULTI_SEARCH_CONFIG_DB"
 CONFIG_SCHEMA_VERSION = 1
 
 
-def _home_from_environment(env) -> Path | None:
+def home_from_environment(env=None) -> Path | None:
     """Resolve the same env home the desktop uses without consulting ``Path.home()``.
 
     ``Path.home()`` consults ``os.path.expanduser('~')`` directly, so a cleared
     environment makes it raise on Windows before the config code can fall back.
     Keep ``USERPROFILE`` ahead of ``HOME`` to match the desktop/Rust contract.
     """
+    env = os.environ if env is None else env
     home = env.get("USERPROFILE") or env.get("HOME")
     if home:
         return Path(home)
@@ -51,6 +51,27 @@ def _home_from_environment(env) -> Path | None:
     if drive and tail:
         return Path(drive + tail)
     return None
+
+
+def user_config_path(environ=None) -> Path:
+    """Resolve ``~/.multi-search/multi-search-config.json`` at call time.
+
+    A changed ``HOME``/``USERPROFILE`` must move this path inside the same
+    process (test isolation and the desktop's child environment both do it), so
+    it is never frozen at import. The module attribute ``USER_CONFIG_PATH``
+    still resolves through this function for callers that read the old name.
+    """
+    override = globals().get("USER_CONFIG_PATH")
+    if override is not None:
+        return Path(override)
+    env = os.environ if environ is None else environ
+    return (home_from_environment(env) or Path.home()) / ".multi-search" / "multi-search-config.json"
+
+
+def __getattr__(name: str) -> Path:
+    if name == "USER_CONFIG_PATH":
+        return user_config_path()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def config_db_path(environ=None) -> Path:
@@ -64,7 +85,7 @@ def config_db_path(environ=None) -> Path:
     selected = env.get(CONFIG_DB_ENV)
     if selected:
         return Path(selected)
-    return (_home_from_environment(env) or Path.home()) / ".multi-search" / "config.sqlite"
+    return (home_from_environment(env) or Path.home()) / ".multi-search" / "config.sqlite"
 
 
 def _sqlite_settings_state() -> tuple[Path, str]:
@@ -108,12 +129,13 @@ def resolve_config_path_source() -> tuple[Path, str]:
     database, state = _sqlite_settings_state()
     if state != "absent":
         return database, "sqlite"
-    if USER_CONFIG_PATH.exists():
-        return USER_CONFIG_PATH, "user"
+    user_config = user_config_path()
+    if user_config.exists():
+        return user_config, "user"
     dev = dev_config_path()
     if dev is not None:
         return dev, "dev_fallback" if dev.exists() else "defaults"
-    return USER_CONFIG_PATH, "defaults"
+    return user_config, "defaults"
 
 
 def resolve_config_path() -> Path:
