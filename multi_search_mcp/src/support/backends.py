@@ -15,24 +15,23 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from ..plugins.registry import builtin_scrape_backends
+
 # Selectable generic channels in the factory chain order: keyed Jina first for
 # speed (anonymous Jina is often slow), then the free channel, then the paid
 # fallbacks, with anonymous Firecrawl as the last resort.
-KNOWN_BACKENDS = ("jina_key", "jina_anon", "exa", "tavily", "firecrawl_key", "firecrawl_anon")
+_CHANNELS = builtin_scrape_backends()
+KNOWN_BACKENDS = tuple(spec.name for spec in _CHANNELS)
 DEFAULT_SCRAPE_CHAIN = KNOWN_BACKENDS
 # Channels that cannot run without a configured key. Used to distinguish
 # "no key configured" from "backend unknown" when a caller forces a list.
-KEYED_BACKENDS = ("jina_key", "exa", "tavily", "firecrawl_key")
+KEYED_BACKENDS = tuple(spec.name for spec in _CHANNELS if spec.key_required)
 # The provider (credential pool and response ``via``) behind each channel.
-BACKEND_PROVIDERS = {
-    "jina_key": "jina", "jina_anon": "jina", "exa": "exa", "tavily": "tavily",
-    "firecrawl_key": "firecrawl", "firecrawl_anon": "firecrawl",
-}
+BACKEND_PROVIDERS = {spec.name: spec.key_provider for spec in _CHANNELS}
 # Historical single names and the channel order they used to run in: Jina was
 # anonymous-first, Firecrawl keyed-first.
 LEGACY_BACKENDS = {
-    "jina": ("jina_anon", "jina_key"),
-    "firecrawl": ("firecrawl_key", "firecrawl_anon"),
+    spec.name: spec.legacy_channels for spec in builtin_scrape_backends(legacy=True)
 }
 # Every name a chain, ``--backend`` or a site preference accepts.
 ACCEPTED_BACKENDS = KNOWN_BACKENDS + tuple(LEGACY_BACKENDS)

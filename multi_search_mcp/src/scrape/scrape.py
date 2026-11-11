@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from ..plugins.base import ScrapeBackendSpec
+from ..plugins.registry import builtin_scrape_backends
 from ..state.key_state import KeyCandidate, _now, key_fingerprint, key_id_for
 from ..state.site_memory import ScrapeAttempt
 from ..support import debug_log
@@ -56,43 +58,18 @@ _HTTP_STATUS_RE = re.compile(r"\bhttp(?: status)?\s*(\d{3})\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
-# Backend metadata table — the single source of truth for the generic scrape
-# plane. Add a new generic backend by appending one row plus a dispatch entry
-# below.
+# Backend metadata comes from provider plugins. Dispatch implementations stay
+# here so historical scraper monkeypatches continue to affect every channel.
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class ScrapeBackendSpec:
-    """Static description of a generic content-fetch backend."""
-
-    name: str
-    # Provider id used to key the credential pool / key_state identity.
-    key_provider: str
-    # True means the backend cannot run without a usable key in the pool.
-    key_required: bool
-    # Optional keyed-channel preference flags interpreted by the dispatcher.
-    supports_anonymous: bool = False
-
-
-_SCRAPE_BACKENDS: tuple[ScrapeBackendSpec, ...] = (
-    ScrapeBackendSpec("jina_key", key_provider="jina", key_required=True),
-    ScrapeBackendSpec("jina_anon", key_provider="jina", key_required=False, supports_anonymous=True),
-    ScrapeBackendSpec("exa", key_provider="exa", key_required=True),
-    ScrapeBackendSpec("tavily", key_provider="tavily", key_required=True),
-    ScrapeBackendSpec("firecrawl_key", key_provider="firecrawl", key_required=True),
-    ScrapeBackendSpec("firecrawl_anon", key_provider="firecrawl", key_required=False,
-                      supports_anonymous=True),
-)
+_SCRAPE_BACKENDS: tuple[ScrapeBackendSpec, ...] = builtin_scrape_backends()
 
 # Historical single names stay valid with their original combined behavior,
 # so saved chains keep working until the user re-saves them as channels:
 # ``jina`` tries anonymous then (on block/5xx/timeout/rate limit) its keys;
 # ``firecrawl`` uses its keys, and anonymous only when none is configured.
-_LEGACY_SPECS: tuple[ScrapeBackendSpec, ...] = (
-    ScrapeBackendSpec("jina", key_provider="jina", key_required=False, supports_anonymous=True),
-    ScrapeBackendSpec("firecrawl", key_provider="firecrawl", key_required=False),
-)
+_LEGACY_SPECS: tuple[ScrapeBackendSpec, ...] = builtin_scrape_backends(legacy=True)
 assert tuple(spec.name for spec in _SCRAPE_BACKENDS) == KNOWN_BACKENDS
 _BACKEND_BY_NAME = {spec.name: spec for spec in _SCRAPE_BACKENDS + _LEGACY_SPECS}
 assert tuple(_BACKEND_BY_NAME) == ACCEPTED_BACKENDS
@@ -656,14 +633,8 @@ def _scrape_firecrawl(target: str, ctx: ScrapeContext, policy: dict) -> dict | N
 
 
 _SCRAPE_DISPATCH: dict[str, Callable[[str, ScrapeContext, dict], dict | None]] = {
-    "jina_key": _scrape_jina_key,
-    "jina_anon": _scrape_jina_anon,
-    "exa": _scrape_exa,
-    "tavily": _scrape_tavily,
-    "firecrawl_key": _scrape_firecrawl_key,
-    "firecrawl_anon": _scrape_firecrawl_anon,
-    "jina": _scrape_jina,
-    "firecrawl": _scrape_firecrawl,
+    spec.name: globals()[spec.dispatch]
+    for spec in _SCRAPE_BACKENDS + _LEGACY_SPECS
 }
 
 
