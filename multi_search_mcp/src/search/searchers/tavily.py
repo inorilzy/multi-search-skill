@@ -26,6 +26,7 @@ def search_tavily(
         "search_depth": "basic",
         "include_answer": include_answer,
         "include_raw_content": include_raw_content,
+        "include_published_date": True,
         "include_usage": True,
     }
     payload = json.dumps(
@@ -66,6 +67,9 @@ def search_tavily(
             "url": item.get("url", ""),
             "description": (item.get("content") or "")[:300],
         }
+        published_at = item.get("published_date")
+        if isinstance(published_at, str) and published_at:
+            result["published_at"] = published_at
         raw = item.get("raw_content") or ""
         if raw:
             result["scraped_content"] = raw
