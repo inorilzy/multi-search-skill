@@ -52,7 +52,7 @@ class FullContentFlowTests(unittest.TestCase):
         self.assert_full_body(fetched)
         self.assertFalse(fetched["cache_hit"])
         self.assertTrue(fetched["persisted"])
-        self.assertEqual(self.scraper.call_args.kwargs["scrape_chars"], DEFAULT_MAX_OBJECT_BYTES)
+        self.assertEqual(self.scraper.call_args.kwargs["scrape_chars"], max_acquisition_chars())
         cached = self.fetch(source_id=fetched["source_id"], full_content=True)
         self.assert_full_body(cached)
         self.assertTrue(cached["cache_hit"])
@@ -108,8 +108,8 @@ class FullContentFlowTests(unittest.TestCase):
         self.assertIn("exceeds max object bytes", fetched["persist_error"]["message"])
         self.assertEqual(self.store.rows("SELECT * FROM content_objects"), [])
 
-# 100,000 CJK characters: ~100K characters (well under the character
-# acquisition bound) but 300,000 UTF-8 bytes (over the 256 KiB cache bound).
+# 100,000 CJK characters: 300,000 UTF-8 bytes, which the old 256 KiB limit
+# rejected but the current 1 MiB per-object budget stores.
 LARGE_CJK_BODY = "# 大型中文页面\n" + "中文正文内容" * 16_666 + "\n文章结束"
 
 class LargeCjkFetchTests(unittest.TestCase):
@@ -130,47 +130,48 @@ class LargeCjkFetchTests(unittest.TestCase):
             scraper=self.scraper, keys={}, config={},
         )
 
-    def test_fixture_exceeds_the_byte_limit_but_not_the_character_limit(self):
-        self.assertGreater(len(LARGE_CJK_BODY.encode("utf-8")), 256 * 1024)
+    def test_fixture_exceeds_the_old_limit_but_fits_the_current_byte_budget(self):
+        encoded = len(LARGE_CJK_BODY.encode("utf-8"))
+        self.assertGreater(encoded, 256 * 1024)
+        self.assertLessEqual(encoded, DEFAULT_MAX_OBJECT_BYTES)
         self.assertLess(len(LARGE_CJK_BODY), max_acquisition_chars())
 
-    def test_character_acquisition_limit_is_aligned_with_the_byte_limit(self):
-        # No body longer than the byte bound in characters can ever be stored,
-        # so the acquisition bound must not exceed it, and must not drop below
-        # the largest storable (pure ASCII) body either.
-        self.assertEqual(max_acquisition_chars(), DEFAULT_MAX_OBJECT_BYTES)
-        self.assertEqual(max_acquisition_chars(1000), 1000)
+    def test_character_acquisition_limit_is_a_quarter_of_the_byte_limit(self):
+        # UTF-8 uses at most four bytes per character, so a body within this
+        # character bound always fits the per-object byte budget.
+        self.assertEqual(max_acquisition_chars(), DEFAULT_MAX_OBJECT_BYTES // 4)
+        self.assertEqual(max_acquisition_chars(1000), 250)
         self.fetch(url=URL, full_content=True)
         self.assertEqual(self.scraper.call_args.kwargs["scrape_chars"], max_acquisition_chars())
 
-    def test_large_cjk_full_content_fetch_returns_the_body_unpersisted(self):
+    def test_large_cjk_full_content_fetch_persists_and_reuses_the_body(self):
         fetched = self.fetch(url=URL, full_content=True)
         self.assertEqual(fetched["body"], LARGE_CJK_BODY)
         self.assertEqual(fetched["content_length"], len(LARGE_CJK_BODY))
         self.assertTrue(fetched["body"].endswith("文章结束"))
         self.assertFalse(fetched["truncated"])
-        self.assertFalse(fetched["persisted"])
+        self.assertTrue(fetched["persisted"])
         self.assertFalse(fetched["cache_hit"])
-        self.assertIsNone(fetched["content_hash"])
-        self.assertIsNone(fetched["expires_at"])
-        error = fetched["persist_error"]
-        self.assertEqual(error["reason"], "content_too_large")
-        self.assertEqual(error["content_bytes"], len(LARGE_CJK_BODY.encode("utf-8")))
-        self.assertEqual(error["limit_bytes"], DEFAULT_MAX_OBJECT_BYTES)
-        self.assertIn("not cached", error["message"])
-        self.assertEqual(self.store.rows("SELECT * FROM content_objects"), [])
-        self.assertEqual(self.store.rows("SELECT * FROM content_sources"), [])
-        with self.assertRaisesRegex(ValueError, "missing or expired"):
-            service.run_read_source(
-                service.ReadSourceRequest(source_id=fetched["source_id"]), state_store=self.store,
-            )
+        self.assertIsNotNone(fetched["content_hash"])
+        self.assertIsNotNone(fetched["expires_at"])
+        self.assertNotIn("persist_error", fetched)
+        cached = self.fetch(source_id=fetched["source_id"], full_content=True)
+        self.assertTrue(cached["cache_hit"])
+        self.assertEqual(cached["body"], LARGE_CJK_BODY)
+        self.assertEqual(self.scraper.call_count, 1)
 
-    def test_large_cjk_preview_fetch_returns_the_preview_unpersisted(self):
+    def test_large_cjk_preview_fetch_persists_the_full_body(self):
         fetched = self.fetch(url=URL, max_chars=1200)
         self.assertEqual(fetched["body"], LARGE_CJK_BODY[:1200])
         self.assertTrue(fetched["truncated"])
-        self.assertFalse(fetched["persisted"])
-        self.assertEqual(fetched["persist_error"]["reason"], "content_too_large")
+        self.assertTrue(fetched["persisted"])
+        self.assertNotIn("persist_error", fetched)
+        continuation = service.run_read_source(
+            service.ReadSourceRequest(fetched["source_id"], offset=2000, limit=100),
+            state_store=self.store,
+        )
+        self.assertEqual(continuation["content"], LARGE_CJK_BODY[2000:2100])
+        self.assertEqual(continuation["content_length"], len(LARGE_CJK_BODY))
 
     def test_small_cjk_page_is_still_persisted_without_persist_error(self):
         small = "中文" * 1000
@@ -181,7 +182,7 @@ class LargeCjkFetchTests(unittest.TestCase):
         self.assertNotIn("persist_error", fetched)
         self.assertTrue(self.fetch(source_id=fetched["source_id"], full_content=True)["cache_hit"])
 
-    def test_search_keeps_large_cjk_preview_and_reports_it_was_not_cached(self):
+    def test_search_keeps_large_cjk_preview_and_reports_it_persisted(self):
         rows = [{
             "source": "brave", "title": "大型中文页面", "url": URL,
             "description": "中文摘要", "content_kind": "excerpt",
@@ -197,13 +198,11 @@ class LargeCjkFetchTests(unittest.TestCase):
         self.assertNotIn("error", page)
         self.assertTrue(page["markdown"])
         self.assertEqual(page["length"], len(LARGE_CJK_BODY))
-        self.assertFalse(page["persisted"])
+        self.assertTrue(page["persisted"])
         hit = response["results"][0]
         self.assertTrue(hit["body_available"])
-        self.assertFalse(hit["body_persisted"])
-        failure, = response["diagnostics"]["body_persist_failures"]
-        self.assertEqual(failure["source_id"], hit["source_id"])
-        self.assertEqual(failure["reason"], "content_too_large")
+        self.assertTrue(hit["body_persisted"])
+        self.assertEqual(response["diagnostics"]["body_persist_failures"], [])
         self.assertEqual(response["diagnostics"]["body_success_count"], 1)
 
 if __name__ == "__main__":

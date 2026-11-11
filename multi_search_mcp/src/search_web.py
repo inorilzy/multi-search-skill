@@ -135,11 +135,13 @@ def run_search_web(
         page.update(
             markdown=body[start:end], preview_start=start, preview_end=end,
             truncated=page["truncated"] or start > 0 or end < len(body),
+            persisted=bool(body_result.get("persisted")),
         )
         hit.update(
             body_available=True,
             body_truncated=page["truncated"],
             body_backend=page["via"],
+            body_persisted=bool(body_result.get("persisted")),
         )
         if body_result.get("persist_error"):
             # The preview is valid, but the full body was too large to cache.
