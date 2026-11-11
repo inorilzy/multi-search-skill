@@ -5,7 +5,12 @@ import re
 from collections.abc import Iterable
 
 
-_QUERY_SECRET_RE = re.compile(r"((?:api[_-]?key|apikey|key|token|auth_token|ct0)=)[^&\s]+", re.I)
+_QUERY_SECRET_RE = re.compile(
+    r"((?:api[_-]?key|apikey|key|token|auth_token|ct0|"
+    r"client[_-]?secret|secret|password|passwd|"
+    r"signature|sig|cookie|session(?:[_-]?id)?|credential)=)[^&\s]+",
+    re.I,
+)
 _HEADER_SECRET_RE = re.compile(
     r"((?:authorization|x-api-key|x-subscription-token)\s*[:=]\s*)(?:Bearer\s+)?[^\s,;]+",
     re.I,
