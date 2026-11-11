@@ -202,7 +202,10 @@ export function managementApi(invoke) {
     credentialAppend: (source, keys) => call('credential_append', { source, keys }, 'CredentialOverview'),
     credentialRemove: (source, index, expected) => call('credential_remove', { source, index, expected }, 'CredentialOverview'),
     credentialDelete: source => call('credential_delete', { source }, 'CredentialOverview'),
-    credentialTest: source => call('credential_test', { source }, 'TestOutcome'),
+    credentialTest: (source, selection = undefined) => {
+      const selected = Number.isInteger(selection?.index) && selection.index >= 0 && typeof selection.expected === 'string';
+      return call('credential_test', { source, index: selected ? selection.index : null, expected: selected ? selection.expected : null }, 'TestOutcome');
+    },
     cookieStatus: () => call('cookie_status', undefined, 'CookieStatus'),
     cookieImport: async (path, confirmed) => {
       if (confirmed !== true || typeof path !== 'string' || !path.trim()) {

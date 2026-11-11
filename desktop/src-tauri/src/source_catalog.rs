@@ -49,6 +49,7 @@ pub struct Source {
     pub aliases: Vec<String>,
     pub key_provider: String,
     pub keyed: bool,
+    pub key_optional: bool,
     pub cookie: bool,
     pub env: Vec<String>,
     pub routes: Vec<String>,

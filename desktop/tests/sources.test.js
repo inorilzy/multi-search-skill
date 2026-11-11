@@ -31,7 +31,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
   const mounted = await mountSources(root, api);
 
   const rows = [...root.querySelectorAll('[data-source-row]')].map(node => node.getAttribute('data-source-row'));
-  assert.deepEqual(rows, ALL, 'all thirteen sources appear as list rows in a stable order');
+  assert.deepEqual(rows, [...ALL, 'jina'], 'search sources and scrape-only credentials appear once in a stable order');
   assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0, 'no detail is expanded on entry');
   assert.equal(root.querySelectorAll('[data-source-detail] [data-field="key"]').length, 0);
   await pick(root, 'baidu');
@@ -43,7 +43,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
     assert.ok(detailOf(root).querySelector('[data-action="add"]'), `${name} detail exposes its add-key control`);
   }
   assert.deepEqual(seen.slice(0, KEYED.length), KEYED, 'each keyed source is queried for the initial overview');
-  assert.deepEqual(seen.slice(KEYED.length), KEYED, 'each keyed source refreshes when its detail opens');
+  assert.deepEqual(seen.slice(KEYED.length + 2), KEYED, 'each keyed source refreshes when its detail opens');
 
   await pick(root, 'stackoverflow');
   assert.match(detailOf(root).textContent, /无需 API Key 也能使用/, 'an optional key says the source works without one');
@@ -55,7 +55,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
     assert.equal(detail.querySelector('[data-field="key"]'), null, `${name} needs no key field`);
     assert.match(detail.textContent, name === 'twitter' ? /Cookie.*路径/ : /无需 API Key/);
   }
-  assert.ok(!root.textContent.includes('Jina'), 'Jina is out of scope for the sources page');
+  assert.ok(root.textContent.includes('Jina Reader'), 'scrape-only credentials share the sources page');
   mounted.dispose();
   window.close();
 });
@@ -169,11 +169,11 @@ test('overview, search, filters and keyboard shortcut use real source state', as
   });
   assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '11');
   assert.equal(root.querySelector('[data-stat="configured"]').textContent, '1');
-  assert.equal(root.querySelector('[data-stat="absent"]').textContent, '10');
+  assert.equal(root.querySelector('[data-stat="absent"]').textContent, '11');
   assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0, 'entering the page expands nothing');
   root.querySelector('[data-filter="unconfigured"]').click();
   const visible = () => [...root.querySelectorAll('[data-source-row]')].filter(row => !row.hidden);
-  assert.equal(visible().length, 10);
+  assert.equal(visible().length, 11);
   assert.ok(!visible().some(row => row.dataset.sourceRow === 'hackernews'));
   const search = root.querySelector('[data-search]');
   search.value = 'Cookie';
