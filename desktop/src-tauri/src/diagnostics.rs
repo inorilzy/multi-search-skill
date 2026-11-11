@@ -88,6 +88,7 @@ impl<'a> CliDiscovery<'a> {
     pub(crate) fn detect(&self) -> CliStatus {
         let secrets = crate::redaction::secrets(self.environment);
         let app = self.probe(find_cli(&self.environment.app_path), &secrets);
+        let store_readable = self.user_path_store_readable();
         let paths = self.current_user_paths();
         let mut user_environment = self.environment.clone();
         if let Ok(path) = std::env::join_paths(&paths) {
@@ -100,7 +101,7 @@ impl<'a> CliDiscovery<'a> {
         // not an executed login shell (which could run arbitrary config).
         // A shell we cannot inspect may still resolve differently — say so
         // instead of implying we verified the user's interactive PATH.
-        if self.user_path_store.is_some() && user.status == "ready" {
+        if store_readable && user.status == "ready" {
             user.reason = "反映已注册的用户 PATH 配置块；未执行登录 Shell 验证。\
                 若交互终端结果不同，请检查是否存在其他 PATH 配置。"
                 .into();
@@ -178,12 +179,20 @@ impl<'a> CliDiscovery<'a> {
             .ok_or_else(|| "CLI 路径不可用".into())
     }
 
+    /// Whether the connected user-PATH store can be read. Linux attaches an unsupported store
+    /// because it has no registration backend; discovery then falls back to the process PATH.
+    pub(crate) fn user_path_store_readable(&self) -> bool {
+        self.user_path_store
+            .as_ref()
+            .is_some_and(|store| store.read().is_ok())
+    }
+
     pub(crate) fn current_user_paths(&self) -> Vec<PathBuf> {
         let Some(store) = self.user_path_store else {
             return self.environment.user_path.clone();
         };
         let Ok(value) = store.read() else {
-            return Vec::new();
+            return self.environment.user_path.clone();
         };
         let mut paths = self.environment.user_path.clone();
         // The production base is the machine PATH, not a stale snapshot of the user's PATH.
