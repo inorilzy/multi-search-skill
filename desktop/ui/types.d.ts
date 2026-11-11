@@ -166,6 +166,12 @@ url: string,
  */
 reused: boolean, };
 
+export type OAuthLoginStatus = { id: number, provider: string, 
+/**
+ * `starting`, `waiting`, `complete`, `error` or `cancelled`; UI must fall back to the raw string.
+ */
+phase: string, url?: string, user_code?: string, message?: string, };
+
 export type PathPlan = { 
 /**
  * owned | existing | absent | added | removed | unchanged | blocked | failed, or a new value added later; UI must fall back to a raw string.

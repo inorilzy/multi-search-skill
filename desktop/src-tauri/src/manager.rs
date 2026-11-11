@@ -8,6 +8,7 @@ use crate::credential_commands::{CredentialManager, SourceEntry, TestOutcome};
 use crate::diagnostics::{CliDiscovery, CliStatus};
 use crate::execution::{Execution, ExecutionManager, ExecutionStatus, SearchOptions};
 use crate::install::{AppInfo, InstallManager, InstallOutcome, InstallPlan};
+use crate::oauth_login::{OAuthLoginStatus, OAuthLogins};
 use crate::skill::{SkillInstall, SkillManager, SkillPlan};
 use crate::skill_manage::{
     RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome,
@@ -36,6 +37,7 @@ pub struct DesktopManager {
     /// The verified managed CLI path. Verifying re-hashes every installed file (~90 MB),
     /// and every CLI-running command asks for it; install/update/uninstall clear it.
     managed_cli_cache: ShortCache<Option<PathBuf>>,
+    oauth_logins: OAuthLogins,
 }
 
 type KeySources = std::collections::BTreeMap<String, crate::credential_commands::CoreKeySource>;
@@ -89,6 +91,7 @@ impl DesktopManager {
             log_viewer: Default::default(),
             key_sources_cache: ShortCache::new(KEY_SOURCES_TTL),
             managed_cli_cache: ShortCache::new(MANAGED_CLI_TTL),
+            oauth_logins: OAuthLogins::default(),
         }
     }
 
@@ -200,8 +203,24 @@ impl DesktopManager {
         self.execution_view().execution(id)
     }
 
+    // ---- oauth login --------------------------------------------------
+
+    pub fn oauth_login_start(&self, provider: &str) -> Result<u64, String> {
+        let cli = self.execution_cli()?;
+        self.oauth_logins.start(&self.environment, &cli, provider)
+    }
+
+    pub fn oauth_login_poll(&self, id: u64) -> Result<OAuthLoginStatus, String> {
+        self.oauth_logins.poll(id)
+    }
+
+    pub fn oauth_login_cancel(&self, id: u64) -> Result<OAuthLoginStatus, String> {
+        self.oauth_logins.cancel(id)
+    }
+
     pub fn shutdown(&self) {
         self.execution_view().shutdown();
+        self.oauth_logins.shutdown();
         self.log_viewer.stop();
     }
 

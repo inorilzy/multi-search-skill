@@ -223,6 +223,29 @@ pub(crate) struct OwnedProcess {
     truncated: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// Copy whole lines out of a growing stdout buffer. `flush` takes the trailing partial line too;
+/// it is only true after the child has exited and the readers were joined.
+fn buffered_lines(bytes: &[u8], cursor: &mut usize, flush: bool) -> Vec<String> {
+    if *cursor >= bytes.len() {
+        return Vec::new();
+    }
+    let tail = &bytes[*cursor..];
+    let end = if flush {
+        tail.len()
+    } else {
+        match tail.iter().rposition(|byte| *byte == b'\n') {
+            Some(end) => end + 1,
+            None => return Vec::new(),
+        }
+    };
+    let chunk = &tail[..end];
+    *cursor += end;
+    String::from_utf8_lossy(chunk)
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
 fn reader(
     mut pipe: impl Read + Send + 'static,
     buffer: Arc<Mutex<Vec<u8>>>,
@@ -318,6 +341,12 @@ impl OwnedProcess {
     pub(crate) fn stderr_text(&self) -> String {
         String::from_utf8_lossy(&self.stderr.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
             .into_owned()
+    }
+    /// Complete stdout lines written since `cursor`, advancing it past them. A trailing partial
+    /// line stays buffered for the next call, so a JSONL reader never sees half an event.
+    pub(crate) fn take_stdout_lines(&self, cursor: &mut usize) -> Vec<String> {
+        let bytes = self.stdout.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        buffered_lines(&bytes, cursor, false)
     }
     pub(crate) fn poll(&mut self) -> io::Result<Option<i32>> {
         Ok(self.child.try_wait()?.map(|s| s.code().unwrap_or(1)))
@@ -425,6 +454,28 @@ mod tests {
             vars.get("MULTI_SEARCH_STATE_DB").map(String::as_str),
             Some("C:/synthetic/state.sqlite"),
             "the CLI must resolve the same state database as the desktop view"
+        );
+    }
+
+    #[test]
+    fn stdout_lines_advance_only_past_complete_lines() {
+        use super::buffered_lines;
+        let mut cursor = 0;
+        let bytes = b"first\nsecond\nthird";
+        assert_eq!(
+            buffered_lines(bytes, &mut cursor, false),
+            vec!["first", "second"]
+        );
+        assert_eq!(cursor, 13, "only complete lines are consumed");
+        assert_eq!(
+            buffered_lines(bytes, &mut cursor, false),
+            Vec::<String>::new(),
+            "a partial trailing line stays buffered"
+        );
+        assert_eq!(
+            buffered_lines(bytes, &mut cursor, true),
+            vec!["third"],
+            "the final read flushes the last line after the child exits"
         );
     }
 

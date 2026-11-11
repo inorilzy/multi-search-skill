@@ -21,6 +21,9 @@ const ERROR_MESSAGES = {
   search_start_failed: '启动搜索的工作器失败，请重试。',
   execution_poll_failed: '执行状态读取失败，请稍后重试或取消本次执行。',
   execution_cancel_failed: '执行取消工作器失败，请重试。',
+  oauth_login_start_failed: '启动浏览器登录失败，请检查 CLI 后重试。',
+  oauth_login_poll_failed: '登录状态读取失败，请重试。',
+  oauth_login_cancel_failed: '取消登录失败，请重试。',
   skill_plan_failed: 'Skill 预览失败，请重试。',
   skill_install_failed: 'Skill 安装工作器失败，请重新预览。',
   install_plan_failed: '安装计划检查失败，请重新检查。',
@@ -183,6 +186,18 @@ export function managementApi(invoke) {
     },
     poll: id => call('poll_execution', { id }, 'ExecutionStatus'),
     cancel: id => call('cancel_test_search', { id }, 'ExecutionStatus'),
+    oauthLoginStart: async provider => {
+      if (typeof provider !== 'string' || !provider.trim()) {
+        throw new ApiError(new TypeError('oauth login requires a provider id'), 'INVALID_ARGUMENT');
+      }
+      const id = await call('oauth_login_start', { provider: provider.trim() });
+      if (typeof id !== 'number' || !Number.isFinite(id)) {
+        throw new ApiError(new TypeError('IPC payload for oauth_login_start expected a numeric login id'), 'INVALID_PAYLOAD');
+      }
+      return id;
+    },
+    oauthLoginPoll: id => call('oauth_login_poll', { id }, 'OAuthLoginStatus'),
+    oauthLoginCancel: id => call('oauth_login_cancel', { id }, 'OAuthLoginStatus'),
     skillPlan: (host, scope, project) => call('skill_plan', { host, scope, project }, 'SkillPlan'),
     skillInstall: (host, scope, project) => call('skill_install', { host, scope, project }, 'SkillInstall'),
     skillStatus: (host, scope, project) => call('skill_status', { host, scope, project }, 'SkillStatus'),

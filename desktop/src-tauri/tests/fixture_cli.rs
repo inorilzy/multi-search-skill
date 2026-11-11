@@ -103,6 +103,60 @@ fn main() {
         );
         std::fs::write(path, body).unwrap();
     }
+    if args.first().map(String::as_str) == Some("login") {
+        if let Ok(path) = env::var("FIXTURE_OAUTH_PID") {
+            std::fs::write(path, std::process::id().to_string()).unwrap();
+        }
+        let mode = env::var("FIXTURE_OAUTH").unwrap_or_else(|_| "firecrawl".into());
+        let open = |url: &str, user_code: Option<&str>| match user_code {
+            Some(code) => println!(
+                "{{\"event\":\"open_url\",\"url\":\"{}\",\"user_code\":\"{}\"}}",
+                url, code
+            ),
+            None => println!("{{\"event\":\"open_url\",\"url\":\"{}\"}}", url),
+        };
+        match mode.as_str() {
+            "non-https" => {
+                open("http://www.firecrawl.dev/cli-auth", None);
+                thread::sleep(Duration::from_secs(60));
+            }
+            "non-whitelisted" => {
+                open("https://evil.example/cli-auth", None);
+                thread::sleep(Duration::from_secs(60));
+            }
+            "invalid-json" => {
+                println!("not-json");
+                thread::sleep(Duration::from_secs(60));
+            }
+            "error" => {
+                open("https://www.firecrawl.dev/cli-auth?code_challenge=synthetic", None);
+                println!("{{\"event\":\"waiting\"}}");
+                println!("{{\"event\":\"error\",\"error_kind\":\"provider\",\"message\":\"授权被拒绝。\"}}");
+                std::process::exit(1);
+            }
+            "hang" => {
+                open("https://www.firecrawl.dev/cli-auth?code_challenge=synthetic", None);
+                println!("{{\"event\":\"waiting\"}}");
+                thread::sleep(Duration::from_secs(60));
+            }
+            "parallel" => {
+                open(
+                    "https://platform.parallel.ai/device?user_code=ABCD-EFGH",
+                    Some("ABCD-EFGH"),
+                );
+                thread::sleep(Duration::from_millis(150));
+                println!("{{\"event\":\"waiting\"}}");
+                thread::sleep(Duration::from_millis(150));
+                println!("{{\"event\":\"complete\",\"credential\":\"parallel_account\"}}");
+            }
+            _ => {
+                open("https://www.firecrawl.dev/cli-auth?code_challenge=synthetic", None);
+                println!("{{\"event\":\"waiting\"}}");
+                println!("{{\"event\":\"complete\",\"credential\":\"firecrawl\"}}");
+            }
+        }
+        return;
+    }
     if args.first().map(String::as_str) == Some("balance") {
         match env::var("FIXTURE_BALANCE").as_deref() {
             Ok("hang") => thread::sleep(Duration::from_secs(60)),

@@ -1,7 +1,7 @@
 use crate::errors::{backend, finish};
 use crate::{
-    CliStatus, DesktopManager, ExecutionStatus, RuntimeEnvironment, SearchOptions, SkillInstall,
-    SkillPlan,
+    CliStatus, DesktopManager, ExecutionStatus, OAuthLoginStatus, RuntimeEnvironment,
+    SearchOptions, SkillInstall, SkillPlan,
 };
 use std::{path::PathBuf, sync::Arc};
 use tauri::Manager;
@@ -116,6 +116,33 @@ async fn cancel_test_search(
 ) -> Result<ExecutionStatus, String> {
     let manager = manager.inner().clone();
     offload(move || manager.cancel_search(id), "execution_cancel_failed").await
+}
+
+/// Browser/device-code login. The provider id is validated against the plugin catalog before the
+/// managed CLI starts; the frontend never supplies a command or an executable path.
+#[tauri::command]
+async fn oauth_login_start(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    provider: String,
+) -> Result<u64, String> {
+    let manager = manager.inner().clone();
+    offload(move || manager.oauth_login_start(&provider), "oauth_login_start_failed").await
+}
+#[tauri::command]
+async fn oauth_login_poll(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    id: u64,
+) -> Result<OAuthLoginStatus, String> {
+    let manager = manager.inner().clone();
+    offload(move || manager.oauth_login_poll(id), "oauth_login_poll_failed").await
+}
+#[tauri::command]
+async fn oauth_login_cancel(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    id: u64,
+) -> Result<OAuthLoginStatus, String> {
+    let manager = manager.inner().clone();
+    offload(move || manager.oauth_login_cancel(id), "oauth_login_cancel_failed").await
 }
 
 #[tauri::command]
@@ -656,6 +683,9 @@ pub fn run() {
             start_test_search,
             poll_execution,
             cancel_test_search,
+            oauth_login_start,
+            oauth_login_poll,
+            oauth_login_cancel,
             skill_plan,
             skill_install,
             install_plan,
