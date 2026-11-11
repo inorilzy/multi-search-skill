@@ -71,7 +71,7 @@ button, input { font: inherit; }
 
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; background: var(--muted); }
 .st-success, .st-ok { background: var(--ok); }
-.st-partial, .st-empty { background: var(--warn); }
+.st-partial, .st-empty, .st-interrupted { background: var(--warn); }
 .st-failed, .st-error, .st-blocked, .st-timeout { background: var(--bad); }
 .st-skipped, .st-untried { background: #b6bec9; }
 
@@ -177,7 +177,7 @@ function link(url, text) {
 const ms = (value) => value === null || value === undefined ? "—" :
   value >= 1000 ? (value / 1000).toFixed(value >= 10000 ? 1 : 2) + " s" : value + " ms";
 const dot = (status) => h("span", { class: "dot st-" + (status || "none"), "aria-hidden": "true" });
-const OUTCOME = { success: "成功", partial: "部分成功", failed: "失败", empty: "无结果" };
+const OUTCOME = { success: "成功", partial: "部分成功", failed: "失败", empty: "无结果", interrupted: "中断（没有结束记录）" };
 const STATUS = { ok: "成功", error: "失败", partial: "部分失败", empty: "无结果", skipped: "跳过", blocked: "被拦截", untried: "未尝试", timeout: "超时", running: "未结束" };
 const when = (ts) => ts ? new Date(ts).toLocaleString() : "";
 

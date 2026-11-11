@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,11 @@ from .support import debug_log
 DEFAULT_PORT = 8765
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _RUN_ID_RE = re.compile(r"^run_[0-9a-f]{12}$")
+# A run without a cli_exit record is only "still running" while its newest
+# event is recent. The longest silent stretch of a live search is one backend
+# call's timeout (90s at most), so five minutes comfortably rules out a live
+# process while not showing an already-cancelled search as running forever.
+RUN_ACTIVE_SECONDS = 300
 # Backend errors that mean "gave up waiting" (the per-backend cap or the page
 # budget), shown as a timeout so the chain's move to the next backend reads clearly.
 _TIMEOUT_ERROR_RE = re.compile(r"timed out|timeout|deadline exceeded", re.I)
@@ -40,24 +46,56 @@ def _files(sources: Iterable[Path]) -> list[Path]:
     return files
 
 
+def _read_events(path: Path) -> list[dict]:
+    """Read one JSONL file; unreadable files and malformed lines are skipped."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    events = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def _sort_events(events: list[dict]) -> None:
+    events.sort(key=lambda event: (event.get("t_ms") or 0, event.get("ts") or ""))
+
+
 def load_runs(sources: Iterable[Path]) -> dict[str, list[dict]]:
     """Group every readable event by ``run_id``; malformed lines are skipped."""
     runs: dict[str, list[dict]] = {}
     for path in _files(sources):
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        for line in lines:
-            try:
-                event = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(event, dict) and isinstance(event.get("run_id"), str):
+        for event in _read_events(path):
+            if isinstance(event.get("run_id"), str):
                 runs.setdefault(event["run_id"], []).append(event)
     for events in runs.values():
-        events.sort(key=lambda event: (event.get("t_ms") or 0, event.get("ts") or ""))
+        _sort_events(events)
     return runs
+
+
+def load_run(sources: Iterable[Path], run_id: str) -> list[dict] | None:
+    """Read only the file carrying ``run_id`` in its name when there is one.
+
+    Files from the default runs directory encode the run id in the file name
+    (``<stamp>-<run_id>.jsonl``), so a detail view never has to parse the other
+    runs. A ``--debug-log`` file may append several runs and need not carry the
+    id, so the remaining files are scanned only when no named candidate has it.
+    """
+    files = _files(sources)
+    ordered = [path for path in files if run_id in path.name]
+    ordered += [path for path in files if run_id not in path.name]
+    for path in ordered:
+        events = [event for event in _read_events(path) if event.get("run_id") == run_id]
+        if events:
+            _sort_events(events)
+            return events
+    return None
 
 
 def _first(events: list[dict], kind: str) -> dict:
@@ -68,24 +106,53 @@ def _all(events: list[dict], kind: str) -> list[dict]:
     return [event for event in events if event.get("event") == kind]
 
 
+def _parse_ts(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _still_running(events: list[dict]) -> bool:
+    stamps = []
+    for event in events:
+        stamp = _parse_ts(event.get("ts"))
+        if stamp is not None:
+            stamps.append(stamp)
+    if not stamps:
+        return False
+    return (datetime.now(timezone.utc) - max(stamps)).total_seconds() < RUN_ACTIVE_SECONDS
+
+
 def summarize_run(run_id: str, events: list[dict]) -> dict:
     request = _first(events, "cli_request")
     parameters = request.get("parameters") or {}
     response = _first(events, "search_response")
     exit_event = _first(events, "cli_exit")
     route = _first(events, "route")
+    outcome = (
+        response.get("outcome")
+        or exit_event.get("outcome")
+        or ("failed" if exit_event.get("exit_code") else None)
+    )
+    interrupted = not exit_event and not _still_running(events)
+    if interrupted:
+        outcome = "interrupted"
     return {
         "run_id": run_id,
         "ts": min((str(event.get("ts") or "") for event in events), default=""),
         "command": request.get("command") or parameters.get("command"),
         "query": parameters.get("query") or parameters.get("url") or parameters.get("source_id"),
         "route": route.get("resolved_route"),
-        "outcome": response.get("outcome") or exit_event.get("outcome")
-        or ("failed" if exit_event.get("exit_code") else None),
+        "outcome": outcome,
         "elapsed_ms": exit_event.get("elapsed_ms") or response.get("elapsed_ms"),
         "result_count": response.get("result_count"),
         "error": exit_event.get("error"),
         "complete": bool(exit_event),
+        "interrupted": interrupted,
     }
 
 
@@ -274,7 +341,7 @@ class _Handler(BaseHTTPRequestHandler):
                         "runs": list_runs(load_runs(self.sources))})
         elif path.startswith("/api/runs/") and _RUN_ID_RE.match(path.rsplit("/", 1)[1]):
             run_id = path.rsplit("/", 1)[1]
-            events = load_runs(self.sources).get(run_id)
+            events = load_run(self.sources, run_id)
             if events is None:
                 self._json({"error": "run not found"}, 404)
             else:
