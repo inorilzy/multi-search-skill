@@ -40,6 +40,7 @@ export const schemas = {
   AppInfo: schema({ app_version: 's', bundled_cli_version: 'sn' }),
   SearchOptions: schema({ query: 's', route: 's', sources: 'sa', timeout: 'n' }),
   ExecutionStatus: schema({ id: 'n', status: 's', exit_code: 'nn', payload: 'xn', error: 's' }),
+  OAuthLoginStatus: schema({ id: 'n', provider: 's', phase: 's', url: 'so', user_code: 'so', message: 'so' }),
   InstallPlan: schema({
     status: 's', root: 's', bin: 's', version: 'sn', current_version: 'sn', source: 'sn',
     compatibility: 's', compatibility_reason: 's', reason: 's', path_hint: 's',

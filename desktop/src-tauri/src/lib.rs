@@ -16,6 +16,7 @@ pub mod log_viewer;
 pub mod macos_path;
 mod manager;
 mod manifest;
+pub mod oauth_login;
 mod process;
 pub mod provider;
 mod redaction;
@@ -34,6 +35,7 @@ pub use diagnostics::{CliStatus, Discovery, RuntimeEnvironment, CLI_FILE_NAME};
 
 pub use execution::{ExecutionStatus, SearchOptions};
 pub use manager::DesktopManager;
+pub use oauth_login::OAuthLoginStatus;
 pub use skill::{SkillInstall, SkillPlan};
 pub use skill_common::skill_version;
 pub use skill_manage::{
@@ -55,6 +57,7 @@ pub mod contract {
     pub use crate::execution::{ExecutionStatus, SearchOptions};
     pub use crate::install::{AppInfo, InstallOutcome, InstallPlan, InstallStep};
     pub use crate::log_viewer::LogViewerInfo;
+    pub use crate::oauth_login::OAuthLoginStatus;
     pub use crate::provider::ProviderInfo;
     pub use crate::scrape_memory::{ScrapeMemoryRow, ScrapeMemoryView};
     pub use crate::settings::{
@@ -214,6 +217,57 @@ pub mod balance_fixture {
         timeout: Duration,
     ) -> Result<BalanceView, String> {
         crate::balance::view_with_timeout(environment, cli, provider, refresh, timeout)
+    }
+}
+
+/// Test seam for OAuth login sessions. Not a supported public API. The opener is injected so
+/// tests can prove which URL the production boundary would hand to the system browser without
+/// launching one.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub mod oauth_login_fixture {
+    use crate::oauth_login::{OAuthLoginStatus, OAuthLogins};
+    use crate::RuntimeEnvironment;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+
+    pub fn manager(opened: Arc<Mutex<Vec<String>>>) -> OAuthLogins {
+        OAuthLogins::with_opener(Arc::new(move |url: &str| {
+            opened
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(url.to_string());
+            Ok(())
+        }))
+    }
+
+    pub fn start(
+        logins: &OAuthLogins,
+        environment: &RuntimeEnvironment,
+        cli: &Path,
+        provider: &str,
+    ) -> Result<u64, String> {
+        logins.start(environment, cli, provider)
+    }
+
+    pub fn poll(logins: &OAuthLogins, id: u64) -> Result<OAuthLoginStatus, String> {
+        logins.poll(id)
+    }
+
+    pub fn cancel(logins: &OAuthLogins, id: u64) -> Result<OAuthLoginStatus, String> {
+        logins.cancel(id)
+    }
+
+    pub fn shutdown(logins: &OAuthLogins) {
+        logins.shutdown();
+    }
+
+    pub fn validate_url(url: &str) -> Result<(), String> {
+        crate::oauth_login::validate_open_url(url)
+    }
+
+    pub fn args(provider: &str) -> Vec<String> {
+        crate::oauth_login::login_args(provider)
     }
 }
 

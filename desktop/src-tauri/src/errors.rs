@@ -38,6 +38,9 @@ pub fn backend(code: &str) -> CommandError {
         "search_start_failed" => "搜索启动工作器失败",
         "execution_poll_failed" => "执行状态读取工作器失败",
         "execution_cancel_failed" => "执行取消工作器失败",
+        "oauth_login_start_failed" => "浏览器登录启动工作器失败",
+        "oauth_login_poll_failed" => "登录状态读取工作器失败",
+        "oauth_login_cancel_failed" => "取消登录工作器失败",
         "skill_plan_failed" => "Skill 预览工作器失败",
         "skill_install_failed" => "Skill 安装工作器失败",
         "install_plan_failed" => "安装计划检查失败",
@@ -115,7 +118,8 @@ mod tests {
     fn every_worker_code_has_a_chinese_message() {
         for code in [
             "cli_detect_failed", "app_info_failed", "search_start_failed", "execution_poll_failed",
-            "execution_cancel_failed", "skill_plan_failed", "skill_install_failed",
+            "execution_cancel_failed", "oauth_login_start_failed", "oauth_login_poll_failed",
+            "oauth_login_cancel_failed", "skill_plan_failed", "skill_install_failed",
             "install_plan_failed", "install_failed", "update_failed", "uninstall_failed",
             "user_path_check_failed", "user_path_change_failed", "credential_status_failed",
             "credential_save_failed", "credential_delete_failed", "credential_test_failed",

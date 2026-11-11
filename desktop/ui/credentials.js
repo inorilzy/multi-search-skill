@@ -3,6 +3,7 @@ import { showError } from './api.js';
 import { SEARCH_SOURCES } from './catalog.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
 import { mountBalance, providerForSource } from './balance.js';
+import { mountOAuthLogin } from './oauth-login.js';
 
 // Search sources come from the catalog generated from Python core metadata (one source of truth for
 // the CLI and this UI). Scraper-only providers also live there: they have credentials but no search
@@ -97,8 +98,8 @@ async function mountExaAdminEditor(root, api, balanceBlock) {
   ready = true;
   return mounted;
 }
-/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void, balanceOnly?: boolean}} [options] */
-export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest, balanceOnly = false } = {}) {
+/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void, balanceOnly?: boolean, oauthPollInterval?: number}} [options] */
+export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest, balanceOnly = false, oauthPollInterval = 150 } = {}) {
   root = pageRoot(root);
   const { label, search, keyOptional, balanceOnly: entryBalanceOnly } = sourceEntry(source);
   balanceOnly = balanceOnly || Boolean(entryBalanceOnly);
@@ -495,16 +496,33 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   renderDrafts();
   await refresh();
   const extraDisposers = [];
+  let balanceBlock = null;
   if (!balanceOnly && typeof api.balanceView === 'function') {
     const balanceSlot = root.ownerDocument.createElement('div');
     root.prepend(balanceSlot);
-    const balanceBlock = await mountBalance(balanceSlot, api, {
+    balanceBlock = await mountBalance(balanceSlot, api, {
       provider: providerForSource(source), source, label,
     });
     extraDisposers.push(balanceBlock);
     if (source === 'exa') {
       extraDisposers.push(await mountExaAdminEditor(root, api, balanceBlock));
     }
+  }
+  // OAuth providers keep the normal key editor too (Firecrawl's API key stays editable), but the
+  // browser flow lives above it and refreshes both the credential rows and the balance on success.
+  const oauthSlot = root.ownerDocument.createElement('div');
+  const oauthBlock = await mountOAuthLogin(oauthSlot, api, {
+    source,
+    label,
+    pollInterval: oauthPollInterval,
+    onComplete: async () => {
+      await refresh();
+      if (balanceBlock) await balanceBlock.reload(true);
+    },
+  });
+  if (!oauthSlot.hidden) {
+    root.prepend(oauthSlot);
+    extraDisposers.push(oauthBlock);
   }
   return {
     dispose() {

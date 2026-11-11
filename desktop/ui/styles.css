@@ -1311,6 +1311,99 @@
     line-height: 1.7;
     color: var(--muted);
   }
+  .oauth-login {
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--panel);
+    padding: 16px;
+    margin: 0 0 16px;
+  }
+  .oauth-login-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .oauth-login-head h3 {
+    margin: 0;
+    font-size: 14px;
+  }
+  .oauth-login-sub {
+    margin: 4px 0 0;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+  .oauth-login-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .oauth-login-actions>button {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .oauth-login-status {
+    margin: 12px 0 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .oauth-login[data-phase=waiting] .oauth-login-status, .oauth-login[data-phase=starting] .oauth-login-status {
+    color: var(--amber);
+  }
+  .oauth-login[data-phase=complete] .oauth-login-status {
+    color: var(--teal);
+  }
+  .oauth-login[data-phase=error] .oauth-login-status {
+    color: var(--red);
+  }
+  .oauth-login-code {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px;
+    border: 1px dashed var(--line);
+    border-radius: 6px;
+    background: var(--scrape-tint);
+  }
+  .oauth-login-code[hidden] {
+    display: none;
+  }
+  .oauth-login-code-label {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .oauth-login-code code {
+    font-family: Consolas,"Microsoft YaHei",monospace;
+    font-size: 15px;
+    letter-spacing: .08em;
+    color: var(--ink);
+  }
+  .oauth-login-code>button {
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .oauth-login-copied {
+    margin: 6px 0 0;
+    min-height: 16px;
+    font-size: 12px;
+    color: var(--teal);
+  }
+  .oauth-login-copied:empty {
+    min-height: 0;
+  }
+  .oauth-login [data-info="oauth-error"]:empty {
+    display: none;
+  }
   .exa-admin-key {
     margin-top: 18px;
     border-top: 1px solid var(--line);

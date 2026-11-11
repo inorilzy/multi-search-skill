@@ -54,6 +54,7 @@ macro_rules! for_each_contract_type {
             contract::AppInfo,
             contract::SearchOptions,
             contract::ExecutionStatus,
+            contract::OAuthLoginStatus,
             contract::InstallPlan,
             contract::InstallStep,
             contract::InstallOutcome,
