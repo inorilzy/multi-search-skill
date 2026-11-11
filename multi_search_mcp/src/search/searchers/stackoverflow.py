@@ -4,6 +4,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 
 from ...state import backoff
 from ...support.http import decompress_limited, read_error_body, read_limited, urlopen_retry
@@ -151,19 +152,31 @@ def search_stackoverflow(
             stats.append("answered")
         if tags:
             stats.append("tags: " + ", ".join(str(tag) for tag in tags[:5]))
-        items.append({
+        row = {
             "source": "stackoverflow",
             "title": title or url_value or "(no title)",
             "url": url_value,
             "description": " · ".join(stats),
             "content_kind": "metadata",
-        })
+        }
+        created = result.get("creation_date")
+        if isinstance(created, (int, float)) and not isinstance(created, bool) and created > 0:
+            try:
+                row["published_at"] = datetime.fromtimestamp(created, timezone.utc).isoformat()
+            except (OverflowError, OSError, ValueError):
+                pass
+        items.append(row)
     if data.get("quota_remaining") == 0:
         # The shared per-IP (or per-key) daily quota is used up.
-        items.append({
+        quota = {
             "source": "stackoverflow",
             "error": "Stack Exchange daily quota exhausted (quota_remaining is 0)",
             "kind": "quota_exhausted", "error_type": "quota_exhausted",
             "origin": "provider", "error_origin": "provider",
-        })
+        }
+        if items:
+            # This response already produced results: record the exhausted key
+            # without replaying the same query on every remaining key.
+            quota["retryable"] = False
+        items.append(quota)
     return items
