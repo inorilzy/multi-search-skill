@@ -14,6 +14,14 @@
 
 **来源引用（Source reference）**：一次搜索响应中某个来源的短期身份，用于后续获取和阅读内容。它不同于该来源的永久身份。
 
+**插件（Provider plugin）**：一个服务商的声明单元，统一给出 id、展示名、Key 提供者、负责的搜索源与抓取通道、登录方式和余额查询能力。插件 id 与 Key 文件的条目名一致；内置插件固定随程序加载，不支持第三方或外部插件。搜索源和抓取通道都由插件声明生成，同一服务商的不同能力归入同一个插件。
+
+**余额（Balance report）**：某个服务商某个凭据的额度报告。状态区分正常、不支持、需要凭据和查询失败；数值按 Key、团队或账户三个作用域之一给出，并带单位、重置时间和查询时间。未知数值留空而不是填 0；一家服务商查询失败不影响其他服务商。成功结果按插件声明的时长缓存，刷新可跳过缓存。
+
+**登录方式（Auth method：api / oauth）**：插件声明的一种凭据取得方式。`api` 从标准输入读取 Key（不经过命令行参数）并写入 Key 文件；`oauth` 用浏览器授权或设备码换到凭据，其中 Firecrawl 换到的 API Key 存入 Key 文件，Parallel 的账户令牌存入独立的 OAuth 文件。一个插件可以同时声明多种登录方式，`login` / `logout` 只操作已声明的凭据条目。
+
+**管理凭据（Balance-only credential）**：只用于查询余额、不用于搜索的独立凭据条目，例如 Exa 的 `exa_admin`（Team Management service key）和 Parallel 的 `parallel_account`（设备码登录得到的 Account API 令牌）。它与搜索 Key 分开保存；缺失时余额显示「需要凭据」，登录或退出只影响余额查询。
+
 ## 路由
 
 **路由（Route）**：按用途组织的一组搜索源，带有展示标签、可选的 `description`（何时使用）和组超时。路由发现以 `multi-search routes` 为准；按描述选择，无描述时参考标签与实际参与源，不传 `--route` 使用发现输出中的 `default_route`。设置结构与维护规则见 [路由文档](docs/route-capability-table.md#路由发现与设置维护)。

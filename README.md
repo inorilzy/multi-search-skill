@@ -38,10 +38,11 @@ uv run --locked multi-search read src_... --keyword 'TaskGroup' --limit 2000
 - `multi_search_mcp/cli.py`：唯一产品入口 `multi-search` CLI，直接调用共享 Core。
 - `multi_search_mcp/tools.py`：仅保留的兼容 Python 适配器，无 MCP 依赖或服务；所有产品能力已由 CLI 提供；本模块只保留旧 Python 调用形状并转发 Core，不再承载独立实现。
 - `multi_search_mcp/src/`：按职责拆分的搜索、抓取、状态、诊断和格式化模块；`service.py` 只是兼容 facade，不再承载实现。
+- `multi_search_mcp/src/plugins/`：内置服务商插件，每个服务商一个声明，统一给出搜索源、抓取通道、登录方式和余额查询能力；搜索与抓取注册表都由这些声明生成。
 - `multi_search_mcp/src/providers/`：第三方调用适配（XKit / Tavily），含托管 Twitter Cookie 的运行时装配；搜索器和抓取器通过这里取得客户端。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
 
-CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys status|reset`、`site stats|set-preference|reset` 和 `routes`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留，但只作为 CLI/Core 之上的薄包装。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
+CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys status|reset`、`site stats|set-preference|reset`、`routes`、`balance`、`login` 和 `logout`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留，但只作为 CLI/Core 之上的薄包装。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
 
 边界约定：凭据按 **环境变量（`env`）> `~/.multi-search/keys.json`（`keys_file`）** 解析，所有平台相同；非敏感行为配置按 `MULTI_SEARCH_CONFIG` → `config.sqlite` 的 settings 记录（桌面端写入，存在即权威）→ `~/.multi-search/multi-search-config.json` → 仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。桌面端首次写入 `config.sqlite` 设置记录时会先导入可解析的用户级 JSON 配置（见「配置和参数」）。CLI 不需要任何 MCP 客户端启动配置。
 
@@ -56,7 +57,7 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys stat
 | 01 概览与测试 | 检测应用继承的 PATH、已登记的用户 PATH（Windows 为注册表，macOS 为本工具追加到登录 Shell 配置的受管区块）中的 CLI（Windows `multi-search.exe`／macOS、Linux `multi-search`），显示版本、实际路径和来源；Linux 没有用户 PATH 注册后端，用户 PATH 存储读取失败时回退到进程 PATH；运行或取消一次测试搜索，结果以结构化列表展示，来源错误单列，原始 JSON 折叠保留。新终端可发现不意味着已打开的终端或 Agent 已刷新环境。 |
 | 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI：Windows 到 `%LOCALAPPDATA%\MultiSearch\cli`，macOS 到 `~/Library/Application Support/MultiSearch/cli`，Linux 到 `$XDG_DATA_HOME/MultiSearch/cli`（否则 `~/.local/share/MultiSearch/cli`）；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本。加入用户 PATH 需单独确认：Windows 写当前用户 PATH，macOS 只在登录 Shell 配置末尾追加带标记的区块，新开终端才生效，已运行的宿主需重启；Linux 暂不支持自动注册 shell PATH，但已安装的受管 CLI 可被发现和运行。 |
 | 03 Agent Skill | 安装到通用 Agents 目录（`.agents/skills`，Codex、Gemini CLI、OpenCode 等读取）或 Claude Code（`.claude/skills`），以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
-| 04 搜索源与凭据 | 列出 13 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），所有平台都可逐行新增、删除、显式显示，并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。默认只显示掩码，测试可能消耗额度。 |
+| 04 搜索源与凭据 | 列出 13 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），所有平台都可逐行新增、删除、显式显示，并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。每个服务商显示余额行（剩余 / 上限、单位、重置时间、更新时间，可刷新），`unsupported` / `needs_credential` 显示原因；Firecrawl 与 Parallel 提供「浏览器登录」按钮、进行中状态和取消，Exa 额外提供「管理 Key（查余额用）」输入行。默认只显示掩码，测试可能消耗额度。 |
 | 05 搜索设置 | 读写默认路由、全局超时（1–90 秒）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另有「模型重排」开关（默认关闭）：开启后填写 System One 的 Base URL 与模型名（必填）以及候选数 / 批量 / 超时高级项，写入配置块的 `ranking` 键；保存时只写入已知 `ranking` 键、丢弃未知字段（重新保存即可自愈），非法的已存 `ranking` 块回退默认值并提示。API 密钥单独保存到 `~/.multi-search/keys.json` 的 `systemone` 条目（Unix 上为 0600），不写进设置，也从不回显；环境变量 `SYSTEMONE_API_KEY` 优先。另可填写 Twitter Cookie 文件路径，并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
 | 06 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）和单个后端时限（`scrape_backend_timeout`，默认 10 秒，立即保存）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。 |
 | 07 Cookie 导入 | 用户显式确认后，把选定的 Twitter/X Cookie JSON 校验并复制到 `~/.multi-search/twitter-cookies.json`（0600），同时设置 `twitter_cookies_path`；删除只移除这份副本。原文件不修改也不删除，本页不显示 Cookie 内容。 |
@@ -262,6 +263,59 @@ TWITTER_COOKIES_PATH
 # 在仓库根目录或已安装环境中运行
 python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 ```
+
+## 服务商余额与登录
+
+每个服务商由一个内置插件声明（`multi_search_mcp/src/plugins/`）：插件统一给出 id、展示名、Key 提供者、负责的搜索源与抓取通道、登录方式和余额查询。插件 id 与 keys.json 的条目名一致；当前只加载内置插件，不支持第三方或外部插件加载。字段映射见[术语表](docs/glossary.md#7-插件余额与登录)。
+
+### 余额
+
+`multi-search balance [--provider <id>]... [--format json|text] [--refresh]`
+
+- 默认输出 JSON（`schema_version` 为 1）；`--format text` 按服务商逐行显示。`--provider` 可重复，只查询指定插件。
+- 每个已配置的 Key 各出一条报告；没有配置凭据时报告状态为 `needs_credential`；插件没有余额能力时状态为 `unsupported`，并给出原因。
+- 成功结果按插件声明的 TTL 缓存（默认 300 秒，Tavily 为 600 秒，避免触及接口 10 次/10 分钟的限额）；`--refresh` 跳过缓存。一家服务商出错不影响其他家。
+- 命令退出码为 0，除非参数非法或配置无法读取。输出、缓存和日志不出现明文 Key、令牌或邮箱。
+
+| 服务商 | 插件 id | 余额支持 | 来源与说明 |
+|---|---|---|---|
+| Brave Search | `brave` | 支持（被动） | 读取上次成功搜索响应中的本月配额；没有记录时提示「搜索一次后显示」，不主动发请求。 |
+| Parallel | `parallel` | 支持 | Account API 的账户美元余额；需先用 `login parallel --method oauth` 设备码登录（`parallel_account`），`will_invoice=true` 时注明后付费。 |
+| 百度千帆 | `baidu` | 不支持 | 搜索 Key 无余额接口，免费额度无查询接口，现金余额需 AK/SK。 |
+| Tavily | `tavily` | 支持 | Key 级与账户级 credits；接口限 10 次/10 分钟，缓存 600 秒。 |
+| Exa | `exa` | 支持 | Team Management 团队美元余额；需要 `exa_admin` 管理 Key（`EXA_SERVICE_KEY`），并联系 Exa 开通 Team Management API。 |
+| SerpAPI | `serpapi` | 支持 | 每月搜索次数、剩余次数与套餐重置日期。 |
+| Firecrawl | `firecrawl` | 支持 | 团队 credits（剩余与套餐上限）及账单周期结束时间。 |
+| V2EX / SOV2EX | `sov2ex` | 不支持 | 匿名 V2EX / SOV2EX 搜索无配额查询接口。 |
+| GitHub | `github` | 支持 | `rate_limit` 的 `search` 与 `code_search`，单位 requests/hour；不带 token 也能查询。 |
+| Hacker News | `hackernews` | 不支持 | 匿名 Hacker News 搜索无配额查询接口。 |
+| Stack Exchange | `stackexchange` | 支持（被动） | 读取上次成功搜索记录的每日配额；没有记录时提示「搜索一次后显示」。 |
+| Twitter / X | `twitter` | 不支持 | 仅支持 Cookie 登录，搜索无余额查询接口。 |
+| Jina AI | `jina` | 支持 | `wallet.total_balance`，单位 tokens；来自 Jina dashboard 的非公开接口，可能随时变化。 |
+
+### 登录与退出
+
+`multi-search login <provider> [--method api|oauth] [--credential <entry>] [--format json|human|markdown|jsonl|text] [--no-browser] [--timeout <秒>]`（`json`/`human`/`markdown` 用于 api，`jsonl`/`text` 用于 oauth）
+
+- `--method api`（默认）：从 stdin 读取一行 Key，终端下不回显；写入 `~/.multi-search/keys.json` 的对应条目，保留其他条目，已有相同 Key 不重复追加。插件支持余额时会立即查一次并输出（只用于确认，失败不回滚已保存的 Key）。Exa 的余额管理 Key 用 `--credential exa_admin` 保存，环境变量 `EXA_SERVICE_KEY` 优先。
+- `--method oauth`：逐行输出事件，默认 text；`--format jsonl` 输出 `open_url` / `waiting` / `complete` / `error` 对象。`--no-browser` 只输出 URL，不打开浏览器。Firecrawl 用 PKCE 浏览器授权，换到的 API Key 写入 `keys.json` 的 `firecrawl` 条目；Parallel 用 RFC 8628 设备码，得到只用于查余额的 Account API 令牌，写入 `~/.multi-search/oauth.json` 的 `parallel_account` 条目。默认超时 300 秒。
+- `multi-search logout <provider> [--credential <entry>]`：删除对应凭据条目。Parallel 的 `parallel_account` 会先调用 revoke 再删除；条目不存在时输出 `removed: false`，不视为错误。
+
+```powershell
+uv run --locked multi-search balance --format text
+uv run --locked multi-search balance --provider tavily --provider exa --refresh
+uv run --locked multi-search login tavily --method api
+uv run --locked multi-search login exa --credential exa_admin --method api
+uv run --locked multi-search login firecrawl --method oauth --no-browser --format jsonl
+uv run --locked multi-search login parallel --method oauth
+uv run --locked multi-search logout exa --credential exa_admin
+```
+
+凭据与缓存位置：
+
+- `~/.multi-search/keys.json`：所有搜索 Key、Exa `exa_admin` 管理 Key 与 Firecrawl OAuth 换到的 API Key；明文 JSON，Unix 上 0600，原子替换、只改动目标条目。
+- `~/.multi-search/oauth.json`：Parallel `parallel_account` 的 access/refresh token 与过期时间；Unix 上 0600，原子写、只改自己的条目。access token 过期时自动用 refresh token 刷新并保存轮换后的新令牌；文件损坏时不会被覆盖。
+- `~/.multi-search/balance-cache.json`：成功余额报告缓存（0600）；`~/.multi-search/quota-records.json`：Brave / Stack Exchange 的被动配额记录。
 
 ## 架构和术语
 
@@ -469,7 +523,7 @@ Provider 参考文档和现行/历史文档分类见 [docs/README.md](docs/READM
 
 ## 安全
 
-- 不要提交 `~/.multi-search/keys.json`、`~/.search-keys.json`、`~/.multi-search/config.sqlite`、`.env`、Cookie 文件或真实 provider key。
+- 不要提交 `~/.multi-search/keys.json`、`~/.multi-search/oauth.json`、`~/.search-keys.json`、`~/.multi-search/config.sqlite`、`.env`、Cookie 文件或真实 provider key。
 - provider error 输出前会尽量 scrub 可能出现的 key 值。
 - 第三方抓取正文始终按 untrusted data 处理。
 - 出站请求只连接代码里写死的服务商地址（搜索 API、抓取服务、X 接口），靠 HTTPS 证书校验确认对端。外部给定的 URL（`fetch --url`、搜索结果链接）只交给服务商或用于提取 ID，本机不直接连接它们，所以 URL 只做格式检查：协议、主机、无凭据、非 localhost、非公网 IP 字面量。本机不解析域名、不检查解析结果，因此 TUN fake-IP 代理（如 `198.18.0.0/15`）下不需要任何开关。新增在本机直接连接外部 URL 的抓取器，必须重新加入解析结果检查。
