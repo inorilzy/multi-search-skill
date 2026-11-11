@@ -22,7 +22,7 @@
 
 **抓取链（Scrape chain）**：通用网页抓取依次尝试的后端顺序（`jina`、`exa`、`tavily`、`firecrawl` 的有序子集），保存在设置的 `scrape_backends` 中。前一个后端失败才尝试下一个，最后一个也失败时返回错误；缺 key 的后端在运行时跳过。每个后端的一次调用最多等 `scrape_backend_timeout` 秒（默认 10），超时即换下一个。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。单次 `fetch --backend` 只覆盖本次调用，不改写设置。
 
-**站点抓取记忆（Site memory）**：按站点键记录各抓取后端的成功、失败、冷却和手动偏好。手动固定的后端排到该站点最前，失败冷却只让该后端靠后；它在抓取链的顺序上做调整，不按历史成功率自动重排。可按单个站点或全部站点重置。
+**站点抓取记忆（Site memory）**：按站点键记录各抓取后端的成功、失败、冷却和手动偏好。手动固定的后端排到该站点最前，失败冷却只让该后端靠后；只有目标网站自身的失败（被拦截、目标超时、目标 4xx/5xx）会写入冷却，抓取服务自己的鉴权失败和整批时限耗尽只计统计，内容很短但抓取成功的页面计为成功。它在抓取链的顺序上做调整，不按历史成功率自动重排。可按单个站点或全部站点重置；按网址操作时会先规整成同一个站点键。
 
 ## 排序
 
@@ -37,9 +37,9 @@
 ## 桌面端
 
 **受管 CLI（Managed CLI）**：由桌面端从应用资源内的受控 bundle 安装，每个平台用自己的根目录和产物名：
-Windows 是 `%LOCALAPPDATA%\MultiSearch\cli` 下的 `multi-search.exe`，macOS 是 `~/Library/Application Support/MultiSearch/cli` 下的 `bin/multi-search`。
-两者的 bundle 都自带运行时：Windows 携带内置 CPython，macOS 携带 `runtime/bin/python3.12`，因此安装后不依赖仓库、开发虚拟环境或系统 Python。
-`active.json` 记录当前生效版本；桌面端只运行受管目录或 PATH 中发现的 CLI，前端不能指定可执行路径。
+Windows 是 `%LOCALAPPDATA%\MultiSearch\cli` 下的 `multi-search.exe`，macOS 是 `~/Library/Application Support/MultiSearch/cli` 下的 `bin/multi-search`，Linux 是 `$XDG_DATA_HOME/MultiSearch/cli`（否则 `~/.local/share/MultiSearch/cli`）下的 `bin/multi-search`。
+各平台的 bundle 都自带运行时：Windows 携带内置 CPython，macOS 与 Linux 携带 `runtime/bin/python3.12`，因此安装后不依赖仓库、开发虚拟环境或系统 Python。
+`active.json` 记录当前生效版本；桌面端只运行受管目录或 PATH 中发现的 CLI，前端不能指定可执行路径。Linux 没有用户 PATH 注册后端，用户 PATH 存储读取失败时发现逻辑回退到进程 PATH，已安装的受管 CLI 仍可用于 Skill 安装、更新和测试搜索。
 Unix 上还要求产物与 `runtime/bin/*` 保持可执行位，权限被改动即判为不可验证，不再当作已安装。
 旧版本保留为可回滚的引用；取消/关闭只结束本次受管执行及其子进程（Windows 用 Job Object 归属）。
 
