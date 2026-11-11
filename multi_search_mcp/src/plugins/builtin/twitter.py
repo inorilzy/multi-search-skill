@@ -30,5 +30,5 @@ PLUGIN = ProviderPlugin(
     auth_methods=(
         AuthMethod("api", "Cookie 凭据", "twitter"),
     ),
-    balance_note='Cookie 登录的 Twitter 搜索不提供余额查询。',
+    balance_note='Twitter / X 仅支持 Cookie 登录，搜索无余额查询接口。',
 )

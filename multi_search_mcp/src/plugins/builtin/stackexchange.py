@@ -1,5 +1,11 @@
 """Stack Exchange provider declaration."""
-from ..base import AuthMethod, ProviderPlugin
+from ..base import AuthMethod, BalanceContext, BalanceReport, ProviderPlugin
+from ..quota_record import quota_report
+
+
+def balance_stackexchange(credential: str, ctx: BalanceContext) -> BalanceReport:
+    """Read the daily quota recorded by the last successful search."""
+    return quota_report("stackexchange", credential, unit="requests", period="day")
 
 
 def search_specs():
@@ -26,5 +32,9 @@ PLUGIN = ProviderPlugin(
     auth_methods=(
         AuthMethod("api", "API Key", "stackexchange"),
     ),
-    balance_note='搜索一次后显示每日配额，读取能力待实现。',
+    # An empty balance credential means optional: use the configured search key
+    # when present, otherwise read the anonymous search record.
+    balance_credential='',
+    balance=balance_stackexchange,
+    balance_note='搜索一次后显示每日配额。',
 )

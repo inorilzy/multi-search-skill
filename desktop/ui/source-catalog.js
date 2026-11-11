@@ -74,8 +74,8 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "搜索一次后显示本月配额，读取能力待实现。",
-      "balance_supported": false,
+      "balance_note": "搜索一次后显示本月配额。",
+      "balance_supported": true,
       "id": "brave",
       "key_provider": "brave",
       "label": "Brave Search",
@@ -118,7 +118,7 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "搜索 Key 无余额接口，账户现金余额需要另外的 AK/SK 签名。",
+      "balance_note": "搜索 Key 无余额接口，免费额度无查询接口，现金余额需 AK/SK，暂不支持。",
       "balance_supported": false,
       "id": "baidu",
       "key_provider": "baidu",
@@ -226,7 +226,7 @@ export const SOURCE_CATALOG = {
     },
     {
       "auth_methods": [],
-      "balance_note": "匿名 SOV2EX 搜索不提供余额或配额查询。",
+      "balance_note": "匿名 V2EX / SOV2EX 搜索无配额查询接口，不支持余额查询。",
       "balance_supported": false,
       "id": "sov2ex",
       "key_provider": null,
@@ -258,7 +258,7 @@ export const SOURCE_CATALOG = {
     },
     {
       "auth_methods": [],
-      "balance_note": "匿名 Hacker News 搜索不提供余额或配额查询。",
+      "balance_note": "匿名 Hacker News 搜索无配额查询接口，不支持余额查询。",
       "balance_supported": false,
       "id": "hackernews",
       "key_provider": null,
@@ -277,8 +277,8 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "搜索一次后显示每日配额，读取能力待实现。",
-      "balance_supported": false,
+      "balance_note": "搜索一次后显示每日配额。",
+      "balance_supported": true,
       "id": "stackexchange",
       "key_provider": "stackexchange",
       "label": "Stack Exchange",
@@ -296,7 +296,7 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "Cookie 登录的 Twitter 搜索不提供余额查询。",
+      "balance_note": "Twitter / X 仅支持 Cookie 登录，搜索无余额查询接口。",
       "balance_supported": false,
       "id": "twitter",
       "key_provider": "twitter",

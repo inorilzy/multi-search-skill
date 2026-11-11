@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
+from ...plugins.quota_record import record_quota
 from ...state import backoff
 from ...support.http import decompress_limited, read_error_body, read_limited, urlopen_retry
 from ...support.secrets import scrub_secrets
@@ -49,6 +50,23 @@ def _decode_response(resp) -> bytes:
     if encoding == "identity":
         return body
     raise ValueError(f"unsupported Content-Encoding: {encoding}")
+
+
+def _record_stackexchange_quota(data: dict, api_key: str) -> None:
+    """Persist the daily quota advertised by a successful wrapper response."""
+    remaining = data.get("quota_remaining")
+    limit = data.get("quota_max")
+    if (
+        not isinstance(remaining, (int, float)) or isinstance(remaining, bool)
+        or not isinstance(limit, (int, float)) or isinstance(limit, bool)
+    ):
+        return
+    record_quota("stackexchange", api_key, {
+        "remaining": remaining,
+        "limit": limit,
+        "unit": "requests",
+        "period": "day",
+    })
 
 
 def _error_row(data: dict, *, key: str = "", status: int | None = None) -> dict:
@@ -135,6 +153,8 @@ def search_stackoverflow(
         backoff.record(_BACKOFF_NAME, float(data["backoff"]))
     if data.get("error_message") or data.get("error_name"):
         return [_error_row(data, key=api_key)]
+
+    _record_stackexchange_quota(data, api_key)
 
     items = []
     for result in data.get("items") or []:

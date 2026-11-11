@@ -22,5 +22,5 @@ PLUGIN = ProviderPlugin(
     key_provider=None,
     search_sources=('sov2ex',),
     search_specs=search_specs,
-    balance_note='匿名 SOV2EX 搜索不提供余额或配额查询。',
+    balance_note='匿名 V2EX / SOV2EX 搜索无配额查询接口，不支持余额查询。',
 )
