@@ -148,21 +148,32 @@ def _needs_credential_report(plugin: ProviderPlugin, entry: str | None, now: Any
     )
 
 
-def _normalize_report(
+def _normalize_reports(
     plugin: ProviderPlugin,
-    report: Any,
+    reports: Any,
     credential: str,
     known_secrets: Iterable[str],
-) -> BalanceReport:
-    if not isinstance(report, BalanceReport):
-        raise TypeError(f"{plugin.id} balance returned {type(report).__name__}, expected BalanceReport")
-    fingerprint = key_fingerprint(credential) if credential else None
-    return replace(
-        report,
-        provider=plugin.id,
-        key_fingerprint=fingerprint,
-        message=scrub_balance_message(report.message, known_secrets),
-    )
+) -> list[BalanceReport]:
+    """Validate one adapter result and attach public-only metadata to each row."""
+    if isinstance(reports, BalanceReport):
+        reports = [reports]
+    elif isinstance(reports, (list, tuple)):
+        reports = list(reports)
+    else:
+        raise TypeError(f"{plugin.id} balance returned {type(reports).__name__}, expected BalanceReport")
+    if not reports:
+        raise ValueError(f"{plugin.id} balance returned no reports")
+    fingerprinted = []
+    for report in reports:
+        if not isinstance(report, BalanceReport):
+            raise TypeError(f"{plugin.id} balance returned {type(report).__name__}, expected BalanceReport")
+        fingerprinted.append(replace(
+            report,
+            provider=plugin.id,
+            key_fingerprint=key_fingerprint(credential) if credential else None,
+            message=scrub_balance_message(report.message, known_secrets),
+        ))
+    return fingerprinted
 
 
 def _error_report(
@@ -194,15 +205,15 @@ def _timeout_report(plugin: ProviderPlugin, credential: str, timeout: float) -> 
     )
 
 
-def _run_job(job: _Job, deadline: float, known_secrets: Iterable[str]) -> BalanceReport:
+def _run_job(job: _Job, deadline: float, known_secrets: Iterable[str]) -> list[BalanceReport]:
     if job.plugin.balance is None:  # pragma: no cover - jobs are only built for callbacks
-        return _unsupported_report(job.plugin, None)
+        return [_unsupported_report(job.plugin, None)]
     context = BalanceContext(timeout=BALANCE_TIMEOUT_SECONDS, deadline=deadline)
     try:
-        report = job.plugin.balance(job.credential, context)
-        return _normalize_report(job.plugin, report, job.credential, known_secrets)
+        reports = job.plugin.balance(job.credential, context)
+        return _normalize_reports(job.plugin, reports, job.credential, known_secrets)
     except Exception as exc:  # noqa: BLE001 - one provider must not break the others
-        return _error_report(job.plugin, job.credential, exc, known_secrets)
+        return [_error_report(job.plugin, job.credential, exc, known_secrets)]
 
 
 def _collect_reports(
@@ -213,20 +224,29 @@ def _collect_reports(
     refresh: bool,
     known_secrets: list[str],
 ) -> dict[str, list[BalanceReport]]:
-    reports: dict[str, list[BalanceReport | None]] = {}
+    reports: dict[str, list[list[BalanceReport] | None]] = {}
     jobs: list[_Job] = []
     now_epoch = _now_epoch(now)
 
     for plugin in plugins:
         if plugin.balance is None:
-            reports[plugin.id] = [_unsupported_report(plugin, now, known_secrets)]
+            reports[plugin.id] = [[_unsupported_report(plugin, now, known_secrets)]]
             continue
         entry = plugin.balance_credential
-        credentials = _credential_values(key_map.get(entry)) if entry else [""]
+        if entry:
+            credentials = _credential_values(key_map.get(entry))
+            missing_entry = entry
+        else:
+            # An empty balance_credential marks an optional credential: use the
+            # plugin's search key when configured, otherwise query anonymously.
+            credentials = _credential_values(key_map.get(plugin.key_provider)) if plugin.key_provider else []
+            missing_entry = None
+            if not credentials:
+                credentials = [""]
         if not credentials:
-            reports[plugin.id] = [_needs_credential_report(plugin, entry, now)]
+            reports[plugin.id] = [[_needs_credential_report(plugin, missing_entry, now)]]
             continue
-        slots: list[BalanceReport | None] = []
+        slots: list[list[BalanceReport] | None] = []
         for credential in credentials:
             fingerprint = key_fingerprint(credential) if credential else None
             cached = None
@@ -238,25 +258,27 @@ def _collect_reports(
                     now=now_epoch,
                 )
             if cached is not None:
-                slots.append(replace(
-                    cached,
-                    provider=plugin.id,
-                    message=scrub_balance_message(cached.message, known_secrets),
-                ))
+                slots.append([
+                    replace(
+                        report,
+                        provider=plugin.id,
+                        message=scrub_balance_message(report.message, known_secrets),
+                    )
+                    for report in cached
+                ])
                 continue
             slots.append(None)
             jobs.append(_Job(plugin, credential, len(slots) - 1))
         reports[plugin.id] = slots
 
-    def store(job: _Job, report: BalanceReport) -> None:
-        reports[job.plugin.id][job.slot] = report
-        if report.status == "ok":
-            cache.put(
-                job.plugin.id,
-                report,
-                ttl_seconds=job.plugin.balance_ttl_seconds,
-                now=now_epoch,
-            )
+    def store(job: _Job, job_reports: list[BalanceReport]) -> None:
+        reports[job.plugin.id][job.slot] = job_reports
+        cache.put(
+            job.plugin.id,
+            job_reports,
+            ttl_seconds=job.plugin.balance_ttl_seconds,
+            now=now_epoch,
+        )
 
     deadline = time.monotonic() + BALANCE_TOTAL_TIMEOUT_SECONDS
     active: dict[Future, _Job] = {}
@@ -284,7 +306,7 @@ def _collect_reports(
             try:
                 store(job, future.result())
             except Exception as exc:  # noqa: BLE001 - defensive: jobs normally catch
-                store(job, _error_report(job.plugin, job.credential, exc, known_secrets))
+                store(job, [_error_report(job.plugin, job.credential, exc, known_secrets)])
         if time.monotonic() >= deadline:
             break
 
@@ -293,15 +315,15 @@ def _collect_reports(
             try:
                 store(job, future.result())
             except Exception as exc:  # noqa: BLE001
-                store(job, _error_report(job.plugin, job.credential, exc, known_secrets))
+                store(job, [_error_report(job.plugin, job.credential, exc, known_secrets)])
         else:
             _POOL.abandon(future)
-            store(job, _timeout_report(job.plugin, job.credential, BALANCE_TOTAL_TIMEOUT_SECONDS))
+            store(job, [_timeout_report(job.plugin, job.credential, BALANCE_TOTAL_TIMEOUT_SECONDS)])
     for job in jobs[next_index:]:
-        store(job, _timeout_report(job.plugin, job.credential, BALANCE_TOTAL_TIMEOUT_SECONDS))
+        store(job, [_timeout_report(job.plugin, job.credential, BALANCE_TOTAL_TIMEOUT_SECONDS)])
 
     return {
-        plugin_id: [report for report in rows if report is not None]
+        plugin_id: [report for slot in rows if slot is not None for report in slot]
         for plugin_id, rows in reports.items()
     }
 
@@ -322,8 +344,10 @@ def collect_balances(
     """
     plugins = _select_plugins(provider_ids)
     if keys is None:
+        # Optional balance credentials (empty entry) still read the plugin's
+        # search-key entry, so GitHub uses a configured token when present.
         needs_keys = any(
-            plugin.balance is not None and plugin.balance_credential
+            plugin.balance is not None and (plugin.balance_credential or plugin.key_provider)
             for plugin in plugins
         )
         key_map = dict(load_keys()) if needs_keys else {}

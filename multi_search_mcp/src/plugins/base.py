@@ -94,7 +94,9 @@ class ProviderPlugin:
     search_sources: tuple[str, ...] = ()
     scrape_channels: tuple[str, ...] = ()
     auth_methods: tuple[AuthMethod, ...] = ()
-    balance: Callable[[str, BalanceContext], BalanceReport] | None = None
+    # Adapters may return one report or a list when the vendor exposes several
+    # independent quotas (Tavily key/account, GitHub search/code_search).
+    balance: Callable[[str, BalanceContext], BalanceReport | list[BalanceReport]] | None = None
     balance_note: str = ""
     balance_ttl_seconds: int = 300
     balance_credential: str | None = None

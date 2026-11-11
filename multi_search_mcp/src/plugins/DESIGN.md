@@ -38,14 +38,18 @@ OAuth writes `parallel_account` for `balance_only`. Exa declares an additional
 API credential `exa_admin` for `balance_only`. These declarations do not start
 login flows.
 
-`ProviderPlugin.balance` is either `None` or a callable with the fixed contract
-`(credential: str, ctx: BalanceContext) -> BalanceReport`. All adapters are left
-`None` in ticket 01. Later tickets can define the callback in their vendor module
-and pass it into `PLUGIN`. The registry reads each module's current `PLUGIN`,
-so replacing a frozen declaration also works without a stale registry cache.
-`balance_credential` defaults to `key_provider`; Exa uses `exa_admin` and Parallel
-uses `parallel_account`. `balance_ttl_seconds` defaults to 300; callers enforce
-caching, while adapters only fetch/interpret their report.
+`ProviderPlugin.balance` is either `None` or a callable with the contract
+`(credential: str, ctx: BalanceContext) -> BalanceReport | list[BalanceReport]`.
+Most adapters return one report; a list carries providers that expose several
+independent quotas (Tavily key/account, GitHub search/code_search). All adapters
+are left `None` in ticket 01. Later tickets can define the callback in their
+vendor module and pass it into `PLUGIN`. The registry reads each module's current
+`PLUGIN`, so replacing a frozen declaration also works without a stale registry
+cache. `balance_credential` defaults to `key_provider`; an explicit empty string
+means the credential is optional and the adapter falls back to an anonymous
+query. Exa uses `exa_admin` and Parallel uses `parallel_account`.
+`balance_ttl_seconds` defaults to 300; callers enforce caching, while adapters
+only fetch/interpret their report.
 
 `BalanceContext(timeout=10.0, deadline=None, http=...)` accepts a
 `urlopen_retry`-compatible HTTP callable. `ctx.open(request, retries=2)` checks the

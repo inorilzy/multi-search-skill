@@ -137,8 +137,8 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "Key 与账户用量查询待实现。",
-      "balance_supported": false,
+      "balance_note": "",
+      "balance_supported": true,
       "id": "tavily",
       "key_provider": "tavily",
       "label": "Tavily",
@@ -185,8 +185,8 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "免费账户余额查询待实现。",
-      "balance_supported": false,
+      "balance_note": "",
+      "balance_supported": true,
       "id": "serpapi",
       "key_provider": "serpapi",
       "label": "SerpAPI",
@@ -210,8 +210,8 @@ export const SOURCE_CATALOG = {
           "type": "oauth"
         }
       ],
-      "balance_note": "团队 credits 余额查询待实现。",
-      "balance_supported": false,
+      "balance_note": "",
+      "balance_supported": true,
       "id": "firecrawl",
       "key_provider": "firecrawl",
       "label": "Firecrawl",
@@ -245,8 +245,8 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "搜索与代码搜索限额查询待实现，支持匿名查询。",
-      "balance_supported": false,
+      "balance_note": "",
+      "balance_supported": true,
       "id": "github",
       "key_provider": "github",
       "label": "GitHub",
@@ -315,8 +315,8 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "Token 余额查询待实现，使用未公开的 dashboard 接口。",
-      "balance_supported": false,
+      "balance_note": "",
+      "balance_supported": true,
       "id": "jina",
       "key_provider": "jina",
       "label": "Jina AI",

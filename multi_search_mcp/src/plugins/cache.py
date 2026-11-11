@@ -115,7 +115,7 @@ class BalanceCache:
         *,
         ttl_seconds: float,
         now: Any = None,
-    ) -> BalanceReport | None:
+    ) -> list[BalanceReport] | None:
         entry = self._load().get(cache_key(plugin_id, key_fingerprint))
         if not isinstance(entry, dict):
             return None
@@ -125,34 +125,45 @@ class BalanceCache:
         ttl = max(0.0, float(ttl_seconds))
         if _now_epoch(now) - float(cached_at) >= ttl:
             return None
-        data = entry.get("report")
-        if not isinstance(data, dict):
+        data = entry.get("reports")
+        if data is None:
+            # Entries written before multi-report support held one report.
+            data = [entry["report"]] if isinstance(entry.get("report"), dict) else None
+        if not isinstance(data, list):
             return None
         known = {item.name for item in fields(BalanceReport)}
-        try:
-            report = BalanceReport(**{key: value for key, value in data.items() if key in known})
-        except (TypeError, ValueError):
-            return None
-        return report if report.status == "ok" else None
+        reports = []
+        for item in data:
+            if not isinstance(item, dict):
+                return None
+            try:
+                report = BalanceReport(**{key: value for key, value in item.items() if key in known})
+            except (TypeError, ValueError):
+                return None
+            if report.status != "ok":
+                return None
+            reports.append(report)
+        return reports or None
 
     def put(
         self,
         plugin_id: str,
-        report: BalanceReport,
+        reports: BalanceReport | list[BalanceReport],
         *,
         ttl_seconds: float,
         now: Any = None,
     ) -> None:
-        """Store only successful reports; errors must be fetched again next time."""
-        if report.status != "ok":
+        """Store only successful report sets; errors are fetched again next time."""
+        items = [reports] if isinstance(reports, BalanceReport) else list(reports)
+        if not items or any(report.status != "ok" for report in items):
             return
         entries = self._load()
-        entries[cache_key(plugin_id, report.key_fingerprint)] = {
+        entries[cache_key(plugin_id, items[0].key_fingerprint)] = {
             "plugin": plugin_id,
-            "key_fingerprint": report.key_fingerprint,
+            "key_fingerprint": items[0].key_fingerprint,
             "cached_at": _now_epoch(now),
             "ttl_seconds": max(0.0, float(ttl_seconds)),
-            "report": report.to_dict(),
+            "reports": [report.to_dict() for report in items],
         }
         self._dirty = True
 
