@@ -96,6 +96,10 @@ def run_scrape_raw(
     # key; an unconfigured chain keeps the configured fallback order instead.
     explicit_backends = tuple(request.backends) if request.backends else None
     backends = explicit_backends or configured_scrape_backends(resolved_config)
+    firecrawl_config = runtime_keys.get("firecrawl")
+    firecrawl_configured = any(
+        firecrawl_config if isinstance(firecrawl_config, list) else [firecrawl_config]
+    )
     result = scraper_fn(
         request.url,
         timeout=timeout,
@@ -117,6 +121,7 @@ def run_scrape_raw(
             candidate.key
             for candidate in key_manager.candidates("firecrawl", runtime_keys.get("firecrawl"))
         ],
+        firecrawl_keys_configured=firecrawl_configured,
         tavily_keys=[
             candidate.key
             for candidate in key_manager.candidates("tavily", runtime_keys.get("tavily"))
