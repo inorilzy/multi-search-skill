@@ -29,6 +29,8 @@ pub fn fixture_cli() -> PathBuf {
                 .unwrap_or_else(|| "default".to_string());
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join(format!("target/fixture-cli-{stem}.exe"));
+            // CARGO_TARGET_DIR may point outside a clean checkout, so Cargo need not create this directory.
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             let temp = path.with_extension(format!("tmp-{}", std::process::id()));
             let output = Command::new("rustc")
                 .args(["--edition=2021", "tests/fixture_cli.rs", "-o"])

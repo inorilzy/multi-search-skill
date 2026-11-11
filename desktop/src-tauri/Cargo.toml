@@ -15,6 +15,11 @@ path = "tests/cookies.rs"
 required-features = ["test-fixtures"]
 
 [[test]]
+name = "fix_t01_fixture_build"
+path = "tests/fix_t01_fixture_build.rs"
+required-features = ["test-fixtures"]
+
+[[test]]
 name = "diagnostics"
 path = "tests/diagnostics.rs"
 required-features = ["test-fixtures"]
