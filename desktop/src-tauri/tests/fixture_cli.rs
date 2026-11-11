@@ -60,14 +60,21 @@ fn main() {
         return;
     }
     if args.get(1).map(String::as_str) == Some("--help") {
-        // Real help text lists each flag; FIXTURE_HELP=stale omits --expand to simulate an incompatible CLI.
-        let stale = env::var("FIXTURE_HELP").as_deref() == Ok("stale");
+        // Real help text lists each flag; FIXTURE_HELP=stale omits --expand to simulate an
+        // incompatible CLI, and FIXTURE_HELP=no-routes rejects the routes subcommand.
+        let help_mode = env::var("FIXTURE_HELP");
+        let stale = help_mode.as_deref() == Ok("stale");
+        if help_mode.as_deref() == Ok("no-routes") && args.first().map(String::as_str) == Some("routes") {
+            eprintln!("usage error: argument command: invalid choice: 'routes'");
+            std::process::exit(2);
+        }
         match args.first().map(String::as_str) {
             Some("search") if stale => println!("usage: multi-search search [--route ROUTE] [--format FORMAT] query"),
             Some("search") => println!("usage: multi-search search [--route ROUTE] [--expand EXPAND] [--format FORMAT] [--source NAME] [--count N] [--timeout S] query"),
             Some("fetch") => println!("usage: multi-search fetch [--full-content] [--format FORMAT] [--url URL] [--url-file PATH] [source_id]"),
             Some("read") => println!("usage: multi-search read [--keyword KEYWORD] [--offset OFFSET] [--limit N] [--format FORMAT] source_id"),
             Some("doctor") => println!("usage: multi-search doctor [--no-keys] [--format FORMAT]"),
+            Some("routes") => println!("usage: multi-search routes [--format FORMAT]"),
             _ => {}
         }
         return;

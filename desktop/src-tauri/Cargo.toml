@@ -69,6 +69,11 @@ path = "tests/skill.rs"
 required-features = ["test-fixtures"]
 
 [[test]]
+name = "skill_compat"
+path = "tests/skill_compat.rs"
+required-features = ["test-fixtures"]
+
+[[test]]
 name = "skill_manage"
 path = "tests/skill_manage.rs"
 required-features = ["test-fixtures"]

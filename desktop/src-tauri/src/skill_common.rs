@@ -89,7 +89,7 @@ pub(crate) const FILES: [(&str, &str); 5] = [
 ];
 
 /// Flags the Skill relies on, per subcommand, as printed by the CLI's own `--help`.
-pub(crate) const REQUIRED_FLAGS: [(&str, &[&str]); 4] = [
+pub(crate) const REQUIRED_FLAGS: [(&str, &[&str]); 5] = [
     (
         "search",
         &["--route", "--expand", "--format", "--source", "--count", "--timeout"],
@@ -97,6 +97,7 @@ pub(crate) const REQUIRED_FLAGS: [(&str, &[&str]); 4] = [
     ("fetch", &["--full-content", "--format", "--url", "--url-file"]),
     ("read", &["--keyword", "--offset", "--format", "--limit"]),
     ("doctor", &["--no-keys", "--format"]),
+    ("routes", &["--format"]),
 ];
 
 pub(crate) type Requirements = BTreeMap<String, Vec<String>>;
