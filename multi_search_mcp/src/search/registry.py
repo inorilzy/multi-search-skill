@@ -1,4 +1,5 @@
 """Provider registry used by the search service."""
+from ..plugins.registry import builtin_plugins
 from .capabilities import get_capability
 from .search_runner import (
     ProviderSpec,
@@ -51,98 +52,8 @@ def build_provider_registry() -> dict[str, ProviderSpec]:
     provider function without rebuilding a static registry at import time.
     """
     return {
-        "brave": _provider_spec(
-            "brave",
-            missing_message="missing BRAVE_SEARCH_API_KEY / BRAVE_API_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_brave, q, key, cfg.counts["brave"], timeout=ctx.timeout, deadline=ctx.deadline,
-            ),
-        ),
-        "parallel": _provider_spec(
-            "parallel",
-            missing_message="missing PARALLEL_API_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_parallel, q, key, cfg.counts["parallel"], timeout=ctx.timeout, deadline=ctx.deadline,
-            ),
-        ),
-        "baidu": _provider_spec(
-            "baidu",
-            missing_message="missing BAIDU_QIANFAN_API_KEY / QIANFAN_API_KEY / APPBUILDER_API_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_baidu, q, key, cfg.counts["baidu"], timeout=ctx.timeout, deadline=ctx.deadline,
-            ),
-        ),
-        "tavily": _provider_spec(
-            "tavily",
-            missing_message="missing TAVILY_API_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_tavily, q, key, cfg.counts["tavily"], timeout=ctx.timeout, deadline=ctx.deadline,
-            ),
-        ),
-        "exa": _provider_spec(
-            "exa",
-            missing_message="missing EXA_API_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_exa, q, key, cfg.counts["exa"], timeout=ctx.timeout, deadline=ctx.deadline,
-            ),
-        ),
-        "serpapi": _provider_spec(
-            "serpapi",
-            missing_message="missing SERPAPI_API_KEY / SERPAPI_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_serpapi, q, key, cfg.counts["serpapi"], cfg.serpapi_engine,
-                timeout=ctx.timeout,
-                deadline=ctx.deadline, publish_partial=ctx.publish_partial,
-            ),
-        ),
-        "firecrawl": _provider_spec(
-            "firecrawl",
-            missing_message="missing FIRECRAWL_API_KEY",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_firecrawl, q, key, cfg.counts["firecrawl"], timeout=ctx.timeout, deadline=ctx.deadline,
-            ),
-        ),
-        "sov2ex": _provider_spec(
-            "sov2ex",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_sov2ex, q, cfg.counts["sov2ex"], timeout=ctx.timeout, deadline=ctx.deadline,
-            ),
-        ),
-        "github_repos": _provider_spec(
-            "github_repos",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_github_repos, q, cfg.counts["github"], key or "", timeout=ctx.timeout,
-                deadline=ctx.deadline,
-            ),
-        ),
-        "github_code": _provider_spec(
-            "github_code",
-            missing_message="missing GITHUB_TOKEN / GH_TOKEN (GitHub code search requires a token)",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_github_code, q, cfg.counts["github_code"], key or "", timeout=ctx.timeout,
-                deadline=ctx.deadline,
-            ),
-        ),
-        "hackernews": _provider_spec(
-            "hackernews",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(search_hackernews, q, cfg.counts["hackernews"], timeout=ctx.timeout, deadline=ctx.deadline),
-        ),
-        "stackoverflow": _provider_spec(
-            "stackoverflow",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_stackoverflow, q, cfg.counts["stackoverflow"], timeout=ctx.timeout,
-                deadline=ctx.deadline, api_key=key or "",
-            ),
-        ),
-        "twitter": _provider_spec(
-            "twitter",
-            call=lambda q, cfg, ctx, key: call_optional_timeout(
-                search_twitter,
-                q,
-                cfg.counts["twitter"],
-                cfg.keys.get("twitter") or cfg.keys.get("twitter_cookies", ""),
-                timeout=ctx.timeout,
-                deadline=ctx.deadline, publish_partial=ctx.publish_partial,
-            ),
-        ),
+        spec.name: spec
+        for plugin in builtin_plugins()
+        if plugin.search_specs is not None
+        for spec in plugin.search_specs()
     }
