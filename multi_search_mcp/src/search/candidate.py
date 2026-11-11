@@ -68,8 +68,9 @@ def canonicalize_url(url: str) -> str:
             (
                 scheme,
                 userinfo + host,
-                # Servers treat "a//b" as "a/b"; providers return both spellings.
-                _REPEATED_SLASHES.sub("/", parts.path) or "/",
+                # Providers return "a//b" and "a/b/" for the page at "a/b"; the
+                # displayed and fetched URL is still the provider's own spelling.
+                _REPEATED_SLASHES.sub("/", parts.path).rstrip("/") or "/",
                 urllib.parse.urlencode(query, doseq=True),
                 "",
             )

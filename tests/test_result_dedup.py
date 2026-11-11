@@ -27,6 +27,14 @@ class CanonicalVariantTests(unittest.TestCase):
             self.assertEqual(canonicalize_url(variant), DOC, variant)
         self.assertEqual(canonicalize_url("https://example.com//"), "https://example.com/")
 
+    def test_a_trailing_slash_does_not_split_one_page(self):
+        page = "https://www.geeksforgeeks.org/python/asyncio-in-python"
+        self.assertEqual(canonicalize_url(page + "/"), canonicalize_url(page))
+        self.assertEqual(canonicalize_url(page + "//?id=1"), canonicalize_url(page + "?id=1"))
+        # The site root keeps its single slash.
+        self.assertEqual(canonicalize_url("https://example.com"), "https://example.com/")
+        self.assertEqual(canonicalize_url("https://example.com/"), "https://example.com/")
+
     def test_display_and_tracking_parameters_are_dropped(self):
         self.assertEqual(canonicalize_url(DOC + "?highlight=asyncio"), DOC)
         self.assertEqual(canonicalize_url(DOC + "?abrmid=0901b02"), DOC)
