@@ -96,6 +96,7 @@ class CiWorkflowTests(unittest.TestCase):
                     self.assertRegex(match.group(1), PINNED_USE)
 
     def test_python_job_covers_lowest_and_highest_python_on_macos_and_windows(self):
+        self.assertIn("python-twitter", self.jobs, "optional XKit coverage needs its own job")
         job = self.jobs["python"]
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         lowest = re.search(r'(?m)^requires-python\s*=\s*">=\s*(3\.\d+)"', pyproject).group(1)
@@ -126,7 +127,8 @@ class CiWorkflowTests(unittest.TestCase):
         targets = dict(_cargo_tests(manifest))
         self.assertIn("install_platform", targets, "autotests=false requires explicit registration")
         for job_name, runner in (("desktop-rust", "windows-latest"),
-                                 ("desktop-macos", "macos-latest")):
+                                 ("desktop-macos", "macos-latest"),
+                                 ("desktop-linux", "ubuntu-latest")):
             with self.subTest(runner=runner):
                 job = self.jobs[job_name]
                 self.assertIn(f"runs-on: {runner}", job)
