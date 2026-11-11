@@ -34,12 +34,26 @@ fn as_source_entry(entry: &'static ProviderEntry) -> SourceEntry {
     }
 }
 
+/// Balance-only credentials are not search sources, so they are absent from the generated
+/// provider catalog. They still use the same keys-file editor and commands; this explicit
+/// allowlist is the only extra entry the credential boundary accepts.
+const EXTRA_CREDENTIALS: &[SourceEntry] = &[SourceEntry {
+    source: "exa_admin",
+    provider: "exa_admin",
+    canonical: "exa_admin",
+    label: "Exa 管理 Key",
+}];
+
 /// Resolve a UI/CLI source name or alias to its SourceEntry. Only keyed
 /// providers resolve through `resolve_source`; non-keyed sources must go
 /// through `resolve_test_source`. The returned entry borrows the static
 /// PROVIDERS row, so there is no per-call allocation.
 fn find_source(name: &str, keyed_only: bool) -> Result<SourceEntry, String> {
     let trimmed = name.trim();
+    if let Some(entry) = EXTRA_CREDENTIALS.iter().find(|entry| entry.source == trimmed) {
+        // Balance-only entries have no search endpoint, so they never resolve as test sources.
+        return if keyed_only { Ok(*entry) } else { Err("不支持的搜索源".into()) };
+    }
     let entry = provider::entries()
         .iter()
         .find(|entry| {

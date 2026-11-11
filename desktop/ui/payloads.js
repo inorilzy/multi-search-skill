@@ -86,6 +86,17 @@ export const schemas = {
   }),
   CredentialValue: schema({ value: 's', snapshot: 's' }),
   TestOutcome: schema({ result: 's', message: 's' }),
+  BalanceAuthMethod: schema({ type: 's', label: 's', credential: 's', purpose: 's' }),
+  BalanceReport: schema({
+    provider: 's', status: 's', scope: 's', unit: 's',
+    remaining: 'nn', limit: 'nn', used: 'nn', resets_at: 'sn', period: 'sn',
+    key_fingerprint: 'sn', error_kind: 'sn', message: 's', fetched_at: 's',
+  }),
+  BalanceProvider: schema({
+    id: 's', label: 's', auth_methods: 'BalanceAuthMethod[]',
+    balance_supported: 'b', balance_note: 's', reports: 'BalanceReport[]',
+  }),
+  BalanceView: schema({ schema_version: 'n', providers: 'BalanceProvider[]' }),
   ProviderInfo: schema({
     source: 's', cliSource: 's', provider: 'sn', label: 's',
     keyed: 'b', search: 'b', cookie: 'b', aliases: 'sa',

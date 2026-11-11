@@ -14,6 +14,22 @@ app_version: string,
  */
 bundled_cli_version: string | null, };
 
+/**
+ * One balance auth method as declared by the plugin catalog. Only `type` is rename-sensitive:
+ * the CLI emits `type`, while Rust keeps `method_type` for readability.
+ */
+export type BalanceAuthMethod = { type: string, label: string, credential: string, purpose: string, };
+
+export type BalanceProvider = { id: string, label: string, auth_methods: Array<BalanceAuthMethod>, balance_supported: boolean, balance_note: string, reports: Array<BalanceReport>, };
+
+/**
+ * One provider row from the balance CLI. Unknown future status/scope/unit values stay strings,
+ * so the UI can fall back to the raw wire value instead of rejecting the whole payload.
+ */
+export type BalanceReport = { provider: string, status: string, scope: string, unit: string, remaining: number | null, limit: number | null, used: number | null, resets_at: string | null, period: string | null, key_fingerprint: string | null, error_kind: string | null, message: string, fetched_at: string, };
+
+export type BalanceView = { schema_version: number, providers: Array<BalanceProvider>, };
+
 export type CliStatus = { app: Discovery, user: Discovery, restart_required: boolean, 
 /**
  * The CLI the desktop itself will run for searches and tests: the verified managed
@@ -65,8 +81,8 @@ env_var?: string,
 file_key_count?: number, key_application_available: boolean, 
 /**
  * Whether this build can hand the fixed HTTPS link to the system browser:
- * Windows (`ShellExecuteW`) and macOS (`/usr/bin/open`) implement it, other
- * platforms do not.
+ * Windows (`ShellExecuteW`), macOS (`/usr/bin/open`) and Linux (`xdg-open`)
+ * implement it; other platforms fall back to manual copying.
  */
 key_application_open_supported: boolean, 
 /**
@@ -262,8 +278,8 @@ timeout: number | null, disabled_sources: Array<string>, routes: { [key in strin
  */
 scrape_backends: Array<string> | null, 
 /**
- * `None` 表示本次保存整块 `ranking` 都不动；`Some` 时按块内已知键合并，
- * 块里不认识的同级键原样保留。
+ * `None` 表示本次保存整块 `ranking` 都不动；`Some` 时按块内已知键整块重写，
+ * 不认识的同级键会在保存时丢弃。
  */
 ranking: RankingInput | null, };
 

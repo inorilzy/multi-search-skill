@@ -1231,6 +1231,95 @@
     margin-top: 10px;
     font-size: 12px;
   }
+  .balance-block {
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: var(--panel);
+    padding: 16px;
+    margin: 0 0 16px;
+  }
+  .balance-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .balance-head h3 {
+    margin: 0;
+    font-size: 14px;
+  }
+  .balance-sub {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .balance-head button {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .balance-rows {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .balance-row {
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+  .balance-row:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .balance-row-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .balance-status {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .balance-row[data-kind=ok] .balance-status {
+    color: var(--teal);
+  }
+  .balance-row[data-kind=error] .balance-status {
+    color: var(--red);
+  }
+  .balance-values {
+    display: grid;
+    grid-template-columns: repeat(auto-fit,minmax(130px,1fr));
+    gap: 6px 14px;
+    margin: 8px 0 0;
+  }
+  .balance-values dt {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .balance-values dd {
+    margin: 0;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .balance-message, .balance-time {
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--muted);
+  }
+  .exa-admin-key {
+    margin-top: 18px;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+  }
+  .exa-admin-key h3 {
+    margin: 0 0 6px;
+    font-size: 14px;
+  }
   .row-error {
     font-size: 12px;
     line-height: 1.7;

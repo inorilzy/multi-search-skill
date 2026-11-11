@@ -24,6 +24,7 @@ export interface CommandContracts {
   debug_log_save: { args: DebugLogSaveArgs; result: T.SettingsView };
   log_viewer_open: { args: Record<string, never>; result: T.LogViewerInfo };
   scrape_backend_timeout_save: { args: ScrapeBackendTimeoutSaveArgs; result: T.SettingsView };
+  balance_view: { args: { provider: string | null; refresh: boolean }; result: T.BalanceView };
 }
 
 export interface ContractMap {
@@ -51,6 +52,10 @@ export interface ContractMap {
   CredentialOverview: T.CredentialOverview;
   CredentialValue: T.CredentialValue;
   TestOutcome: T.TestOutcome;
+  BalanceAuthMethod: T.BalanceAuthMethod;
+  BalanceReport: T.BalanceReport;
+  BalanceProvider: T.BalanceProvider;
+  BalanceView: T.BalanceView;
   ProviderInfo: T.ProviderInfo;
   RouteConfig: T.RouteConfig;
   RankingInput: T.RankingInput;

@@ -137,6 +137,11 @@ name = "ui_contract"
 path = "tests/ui_contract.rs"
 required-features = ["test-fixtures", "ts"]
 
+[[test]]
+name = "balance"
+path = "tests/balance.rs"
+required-features = ["test-fixtures"]
+
 [[bin]]
 name = "multi-search-desktop"
 path = "src/main.rs"

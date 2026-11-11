@@ -1,6 +1,7 @@
 import { SOURCES, mountCredentialBody } from './credentials.js';
 import { showError } from './api.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
+import { mountBalance, providerForSource } from './balance.js';
 
 const ENTRIES = [...SOURCES, ...SOURCE_CATALOG.sources
   .filter(entry => !entry.searchable && entry.keyed)
@@ -236,7 +237,12 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     for (const button of [rec.pick, rec.row.querySelector('[data-expand]')]) button.setAttribute('aria-expanded', 'true');
     rec.row.querySelector('[data-expand]').setAttribute('aria-label', `收起 ${rec.entry.label}`);
     rec.detail.hidden = false;
-    if (!rec.entry.keyed) { detailMount = mountKeylessDetail(rec); return; }
+    if (!rec.entry.keyed) {
+      const mounted = await mountKeylessDetail(rec);
+      if (disposed || ticket !== activeTicket) { mounted.dispose(); return; }
+      detailMount = mounted;
+      return;
+    }
     const body = doc.createElement('div');
     rec.detail.append(body);
     const previous = { ...rec.test };
@@ -256,11 +262,13 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     }
     detailMount = mounted;
   }
-  function mountKeylessDetail(rec) {
+  async function mountKeylessDetail(rec) {
     const panel = doc.createElement('section');
     panel.className = 'keyless-detail';
     panel.innerHTML = `<div><p>${rec.entry.cookie ? '在搜索设置页配置 Cookie 文件路径；此处不读取或显示 Cookie 正文。' : '该服务无需 API Key，可直接测试连接。'}</p><p class="credential-note">测试会发送外部搜索请求，请只在需要时测试。</p><button type="button" data-action="test">测试连接</button></div><div class="test-result" data-kind="idle"><div><strong data-status="test" aria-live="polite"></strong><p data-info="test" role="status"></p></div></div>`;
     rec.detail.append(panel);
+    const balanceSlot = doc.createElement('div');
+    rec.detail.append(balanceSlot);
     let stale = false;
     const button = panel.querySelector('button');
     const show = result => {
@@ -280,7 +288,10 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
       } catch (error) { show({ kind: 'error', title: '测试失败', message: showError(panel.querySelector('[data-info="test"]'), error, '测试启动失败，请检查 CLI 后重试。').message }); }
       finally { if (!stale && !disposed) button.disabled = false; }
     });
-    return { dispose() { stale = true; } };
+    const balance = await mountBalance(balanceSlot, api, {
+      provider: providerForSource(rec.entry.source), source: rec.entry.source, label: rec.entry.label,
+    });
+    return { dispose() { stale = true; balance.dispose(); } };
   }
 
   for (const entry of ENTRIES) buildRow(entry);
