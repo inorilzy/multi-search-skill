@@ -76,6 +76,7 @@ const APP_COMMANDS: &[&str] = &[
     "log_viewer_open",
     "scrape_backend_timeout_save",
     "provider_list",
+    "balance_view",
     "scrape_memory_view",
     "scrape_memory_pin",
     "scrape_memory_reset",

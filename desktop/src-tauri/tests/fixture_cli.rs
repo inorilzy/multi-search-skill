@@ -75,6 +75,7 @@ fn main() {
             Some("read") => println!("usage: multi-search read [--keyword KEYWORD] [--offset OFFSET] [--limit N] [--format FORMAT] source_id"),
             Some("doctor") => println!("usage: multi-search doctor [--no-keys] [--format FORMAT]"),
             Some("routes") => println!("usage: multi-search routes [--format FORMAT]"),
+            Some("balance") => println!("usage: multi-search balance [--provider PROVIDER] [--format FORMAT] [--refresh]"),
             _ => {}
         }
         return;
@@ -101,6 +102,17 @@ fn main() {
                 .join(",")
         );
         std::fs::write(path, body).unwrap();
+    }
+    if args.first().map(String::as_str) == Some("balance") {
+        match env::var("FIXTURE_BALANCE").as_deref() {
+            Ok("hang") => thread::sleep(Duration::from_secs(60)),
+            Ok("invalid") => println!("not-json"),
+            _ => println!(
+                "{}",
+                env::var("FIXTURE_BALANCE_JSON").unwrap_or_else(|_| r#"{"schema_version":1,"providers":[{"id":"tavily","label":"Tavily","auth_methods":[],"balance_supported":true,"balance_note":"","reports":[{"provider":"tavily","status":"ok","scope":"key","unit":"credits","remaining":123,"limit":500,"used":377,"resets_at":null,"period":null,"key_fingerprint":null,"error_kind":null,"message":"","fetched_at":"2026-11-01T00:00:00+00:00"}]}]}"#.into())
+            ),
+        }
+        return;
     }
     let query = args.iter().position(|arg| arg == "--").and_then(|i| args.get(i+1)).or_else(|| args.get(1)).map(String::as_str).unwrap_or("");
     if query == "hang" {

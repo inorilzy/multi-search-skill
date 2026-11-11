@@ -1,4 +1,5 @@
 //! Native management boundary; the CLI remains the search implementation.
+pub mod balance;
 pub(crate) mod config_db;
 pub mod cookie;
 pub mod credential;
@@ -44,6 +45,7 @@ pub use skill_manage::{
 /// the same Rust types each `#[tauri::command]` already returns or accepts;
 /// no new public surface is added beyond what the IPC layer exposes.
 pub mod contract {
+    pub use crate::balance::{BalanceAuthMethod, BalanceProvider, BalanceReport, BalanceView};
     pub use crate::cookie::CookieStatus;
     pub use crate::credential::CredentialStatus;
     pub use crate::credential_commands::{
@@ -162,6 +164,56 @@ pub mod process_fixture {
         )
         .map(|output| output.stdout)
         .map_err(|error| error.to_string())
+    }
+}
+
+/// Test seam for the balance command boundary. Not a supported public API.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub mod balance_fixture {
+    use crate::balance::BalanceView;
+    use crate::RuntimeEnvironment;
+    use std::path::Path;
+    use std::time::Duration;
+
+    pub fn validate(provider: Option<&str>) -> Result<Option<String>, String> {
+        crate::balance::validate_provider(provider)
+    }
+
+    pub fn args(provider: Option<&str>, refresh: bool) -> Vec<String> {
+        crate::balance::balance_args(provider, refresh)
+    }
+
+    pub fn parse(stdout: &str) -> Result<BalanceView, String> {
+        crate::balance::parse_balance_view(stdout)
+    }
+
+    pub fn interpret(
+        timed_out: bool,
+        code: Option<i32>,
+        truncated: bool,
+        stdout: &str,
+    ) -> Result<BalanceView, String> {
+        crate::balance::interpret_parts(timed_out, code, truncated, stdout)
+    }
+
+    pub fn view(
+        environment: &RuntimeEnvironment,
+        cli: &Path,
+        provider: Option<&str>,
+        refresh: bool,
+    ) -> Result<BalanceView, String> {
+        crate::balance::view(environment, cli, provider, refresh)
+    }
+
+    pub fn view_with_timeout(
+        environment: &RuntimeEnvironment,
+        cli: &Path,
+        provider: Option<&str>,
+        refresh: bool,
+        timeout: Duration,
+    ) -> Result<BalanceView, String> {
+        crate::balance::view_with_timeout(environment, cli, provider, refresh, timeout)
     }
 }
 

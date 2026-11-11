@@ -2,6 +2,7 @@ import { pageRoot, confirmInline, disposePage } from './dom.js';
 import { showError } from './api.js';
 import { SEARCH_SOURCES } from './catalog.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
+import { mountBalance, providerForSource } from './balance.js';
 
 // Search sources come from the catalog generated from Python core metadata (one source of truth for
 // the CLI and this UI). Scraper-only providers also live there: they have credentials but no search
@@ -26,6 +27,11 @@ export function scrapeCredentialProviders() {
 }
 
 const DEFAULT_SOURCE = 'tavily';
+// Balance-only credentials are not search sources, so they are not in the generated catalog.
+// The only such entry the credential editor exposes today is Exa's Team Management service key.
+const EXTRA_CREDENTIALS = {
+  exa_admin: { source: 'exa_admin', label: 'Exa 管理 Key', keyed: true, search: false, balanceOnly: true },
+};
 const storeLabels = { present: '已保存', absent: '未保存', unavailable: 'Key 文件无法读取', unreadable: '已保存条目格式无法识别' };
 export const KEYS_FILE_NOTE = 'Key 以明文保存在 ~/.multi-search/keys.json（仅当前用户可读写）';
 
@@ -57,10 +63,11 @@ function testText(result, label, provenance) {
   };
   return labels[result] || '测试失败';
 }
-/** @typedef {{ source: string, label: string, keyed: boolean, keyOptional?: boolean, cookie?: boolean, search?: boolean }} CredentialEntry */
+/** @typedef {{ source: string, label: string, keyed: boolean, keyOptional?: boolean, cookie?: boolean, search?: boolean, balanceOnly?: boolean }} CredentialEntry */
 /** @param {string} source @returns {CredentialEntry} */
 const sourceEntry = source => SOURCES.find(item => item.source === source)
   || SCRAPE_PROVIDERS.find(item => item.source === source)
+  || EXTRA_CREDENTIALS[source]
   || SOURCES.find(item => item.source === DEFAULT_SOURCE)
   || { source, label: source, keyed: true, search: true };
 const provenance = value => JSON.stringify([value.effective_source, value.store?.state, value.store?.saved_at]);
@@ -74,11 +81,28 @@ export async function mountCredentials(root, api, options = {}) {
   const holder = root.ownerDocument.createElement('div'); root.append(holder);
   return mountCredentialBody(holder, api, pageOptions);
 }
-/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void}} [options] */
-export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest } = {}) {
+// Exa's Team Management service key is a balance-only credential, not a search source. It is
+// edited with the same credential editor so saving/removing uses the shared keys-file commands.
+async function mountExaAdminEditor(root, api, balanceBlock) {
+  const doc = root.ownerDocument;
+  const section = doc.createElement('section');
+  section.className = 'exa-admin-key';
+  section.innerHTML = `<h3>管理 Key（仅用于查余额）</h3><p class="credential-note">Exa 的 Team Management Service Key 只用于查询余额，不会用于搜索。没有该 Key 时余额会显示“需要凭据”。</p><div data-exa-admin-body></div>`;
+  root.append(section);
+  let ready = false;
+  const mounted = await mountCredentialBody(section.querySelector('[data-exa-admin-body]'), api, {
+    source: 'exa_admin',
+    onStatus: () => { if (ready) void balanceBlock.reload(false); },
+  });
+  ready = true;
+  return mounted;
+}
+/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void, balanceOnly?: boolean}} [options] */
+export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest, balanceOnly = false } = {}) {
   root = pageRoot(root);
-  const { label, search, keyOptional } = sourceEntry(source);
-  const searchTest = search !== false;
+  const { label, search, keyOptional, balanceOnly: entryBalanceOnly } = sourceEntry(source);
+  balanceOnly = balanceOnly || Boolean(entryBalanceOnly);
+  const searchTest = search !== false && !balanceOnly;
   root.innerHTML = `<div class="credential-editor"><div class="credential-fields">
     <p class="credential-note credential-intro">API Key：每行一条，可保存多条轮换使用。</p>
     <p class="credential-note" data-key-optional hidden>无需 API Key 也能使用；填写 Key 只用于提高每日额度。</p>
@@ -102,6 +126,12 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     <details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? `测试会向对应服务发送外部搜索请求，可能消耗额度。每次只测试所选的一把 Key，默认选中最后一行；环境变量单独列出。新增后请先保存。测试不写入正式状态库。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details></div></div>`;
   if (keyOptional) root.querySelector('[data-key-optional]').hidden = false;
   root.querySelector('.credential-note').prepend(root.ownerDocument.createTextNode(`${label} `));
+  if (balanceOnly) {
+    root.querySelector('.credential-intro').textContent = '管理 Key：每行一条，仅用于查询余额，不会用于搜索。';
+    for (const node of root.querySelectorAll('[data-test-key-label], [data-action="test"], [data-action="application"], [data-info="application"], [data-application-fallback], .credential-feedback')) {
+      node.hidden = true;
+    }
+  }
   const q = selector => /** @type {any} */ (root.querySelector(selector));
   const text = (selector, value) => { q(selector).textContent = value; };
   let current = { store: { state: 'absent', error: '' }, effective_source: 'none' };
@@ -464,5 +494,27 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   q('[data-action="refresh"]').addEventListener('click', refresh);
   renderDrafts();
   await refresh();
-  return { dispose() { disposePage(root); disposed = true; generation += 1; revealed.clear(); for (const input of root.querySelectorAll("input")) input.value = ""; root.replaceChildren(); } };
+  const extraDisposers = [];
+  if (!balanceOnly && typeof api.balanceView === 'function') {
+    const balanceSlot = root.ownerDocument.createElement('div');
+    root.prepend(balanceSlot);
+    const balanceBlock = await mountBalance(balanceSlot, api, {
+      provider: providerForSource(source), source, label,
+    });
+    extraDisposers.push(balanceBlock);
+    if (source === 'exa') {
+      extraDisposers.push(await mountExaAdminEditor(root, api, balanceBlock));
+    }
+  }
+  return {
+    dispose() {
+      for (const extra of extraDisposers) extra.dispose();
+      disposePage(root);
+      disposed = true;
+      generation += 1;
+      revealed.clear();
+      for (const input of root.querySelectorAll("input")) input.value = "";
+      root.replaceChildren();
+    },
+  };
 }

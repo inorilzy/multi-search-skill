@@ -493,6 +493,25 @@ async fn scrape_memory_reset(
     .await
 }
 
+/// Provider balances. The provider id is validated against the shared plugin catalog inside
+/// `balance::view` before the managed CLI is started; the frontend never selects a program.
+#[tauri::command]
+async fn balance_view(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    provider: Option<String>,
+    refresh: bool,
+) -> Result<crate::balance::BalanceView, String> {
+    let manager = manager.inner().clone();
+    offload(
+        move || {
+            let cli = manager.execution_cli()?;
+            crate::balance::view(&manager.environment, &cli, provider.as_deref(), refresh)
+        },
+        "balance_view_failed",
+    )
+    .await
+}
+
 /// Provider manifest for the sources/settings pages. Returns the same rows the
 /// desktop uses internally; the UI keeps no copy of this table.
 #[tauri::command]
@@ -666,6 +685,7 @@ pub fn run() {
             log_viewer_open,
             scrape_backend_timeout_save,
             provider_list,
+            balance_view,
             scrape_memory_view,
             scrape_memory_pin,
             scrape_memory_reset
