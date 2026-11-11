@@ -16,6 +16,10 @@ const SOURCE_ORDER: &[&str] = &[
     "baidu", "brave", "parallel", "tavily", "exa", "firecrawl", "serpapi",
     "github_repos", "github_code", "hackernews", "stackoverflow", "sov2ex", "twitter", "jina",
 ];
+const PLUGIN_ORDER: &[&str] = &[
+    "brave", "parallel", "baidu", "tavily", "exa", "serpapi", "firecrawl",
+    "sov2ex", "github", "hackernews", "stackexchange", "twitter", "jina",
+];
 
 #[test]
 fn catalog_shape_and_shared_metadata_are_stable() {
@@ -76,6 +80,113 @@ fn catalog_shape_and_shared_metadata_are_stable() {
             assert_eq!(catalog.route(alias).map(|item| item.name.as_str()), Some(route.name.as_str()));
         }
     }
+}
+
+#[test]
+fn catalog_parses_plugins_and_source_ownership() {
+    let catalog = fixture::catalog();
+    let ids: Vec<&str> = catalog.plugins.iter().map(|plugin| plugin.id.as_str()).collect();
+    assert_eq!(ids, PLUGIN_ORDER, "plugins follow registration order");
+
+    for plugin in &catalog.plugins {
+        assert!(!plugin.label.trim().is_empty(), "{} has a label", plugin.id);
+        if !plugin.balance_supported {
+            assert!(!plugin.balance_note.trim().is_empty(), "{} explains missing balance support", plugin.id);
+        }
+        if plugin.key_provider.is_none() {
+            assert!(plugin.auth_methods.is_empty(), "{} has no key to log in with", plugin.id);
+        }
+    }
+
+    for source in &catalog.sources {
+        let plugin_id = source
+            .plugin
+            .as_deref()
+            .unwrap_or_else(|| panic!("{} names its owning plugin", source.name));
+        let plugin = catalog
+            .plugin(plugin_id)
+            .unwrap_or_else(|| panic!("{plugin_id} must be a declared plugin"));
+        assert!(
+            plugin.search_sources.contains(&source.name) || plugin.scrape_channels.contains(&source.name),
+            "{} belongs to {plugin_id}",
+            source.name,
+        );
+    }
+
+    let baidu = catalog.plugin("baidu").expect("baidu plugin");
+    assert!(!baidu.balance_supported, "baidu has no balance endpoint yet");
+    assert!(!baidu.balance_note.trim().is_empty());
+
+    let firecrawl = catalog.plugin("firecrawl").expect("firecrawl plugin");
+    let oauth = firecrawl
+        .auth_methods
+        .iter()
+        .find(|method| method.method_type == "oauth")
+        .expect("firecrawl declares browser login");
+    assert_eq!((oauth.credential.as_str(), oauth.purpose.as_str()), ("firecrawl", "search_key"));
+
+    let parallel = catalog.plugin("parallel").expect("parallel plugin");
+    let oauth = parallel
+        .auth_methods
+        .iter()
+        .find(|method| method.method_type == "oauth")
+        .expect("parallel declares browser login");
+    assert_eq!(
+        (oauth.credential.as_str(), oauth.purpose.as_str()),
+        ("parallel_account", "balance_only"),
+    );
+
+    let exa = catalog.plugin("exa").expect("exa plugin");
+    assert!(exa.auth_methods.iter().any(|method| {
+        method.method_type == "api" && method.credential == "exa_admin" && method.purpose == "balance_only"
+    }));
+}
+
+#[test]
+fn catalog_parses_without_plugins_or_source_plugin_fields() {
+    use multi_search_desktop::source_catalog::Catalog;
+
+    const LEGACY_CATALOG: &str = r#"{
+        "schema_version": 1,
+        "key_resolution": {
+            "order": ["env", "keys_file"],
+            "env_alias_priority": "last_non_empty_wins",
+            "description": "fixture"
+        },
+        "env": {"alias_priority": "last_non_empty_wins", "providers": {}},
+        "credential_store_providers": [],
+        "source_aliases": {},
+        "sources": [{
+            "name": "brave",
+            "public_name": "brave",
+            "label": "Brave Search",
+            "description": "fixture",
+            "mark": "B",
+            "kind": "search",
+            "searchable": true,
+            "aliases": [],
+            "key_provider": "brave",
+            "keyed": true,
+            "key_optional": false,
+            "cookie": false,
+            "env": ["BRAVE_API_KEY"],
+            "routes": ["default"],
+            "max_count": 15
+        }],
+        "routes": []
+    }"#;
+
+    let legacy: Catalog =
+        serde_json::from_str(LEGACY_CATALOG).expect("catalogs from older CLI builds must parse");
+    assert!(legacy.plugins.is_empty(), "missing plugins defaults to empty");
+    assert_eq!(legacy.sources[0].plugin, None, "missing source plugin defaults to None");
+
+    let with_plugin = LEGACY_CATALOG.replace(
+        r#""name": "brave","#,
+        r#""name": "brave", "plugin": "brave","#,
+    );
+    let catalog: Catalog = serde_json::from_str(&with_plugin).expect("source plugin parses");
+    assert_eq!(catalog.sources[0].plugin.as_deref(), Some("brave"));
 }
 
 #[test]
