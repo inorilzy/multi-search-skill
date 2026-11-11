@@ -149,7 +149,12 @@ class TwitterScraperTests(unittest.TestCase):
 
     def test_comment_timeout_reserves_cleanup_time_after_detail(self):
         real_wait_for = asyncio.wait_for
-        for timeout, detail_time, expected in ((1, 0, 0.9), (10, 0, 9.75), (1, 0.8, 0.18)):
+        # Cleanup reserves at least 0.25s, otherwise 15% of the remaining
+        # budget up to 1s; budgets below the minimum cannot fetch another page.
+        for timeout, detail_time, expected in (
+            (1, 0, 0.75), (4, 0, 3.4), (10, 0, 9.0),
+            (10, 6, 3.4), (1, 0.8, None), (0.25, 0, None),
+        ):
             with self.subTest(timeout=timeout, detail_time=detail_time):
                 clock = [100.0]
                 timeouts = []
@@ -170,9 +175,17 @@ class TwitterScraperTests(unittest.TestCase):
                      mock.patch.object(twitter.asyncio, "wait_for", side_effect=capture_wait_for):
                     result, _client, _factory = self.fetch(client=client, timeout=timeout)
                 self.assertNotIn("error", result)
-                self.assertEqual(len(timeouts), 2)
                 self.assertAlmostEqual(timeouts[0], timeout)
-                self.assertAlmostEqual(timeouts[1], expected)
+                self.assertIn("Acquired body", result["markdown"])
+                self.assertIn("First reply", result["markdown"])
+                if expected is None:
+                    self.assertEqual(len(timeouts), 1)
+                    self.assertEqual(page.next_calls, 0)
+                    self.assertIn("comment budget exhausted", result["markdown"])
+                else:
+                    self.assertEqual(len(timeouts), 2)
+                    self.assertAlmostEqual(timeouts[1], expected)
+                    self.assertEqual(page.next_calls, 1)
                 client.http.aclose.assert_awaited_once()
 
     def test_reported_reply_count_and_missing_next_page_are_marked(self):
@@ -183,10 +196,28 @@ class TwitterScraperTests(unittest.TestCase):
                 self.assertIn("Replies incomplete", result["markdown"])
 
     def test_pagination_shares_one_overall_timeout(self):
+        clock = [100.0]
+        timeouts = []
+        real_wait_for = asyncio.wait_for
         last = Page([tweet("Reply beyond the deadline")])
-        second = Page([tweet("Reply inside the deadline")], next_page=last, delay=0.06)
-        first = Page([tweet("First reply")], next_page=second, delay=0.06)
-        result, client, _factory = self.fetch(tweet(replies=first), timeout=0.1)
+        second = Page([tweet("Reply inside the deadline")], next_page=last)
+        first = Page([tweet("First reply")], next_page=second)
+
+        async def capture_wait_for(awaitable, timeout):
+            timeouts.append(timeout)
+            # Each page takes 0.5s. Only the first fits the shared 0.75s
+            # reply budget; a fresh budget per page would fetch both.
+            if len(timeouts) > 1:
+                clock[0] += min(0.5, timeout)
+                if timeout < 0.5:
+                    awaitable.close()
+                    raise asyncio.TimeoutError
+            return await real_wait_for(awaitable, timeout)
+
+        with mock.patch.object(twitter, "time", SimpleNamespace(monotonic=lambda: clock[0])), \
+             mock.patch.object(twitter.asyncio, "wait_for", side_effect=capture_wait_for):
+            result, client, _factory = self.fetch(tweet(replies=first), timeout=1)
+        self.assertEqual(timeouts, [1, 0.75, 0.25])
         self.assertIn("Reply inside the deadline", result["markdown"])
         self.assertNotIn("Reply beyond the deadline", result["markdown"])
         self.assertIn("timed out", result["markdown"])

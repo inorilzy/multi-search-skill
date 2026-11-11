@@ -36,6 +36,31 @@ jobs:
       - name: Check documentation source paths and local links
         run: python scripts/check_glossary_paths.py
 
+  python-twitter:
+    name: Python Twitter tests with XKit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Check out the complete pinned XKit source
+        # Private repository: configure a read-only token for xkit-py.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: inorilzy/xkit-py
+          ref: c02ff46efd0264b4bc85968e3f5732561ffdbaf3
+          path: .xkit-source
+          token: ${{ secrets.XKIT_READ_TOKEN }}
+          persist-credentials: false
+      - name: Install the CLI and XKit
+        run: python -m pip install . ./.xkit-source
+      - name: Require the optional dependency before running Twitter tests
+        # Fail on a missing/incomplete package instead of accepting skipped tests.
+        run: python -c "from xkit import Client; from twikit.tweet import Tweet"
+      - name: Run Twitter scraper tests
+        run: python -m unittest tests.test_twitter_scraper -v
+
   locked-regression:
     name: Locked regression, Python ${{ matrix.python }} on ${{ matrix.os }}
     # Same suite against the committed uv.lock instead of a fresh resolve, so a lock that
@@ -136,6 +161,40 @@ jobs:
         # The tauri.check.conf.json overlay disables bundle inputs only; it is not a release or
         # bundle certification. The script derives the repo root itself (no cwd/PYTHONPATH).
         run: python -B scripts/rust_ci_matrix.py
+
+  desktop-linux:
+    name: Desktop Linux tests and contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MANIFEST: desktop/src-tauri/Cargo.toml
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.12"
+      - name: Install locked Python dependencies for interop
+        run: |
+          uv sync --locked --python 3.12
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Prepare the pinned native Rust compiler
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+          cargo fetch --locked --manifest-path "$MANIFEST"
+      - name: Release installation boundary ignores test selectors
+        run: cargo test --locked --manifest-path "$MANIFEST" --no-default-features --test install_release_boundary
+      - name: Linux domain tests and generated UI contract
+        # Domain tests require no Tauri window or WebKit/GTK libraries.
+        run: cargo test --locked --manifest-path "$MANIFEST" --no-default-features --features test-fixtures,ts
+      - name: Linux install acceptance-boundary tests
+        run: >
+          cargo test --locked --manifest-path "$MANIFEST" --no-default-features
+          --features test-fixtures,install-test-boundary --test install --test install_lifecycle
+          --test install_platform --test install_real_bundle --test install_production_path
 
   desktop-macos:
     name: Desktop macOS installation and contracts

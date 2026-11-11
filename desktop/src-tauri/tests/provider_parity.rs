@@ -3,8 +3,8 @@
 //! the CLI owns the runtime registry. This test catches drift before a user
 //! sees a missing or misbehaving source.
 //!
-//! Requires `python` on PATH. Skips silently on platforms/environments where
-//! the Python package cannot be imported (CI on Linux without deps, etc.).
+//! Requires `python` on PATH with the repository's dependencies installed.
+//! Interpreter, import, and metadata errors must fail the parity checks.
 use std::{collections::BTreeSet, path::PathBuf, process::Command};
 
 fn repo_root() -> PathBuf {
@@ -14,36 +14,35 @@ fn repo_root() -> PathBuf {
 }
 
 /// Run a small Python snippet that prints the three provider-side collections
-/// (`ALL_SOURCE_NAMES`, `SOURCE_ALIASES`, `PROVIDERS`) as JSON. Returns `None`
-/// when the interpreter or the package is unavailable, so the test can skip.
-fn python_provider_metadata() -> Option<serde_json::Value> {
+/// (`ALL_SOURCE_NAMES`, `SOURCE_ALIASES`, credential providers) as JSON.
+fn python_provider_metadata() -> serde_json::Value {
     let script = r#"
 import json
 from multi_search_mcp.src.search.search_runner import ALL_SOURCE_NAMES, SOURCE_ALIASES
-from multi_search_mcp.src.support.credential_store import PROVIDERS as CRED_PROVIDERS
+from multi_search_mcp.src.state.keys import CREDENTIAL_STORE_PROVIDERS
 print(json.dumps({
     "all_sources": sorted(ALL_SOURCE_NAMES),
     "aliases": SOURCE_ALIASES,
-    "credential_providers": sorted(CRED_PROVIDERS),
+    "credential_providers": sorted(CREDENTIAL_STORE_PROVIDERS),
 }))
 "#;
     let output = Command::new("python")
         .args(["-B", "-c", script])
         .env("PYTHONPATH", repo_root())
         .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    serde_json::from_slice(&output.stdout).ok()
+        .expect("provider parity requires python on PATH");
+    assert!(
+        output.status.success(),
+        "Python provider metadata failed ({}): {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("Python provider metadata must be valid JSON")
 }
 
 #[test]
 fn rust_provider_manifest_matches_python_registries() {
-    let Some(metadata) = python_provider_metadata() else {
-        eprintln!("python not available; skipping provider parity check");
-        return;
-    };
+    let metadata = python_provider_metadata();
 
     // Canonical source names must equal ALL_SOURCE_NAMES. The desktop picks a
     // subset: jina is a scraper-only provider with no search surface.
@@ -65,9 +64,8 @@ fn rust_provider_manifest_matches_python_registries() {
         .collect();
     assert_eq!(rust_canonical, expected, "canonical source drift");
 
-    // Every keyed Rust provider must appear in Python CRED_PROVIDERS so the
-    // SQLite store can address it; non-keyed providers intentionally do not
-    // appear there.
+    // Every keyed Rust provider must appear in the Python keys-file registry;
+    // non-keyed providers intentionally do not appear there.
     let rust_keyed: BTreeSet<String> = multi_search_desktop::provider::list()
         .into_iter()
         .filter_map(|row| row.provider.map(str::to_string))
@@ -78,12 +76,10 @@ fn rust_provider_manifest_matches_python_registries() {
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
-    // Cookie custody shares encrypted storage, but is deliberately not an API-key
-    // editor/rotation provider. All remaining providers must still match exactly.
-    assert!(python_providers.contains("twitter_cookies"));
+    // Cookies use a separate file reference, not the API-key registry.
+    assert!(!python_providers.contains("twitter_cookies"));
     assert!(!rust_keyed.contains("twitter_cookies"));
-    let python_keyed = python_providers.into_iter().filter(|name| name != "twitter_cookies").collect();
-    assert_eq!(rust_keyed, python_keyed, "keyed provider drift");
+    assert_eq!(rust_keyed, python_providers, "keyed provider drift");
 
     // Every Python source alias must resolve to the same canonical row in
     // Rust. The inverse is also true: Rust must not accept an alias that
@@ -106,9 +102,7 @@ fn rust_alias_set_is_a_subset_of_python_aliases() {
     // (e.g. `github-repos` is the canonical CLI spelling rather than an alias
     // in the Python view). What we forbid is Rust *dropping* an alias that
     // Python documents — that path is covered by the parity test above.
-    let Some(metadata) = python_provider_metadata() else {
-        return;
-    };
+    let metadata = python_provider_metadata();
     let python_alias_keys: BTreeSet<&str> = metadata["aliases"]
         .as_object()
         .unwrap()
