@@ -418,6 +418,17 @@ mod tests {
     }
 
     #[test]
+    fn shared_state_database_override_reaches_the_child() {
+        let env = environment(&[("MULTI_SEARCH_STATE_DB", "C:/synthetic/state.sqlite")]);
+        let vars = child_variables(&env, &[]);
+        assert_eq!(
+            vars.get("MULTI_SEARCH_STATE_DB").map(String::as_str),
+            Some("C:/synthetic/state.sqlite"),
+            "the CLI must resolve the same state database as the desktop view"
+        );
+    }
+
+    #[test]
     fn reader_recovers_poison_and_marks_truncation() {
         use super::{reader, OUTPUT_LIMIT};
         use std::sync::Arc;

@@ -1,17 +1,46 @@
 """SQLite-backed runtime state for multi-search MCP/service use."""
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from ..support.config import home_from_environment
 
-DEFAULT_STATE_PATH = Path.home() / ".multi-search" / "state.sqlite"
+
+STATE_DB_ENV = "MULTI_SEARCH_STATE_DB"
 # How long a writer waits for another process' lock. WAL makes writer/writer
 # contention the only blocking case, so this is a safety net, not the normal path.
 BUSY_TIMEOUT_SECONDS = 10
+
+
+def default_state_path() -> Path:
+    """Resolve the state database path when a store is created.
+
+    ``MULTI_SEARCH_STATE_DB`` is the same test/CLI override the desktop's
+    scrape-memory view honours; both treat it as a literal path. Otherwise the
+    home directory is resolved now, so changing ``HOME``/``USERPROFILE`` inside
+    one process moves the database instead of keeping its import-time value.
+    The module attribute ``DEFAULT_STATE_PATH`` still resolves through this
+    function for callers that read the old name.
+    """
+    override = globals().get("DEFAULT_STATE_PATH")
+    if override is not None:
+        return Path(override)
+    selected = os.environ.get(STATE_DB_ENV)
+    if selected:
+        return Path(selected)
+    return (home_from_environment() or Path.home()) / ".multi-search" / "state.sqlite"
+
+
+def __getattr__(name: str) -> Path:
+    if name == "DEFAULT_STATE_PATH":
+        return default_state_path()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Bump when changing SCHEMA or adding a one-shot data rewrite. Schema creation
 # and data rewrites are guarded by ``PRAGMA user_version`` so a second process
@@ -76,19 +105,6 @@ SCHEMA = (
       scraper TEXT NOT NULL,
       success INTEGER NOT NULL,
       content_length INTEGER,
-      error_type TEXT,
-      error_message TEXT,
-      elapsed_ms INTEGER,
-      created_at TEXT NOT NULL
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS provider_runs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      provider TEXT NOT NULL,
-      operation TEXT NOT NULL,
-      success INTEGER NOT NULL,
-      raw_hits INTEGER,
       error_type TEXT,
       error_message TEXT,
       elapsed_ms INTEGER,
@@ -169,7 +185,7 @@ class StateStore:
     """
 
     def __init__(self, path: str | Path | None = None):
-        self.path = Path(path).expanduser() if path else DEFAULT_STATE_PATH
+        self.path = Path(path).expanduser() if path else default_state_path()
         self._local = threading.local()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.migrate()
