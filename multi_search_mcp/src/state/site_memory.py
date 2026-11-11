@@ -1,6 +1,7 @@
 """Site-to-scraper preference memory for scrape backend ordering."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, urlsplit, urlunsplit
@@ -63,6 +64,31 @@ def site_key(url: str) -> str:
     return host or "unknown"
 
 
+def normalize_site_key(value: str | None) -> str:
+    """Return the canonical key for a URL, bare host, or stored site key.
+
+    ``site_key`` needs a full URL, while the ``site`` commands also accept the
+    keys printed by ``site stats`` (which can carry a path grouping such as
+    ``github.com/repo``). Both forms must address the same row.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return "unknown"
+    if "://" in text:
+        return site_key(text)
+    if "/" in text:
+        return text.lower().rstrip("/")
+    try:
+        parsed = urlsplit("//" + text)
+        parsed.port  # A bare IPv6 site key has no port suffix; keep it verbatim.
+    except ValueError:
+        return text.lower()
+    host = (parsed.hostname or text).lower().rstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    return host or "unknown"
+
+
 @dataclass
 class ScrapeAttempt:
     url: str
@@ -72,11 +98,14 @@ class ScrapeAttempt:
     error_type: str = ""
     error_message: str = ""
     elapsed_ms: int | None = None
+    error_origin: str = ""
 
 
 class SiteScraperMemory:
     def __init__(self, store: StateStore | None = None, min_success_chars: int = 300):
         self.store = store or StateStore()
+        # Kept in the signature for existing callers; a short page that the
+        # scraper returned successfully is a success, not a failure.
         self.min_success_chars = min_success_chars
         self._updates: list[dict] = []
         self._sanitize_history()
@@ -129,56 +158,69 @@ class SiteScraperMemory:
         site = site_key(attempt.url)
         now = _iso()
         stored_url = _stored_url(attempt.url)
-        error_type = attempt.error_type or classify_scrape_error(attempt.error_message)
-        error_message = scrub_secrets(attempt.error_message) if attempt.error_message else ""
-        success = bool(attempt.success and attempt.content_length >= self.min_success_chars)
-        self.store.execute(
-            """
-            INSERT INTO scrape_attempts (
-                url, site, scraper, success, content_length, error_type,
-                error_message, elapsed_ms, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                stored_url, site, attempt.scraper, 1 if success else 0,
-                attempt.content_length, error_type, error_message,
-                attempt.elapsed_ms, now,
-            ),
+        error_type = (
+            str(attempt.error_type or "").strip().lower()
+            or classify_scrape_error(attempt.error_message)
         )
-        self._ensure_row(site, attempt.scraper)
-        if success:
+        error_origin = str(attempt.error_origin or _inferred_error_origin(error_type)).strip().lower()
+        error_message = scrub_secrets(attempt.error_message) if attempt.error_message else ""
+        # A short page that was fetched successfully is still a success; the
+        # length is diagnostic, never a target-site failure.
+        success = bool(attempt.success)
+        cooldown_until = (
+            _iso(_now() + timedelta(hours=1))
+            if not success and error_origin == "target"
+            else None
+        )
+        # One attempt writes its history row, aggregate counters and cooldown
+        # as a unit so concurrent readers never observe a half-written attempt.
+        with self.store.transaction():
             self.store.execute(
                 """
-                UPDATE site_scraper_stats
-                SET success_count = success_count + 1,
-                    avg_content_length = CASE
-                      WHEN avg_content_length IS NULL THEN ?
-                      ELSE CAST(((avg_content_length * success_count) + ?) / (success_count + 1) AS INTEGER)
-                    END,
-                    last_success_at = ?, last_error_type = NULL, last_error_message = NULL,
-                    cooldown_until = NULL, sample_url = ?, updated_at = ?
-                WHERE site = ? AND scraper = ?
+                INSERT INTO scrape_attempts (
+                    url, site, scraper, success, content_length, error_type,
+                    error_message, elapsed_ms, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (attempt.content_length, attempt.content_length, now, stored_url, now, site, attempt.scraper),
+                (
+                    stored_url, site, attempt.scraper, 1 if success else 0,
+                    attempt.content_length, error_type, error_message,
+                    attempt.elapsed_ms, now,
+                ),
             )
-        else:
-            failure_col = "failure_count"
-            if error_type == "blocked":
-                failure_col = "blocked_count"
-            elif error_type == "timeout":
-                failure_col = "timeout_count"
-            cooldown_until = _iso(_now() + timedelta(hours=1)) if error_type in {"blocked", "timeout"} else None
-            self.store.execute(
-                f"""
-                UPDATE site_scraper_stats
-                SET {failure_col} = {failure_col} + 1,
-                    last_failure_at = ?, last_error_type = ?, last_error_message = ?,
-                    cooldown_until = COALESCE(?, cooldown_until), sample_url = ?, updated_at = ?
-                WHERE site = ? AND scraper = ?
-                """,
-                (now, error_type, error_message, cooldown_until, stored_url, now, site, attempt.scraper),
-            )
-        self._prune_attempts(site, now)
+            self._ensure_row(site, attempt.scraper)
+            if success:
+                self.store.execute(
+                    """
+                    UPDATE site_scraper_stats
+                    SET success_count = success_count + 1,
+                        avg_content_length = CASE
+                          WHEN avg_content_length IS NULL THEN ?
+                          ELSE CAST(((avg_content_length * success_count) + ?) / (success_count + 1) AS INTEGER)
+                        END,
+                        last_success_at = ?, last_error_type = NULL, last_error_message = NULL,
+                        cooldown_until = NULL, sample_url = ?, updated_at = ?
+                    WHERE site = ? AND scraper = ?
+                    """,
+                    (attempt.content_length, attempt.content_length, now, stored_url, now, site, attempt.scraper),
+                )
+            else:
+                failure_col = "failure_count"
+                if error_type == "blocked":
+                    failure_col = "blocked_count"
+                elif error_type in {"timeout", "deadline"}:
+                    failure_col = "timeout_count"
+                self.store.execute(
+                    f"""
+                    UPDATE site_scraper_stats
+                    SET {failure_col} = {failure_col} + 1,
+                        last_failure_at = ?, last_error_type = ?, last_error_message = ?,
+                        cooldown_until = COALESCE(?, cooldown_until), sample_url = ?, updated_at = ?
+                    WHERE site = ? AND scraper = ?
+                    """,
+                    (now, error_type, error_message, cooldown_until, stored_url, now, site, attempt.scraper),
+                )
+            self._prune_attempts(site, now)
         self._updates.append({
             "site": site,
             "scraper": attempt.scraper,
@@ -206,6 +248,7 @@ class SiteScraperMemory:
 
     def stats(self, site: str | None = None) -> list[dict]:
         if site:
+            site = normalize_site_key(site)
             return self.store.rows(
                 "SELECT * FROM site_scraper_stats WHERE site = ? ORDER BY manually_pinned DESC, success_count DESC, scraper",
                 (site,),
@@ -215,6 +258,7 @@ class SiteScraperMemory:
         )
 
     def set_preference(self, site: str, scraper: str, priority: int | None = None, note: str | None = None) -> None:
+        site = normalize_site_key(site)
         self._ensure_row(site, scraper)
         now = _iso()
         self.store.execute(
@@ -228,6 +272,7 @@ class SiteScraperMemory:
 
     def reset(self, site: str | None = None) -> int:
         if site:
+            site = normalize_site_key(site)
             with self.store.connect() as conn:
                 cur = conn.execute("DELETE FROM site_scraper_stats WHERE site = ?", (site,))
                 conn.execute("DELETE FROM scrape_attempts WHERE site = ?", (site,))
@@ -254,8 +299,32 @@ class SiteScraperMemory:
         )
 
 
+def _inferred_error_origin(error_type: str) -> str:
+    """Origin for message-only attempts that predate structured metadata.
+
+    Blocked pages and target timeouts are the two legacy site-memory failure
+    classes; provider/auth/batch-deadline failures must not cool down a site.
+    """
+    return "target" if error_type in {"blocked", "timeout"} else ""
+
+
+_HTTP_401_RE = re.compile(r"\b(?:http(?: status)?\s*)?401\b")
+_AUTH_WORDS = (
+    "login", "sign in", "unauthorized", "authentication", "authenticate",
+    "api key", "apikey",
+)
+
+
 def classify_scrape_error(message: str) -> str:
     text = str(message or "").lower()
+    if "scrape deadline exceeded" in text or "scrape url deadline exceeded" in text:
+        # The whole-batch budget ran out before this backend could work; it is
+        # not evidence that the target site blocks or times out.
+        return "deadline"
+    if _HTTP_401_RE.search(text) and any(word in text for word in _AUTH_WORDS):
+        # Provider APIs answer 401 with wording such as "login required";
+        # that is a credential problem, not the target site's login wall.
+        return "auth"
     if "blocked" in text or "login" in text or "captcha" in text or "荒原" in text:
         return "blocked"
     if "timeout" in text or "deadline" in text:

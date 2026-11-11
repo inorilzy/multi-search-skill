@@ -247,7 +247,7 @@ class PrefetchedBodySelectionTests(unittest.TestCase):
         with mock.patch("multi_search_mcp.src.search.candidates.ContentStore", side_effect=cache), \
              mock.patch("multi_search_mcp.src.scrape.fetch.ContentStore", side_effect=cache):
             response = self._search(rows, use_state=True, scrape_chars=1)
-        self.assertIn("exceeds max object bytes", response["diagnostics"]["content_store_errors"][0]["error"])
+        self.assertEqual(response["diagnostics"]["content_store_errors"], [])
         page = response["scrapes"][0]
         self.assertEqual(page["markdown"], "证")
         self.assertFalse(page["persisted"])

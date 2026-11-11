@@ -81,8 +81,8 @@ pub struct CredentialOverview {
     pub file_key_count: Option<usize>,
     pub key_application_available: bool,
     /// Whether this build can hand the fixed HTTPS link to the system browser:
-    /// Windows (`ShellExecuteW`) and macOS (`/usr/bin/open`) implement it, other
-    /// platforms do not.
+    /// Windows (`ShellExecuteW`), macOS (`/usr/bin/open`) and Linux (`xdg-open`)
+    /// implement it; other platforms fall back to manual copying.
     pub key_application_open_supported: bool,
     /// Read-only copy of the single trusted mapping so the page can offer manual
     /// copying when direct opening is unavailable. Absent when the source has no

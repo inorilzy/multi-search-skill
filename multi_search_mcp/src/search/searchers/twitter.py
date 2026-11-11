@@ -2,7 +2,11 @@
 import time
 from collections.abc import Callable
 
-from ...providers.xkit import load_twitter_cookies, scrub_twitter_error
+from ...providers.xkit import TwitterCookiesMissing, load_twitter_cookies, scrub_twitter_error
+
+# X's retry wait after a 429. Waiting is only useful when the caller's budget
+# covers both the wait and a fresh request.
+RATE_LIMIT_RETRY_SECONDS = 5
 
 
 def search_twitter(
@@ -20,15 +24,20 @@ def search_twitter(
     ``~/.mcp-twikit/cookies.json``.
     """
     try:
+        cookies_dict = load_twitter_cookies(cookies)
+    except Exception as exc:
+        row = {"source": "twitter", "error": scrub_twitter_error(str(exc) or type(exc).__name__, cookies)}
+        if isinstance(exc, TwitterCookiesMissing) or "cookies file not found" in str(exc):
+            # The desktop maps missing_key to the "save a cookie" guide; a
+            # missing dependency or malformed file is a different failure.
+            row["error_type"] = "missing_key"
+        return [row]
+
+    try:
         import asyncio
         from xkit import Client  # type: ignore
     except ImportError:
         return [{"source": "twitter", "error": "XKit-py unavailable; reinstall multi-search-mcp with its dependencies"}]
-
-    try:
-        cookies_dict = load_twitter_cookies(cookies)
-    except Exception as exc:
-        return [{"source": "twitter", "error": scrub_twitter_error(str(exc) or type(exc).__name__, cookies)}]
 
     items = []
     if timeout is not None and timeout > 0:
@@ -43,15 +52,41 @@ def search_twitter(
             raise asyncio.TimeoutError("search deadline exhausted")
         return await asyncio.wait_for(call(*args, **kwargs), timeout=remaining)
 
+    async def wait_before_retry(seconds: float) -> bool:
+        """Wait for the provider hint, but never past the caller's deadline."""
+        if deadline is None:
+            await asyncio.sleep(seconds)
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        try:
+            await asyncio.wait_for(asyncio.sleep(seconds), timeout=remaining)
+        except (asyncio.TimeoutError, TimeoutError):
+            return False
+        return True
+
     async def search(client) -> list:
         client.set_cookies(cookies_dict)
         try:
             tweets = await request(client.search_tweet, query, "Top", count=count)
         except Exception as exc:
             message = str(exc) or type(exc).__name__
-            if not ("404" in message or "429" in message or "rate" in message.lower()):
+            rate_limited = "429" in message or "rate" in message.lower()
+            if not (rate_limited or "404" in message):
                 raise
-            await request(asyncio.sleep, 5)
+            if not await wait_before_retry(RATE_LIMIT_RETRY_SECONDS):
+                if rate_limited:
+                    # Report the real cause instead of a generic deadline timeout.
+                    items.append({
+                        "source": "twitter",
+                        "error": "Twitter rate limited (429); remaining budget is shorter than the 5s retry wait",
+                        "kind": "rate_limit", "error_type": "rate_limit",
+                        "rate_limited": True, "retry_after": RATE_LIMIT_RETRY_SECONDS,
+                    })
+                else:
+                    items.append({"source": "twitter", "error": scrub_twitter_error(message, cookies_dict)})
+                return items
             tweets = await request(client.search_tweet, query, "Top", count=count)
         for tweet in tweets[:count]:
             screen = getattr(getattr(tweet, "user", None), "screen_name", "") or "i/web"

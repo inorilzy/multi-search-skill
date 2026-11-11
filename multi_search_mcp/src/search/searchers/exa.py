@@ -66,6 +66,9 @@ def search_exa(
             "url": r.get("url", ""),
             "description": description[:300],
         }
+        published_at = r.get("publishedDate")
+        if isinstance(published_at, str) and published_at:
+            result["published_at"] = published_at
         if text:
             result["scraped_content"] = text
             result["content_kind"] = "body"
