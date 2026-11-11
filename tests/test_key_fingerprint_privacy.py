@@ -23,7 +23,7 @@ from multi_search_mcp.src.state.key_state import (
 from multi_search_mcp.src.state.state_store import SCHEMA, StateStore
 
 
-KEYS = ("WXYZ1234", "tvly-QWERTYUIOPASDFGHJKLZXCVB", "fc-MNOPQRSTUVWX", "k")
+KEYS = ("WXYZzzQX", "tvly-QWERTYUIOPASDFGHJKLZXCVB", "fc-MNOPQRSTUVWX", "k")
 
 
 def _legacy_fingerprint(key: str) -> str:
@@ -35,6 +35,14 @@ def _legacy_fingerprint(key: str) -> str:
 
 
 class FingerprintFormatTests(unittest.TestCase):
+    def test_fixture_markers_cannot_match_timestamps_or_hex(self):
+        timestamp_and_hex_chars = set("0123456789abcdefABCDEF-TZ:+.")
+        for key in KEYS:
+            if len(key) >= 4:
+                for marker in (key[:4], key[-4:]):
+                    with self.subTest(marker=marker):
+                        self.assertTrue(set(marker) - timestamp_and_hex_chars)
+
     def test_fingerprint_is_short_hash_without_plaintext(self):
         for key in KEYS:
             with self.subTest(length=len(key)):
@@ -44,9 +52,9 @@ class FingerprintFormatTests(unittest.TestCase):
                 self.assertNotIn(key[-4:], fingerprint)
 
     def test_eight_character_key_is_not_exposed(self):
-        # The old format returned "WXYZ...1234", i.e. the whole key.
-        self.assertNotIn("WXYZ", key_fingerprint("WXYZ1234"))
-        self.assertNotIn("1234", key_fingerprint("WXYZ1234"))
+        # The old format returned "WXYZ...zzQX", i.e. the whole key.
+        self.assertNotIn("WXYZ", key_fingerprint("WXYZzzQX"))
+        self.assertNotIn("zzQX", key_fingerprint("WXYZzzQX"))
 
     def test_fingerprint_is_derivable_from_key_id(self):
         for key in KEYS:
@@ -85,7 +93,7 @@ class FingerprintStorageTests(unittest.TestCase):
                 # Other columns survive the rewrite untouched.
                 self.assertEqual(row["success_count"], 3)
                 self.assertEqual(row["created_at"], "legacy")
-        for leaked in ("WXYZ", "1234", "tvly", "ZXCVB", "MNOP"):
+        for leaked in ("WXYZ", "zzQX", "tvly", "ZXCVB", "MNOP"):
             self.assertNotIn(leaked, serialized)
 
     def test_rewrite_is_idempotent_and_keeps_key_health(self):
