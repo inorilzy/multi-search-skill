@@ -11,6 +11,11 @@ from ..base import AuthMethod, BalanceContext, BalanceReport, ProviderPlugin, Sc
 
 
 FIRECRAWL_BALANCE_URL = "https://api.firecrawl.dev/v2/team/credit-usage"
+# Browser hand-off used by `login firecrawl --method oauth`; the flow itself
+# lives in plugins/oauth.py, this module only owns the vendor constants.
+FIRECRAWL_CLI_AUTH_URL = "https://www.firecrawl.dev/cli-auth"
+FIRECRAWL_CLI_STATUS_URL = "https://www.firecrawl.dev/api/auth/cli/status"
+FIRECRAWL_CLI_POLL_SECONDS = 3.0
 _BALANCE_HTTP_ERROR_KINDS = {
     401: "invalid",
     403: "invalid",

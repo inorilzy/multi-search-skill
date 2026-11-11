@@ -101,8 +101,8 @@
           "type": "oauth"
         }
       ],
-      "balance_note": "需要 Account API 登录后查询余额，查询能力待实现。",
-      "balance_supported": false,
+      "balance_note": "先运行 login parallel --method oauth 完成设备码登录，再查询 Account API 余额。",
+      "balance_supported": true,
       "id": "parallel",
       "key_provider": "parallel",
       "label": "Parallel",
