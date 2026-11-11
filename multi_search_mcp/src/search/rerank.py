@@ -49,14 +49,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from collections.abc import Mapping
-from concurrent.futures import Future, TimeoutError as FutureTimeoutError
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError, as_completed
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from ..support import debug_log
 from ..support.concurrency import BoundedDaemonExecutor
 from ..support.config import ConfigError
-from ..support.http import read_limited
+from ..support.http import MAX_RESPONSE_BYTES, ResponseTooLargeError, read_limited
 from ..state.keys import default_keys_file
 
 
@@ -298,13 +298,20 @@ def apply_rerank(
 
     scores: dict[str, float] = {}
     failure: str | None = None
-    for _index, future in submitted:
-        remaining = deadline - time.monotonic()
-        try:
-            scores.update(future.result(timeout=max(0.0, remaining)))
-        except BaseException as exc:  # noqa: BLE001 - any failure falls back
-            failure = _reason_for(exc)
-            break
+    try:
+        # Judge batches in completion order: a later batch that fails fast must
+        # not wait for an earlier slow one before the stage falls back to RRF.
+        for future in as_completed(
+            [future for _index, future in submitted],
+            timeout=max(0.0, deadline - time.monotonic()),
+        ):
+            try:
+                scores.update(future.result())
+            except BaseException as exc:  # noqa: BLE001 - any failure falls back
+                failure = _reason_for(exc)
+                break
+    except FutureTimeoutError:
+        failure = "timeout"
     if failure is not None:
         for _index, pending in submitted:
             _RERANK_POOL.abandon(pending)
@@ -376,8 +383,40 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 # The configured System One endpoint is a user-chosen, trusted target (often a
 # local gateway on 127.0.0.1), so the page-fetch SSRF guard does not apply.  It
 # gets its own opener: no redirects, no proxy-env surprises beyond urllib's,
-# bounded by the stage deadline and ``read_limited``.
+# bounded by the stage deadline and ``_read_body_before``.
 _SYSTEMONE_OPENER = urllib.request.build_opener(_NoRedirect())
+
+
+# A single ``HTTPResponse.read()`` can perform many socket reads.  A server
+# that drips one byte at a time resets the per-recv socket timeout each time,
+# so reading the whole body in one call would outlive the stage deadline and
+# keep the worker thread alive.  read1 performs at most one underlying read;
+# refresh the socket budget from the deadline before every one of them.
+_READ_CHUNK_BYTES = 64 * 1024
+
+
+def _read_body_before(response, deadline: float) -> bytes:
+    read1 = getattr(response, "read1", None)
+    if read1 is None:
+        return read_limited(response)
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("rerank response deadline exceeded")
+        stream = getattr(response, "fp", None)
+        sock = getattr(getattr(stream, "raw", None), "_sock", None)
+        if sock is not None:
+            sock.settimeout(max(0.001, remaining))
+        size = min(_READ_CHUNK_BYTES, MAX_RESPONSE_BYTES + 1 - total)
+        chunk = read1(size)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > MAX_RESPONSE_BYTES:
+            raise ResponseTooLargeError("provider response body", MAX_RESPONSE_BYTES)
 
 
 def _open_trusted(request: urllib.request.Request, *, timeout: float, deadline: float):
@@ -455,7 +494,7 @@ class SystemOneReranker:
             opener = self._opener or _open_trusted
             response = opener(request, timeout=remaining, deadline=deadline)
             with response:
-                body = read_limited(response)
+                body = _read_body_before(response, deadline)
         except urllib.error.HTTPError as exc:
             exc.close()
             if exc.code in (401, 403):
