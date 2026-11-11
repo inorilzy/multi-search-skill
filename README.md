@@ -289,7 +289,7 @@ flowchart LR
 术语固定如下：
 
 - **Service 服务层**：`multi_search_mcp/src/service.py` 是对外 facade；实现按职责拆在 `search/candidates.py`（候选搜索）、`search_web.py`（搜索+抓取编排）、`scrape/fetch.py`（抓取）、`read.py`（缓存读取）、`multi_search.py`（兼容展示）、`diagnostics.py`（诊断）、`state/runtime.py`（配置、凭据与 Cookie 模式的运行时装配）等模块，CLI 只做参数适配。
-- **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口；分数相同按 canonical URL 排序。归一化时路径中连续的 `/` 合并为一个，并去掉追踪和仅用于显示的参数（`utm_*`、`fbclid`、`highlight` 等），未知业务参数保留。取前 15 条时每个网站（去掉 `www.` 的主机名）最多 3 条，超出的页面排到其他网站之后，其他网站候选不够时才补回。`ranking.mode="rrf_model"` 时融合先扩展到 `candidate_limit` 条供模型重排，重排或回退后再按同样的网站上限截取前 15 条。
+- **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口；分数相同按 canonical URL 排序。归一化时路径中连续的 `/` 合并为一个，并去掉追踪和仅用于显示的参数（`utm_*`、`fbclid`、`highlight`、`featured_on` 等），未知业务参数保留。取前 15 条时每个网站（去掉 `www.` 的主机名）最多 3 条，超出的页面排到其他网站之后，其他网站候选不够时才补回。`ranking.mode="rrf_model"` 时融合先扩展到 `candidate_limit` 条供模型重排，重排或回退后再按同样的网站上限截取前 15 条。
 - **SourceRegistry / ContentStore**：短期 SQLite 状态。前者把本次响应的 `source_id` 映射到 URL；后者按 TTL、单条/总容量限制保存正文并以内容哈希去重。provider 的 retention policy 可禁止保存结果、摘要或正文。
 
 同 canonical URL、相同来源集合、显式后端顺序及凭据上下文的有效抓取正文可跨响应复用，每次响应仍生成独立 `source_id`。关联新 ID 不延长原正文 TTL；来源策略更严格时服从当前限制。不同来源上下文（包括 direct 与搜索来源）、provider 预取正文及旧的无复用元数据缓存不跨 ID 混用。凭据上下文只存 SHA-256 摘要；旧缓存仍可按原 ID 读取。SQLite 首次运行自动兼容增加 URL/scope 字段与索引。

@@ -30,6 +30,7 @@ class CanonicalVariantTests(unittest.TestCase):
     def test_display_and_tracking_parameters_are_dropped(self):
         self.assertEqual(canonicalize_url(DOC + "?highlight=asyncio"), DOC)
         self.assertEqual(canonicalize_url(DOC + "?abrmid=0901b02"), DOC)
+        self.assertEqual(canonicalize_url(DOC + "?featured_on=pythonbytes"), DOC)
         # Unknown business parameters still keep URLs distinct.
         self.assertEqual(canonicalize_url(DOC + "?id=2&highlight=x"), DOC + "?id=2")
 

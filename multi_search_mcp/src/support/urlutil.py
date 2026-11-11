@@ -9,9 +9,9 @@ import urllib.parse
 TRACKING_PARAMS = {
     "fbclid", "gclid", "dclid", "msclkid", "yclid",
     "ref", "ref_src", "source",
-    # Display-only: Sphinx search-term highlighting and an observed click id.
-    # Without them one documentation page fused into several results.
-    "highlight", "abrmid",
+    # Display-only or referral markers observed on one page returned several
+    # times: Sphinx search highlighting, a click id, a newsletter referral.
+    "highlight", "abrmid", "featured_on",
 }
 
 
