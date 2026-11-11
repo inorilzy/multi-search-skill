@@ -1207,23 +1207,24 @@ fn invalid_ranking_input_is_rejected_without_writing() {
 }
 
 #[test]
-fn unknown_keys_inside_ranking_survive_a_save_and_the_legacy_profile_is_dropped() {
+fn unknown_keys_inside_ranking_are_dropped_by_a_save_and_the_legacy_profile_is_dropped() {
     let s = Sandbox::new("ranking-unknown-keys");
     let e = s.env(&[]);
     fixture::save(&e, &input("default", 60, &[])).unwrap();
     s.replace(
         r#"{"type":"default","ranking":{"mode":"rrf","reranker_profile_id":"jev_default","candidate_limit":50,"batch_size":20,"rerank_timeout":5,"future_key":{"x":1}}}"#,
     );
-    // An unreleased build's profile key is tolerated on read.
+    // Unknown keys are tolerated on read; saving writes only the known keys so
+    // the CLI can accept the rewritten settings.
     assert!(!fixture::view(&e).ranking_invalid);
     let mut request = input("default", 60, &[]);
     request.ranking = Some(RankingInput { candidate_limit: 66, ..ranking_input() });
     fixture::save(&e, &request).unwrap();
-    let block = &s.object()["ranking"];
-    assert_eq!(block["candidate_limit"], 66);
-    assert_eq!(block["mode"], "rrf_model");
-    assert_eq!(block["future_key"], serde_json::json!({"x":1}));
-    assert!(block.get("reranker_profile_id").is_none());
+    assert_eq!(
+        s.object()["ranking"],
+        serde_json::json!({"mode":"rrf_model","base_url":"http://127.0.0.1:3425/v1","model":"group/jev","candidate_limit":66,"batch_size":20,"rerank_timeout":10}),
+        "save writes only the known ranking keys"
+    );
 }
 
 #[test]

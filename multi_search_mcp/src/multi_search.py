@@ -48,6 +48,7 @@ def run_multi_search(request: MultiSearchRequest | dict, *, reranker=None) -> di
             scrape_timeout=request.scrape_timeout,
             scrape_concurrency=request.scrape_concurrency,
             output=request.output,
+            ranking=request.ranking,
         ),
         config,
     )

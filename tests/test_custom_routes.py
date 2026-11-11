@@ -168,7 +168,7 @@ class ConfiguredRouteTests(unittest.TestCase):
             ({"routes": {"ok": {"label": "Ok", "sources": ["hackernews"], "extra": 1}}}, "unknown field"),
             ({"routes": {"ok": {"label": "Ok", "sources": ["hackernews"], "timeout": True}}}, "timeout"),
             ({"routes": {"ok": {"label": "Ok", "sources": ["hackernews"], "timeout": 0}}}, "timeout"),
-            ({"routes": {"ok": {"label": "Ok", "sources": ["hackernews"], "timeout": 61}}}, "timeout"),
+            ({"routes": {"ok": {"label": "Ok", "sources": ["hackernews"], "timeout": 91}}}, "timeout"),
             ({"routes": valid}, "type references unknown route: default"),
             ({"type": "missing", "routes": valid}, "type references unknown route: missing"),
         )

@@ -57,14 +57,15 @@ const cloneRanking = ranking => ({
   rerank_timeout: Number(ranking?.rerank_timeout ?? RANKING_FACTORY.rerank_timeout),
 });
 
-function validateRoute(id, route, routes, originalId = null) {
+function validateRoute(id, route, routes, timeoutBounds, originalId = null) {
   if (!ID_PATTERN.test(id) || id === 'web') return '标识需为 1–64 个 ASCII 小写字母、数字、下划线或连字符，且不能使用 web。';
   if (id !== originalId && routes.has(id)) return '该路由标识已存在。';
   const label = route.label.trim();
   if (charLength(label) < 1 || charLength(label) > 80) return '名称需为 1–80 个字符。';
   if (charLength(route.description?.trim() || '') > 120) return '何时使用描述不能超过 120 个字符。';
   if (!route.sources.length) return '请至少选择一个搜索源。';
-  if (route.timeout != null && (!Number.isInteger(route.timeout) || route.timeout < 1 || route.timeout > 60)) return '独立超时需为 1–60 秒，留空则继承全局。';
+  const { min, max } = timeoutBounds;
+  if (route.timeout != null && (!Number.isInteger(route.timeout) || route.timeout < min || route.timeout > max)) return `独立超时需为 ${min}–${max} 秒，留空则继承全局。`;
   return '';
 }
 
@@ -83,7 +84,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       <p data-info="error" class="error-message" role="alert"></p><button type="button" data-action="retry" hidden>重试读取</button>
 
       <section class="panel settings-defaults"><div class="section-title"><div><p class="eyebrow">DEFAULTS</p><h2>默认路由与全局超时</h2></div><span class="draft-badge" data-dirty hidden>有未保存修改</span></div>
-        <div class="settings-default-grid"><label>默认路由<select data-field="route" disabled></select></label><label>全局超时（秒）<input data-field="timeout" type="number" min="1" max="60" step="1" disabled></label></div>
+        <div class="settings-default-grid"><label>默认路由<select data-field="route" disabled></select></label><label>全局超时（秒）<input data-field="timeout" type="number" step="1" disabled></label></div>
       </section>
 
       <section class="panel route-panel"><div class="section-title"><div><p class="eyebrow">ROUTE GROUPS</p><h2>搜索分组</h2></div><div class="route-actions"><button type="button" data-action="new-route" disabled>新建分组</button><button type="button" data-action="restore" disabled>恢复内置五组</button></div></div>
@@ -288,7 +289,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     panel.className = 'route-editor';
     panel.dataset.mode = mode;
     panel.innerHTML = `<div class="route-editor-head"><div><p class="eyebrow">${editing ? 'EDIT' : copy ? 'COPY' : 'NEW'}</p><h3>${editing ? '编辑分组' : copy ? '复制为新分组' : '新建分组'}</h3></div></div>
-      <div class="route-editor-grid"><label>标识<input data-edit="id" maxlength="64" spellcheck="false" autocomplete="off"><small data-edit-id-hint></small></label><label>名称<input data-edit="label" maxlength="80"></label><label>独立超时（秒）<input data-edit="timeout" type="number" min="1" max="60" step="1"><small>留空继承全局 ${globalTimeout} 秒</small></label></div>
+      <div class="route-editor-grid"><label>标识<input data-edit="id" maxlength="64" spellcheck="false" autocomplete="off"><small data-edit-id-hint></small></label><label>名称<input data-edit="label" maxlength="80"></label><label>独立超时（秒）<input data-edit="timeout" type="number" min="${timeoutMin}" max="${timeoutMax}" step="1"><small>留空继承全局 ${globalTimeout} 秒</small></label></div>
       <label>何时使用<input data-edit="description" type="text" placeholder="可选，最多 120 个字符"><small>说明适合使用这个分组的场景，可留空。</small></label>
       <fieldset class="route-sources"><legend class="visually-hidden">搜索源（至少一个）</legend><div class="route-sources-head"><span class="route-sources-label">搜索源（至少一个）</span><span class="route-sources-count" data-source-count aria-live="polite"></span><div class="route-source-tools"><button type="button" data-source-action="all">全选</button><button type="button" data-source-action="none">全不选</button><button type="button" data-source-action="invert">反选</button></div></div><div class="route-source-grid" data-edit="sources"></div></fieldset>
       <p class="error-message route-form-error" data-edit-error ></p>
@@ -356,7 +357,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
         sources: [...panel.querySelectorAll('[data-route-source]:checked')].map(box => box.value),
         timeout: timeoutText === '' ? null : Number(timeoutText),
       };
-      const error = validateRoute(id, candidate, routes, editing ? routeId : null);
+      const error = validateRoute(id, candidate, routes, { min: timeoutMin, max: timeoutMax }, editing ? routeId : null);
       panel.querySelector('[data-edit-error]').textContent = error;
       if (error) return;
       routes.set(id, candidate);
@@ -660,7 +661,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       return `全局超时需为 ${timeoutMin} 到 ${timeoutMax} 秒之间的整数。`;
     }
     for (const [id, route] of routes) {
-      const error = validateRoute(id, route, new Map([...routes].filter(([other]) => other !== id)), id);
+      const error = validateRoute(id, route, new Map([...routes].filter(([other]) => other !== id)), { min: timeoutMin, max: timeoutMax }, id);
       if (error) return `${route.label || id}：${error}`;
     }
     const rankingProblem = rankingError();
