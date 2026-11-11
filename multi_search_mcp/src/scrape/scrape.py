@@ -7,10 +7,8 @@ working while the tree migrates.
 """
 from __future__ import annotations
 
-import ipaddress
 import re
 import time
-import unicodedata
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -24,7 +22,7 @@ from ..support.auth import is_key_retryable_error
 from ..support.models import normalize_scrape_result
 from ..support.url_security import (
     UrlSecurityError,
-    check_host_is_not_local,
+    validate_http_host,
     validate_scrape_url,
 )
 from .scrapers import _DEFAULT_SCRAPE_TIMEOUT_SECONDS
@@ -371,11 +369,7 @@ def _validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
         raise UrlSecurityError(f"{label} must not include credentials")
     if deadline is not None and deadline - time.monotonic() <= 0:
         raise UrlSecurityError(f"{label} deadline exceeded")
-    host = _normalize_delegated_host(hostname, label=label)
-    literal = _literal_ip(host, label=label)
-    if literal is not None and getattr(literal, "scope_id", None):
-        raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
-    check_host_is_not_local(host, label=label)
+    host, literal = validate_http_host(hostname, label=label)
     if literal is not None:
         # Forward the address exactly as validated, never its alternate spelling.
         host = f"[{literal.compressed}]" if literal.version == 6 else str(literal)
@@ -394,120 +388,6 @@ def _validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
 # etc., so no parser can treat it as an authority or path separator.
 _URL_PATH_SAFE = "/%!$&'()*+,;=:@-._~"
 _URL_QUERY_SAFE = _URL_PATH_SAFE + "?"
-
-
-# Dots that IDNA/WHATWG URL parsers treat as label separators.
-_IDNA_DOTS = str.maketrans({"\u3002": ".", "\uff0e": ".", "\uff61": "."})
-# A label the platform IPv4 parser (inet_aton) may read as a number.
-_NUMERIC_LABEL = re.compile(r"^(?:0x[0-9a-f]*|[0-9]+)$")
-# Host names are ASCII letters, digits, hyphens, underscores and dots. Anything
-# else (backslash, percent escapes, control characters, ^|<> and space) is not
-# a host: WHATWG parsers either terminate the authority there or reject the
-# URL, so the host the provider fetches would differ from the one checked here.
-_HOSTNAME_CHARS = re.compile(
-    r"[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?)*\.?"
-)
-# Returned by _parse_inet_aton for a leading-zero label: libc reads ``010`` as
-# decimal on BSD/macOS and as octal in WHATWG/glibc, so neither guess is safe.
-_AMBIGUOUS = object()
-
-
-def _normalize_delegated_host(hostname: str, *, label: str) -> str:
-    """Return the ASCII host the provider's URL stack will actually use.
-
-    Without normalization, ``ⓛⓞⓒⓐⓛⓗⓞⓢⓣ``, fullwidth digits, an ideographic
-    full stop or a percent-encoded host slip past the localhost/literal-IP
-    checks and are then mapped to ``localhost``/``127.0.0.1`` downstream.
-    """
-    raw = str(hostname)
-    try:
-        ipaddress.ip_address(raw.strip("[]"))
-    except ValueError:
-        pass
-    else:
-        return raw.strip("[]").lower()
-    # WHATWG URL parsers percent-decode the host (``127.0.0.%31``) before use.
-    decoded = urllib.parse.unquote(raw)
-    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in decoded):
-        raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
-    host = unicodedata.normalize("NFKC", decoded).translate(_IDNA_DOTS).lower().rstrip(".")
-    if not host:
-        raise UrlSecurityError(f"{label} is missing host")
-    try:
-        ascii_host = host.encode("idna").decode("ascii")
-    except UnicodeError as exc:
-        raise UrlSecurityError(f"{label} host is not a valid domain name") from exc
-    ascii_host = ascii_host.lower().rstrip(".")
-    if not _HOSTNAME_CHARS.fullmatch(ascii_host):
-        # Backslash terminates the authority in WHATWG parsing (the provider
-        # would fetch a different host than the one validated here); percent
-        # escapes, control characters and ^|<> are equally not part of a host.
-        raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname")
-    return ascii_host
-
-
-def _parse_inet_aton(host: str) -> ipaddress.IPv4Address | None:
-    """IPv4 parse with inet_aton semantics, as used by platform resolvers.
-
-    Accepts 1-4 dot-separated parts, each decimal or ``0x`` hex; the last part
-    fills the remaining bytes (``127.1`` → ``127.0.0.1``, ``2130706433`` →
-    ``127.0.0.1``). Returns None when ``host`` is not numeric, and the
-    ``_AMBIGUOUS`` sentinel for a leading-zero label, whose base differs
-    between libc implementations.
-    """
-    labels = host.split(".")
-    if not 1 <= len(labels) <= 4:
-        return None
-    values = []
-    for part in labels:
-        if not part:
-            return None
-        try:
-            if part.startswith("0x"):
-                value = int(part[2:] or "0", 16)
-            elif len(part) > 1 and part.startswith("0"):
-                # ``010`` is octal to glibc/WHATWG but decimal to BSD libc; do
-                # not guess which address the provider ends up fetching.
-                if not part.isdigit():
-                    return None
-                return _AMBIGUOUS
-            else:
-                value = int(part, 10)
-        except ValueError:
-            return None
-        values.append(value)
-    *head, last = values
-    if any(value > 0xFF for value in head):
-        return None
-    if last >= 1 << (8 * (4 - len(head))):
-        return None
-    number = 0
-    for value in head:
-        number = (number << 8) | value
-    number = (number << (8 * (4 - len(head)))) | last
-    return ipaddress.IPv4Address(number)
-
-
-def _literal_ip(host: str, *, label: str):
-    """Return the IP a numeric host denotes, or None for a real domain name.
-
-    A host made only of numeric labels is an IPv4 address under inet_aton
-    semantics. Fails closed: a host whose last label looks numeric but does not
-    parse as an address is rejected, since no public hostname has a numeric
-    TLD. Numeric labels elsewhere (``163.com``) are ordinary domain names.
-    """
-    try:
-        return ipaddress.ip_address(host.strip("[]"))
-    except ValueError:
-        pass
-    parsed = _parse_inet_aton(host)
-    if parsed is _AMBIGUOUS:
-        raise UrlSecurityError(f"unsafe {label}: host is a non-canonical numeric address")
-    if parsed is not None:
-        return parsed
-    if _NUMERIC_LABEL.match(host.rsplit(".", 1)[-1]):
-        raise UrlSecurityError(f"unsafe {label}: host is a non-canonical numeric address")
-    return None
 
 
 def uses_delegated_backends(url: str, backends, *, scraper=None) -> bool:
