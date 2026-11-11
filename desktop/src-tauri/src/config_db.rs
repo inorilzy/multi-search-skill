@@ -24,15 +24,31 @@ pub(crate) const MIGRATIONS: &[&str] = &[
     "CREATE TABLE credentials(provider TEXT PRIMARY KEY, encrypted_value BLOB NOT NULL, saved_at REAL NOT NULL); \
      CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);",
 ];
-pub(crate) fn path(variables: &BTreeMap<String, String>) -> Option<PathBuf> {
-    if let Some(value) = variables.get(DB_ENV).filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(value));
-    }
+/// The user home the desktop derives `~/.multi-search` paths from.
+pub(crate) fn home_directory(variables: &BTreeMap<String, String>) -> Option<PathBuf> {
     variables
         .get("USERPROFILE")
         .filter(|v| !v.is_empty())
         .or_else(|| variables.get("HOME").filter(|v| !v.is_empty()))
-        .map(|home| PathBuf::from(home).join(".multi-search/config.sqlite"))
+        .map(PathBuf::from)
+}
+pub(crate) fn path(variables: &BTreeMap<String, String>) -> Option<PathBuf> {
+    if let Some(value) = variables.get(DB_ENV).filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(value));
+    }
+    home_directory(variables).map(|home| home.join(".multi-search/config.sqlite"))
+}
+/// Whether the settings record exists. The desktop imports the user JSON config
+/// only before its first settings write, so an existing (even empty) row keeps
+/// later saves from re-reading the file.
+pub(crate) fn settings_record_exists(c: &Connection) -> Result<bool, String> {
+    c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE id=1)",
+        [],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|exists| exists != 0)
+    .map_err(|_| "无法读取配置数据库设置".to_string())
 }
 fn version(c: &Connection) -> Result<i64, String> {
     c.pragma_query_value(None, "user_version", |r| r.get(0))

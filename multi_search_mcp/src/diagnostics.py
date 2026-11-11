@@ -19,6 +19,7 @@ from .state.keys import (
 )
 from .state.operations import key_status, site_scraper_stats
 from .state.state_store import StateStore
+from .support import config as config_support
 from .support.config import CONFIG_SCHEMA_VERSION, config_list, load_config, resolve_config_path_source
 from .support.secrets import scrub_secrets
 
@@ -81,6 +82,14 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         keys_error = str(exc)
     store = StateStore()
     config_path, config_path_source = resolve_config_path_source()
+    user_config = config_support.USER_CONFIG_PATH
+    config_shadowed = config_path_source == "sqlite" and user_config.is_file()
+    config_warnings = []
+    if config_shadowed:
+        config_warnings.append(
+            f"用户 JSON 配置 {user_config} 与 config.sqlite 同时存在；"
+            "config.sqlite 的 settings 记录优先，JSON 配置已被遮蔽且不再被读取。"
+        )
     config_error = None
     route_names = available_routes()
     try:
@@ -100,6 +109,8 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
         "state_path": str(store.path),
         "config_path": str(config_path),
         "config_path_source": config_path_source,
+        "config_shadowed": config_shadowed,
+        "config_warnings": config_warnings,
         "config_loaded": config_error is None and config_path.exists(),
         "config_status": "error" if config_error else "ok" if config_path.exists() else "defaults",
         "key_sources": {

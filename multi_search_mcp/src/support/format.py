@@ -30,6 +30,8 @@ _UNTRUSTED_BANNER = (
 _SCRIPT_STYLE_RE = re.compile(r"<\s*(script|style)\b[^>]*>.*?<\s*/\s*\1\s*>", re.I | re.S)
 _HTML_RE = re.compile(r"<[^>]+>")
 _IMG_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+_ELLIPSIS_RE = re.compile(r"\s*(?:…|\.{3,})\s*")
+_SNIPPET_JOINER_RE = re.compile(r"\s+·\s+")
 
 
 def ranking_mode_label(payload: dict) -> str:
@@ -75,9 +77,23 @@ def body_preview_start(body: str, title: str, max_chars: int, snippet: str = "")
     if len(body) <= max_chars:
         return 0
     expected = unescape(title).strip().casefold()
-    words = snippet.split()
-    # Short labels such as "Python" are too ambiguous to identify a passage.
-    excerpt = re.compile(r" {0,3}" + r"\s+".join(re.escape(word) for word in words)) if len("".join(words)) >= 32 else None
+    # Provider summaries are not always verbatim quotes: shortened text ends
+    # with "…" or "...", hard truncation stops mid-word, and Brave joins extra
+    # snippets with " · ". Match each part on its own; the 32-non-whitespace
+    # floor keeps short labels such as "Python" from moving the preview.
+    parts = [snippet]
+    for part in _SNIPPET_JOINER_RE.split(snippet):
+        parts.extend(_ELLIPSIS_RE.split(part))
+    excerpts = []
+    seen = set()
+    for part in parts:
+        words = part.split()
+        if len("".join(words)) < 32:
+            continue
+        pattern = r" {0,3}" + r"\s+".join(re.escape(word) for word in words)
+        if pattern not in seen:
+            seen.add(pattern)
+            excerpts.append(re.compile(pattern))
     excerpt_offset = None
     lines = body.splitlines(keepends=True)
     offset = 0
@@ -88,12 +104,16 @@ def body_preview_start(body: str, title: str, max_chars: int, snippet: str = "")
             if marker and marker[1][0] == fence[0] and len(marker[1]) >= len(fence) and not line[marker.end():].strip():
                 fence = ""
         elif marker:
-            fence = marker[1]
+            # A backtick fence's info string cannot contain a backtick: a run
+            # later on the same line is an inline code span that closes there,
+            # not an opening fence that would hide the rest of the document.
+            if not (marker[1][0] == "`" and "`" in line[marker.end():]):
+                fence = marker[1]
         else:
             if (
-                excerpt is not None and excerpt_offset is None
+                excerpts and excerpt_offset is None
                 and (index == 0 or not lines[index - 1].strip())
-                and excerpt.match(body, offset)
+                and any(excerpt.match(body, offset) for excerpt in excerpts)
             ):
                 excerpt_offset = offset
             heading = re.fullmatch(r" {0,3}#\s+(.+?)\s*", line.rstrip("\r\n"))
