@@ -261,11 +261,12 @@ fn application_url(source: &str) -> Option<&'static str> {
         .and_then(|(_, u)| *u)
 }
 /// Platform fact: whether this build can hand a validated HTTPS application link
-/// to the system browser (`ShellExecuteW` on Windows, `/usr/bin/open` on macOS).
-/// Other platforms fall back to manual copying, and the page disables the open
-/// button up front from this same flag instead of failing only after a click.
+/// to the system browser (`ShellExecuteW` on Windows, `/usr/bin/open` on macOS,
+/// `xdg-open` on Linux). Other platforms fall back to manual copying, and the page
+/// disables the open button up front from this same flag instead of failing only
+/// after a click.
 pub(crate) fn browser_open_supported() -> bool {
-    cfg!(any(windows, target_os = "macos"))
+    cfg!(any(windows, target_os = "macos", target_os = "linux"))
 }
 pub(crate) fn open_application_with(
     source: &str,
@@ -312,11 +313,11 @@ pub(crate) fn open_browser(url: &str) -> Result<(), String> {
         Ok(())
     }
 }
-/// macOS hands the already-validated HTTPS URL to LaunchServices through the absolute
-/// `/usr/bin/open` binary. The URL is one argv entry, never interpreted by a shell.
-#[cfg(target_os = "macos")]
-pub(crate) fn open_browser(url: &str) -> Result<(), String> {
-    let status = std::process::Command::new("/usr/bin/open")
+/// Hand the already-validated URL to `program` as a single argv entry. The address is
+/// never interpreted by a shell, so `&`/spaces cannot split it into another command.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn launch_browser(program: &std::path::Path, url: &str) -> Result<(), String> {
+    let status = std::process::Command::new(program)
         .arg(url)
         .status()
         .map_err(|_| "无法打开系统浏览器".to_string())?;
@@ -326,9 +327,48 @@ pub(crate) fn open_browser(url: &str) -> Result<(), String> {
         Err("无法打开系统浏览器".into())
     }
 }
-#[cfg(not(any(windows, target_os = "macos")))]
+/// macOS hands the already-validated HTTPS URL to LaunchServices through the absolute
+/// `/usr/bin/open` binary.
+#[cfg(target_os = "macos")]
+pub(crate) fn open_browser(url: &str) -> Result<(), String> {
+    launch_browser(std::path::Path::new("/usr/bin/open"), url)
+}
+/// Linux delegates to the desktop's `xdg-open` helper, resolved through PATH; the URL is
+/// one argv entry, never interpreted by a shell.
+#[cfg(target_os = "linux")]
+pub(crate) fn open_browser(url: &str) -> Result<(), String> {
+    launch_browser(std::path::Path::new("xdg-open"), url)
+}
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub(crate) fn open_browser(_: &str) -> Result<(), String> {
-    Err("系统浏览器入口仅支持 Windows 和 macOS".into())
+    Err("系统浏览器入口仅支持 Windows、macOS 和 Linux".into())
+}
+/// Test seam for the browser launcher. Not a supported public API.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub mod browser_fixture {
+    /// Run the same single-argv launcher as production with a synthetic program.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub fn launch(program: &std::path::Path, url: &str) -> Result<(), String> {
+        super::launch_browser(program, url)
+    }
+    /// The platform browser command the production path invokes.
+    pub fn launcher() -> &'static str {
+        if cfg!(windows) {
+            "ShellExecuteW"
+        } else if cfg!(target_os = "macos") {
+            "/usr/bin/open"
+        } else if cfg!(target_os = "linux") {
+            "xdg-open"
+        } else {
+            "unsupported"
+        }
+    }
+    /// Invoke the real platform browser opener (Linux CI uses a fake `xdg-open` on PATH).
+    #[cfg(target_os = "linux")]
+    pub fn open(url: &str) -> Result<(), String> {
+        super::open_browser(url)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]

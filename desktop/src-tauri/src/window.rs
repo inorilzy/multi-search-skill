@@ -413,8 +413,7 @@ async fn log_viewer_open(
     offload(
         move || {
             let info = manager.log_viewer()?;
-            crate::credential_commands::open_browser(&info.url)?;
-            Ok(info)
+            crate::log_viewer::open_in_browser(info, crate::credential_commands::open_browser)
         },
         "log_viewer_open_failed",
     )
