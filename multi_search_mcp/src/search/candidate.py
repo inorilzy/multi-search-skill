@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import urllib.parse
 from typing import Any
 
@@ -13,6 +14,12 @@ from .query_policy import QueryFusionPolicy
 RRF_RANK_CONSTANT = 40
 SEARCH_RESULT_LIMIT = 15
 SEARCH_HIT_CONTENT_CHARS = 1200
+# One site may hold at most this many of the final results while other sites
+# still have candidates; its lower-ranked pages fill the list only after them.
+MAX_RESULTS_PER_SITE = 3
+# Fused candidates kept for the site cap to choose from (pure RRF path).
+DIVERSITY_POOL_LIMIT = 60
+_REPEATED_SLASHES = re.compile(r"/{2,}")
 
 
 def canonicalize_url(url: str) -> str:
@@ -61,13 +68,34 @@ def canonicalize_url(url: str) -> str:
             (
                 scheme,
                 userinfo + host,
-                parts.path or "/",
+                # Servers treat "a//b" as "a/b"; providers return both spellings.
+                _REPEATED_SLASHES.sub("/", parts.path) or "/",
                 urllib.parse.urlencode(query, doseq=True),
                 "",
             )
         )
     except (TypeError, ValueError):
         return value
+
+
+def _site(hit: dict) -> str:
+    host = (urllib.parse.urlsplit(str(hit.get("canonical_url") or hit.get("url") or "")).hostname or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def diversify_by_site(hits: list[dict], limit: int, per_site: int = MAX_RESULTS_PER_SITE) -> list[dict]:
+    """Keep ranked order, but defer a site's pages beyond ``per_site`` behind other sites."""
+    kept: list[dict] = []
+    deferred: list[dict] = []
+    counts: dict[str, int] = {}
+    for hit in hits:
+        site = _site(hit)
+        if counts.get(site, 0) < per_site:
+            counts[site] = counts.get(site, 0) + 1
+            kept.append(hit)
+        else:
+            deferred.append(hit)
+    return (kept + deferred)[: max(0, int(limit))]
 
 
 def make_source_id(response_id: str, canonical_url: str) -> str:

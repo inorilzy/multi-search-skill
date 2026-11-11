@@ -24,7 +24,9 @@ from ..support.config import config_list
 from ..support.models import ANSWER_SOURCES, is_empty_result, search_content
 from ..support.requests import SearchWebRequest
 from ..support.secrets import scrub_secrets
-from .candidate import SEARCH_RESULT_LIMIT, canonicalize_url, fuse_search_results
+from .candidate import (
+    DIVERSITY_POOL_LIMIT, SEARCH_RESULT_LIMIT, canonicalize_url, diversify_by_site, fuse_search_results,
+)
 from .capabilities import retention_policy_for_sources
 from .query_plan import build_query_plan
 from .query_policy import QueryFusionPolicy
@@ -192,7 +194,7 @@ def run_search_candidates(
     limit = (
         max(rerank_policy.candidate_limit, SEARCH_RESULT_LIMIT)
         if rerank_policy.enabled
-        else SEARCH_RESULT_LIMIT
+        else DIVERSITY_POOL_LIMIT
     )
     hits = fuse_search_results(
         query_runs, response_id=response_id, limit=limit,
@@ -213,7 +215,6 @@ def run_search_candidates(
             hits, request.query, reranker, policy=rerank_policy,
             deadline=time.monotonic() + rerank_policy.rerank_timeout,
         )
-        hits = hits[:SEARCH_RESULT_LIMIT]
         debug_log.log_rerank(hits, rerank_meta, rerank_started)
     else:
         for hit in hits:
@@ -221,6 +222,7 @@ def run_search_candidates(
         rerank_meta = {
             "mode_requested": "rrf", "mode_used": "rrf", "fallback_reason": None,
         }
+    hits = diversify_by_site(hits, SEARCH_RESULT_LIMIT)
     primary_rows = query_results[query_plan.primary_query]
     primary_has_candidates = bool(fuse_search_results(
         [(query_plan.primary_query, primary_rows)], response_id=response_id, limit=1,

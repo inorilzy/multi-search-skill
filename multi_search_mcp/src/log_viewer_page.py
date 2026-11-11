@@ -388,6 +388,7 @@ function renderRanking(r) {
   let note = "先按各源的排名做 RRF 融合（同一网址在多个源、多个查询里排得越靠前，分越高）";
   note += reranked ? "，再用模型打相关性分重排" : r.mode_requested === "rrf_model" ?
     "；模型重排失败，保留 RRF 顺序：" + (r.fallback_reason || "原因未知") : "；没有开启模型重排";
+  note += "。同一网站最多保留 3 条，超出的排到其他网站之后";
   return section("4", "排序", "融合候选 " + r.fused_count + " 条，最终保留 " + r.rows.length + " 条",
     h("p", { class: "muted small" }, note),
     h("table", {},

@@ -187,6 +187,33 @@ Maintenance commands share the same Core state: `multi-search keys status` /
 [--priority N] [--note TEXT]`, `site reset [site]`.
 Prefer these over the legacy Python adapter module, which only forwards to Core.
 
+## Search traces
+
+The user's `debug_log` setting (desktop page 05, "记录搜索详情", off by default)
+records each `search` / `fetch` run to `~/.multi-search/logs/runs/`: the query
+and `--expand` variants as passed, the route and active sources, per-provider
+timing and results, the fusion and rerank order, and every scrape backend
+attempt with its timing. Traces contain queries and page text, never keys.
+They record what the Agent passed to the CLI; the user's original wording
+stays on the Agent's side.
+
+Use traces when the user asks what a search did, why it was slow, or why a
+page was missing:
+
+```sh
+multi-search logs list --limit 5 --format json
+multi-search logs serve --open
+```
+
+`logs list` returns `run_id`, time, query, route, `outcome`, total
+`elapsed_ms`, and result count per run, newest first. `logs serve` opens a
+read-only page on 127.0.0.1 with the full detail; it runs until Ctrl+C, so
+start it for the user rather than inside a delegated executor. An empty list
+means the setting is off: tell the user where to switch it on, and leave the
+setting itself to them. To trace one diagnostic run without changing the
+setting, add `--debug-log <path>` to that command and read the file with
+`logs list --path <path>`.
+
 Completion: the CLI runs, the search outcome is visible, and matching links are
 identified or the bodies needed for the answer were read by the executor (or
 failures recorded). Each claim about page contents cites an inspected excerpt.
