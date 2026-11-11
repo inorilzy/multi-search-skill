@@ -113,6 +113,11 @@ settings, so do not assume any fixed set of route ids.
   SOV2EX API supplies titles, URLs, and highlight snippets. Indexed topic
   bodies are discarded; selected URLs are fetched after ranking.
 
+For links-only requests, add `--no-fetch` to `search`: it returns fused,
+ranked candidates without fetching page bodies or writing the body cache, so a
+links-only lookup does not spend body-fetch capacity. Search without it only
+when the answer needs evidence from page content.
+
 The RRF cap, preview size, and per-field contracts are documented once in
 [cli.md](cli.md); this file describes workflow, not parameter limits.
 

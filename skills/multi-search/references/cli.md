@@ -5,16 +5,14 @@ The CLI runs Core directly; no MCP server or MCP client configuration is needed.
 
 ## Install
 
-This MCP-free migration is currently a local candidate, not a new published
-release. The historical `v0.4.0` tag does not include these changes. From the
-verified local checkout, run at the repository root:
+Version 0.4.1 is released. From the repository root, run:
 
 ```sh
 uv tool install --force .
 multi-search --help
 ```
 
-To reinstall the same local candidate use `uv tool install --force --reinstall .`.
+To reinstall the same release use `uv tool install --force --reinstall .`.
 Do not substitute guessed remote tags or URLs for the verified local artifact.
 The historical distribution/module name `multi-search-mcp` / `multi_search_mcp`
 is retained for compatibility; the only product command is `multi-search` and
