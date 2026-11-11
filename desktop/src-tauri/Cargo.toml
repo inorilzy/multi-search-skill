@@ -94,6 +94,11 @@ path = "tests/settings.rs"
 required-features = ["test-fixtures"]
 
 [[test]]
+name = "config_shadow"
+path = "tests/config_shadow.rs"
+required-features = ["test-fixtures"]
+
+[[test]]
 name = "scrape_memory"
 path = "tests/scrape_memory.rs"
 required-features = ["test-fixtures"]

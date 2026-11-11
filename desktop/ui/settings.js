@@ -38,6 +38,8 @@ const RERANK_KEY_SOURCE_LABELS = {
   none: '未设置',
   unreadable: '密钥文件无法读取，请检查 ~/.multi-search/keys.json',
 };
+// README 与 CLI 的配置优先级：MULTI_SEARCH_CONFIG 指定的 JSON 文件优先于本页的 SQLite 设置。
+const CLI_ENV_NOTICE = 'CLI 正在使用环境变量 MULTI_SEARCH_CONFIG 指定的配置文件；本页保存的 SQLite 设置不会影响该配置。';
 // 与 core 的 _valid_base_url 同义：http(s)、有主机、无 ? 与 #。
 const baseUrlError = value => {
   if (!value) return '';
@@ -81,6 +83,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
         <article><span>实际搜索源</span><strong data-summary="active-count">—</strong><small data-summary="active">状态未知</small></article>
       </section>
       <p class="error-message settings-warning" data-info="active-warning" ></p>
+      <p class="error-message settings-warning" data-info="config-source" role="status"></p>
       <p data-info="error" class="error-message" role="alert"></p><button type="button" data-action="retry" hidden>重试读取</button>
 
       <section class="panel settings-defaults"><div class="section-title"><div><p class="eyebrow">DEFAULTS</p><h2>默认路由与全局超时</h2></div><span class="draft-badge" data-dirty hidden>有未保存修改</span></div>
@@ -633,12 +636,15 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     q('[data-field="twitter"]').value = twitterPath;
     text('[data-status="path"]', view.config_path || '无法确定配置文件位置');
     text('[data-status="path-source"]', view.path_source === 'env' ? `隔离数据库 MULTI_SEARCH_CONFIG_DB（${view.file_present ? '已存在' : '尚未创建'}）` : `用户 SQLite 配置（${view.file_present ? '已存在' : '尚未创建'}）`);
-    const notes = ['SQLite 是唯一生效配置来源；旧 JSON、环境变量和旧凭据文件不会自动生效。'];
+    const notes = view.read_source === 'cli_env'
+      ? [CLI_ENV_NOTICE]
+      : ['SQLite 是唯一生效配置来源；旧 JSON、环境变量和旧凭据文件不会自动生效。'];
     if (view.timeout_configured === false) notes.push('配置中没有显式的全局超时，当前显示的是 CLI 内置值；不修改则保存时不会写入。');
     if (view.timeout_out_of_range) notes.push(`已保存的超时 ${view.timeout} 秒超出 ${timeoutMin} 到 ${timeoutMax} 秒；不修改则原样保留。`);
     if (view.unknown_disabled_sources?.length) notes.push(`配置中还有无法识别的禁用项（${view.unknown_disabled_sources.join('、')}），保存时会原样保留。`);
     if (rankingInvalid) notes.push('已保存的模型重排配置非法，当前按默认值显示；请修正后重新保存。');
     text('[data-info="env"]', notes.join(' '));
+    text('[data-info="config-source"]', view.read_source === 'cli_env' ? CLI_ENV_NOTICE : '');
     dirty = false;
     editorDirty = false;
     revision += 1;

@@ -47,6 +47,25 @@ def _validate_format(url: str, *, label: str, deadline: float | None) -> str:
     return candidate
 
 
+def validate_http_host(
+    host: str, *, label: str = "URL",
+) -> tuple[str, ipaddress.IPv4Address | ipaddress.IPv6Address | None]:
+    """Normalize a host and reject local or non-public IP destinations.
+
+    Returns the ASCII host and, for a numeric spelling, the address it denotes,
+    so a caller that rebuilds a URL can use the exact form that was validated.
+    This is the one implementation of the host rules: URL format checks, HTTP
+    connect/redirect hops and delegated scrape validation all use it.
+    """
+    normalized = normalize_http_host(host, label=label)
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
+    literal = numeric_host(normalized)
+    if literal is not None:
+        _ensure_public_ip(literal, label=label)
+    return normalized, literal
+
+
 def check_host_is_not_local(host: str, *, label: str) -> None:
     """Reject ``localhost`` and non-public IP literals, without any DNS lookup.
 
@@ -54,15 +73,10 @@ def check_host_is_not_local(host: str, *, label: str) -> None:
     format check, the HTTP connect/redirect hop, and the delegated scrape
     policy. ``host`` may be any spelling; it is normalised first.
     """
-    normalized = normalize_http_host(host)
-    if normalized == "localhost" or normalized.endswith(".localhost"):
-        raise UrlSecurityError(f"unsafe {label}: localhost is not allowed")
-    literal = numeric_host(normalized)
-    if literal is not None:
-        _ensure_public_ip(literal, label=label)
+    validate_http_host(host, label=label)
 
 
-def normalize_http_host(host: str) -> str:
+def normalize_http_host(host: str, *, label: str = "URL") -> str:
     """Normalize hosts before telling literal addresses from names."""
     try:
         decoded = urllib.parse.unquote(str(host).strip("[]"), errors="strict")
@@ -81,7 +95,7 @@ def normalize_http_host(host: str) -> str:
             raise ValueError("invalid characters")
         return normalized
     except (ValueError, UnicodeError) as exc:
-        raise UrlSecurityError("unsafe URL: host is not a valid hostname") from exc
+        raise UrlSecurityError(f"unsafe {label}: host is not a valid hostname") from exc
 
 
 def http_target(url: str, *, label: str = "URL") -> tuple:
