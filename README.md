@@ -108,7 +108,7 @@ cd multi-search-skill
 multi-search --help
 ```
 
-Python 包依赖由 `pyproject.toml` 管理，包含 `beautifulsoup4`、`curl-cffi`，不包含 MCP。
+Python 包依赖由 `pyproject.toml` 管理，不包含 MCP。CLI bundle 的锁定依赖（含 Twitter/X 所需 xkit 的依赖）在 `scripts/cli-bundle-requirements.txt`。
 
 > **XKit-py 当前已暂时停用。** `pyproject.toml` 里对 [XKit-py](https://github.com/inorilzy/xkit-py) 的依赖已注释掉，`uv.lock` 也随之重建，安装不再需要该私有仓库的读取权限。代价是 Twitter/X 搜索和推文抓取不可用，调用时会返回明确的「需要安装 xkit」错误，其他来源不受影响。要恢复时取消 `pyproject.toml` 中那行的注释并重新执行 `uv lock`。
 
