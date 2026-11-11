@@ -34,30 +34,40 @@ const FETCH_CREDENTIALS: &[&str] = &[
 ];
 
 /// Credential variable names one search may receive: the selected sources' own keys (or the
-/// route's sources when none are selected) plus the fetch-stage keys. Every other key stays out
-/// of the child environment. Source names, aliases and env names come from the shared catalog.
-pub(crate) fn search_credentials(route: &str, sources: &[String]) -> Vec<&'static str> {
+/// route's sources from the current settings when none are selected) plus the fetch-stage keys.
+/// Model reranking also needs its key. Every other key stays out of the child environment.
+/// Route members come from the settings view (not the compiled catalog's routes) so custom routes
+/// and built-in routes whose sources were edited pass the keys of the sources the CLI will run.
+pub(crate) fn search_credentials(
+    settings: &crate::settings::SettingsView,
+    route: &str,
+    sources: &[String],
+) -> Vec<String> {
     let catalog = crate::source_catalog::catalog();
-    let selected: Vec<&'static str> = if sources.is_empty() {
-        catalog
-            .route(route)
-            .map(|entry| entry.sources.iter().map(String::as_str).collect())
+    let selected: Vec<String> = if sources.is_empty() {
+        settings
+            .routes
+            .get(route)
+            .map(|entry| entry.sources.clone())
             .unwrap_or_default()
     } else {
         sources
             .iter()
             .filter_map(|name| catalog.source(name))
-            .map(|entry| entry.name.as_str())
+            .map(|entry| entry.name.clone())
             .collect()
     };
-    let mut names: Vec<&'static str> = FETCH_CREDENTIALS.to_vec();
+    let mut names: Vec<String> = FETCH_CREDENTIALS.iter().map(|name| (*name).to_string()).collect();
     for source in selected {
         if source == "twitter" {
-            names.push("TWITTER_COOKIES_PATH");
+            names.push("TWITTER_COOKIES_PATH".into());
         }
-        if let Some(entry) = catalog.source(source) {
-            names.extend(entry.env.iter().map(String::as_str));
+        if let Some(entry) = catalog.source(&source) {
+            names.extend(entry.env.iter().cloned());
         }
+    }
+    if settings.ranking.mode == "rrf_model" {
+        names.push(crate::settings::SYSTEMONE_KEY_ENV.into());
     }
     names.sort_unstable();
     names.dedup();
@@ -174,7 +184,8 @@ impl ExecutionManager<'_> {
         {
             return Err("已有测试搜索正在运行".into());
         }
-        let credentials = search_credentials(&options.route, &options.sources);
+        let credentials = search_credentials(&settings, &options.route, &options.sources);
+        let credential_names: Vec<&str> = credentials.iter().map(String::as_str).collect();
         let id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -192,7 +203,7 @@ impl ExecutionManager<'_> {
         }
         args.push("--".into());
         args.push(options.query);
-        let process = OwnedProcess::spawn(&cli, &args, &self.environment, &credentials)
+        let process = OwnedProcess::spawn(&cli, &args, &self.environment, &credential_names)
             .map_err(|_| "无法启动 CLI")?;
         let execution = Arc::new(Mutex::new(Execution {
             state: ExecutionStatus {
