@@ -2,8 +2,8 @@
 
 Over-long queries are rejected upstream with 400/422, which used to surface as
 a provider failure. Truncation keeps the leading words (the most specific part
-of a fused query) and reports it as a target-kind note row, so the change is
-visible in provider status but never counts against key health.
+of a fused query) and reports it as a notice row, so the change is visible
+without counting as a provider error or against key health.
 """
 from __future__ import annotations
 
@@ -42,10 +42,6 @@ def limit_query(
         limits.append(f"{max_words} words")
     note = {
         "source": source,
-        "error": f"query truncated to the provider limit ({' / '.join(limits)})",
-        "kind": "target",
-        "error_type": "target",
-        "origin": "target",
-        "error_origin": "target",
+        "notice": f"query truncated to the provider limit ({' / '.join(limits)})",
     }
     return text, [note]

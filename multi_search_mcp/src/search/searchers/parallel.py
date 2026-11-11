@@ -6,6 +6,7 @@ import urllib.request
 from ...support.http import read_limited, urlopen_retry
 from ...support.http_errors import http_error_row
 from ...support.secrets import scrub_secrets
+from ..notices import notice_row
 
 # docs/parallel/api-reference-search.md: ErrorResponse {type, error:{ref_id, message}}.
 _PARALLEL_HTTP_ERROR_KINDS = {401: "invalid", 402: "quota_exhausted", 403: "invalid", 429: "rate_limit"}
@@ -92,7 +93,5 @@ def search_parallel(
         # input_validation_warning entries (e.g. a clamped max_results).
         text = warning.get("message") if isinstance(warning, dict) else str(warning)
         if text:
-            results.append({"source": "parallel", "error": f"Parallel warning: {text}"[:300],
-                            "kind": "target", "error_type": "target",
-                            "origin": "target", "error_origin": "target"})
+            results.append(notice_row("parallel", f"Parallel warning: {text}"[:300]))
     return results

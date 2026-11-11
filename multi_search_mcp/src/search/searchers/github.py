@@ -25,7 +25,21 @@ _GITHUB_RATE_LIMIT_HEADERS = frozenset({
 _GITHUB_QUERY_MAX_CHARS = 256
 _GITHUB_QUERY_MAX_OPERATORS = 5
 _GITHUB_QUERY_OPERATORS = frozenset({"AND", "OR", "NOT"})
-_GITHUB_QUALIFIER_RE = re.compile(r"-?[A-Za-z][\w.-]*:\S")
+# Only documented search qualifiers are excluded from the text-length budget.
+# Free-form tokens that merely look like ``key:value`` (URLs, error codes,
+# Windows drive paths) are search text and must count toward the limit.
+_GITHUB_QUALIFIER_NAMES = (
+    "repo", "language", "user", "org", "topic", "path", "filename", "extension",
+    "is", "in", "size", "stars", "forks", "created", "pushed", "updated",
+    "license", "author", "committer", "author-name", "committer-name",
+    "author-email", "committer-email", "author-date", "committer-date",
+    "merge", "hash", "parent", "tree", "label", "milestone", "project",
+    "status", "type",
+)
+_GITHUB_QUALIFIER_RE = re.compile(
+    r"-?(?:" + "|".join(_GITHUB_QUALIFIER_NAMES) + r"):\S",
+    re.IGNORECASE,
+)
 GITHUB_QUERY_TRUNCATED_MESSAGE = "query truncated to GitHub's 256-character / 5-operator limit"
 GITHUB_INCOMPLETE_RESULTS_MESSAGE = "GitHub search timed out; results may be incomplete"
 _CODE_FRAGMENT_MAX_CHARS = 300
@@ -197,9 +211,9 @@ def _github_exception_row(exc: _GitHubHTTPError, token: str, *, source: str) -> 
     )
 
 
-def _github_target_row(source: str, message: str) -> dict:
+def _github_notice_row(source: str, message: str) -> dict:
     """Warning row that never counts as evidence about the token."""
-    return {"source": source, "error": message, "error_type": "target"}
+    return {"source": source, "notice": message}
 
 
 def limit_github_query(query: str) -> tuple[str, bool]:
@@ -236,6 +250,10 @@ def limit_github_query(query: str) -> tuple[str, bool]:
             truncated = True
         kept.append(token)
         text_chars += separator + len(token)
+    # A dropped search word must not leave a boolean operator dangling at the
+    # end: GitHub rejects that query instead of searching the kept words.
+    while truncated and kept and kept[-1] in _GITHUB_QUERY_OPERATORS:
+        kept.pop()
     limited = " ".join(kept)
     if not truncated:
         # Whitespace-only normalization is not a truncation; send the original.
@@ -245,7 +263,7 @@ def limit_github_query(query: str) -> tuple[str, bool]:
 
 def _github_incomplete_row(data: dict, source: str) -> list[dict]:
     if isinstance(data, dict) and data.get("incomplete_results") is True:
-        return [_github_target_row(source, GITHUB_INCOMPLETE_RESULTS_MESSAGE)]
+        return [_github_notice_row(source, GITHUB_INCOMPLETE_RESULTS_MESSAGE)]
     return []
 
 
@@ -327,7 +345,7 @@ def search_github_repos(
     """Search GitHub repositories. Uses token directly if provided, else gh CLI."""
     source = "github-repos"
     query, truncated = limit_github_query(query)
-    notices = [_github_target_row(source, GITHUB_QUERY_TRUNCATED_MESSAGE)] if truncated else []
+    notices = [_github_notice_row(source, GITHUB_QUERY_TRUNCATED_MESSAGE)] if truncated else []
     endpoint = f"search/repositories?q={urllib.parse.quote_plus(query)}&sort=stars&per_page={count}"
     try:
         rc, stdout, stderr = _github_api(endpoint, token, timeout=timeout, deadline=deadline)
@@ -394,7 +412,7 @@ def search_github_code(
             "error_type": "missing_key",
         }]
     query, truncated = limit_github_query(query)
-    notices = [_github_target_row(source, GITHUB_QUERY_TRUNCATED_MESSAGE)] if truncated else []
+    notices = [_github_notice_row(source, GITHUB_QUERY_TRUNCATED_MESSAGE)] if truncated else []
     per_page = max(1, min(int(count), 100))
     endpoint = f"search/code?q={urllib.parse.quote_plus(query)}&per_page={per_page}"
     try:
