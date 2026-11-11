@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Literal
 
-from .src.support.backends import KNOWN_BACKENDS
+from .src.support.backends import ACCEPTED_BACKENDS
 from .src.service import (
     FetchSourceRequest,
     MultiSearchRequest,
@@ -225,12 +225,12 @@ def get_site_scraper_stats_tool(site: str | None = None) -> dict[str, Any]:
 
 
 def scraper_preference_error(scraper: str) -> dict[str, Any] | None:
-    if scraper in KNOWN_BACKENDS:
+    if scraper in ACCEPTED_BACKENDS:
         return None
     return _error(
         f"unknown scraper: {scraper!r}",
         "invalid_request",
-        valid_scrapers=list(KNOWN_BACKENDS),
+        valid_scrapers=list(ACCEPTED_BACKENDS),
     )
 
 
@@ -243,7 +243,7 @@ def set_site_scraper_preference_tool(
     try:
         return set_site_scraper_preference(site, scraper, priority=priority, note=note)
     except ValueError as exc:
-        return _error(str(exc), "invalid_request", valid_scrapers=list(KNOWN_BACKENDS))
+        return _error(str(exc), "invalid_request", valid_scrapers=list(ACCEPTED_BACKENDS))
 
 
 def reset_site_scraper_stats_tool(site: str | None = None) -> dict[str, Any]:

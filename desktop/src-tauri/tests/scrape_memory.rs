@@ -78,7 +78,7 @@ fn missing_state_database_reports_unavailable_and_writes_nothing() {
     assert_eq!(view.reason, "尚无抓取状态数据");
     assert!(!s.db().exists());
 
-    let pinned = scrape_memory::pin(&s.env(), "example.com", "jina").unwrap();
+    let pinned = scrape_memory::pin(&s.env(), "example.com", "jina_key").unwrap();
     assert!(!pinned.available);
     assert!(!s.db().exists(), "pin must not create state.sqlite");
 
@@ -134,10 +134,10 @@ fn pin_inserts_row_and_puts_backend_first() {
     s.create();
     s.insert("example.com", "exa", 10, 0, None);
     s.insert("example.com", "tavily", 5, 0, None);
-    let view = scrape_memory::pin(&s.env(), "example.com", "firecrawl").unwrap();
+    let view = scrape_memory::pin(&s.env(), "example.com", "firecrawl_key").unwrap();
     assert!(view.available);
     let first = &view.rows[0];
-    assert_eq!(first.scraper, "firecrawl");
+    assert_eq!(first.scraper, "firecrawl_key");
     assert!(first.manually_pinned);
     assert_eq!(first.manual_priority, Some(-1));
 
@@ -197,7 +197,7 @@ fn concurrent_pins_get_distinct_priorities_without_lost_writes() {
     s.create();
     let env = s.env();
     let mut handles = Vec::new();
-    for scraper in ["jina", "exa", "tavily", "firecrawl"] {
+    for scraper in ["jina_key", "exa", "tavily", "firecrawl_anon"] {
         let env = env.clone();
         handles.push(std::thread::spawn(move || {
             scrape_memory::pin(&env, "example.com", scraper).map(|_| scraper)

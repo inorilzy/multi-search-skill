@@ -131,10 +131,10 @@ class DebugLogTests(unittest.TestCase):
         self.assertEqual(len(by_kind["fusion"][0]["candidates"]), 2)
 
         chain = by_kind["scrape_chain"][0]
-        self.assertEqual(chain["order"][:2], ["jina", "exa"])
+        self.assertEqual(chain["order"][:3], ["jina_key", "jina_anon", "exa"])
         attempts = [(row["url"], row["backend"], row["status"]) for row in by_kind["scrape_attempt"]]
-        self.assertIn(("https://evidence.example/one", "jina", "error"), attempts)
-        self.assertIn(("https://evidence.example/one", "firecrawl", "ok"), attempts)
+        self.assertIn(("https://evidence.example/one", "jina_anon", "error"), attempts)
+        self.assertIn(("https://evidence.example/one", "firecrawl_anon", "ok"), attempts)
         fetched = {row["url"]: row for row in by_kind["fetch_source"]}
         self.assertEqual(fetched["https://evidence.example/one"]["backend"], "firecrawl")
         self.assertEqual(fetched["https://evidence.example/one"]["how"], "scrape")
@@ -230,7 +230,8 @@ class DebugLogTests(unittest.TestCase):
         page = detail["fetches"][0]
         self.assertEqual(page["url"], detail["ranking"]["rows"][0]["url"])
         self.assertEqual([(a["backend"], a["status"]) for a in page["attempts"]],
-                         [("jina", "error"), ("exa", "skipped"), ("tavily", "skipped"), ("firecrawl", "ok")])
+                         [("jina_key", "skipped"), ("jina_anon", "error"), ("exa", "skipped"),
+                          ("tavily", "skipped"), ("firecrawl_key", "skipped"), ("firecrawl_anon", "ok")])
         self.assertEqual(page["result"]["backend"], "firecrawl")
 
     def test_abandoned_fetch_is_reported_as_a_timeout(self):

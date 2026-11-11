@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, urlsplit, urlunsplit
 
+from ..support.backends import backend_provider
 from ..support.secrets import scrub_secrets
 from .state_store import StateStore
 
@@ -138,7 +139,9 @@ class SiteScraperMemory:
         now = _now()
 
         def rank(scraper: str) -> tuple:
-            row = by_scraper.get(scraper)
+            # Pins and cooldowns recorded before the chain was split into
+            # channels are keyed by the provider name and still apply.
+            row = by_scraper.get(scraper) or by_scraper.get(backend_provider(scraper))
             original_index = original.index(scraper)
             # The user-configured chain is the baseline order. Site memory only
             # lifts manual pins and demotes cooling backends; success/failure

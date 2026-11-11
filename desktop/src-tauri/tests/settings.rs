@@ -357,9 +357,10 @@ fn scrape_backends_save_trims_dedupes_and_keeps_order() {
     let view = fixture::save(&e, &request).unwrap();
     assert_eq!(
         s.object()["scrape_backends"],
-        serde_json::json!(["firecrawl", "jina", "exa"])
+        // Historical names expand to their channels in their former order.
+        serde_json::json!(["firecrawl_key", "firecrawl_anon", "jina_anon", "jina_key", "exa"])
     );
-    assert_eq!(view.scrape_backends, ["firecrawl", "jina", "exa"]);
+    assert_eq!(view.scrape_backends, ["firecrawl_key", "firecrawl_anon", "jina_anon", "jina_key", "exa"]);
 }
 
 #[test]
@@ -411,7 +412,7 @@ fn omitted_scrape_backends_preserve_existing_key() {
 fn missing_scrape_backends_view_uses_factory_chain_and_options() {
     let s = Sandbox::new("scrape-defaults");
     let view = fixture::view(&s.env(&[]));
-    assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+    assert_eq!(view.scrape_backends, ["jina_key", "jina_anon", "exa", "tavily", "firecrawl_key", "firecrawl_anon"]);
     assert_eq!(view.builtin_scrape_backends, view.scrape_backends);
     assert_eq!(
         view.scrape_backend_options
@@ -419,10 +420,12 @@ fn missing_scrape_backends_view_uses_factory_chain_and_options() {
             .map(|option| (option.name.as_str(), option.label.as_str()))
             .collect::<Vec<_>>(),
         [
-            ("jina", "Jina Reader"),
+            ("jina_key", "Jina Reader（Key）"),
+            ("jina_anon", "Jina Reader（匿名）"),
             ("exa", "Exa"),
             ("tavily", "Tavily"),
-            ("firecrawl", "Firecrawl"),
+            ("firecrawl_key", "Firecrawl（Key）"),
+            ("firecrawl_anon", "Firecrawl（匿名）"),
         ]
     );
 }
@@ -453,7 +456,7 @@ fn dirty_scrape_backends_read_tolerantly_and_fall_back_when_useless() {
         s.replace(body);
         let view = fixture::view(&e);
         assert_eq!(view.status, "ok");
-        assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+        assert_eq!(view.scrape_backends, ["jina_key", "jina_anon", "exa", "tavily", "firecrawl_key", "firecrawl_anon"]);
         // null 与缺失等价（历史默认）；其余三种是用户明确写入的非法值。
         assert_eq!(
             view.scrape_backends_invalid,
@@ -471,7 +474,7 @@ fn missing_or_absent_scrape_backends_is_not_reported_invalid() {
     s.replace(r#"{"type":"default"}"#);
     let view = fixture::view(&e);
     assert!(!view.scrape_backends_invalid);
-    assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+    assert_eq!(view.scrape_backends, ["jina_key", "jina_anon", "exa", "tavily", "firecrawl_key", "firecrawl_anon"]);
 }
 
 #[test]
@@ -488,10 +491,10 @@ fn invalid_saved_scrape_backends_can_be_overwritten_by_save() {
     request.scrape_backends = Some(vec!["jina".into(), "tavily".into()]);
     let saved = fixture::save(&e, &request).unwrap();
     assert!(!saved.scrape_backends_invalid);
-    assert_eq!(saved.scrape_backends, ["jina", "tavily"]);
+    assert_eq!(saved.scrape_backends, ["jina_anon", "jina_key", "tavily"]);
     assert_eq!(
         s.object()["scrape_backends"],
-        serde_json::json!(["jina", "tavily"])
+        serde_json::json!(["jina_anon", "jina_key", "tavily"])
     );
 }
 
@@ -503,9 +506,9 @@ fn unreadable_view_still_exposes_default_scrape_chain() {
     s.replace("{ not json");
     let view = fixture::view(&e);
     assert_eq!(view.status, "config_unreadable");
-    assert_eq!(view.scrape_backends, ["jina", "exa", "tavily", "firecrawl"]);
+    assert_eq!(view.scrape_backends, ["jina_key", "jina_anon", "exa", "tavily", "firecrawl_key", "firecrawl_anon"]);
     assert!(!view.scrape_backends_invalid);
-    assert_eq!(view.scrape_backend_options.len(), 4);
+    assert_eq!(view.scrape_backend_options.len(), 6);
 }
 
 #[test]
@@ -549,7 +552,7 @@ import json, sys
 from multi_search_mcp.src.support.config_db import ConfigDatabase
 from multi_search_mcp.src.scrape.service import configured_scrape_backends
 data = ConfigDatabase(sys.argv[1]).read_settings()
-assert list(configured_scrape_backends(data)) == ['firecrawl', 'jina']
+assert list(configured_scrape_backends(data)) == ['firecrawl_key', 'firecrawl_anon', 'jina_anon', 'jina_key']
 print(json.dumps({"type": data.get("type"), "timeout": data.get("timeout"), "disabled_sources": data.get("disabled_sources")}))
 "#;
     let output = std::process::Command::new("python")
@@ -968,7 +971,7 @@ fn scrape_patch_and_other_settings_writes_preserve_each_other() {
         assert_eq!(object["type"], "dev");
         assert_eq!(object["timeout"], 37);
         assert_eq!(object["disabled_sources"], serde_json::json!(["brave"]));
-        assert_eq!(object["scrape_backends"], serde_json::json!(["firecrawl", "exa"]));
+        assert_eq!(object["scrape_backends"], serde_json::json!(["firecrawl_key", "firecrawl_anon", "exa"]));
         assert_eq!(object["future"], serde_json::json!({"keep":true}));
     }
     for invalid in [vec![], vec!["unknown".into()]] {

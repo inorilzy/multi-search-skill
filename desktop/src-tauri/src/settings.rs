@@ -33,7 +33,24 @@ pub const TIMEOUT_MIN: u32 = 1;
 pub const TIMEOUT_MAX: u32 = 90;
 
 /// 通用网页抓取后端的出厂 fallback 链；顺序即默认尝试顺序。
-pub const SCRAPE_BACKENDS: &[&str] = &["jina", "exa", "tavily", "firecrawl"];
+/// 抓取链的可选通道，顺序即出厂顺序（与 core 的 `KNOWN_BACKENDS` 一致）：Jina 与
+/// Firecrawl 各拆成 Key 通道和匿名通道，Jina Key 排第一以求速度。
+pub const SCRAPE_BACKENDS: &[&str] =
+    &["jina_key", "jina_anon", "exa", "tavily", "firecrawl_key", "firecrawl_anon"];
+/// 旧版本保存的单一名称及其原执行顺序（Jina 先匿名，Firecrawl 先 Key）。读取时展开成
+/// 通道显示，保存时写成通道名；与 core 的 `LEGACY_BACKENDS` 一致。
+pub const LEGACY_SCRAPE_BACKENDS: &[(&str, &[&str])] = &[
+    ("jina", &["jina_anon", "jina_key"]),
+    ("firecrawl", &["firecrawl_key", "firecrawl_anon"]),
+];
+
+/// 一个保存值对应的通道（旧名展开），未知名称返回空。
+pub fn scrape_channels(name: &str) -> Vec<&'static str> {
+    if let Some((_, channels)) = LEGACY_SCRAPE_BACKENDS.iter().find(|(legacy, _)| *legacy == name) {
+        return channels.to_vec();
+    }
+    SCRAPE_BACKENDS.iter().copied().filter(|known| *known == name).collect()
+}
 /// 单个抓取后端一次调用的时限（秒，设置键 `scrape_backend_timeout`）；与 core 的
 /// `SCRAPE_BACKEND_TIMEOUT_DEFAULT` / `SCRAPE_BACKEND_TIMEOUT_MAX` 保持一致。
 pub const SCRAPE_BACKEND_TIMEOUT_DEFAULT: u32 = 10;
@@ -163,10 +180,12 @@ fn ranking_state(object: &Map<String, Value>) -> (RankingState, bool) {
 
 pub fn scrape_backend_label(name: &str) -> &'static str {
     match name {
-        "jina" => "Jina Reader",
+        "jina_key" => "Jina Reader（Key）",
+        "jina_anon" => "Jina Reader（匿名）",
         "exa" => "Exa",
         "tavily" => "Tavily",
-        "firecrawl" => "Firecrawl",
+        "firecrawl_key" => "Firecrawl（Key）",
+        "firecrawl_anon" => "Firecrawl（匿名）",
         _ => "",
     }
 }
@@ -202,13 +221,15 @@ fn scrape_chain(object: &Map<String, Value>) -> (Vec<String>, bool) {
             invalid = true;
             continue;
         };
-        let name = raw.trim();
-        if !SCRAPE_BACKENDS.contains(&name) {
+        let channels = scrape_channels(raw.trim());
+        if channels.is_empty() {
             invalid = true;
             continue;
         }
-        if !chain.iter().any(|saved| saved == name) {
-            chain.push(name.to_string());
+        for name in channels {
+            if !chain.iter().any(|saved| saved == name) {
+                chain.push(name.to_string());
+            }
         }
     }
     if items.is_empty() {
@@ -615,11 +636,14 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
             let mut chain: Vec<String> = Vec::new();
             for raw in items {
                 let name = raw.trim();
-                if !SCRAPE_BACKENDS.contains(&name) {
+                let channels = scrape_channels(name);
+                if channels.is_empty() {
                     return Err(format!("不支持的抓取后端：{name}"));
                 }
-                if !chain.iter().any(|saved| saved == name) {
-                    chain.push(name.to_string());
+                for channel in channels {
+                    if !chain.iter().any(|saved| saved == channel) {
+                        chain.push(channel.to_string());
+                    }
                 }
             }
             if chain.is_empty() {
@@ -862,8 +886,11 @@ pub fn save_scrape_backends(environment: &RuntimeEnvironment, backends: &[String
     let mut chain: Vec<String> = Vec::new();
     for raw in backends {
         let name = raw.trim();
-        if !SCRAPE_BACKENDS.contains(&name) { return Err(format!("不支持的抓取后端：{name}")); }
-        if !chain.iter().any(|saved| saved == name) { chain.push(name.to_string()); }
+        let channels = scrape_channels(name);
+        if channels.is_empty() { return Err(format!("不支持的抓取后端：{name}")); }
+        for channel in channels {
+            if !chain.iter().any(|saved| saved == channel) { chain.push(channel.to_string()); }
+        }
     }
     if chain.is_empty() { return Err("抓取顺序至少要保留一个后端".into()); }
     let path = config_path(environment).ok_or("无法定位配置数据库")?;

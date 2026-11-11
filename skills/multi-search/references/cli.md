@@ -148,12 +148,14 @@ itself expired, write its previously observed URL to a file, fetch it with
 The generic scrape backend chain is configured once per settings record in the
 top-level `scrape_backends` array (siblings: `scrape_chars`, `scrape_timeout`).
 Its order is the fallback priority: when a backend cannot fetch the page, the
-next one is tried. Allowed values are `jina`, `exa`, `tavily`, and `firecrawl`;
-duplicates are ignored after their first position. Omitted or `null` keeps the
-default order `["jina", "exa", "tavily", "firecrawl"]`. An explicit empty array
-or an unknown name is a configuration error. Key-requiring backends (Exa and
-Tavily) without a configured key are skipped at runtime; Jina and Firecrawl
-allow anonymous scraping, so the default chain still starts with anonymous Jina.
+next one is tried. Entries are channels: `jina_key`, `jina_anon`, `exa`,
+`tavily`, `firecrawl_key`, and `firecrawl_anon` (the historical `jina` and
+`firecrawl` still work with their original behaviour). Duplicates are ignored
+after their first position. Omitted or `null` keeps the default order
+`["jina_key", "jina_anon", "exa", "tavily", "firecrawl_key", "firecrawl_anon"]`.
+An explicit empty array or an unknown name is a configuration error. Keyed
+channels without a usable key are skipped at runtime; results still report
+the service (`jina`, `firecrawl`, …) in `via`.
 `--backend` only overrides the chain for that single `fetch` call and is not
 saved to settings. Twitter/X URLs always use their dedicated scraper. Site memory then adjusts the order per site: a pinned backend
 (`site set-preference`) moves first and a cooling backend moves last; success

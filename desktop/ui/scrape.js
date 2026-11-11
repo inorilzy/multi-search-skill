@@ -10,7 +10,12 @@ const cloneChain = chain => (chain || []).map(String);
 
 // Mirrors Python ScrapeBackendSpec.key_required, NOT search-provider key requirements.
 // Jina and Firecrawl can scrape anonymously. Runtime cooldown is not a config error.
-const REQUIRED_KEY_BACKENDS = ['exa', 'tavily'];
+// 只能用 Key 的通道，以及它们对应的凭据源（Key 通道读同一个服务商的 Key）。
+const REQUIRED_KEY_BACKENDS = ['jina_key', 'exa', 'tavily', 'firecrawl_key'];
+const CHANNEL_PROVIDER = { jina_key: 'jina', jina_anon: 'jina', exa: 'exa', tavily: 'tavily', firecrawl_key: 'firecrawl', firecrawl_anon: 'firecrawl' };
+const providerOf = name => CHANNEL_PROVIDER[name] || name;
+// 旧版本按服务商记下的站点记忆行（拆分通道之前），仍按服务商显示。
+const LEGACY_LABELS = { jina: 'Jina Reader（旧记录）', firecrawl: 'Firecrawl（旧记录）' };
 
 export async function mountScrape(root, api, { number = '06' } = {}) {
   root = pageRoot(root);
@@ -72,9 +77,9 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   let timeoutBusy = false;
   let timeoutBounds = [1, 60];
 
-  const labelOf = name => options.get(name) || name;
+  const labelOf = name => options.get(name) || LEGACY_LABELS[name] || name;
   const PROVIDER_MARKS = { jina: 'J', exa: 'E', tavily: 'T', firecrawl: 'F' };
-  const providerMark = name => PROVIDER_MARKS[name] || (labelOf(name).trim()[0] || name[0] || '?').toUpperCase();
+  const providerMark = name => PROVIDER_MARKS[providerOf(name)] || (labelOf(name).trim()[0] || name[0] || '?').toUpperCase();
 
   function announceSort(message) {
     const node = q('[data-sort-status]');
@@ -85,7 +90,7 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     if (!REQUIRED_KEY_BACKENDS.includes(name)) {
       return { kind: 'ready', text: '可匿名使用' };
     }
-    const state = credentialStates.get(name);
+    const state = credentialStates.get(providerOf(name));
     if (state === 'present') return { kind: 'ready', text: 'Key 已配置' };
     if (state === 'absent' || state === 'unreadable') return { kind: 'warning', text: '待配置 Key' };
     return { kind: 'unknown', text: '状态待确认' };
@@ -280,7 +285,8 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
   }
 
   async function readCredentialStates() {
-    return new Map(await Promise.all(REQUIRED_KEY_BACKENDS.map(async name => {
+    const providers = [...new Set(REQUIRED_KEY_BACKENDS.map(providerOf))];
+    return new Map(await Promise.all(providers.map(async name => {
       try {
         const view = await api.credentialStatus(name);
         return /** @type {[string, string]} */ ([name, credentialStateOf(view)]);
@@ -292,11 +298,12 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
 
   function chainAvailability(names) {
     const required = names.filter(name => REQUIRED_KEY_BACKENDS.includes(name));
-    const missing = required.filter(name => ['absent', 'unreadable'].includes(credentialStates.get(name)));
-    const unknown = required.filter(name => !['present', 'absent', 'unreadable'].includes(credentialStates.get(name)));
+    const stateOf = name => credentialStates.get(providerOf(name));
+    const missing = required.filter(name => ['absent', 'unreadable'].includes(stateOf(name)));
+    const unknown = required.filter(name => !['present', 'absent', 'unreadable'].includes(stateOf(name)));
     const blocked = names.length > 0 && missing.length === names.length;
     let warning = missing.length
-      ? `${missing.map(labelOf).join('、')} 缺少可用 Key（未配置或无法解密）。${blocked ? '整条链无法运行，不能保存；请在数据源配置 Key，或加入可匿名抓取的 Jina / Firecrawl。' : '这些后端将无法抓取，请配置 Key 或使用链中其他后端。'}`
+      ? `${missing.map(labelOf).join('、')} 缺少可用 Key（未配置或无法解密）。${blocked ? '整条链无法运行，不能保存；请在数据源配置 Key，或加入匿名通道「Jina Reader（匿名）」或「Firecrawl（匿名）」。' : '这些后端将无法抓取，请配置 Key 或使用链中其他后端。'}`
       : '';
     if (unknown.length) warning += `${unknown.map(labelOf).join('、')} 的凭据状态暂时无法确认，请刷新重试；这不代表永久配置错误。`;
     return { blocked, warning };
@@ -613,11 +620,12 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
       const actions = doc.createElement('div');
       actions.className = 'route-row-actions';
       if (!options.has(row.scraper)) {
-        // 平台专用抓取器（twitter 等）按域名分派，不参与通用链重排。
+        // 平台专用抓取器（twitter 等）按域名分派，不参与通用链重排；拆分通道前的旧记录
+        // 仍会作用于对应服务商的两个通道，但固定要在新通道上重新设置。
         const note = doc.createElement('span');
         note.className = 'scrape-muted';
         note.setAttribute('data-memory-pin-note', row.scraper);
-        note.textContent = '平台抓取，按域名分派';
+        note.textContent = LEGACY_LABELS[row.scraper] ? '旧记录，按服务商作用于两个通道' : '平台抓取，按域名分派';
         actions.append(note);
       } else {
         const blocked = pinBlockedReason(row.scraper);

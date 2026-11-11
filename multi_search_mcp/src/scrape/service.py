@@ -14,24 +14,26 @@ from ..support.config import (
 from ..support.format import format_scrapes
 from ..support.models import normalize_scrape_result
 from ..support.requests import ScrapeRequest
-from .scrape import KNOWN_BACKENDS, scrape_url_smart
+from ..support.backends import ACCEPTED_BACKENDS, DEFAULT_SCRAPE_CHAIN
+from .scrape import scrape_url_smart
 from .scrapers.twitter import is_twitter_url
 
 
 def configured_scrape_backends(config: dict | None) -> tuple[str, ...]:
     """Resolve the shared ordered fallback chain used by scrape and fetch.
 
-    Absent/null keeps jina → exa → tavily → firecrawl. An explicit empty list
-    is an error; duplicates keep their first position.
+    Absent/null keeps the factory channel order (keyed Jina first). Historical
+    ``jina`` / ``firecrawl`` entries stay valid with their original behavior.
+    An explicit empty list is an error; duplicates keep their first position.
     """
     config = config or {}
     if config.get("scrape_backends") is None:
-        return KNOWN_BACKENDS
+        return DEFAULT_SCRAPE_CHAIN
     chain = tuple(dict.fromkeys(config_list(config, "scrape_backends")))
     if not chain:
         raise ConfigError("scrape_backends requires at least one backend")
-    if any(name not in KNOWN_BACKENDS for name in chain):
-        raise ConfigError(f"unknown scrape backend; valid backends: {', '.join(KNOWN_BACKENDS)}")
+    if any(name not in ACCEPTED_BACKENDS for name in chain):
+        raise ConfigError(f"unknown scrape backend; valid backends: {', '.join(ACCEPTED_BACKENDS)}")
     return chain
 
 

@@ -16,11 +16,11 @@ from multi_search_mcp.src.support.config import ConfigError
 URL = "https://example.com/article"
 
 class ResolveScrapeBackendsTests(unittest.TestCase):
-    def test_missing_or_null_uses_the_legacy_default_order(self):
+    def test_missing_or_null_uses_the_factory_channel_order(self):
         self.assertEqual(resolve_scrape_backends({}), list(DEFAULT_SCRAPE_BACKENDS))
         self.assertEqual(
             resolve_scrape_backends({"scrape_backends": None}),
-            ["jina", "exa", "tavily", "firecrawl"],
+            ["jina_key", "jina_anon", "exa", "tavily", "firecrawl_key", "firecrawl_anon"],
         )
 
     def test_configured_order_is_preserved_and_duplicates_are_dropped_in_place(self):
@@ -40,7 +40,8 @@ class ResolveScrapeBackendsTests(unittest.TestCase):
     def test_unknown_backends_fail_with_the_valid_names(self):
         with self.assertRaisesRegex(
             ConfigError,
-            r"unknown scrape backend; valid backends: jina, exa, tavily, firecrawl",
+            r"unknown scrape backend; valid backends: jina_key, jina_anon, exa, tavily, "
+            r"firecrawl_key, firecrawl_anon, jina, firecrawl",
         ):
             resolve_scrape_backends({"scrape_backends": ["jinaa", "bing"]})
 

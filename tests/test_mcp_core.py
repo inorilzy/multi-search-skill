@@ -226,9 +226,12 @@ class CapabilityTests(unittest.TestCase):
         self.assertFalse(route_sources - set(PROVIDER_CAPABILITIES))
 
     def test_capabilities_cover_all_scraper_backends(self):
+        from multi_search_mcp.src.support.backends import backend_provider
+
         for name in KNOWN_BACKENDS:
-            self.assertIn(name, PROVIDER_CAPABILITIES)
-            self.assertTrue(PROVIDER_CAPABILITIES[name].scrape.can_scrape)
+            provider = backend_provider(name)
+            self.assertIn(provider, PROVIDER_CAPABILITIES)
+            self.assertTrue(PROVIDER_CAPABILITIES[provider].scrape.can_scrape)
 
     def test_removed_video_sources_are_not_advertised(self):
         from multi_search_mcp.src.search.registry import build_provider_registry

@@ -178,7 +178,7 @@ class CoreOperationsTests(unittest.TestCase):
 
     def test_operations_module_is_the_only_state_command_implementation(self):
         source = (ROOT / "multi_search_mcp" / "src" / "state" / "operations.py").read_text(encoding="utf-8")
-        self.assertIn("from ..support.backends import KNOWN_BACKENDS", source)
+        self.assertIn("from ..support.backends import ACCEPTED_BACKENDS", source)
         self.assertIn("SQLiteKeyManager", source)
         self.assertIn("SiteScraperMemory", source)
         # Only this module and the search path (which summarizes status rows

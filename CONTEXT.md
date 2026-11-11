@@ -20,7 +20,7 @@
 
 ## 抓取
 
-**抓取链（Scrape chain）**：通用网页抓取依次尝试的后端顺序（`jina`、`exa`、`tavily`、`firecrawl` 的有序子集），保存在设置的 `scrape_backends` 中。前一个后端失败才尝试下一个，最后一个也失败时返回错误；缺 key 的后端在运行时跳过。每个后端的一次调用最多等 `scrape_backend_timeout` 秒（默认 10），超时即换下一个。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。单次 `fetch --backend` 只覆盖本次调用，不改写设置。
+**抓取链（Scrape chain）**：通用网页抓取依次尝试的通道顺序，保存在设置的 `scrape_backends` 中。通道是「服务 + 用法」：Jina 和 Firecrawl 各有 Key 通道和匿名通道（`jina_key`、`jina_anon`、`firecrawl_key`、`firecrawl_anon`），Exa、Tavily 只有 Key 通道；出厂顺序先用 Jina Key。旧的 `jina`、`firecrawl` 仍按原行为生效。前一个通道失败才尝试下一个，最后一个也失败时返回错误；没有可用 key 的 Key 通道在运行时跳过。每个通道的一次调用最多等 `scrape_backend_timeout` 秒（默认 10），超时即换下一个。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。单次 `fetch --backend` 只覆盖本次调用，不改写设置。
 
 **站点抓取记忆（Site memory）**：按站点键记录各抓取后端的成功、失败、冷却和手动偏好。手动固定的后端排到该站点最前，失败冷却只让该后端靠后；只有目标网站自身的失败（被拦截、目标超时、目标 4xx/5xx）会写入冷却，抓取服务自己的鉴权失败和整批时限耗尽只计统计，内容很短但抓取成功的页面计为成功。它在抓取链的顺序上做调整，不按历史成功率自动重排。可按单个站点或全部站点重置；按网址操作时会先规整成同一个站点键。
 

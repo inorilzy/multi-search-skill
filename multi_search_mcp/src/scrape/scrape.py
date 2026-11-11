@@ -19,6 +19,11 @@ from ..state.key_state import KeyCandidate, _now, key_fingerprint, key_id_for
 from ..state.site_memory import ScrapeAttempt
 from ..support import debug_log
 from ..support.auth import is_key_retryable_error
+from ..support.backends import (
+    ACCEPTED_BACKENDS,
+    KNOWN_BACKENDS,
+    backend_provider,
+)
 from ..support.models import normalize_scrape_result
 from ..support.url_security import (
     UrlSecurityError,
@@ -71,22 +76,32 @@ class ScrapeBackendSpec:
 
 
 _SCRAPE_BACKENDS: tuple[ScrapeBackendSpec, ...] = (
-    ScrapeBackendSpec("jina", key_provider="jina", key_required=False, supports_anonymous=True),
+    ScrapeBackendSpec("jina_key", key_provider="jina", key_required=True),
+    ScrapeBackendSpec("jina_anon", key_provider="jina", key_required=False, supports_anonymous=True),
     ScrapeBackendSpec("exa", key_provider="exa", key_required=True),
     ScrapeBackendSpec("tavily", key_provider="tavily", key_required=True),
-    ScrapeBackendSpec("firecrawl", key_provider="firecrawl", key_required=False),
+    ScrapeBackendSpec("firecrawl_key", key_provider="firecrawl", key_required=True),
+    ScrapeBackendSpec("firecrawl_anon", key_provider="firecrawl", key_required=False,
+                      supports_anonymous=True),
 )
 
-_BACKEND_BY_NAME = {spec.name: spec for spec in _SCRAPE_BACKENDS}
-
-# Selectable generic backends. Platform scrapers are still picked by URL domain.
-KNOWN_BACKENDS = tuple(spec.name for spec in _SCRAPE_BACKENDS)
+# Historical single names stay valid with their original combined behavior,
+# so saved chains keep working until the user re-saves them as channels:
+# ``jina`` tries anonymous then (on block/5xx/timeout/rate limit) its keys;
+# ``firecrawl`` uses its keys, and anonymous only when none is configured.
+_LEGACY_SPECS: tuple[ScrapeBackendSpec, ...] = (
+    ScrapeBackendSpec("jina", key_provider="jina", key_required=False, supports_anonymous=True),
+    ScrapeBackendSpec("firecrawl", key_provider="firecrawl", key_required=False),
+)
+assert tuple(spec.name for spec in _SCRAPE_BACKENDS) == KNOWN_BACKENDS
+_BACKEND_BY_NAME = {spec.name: spec for spec in _SCRAPE_BACKENDS + _LEGACY_SPECS}
+assert tuple(_BACKEND_BY_NAME) == ACCEPTED_BACKENDS
 # Backends that require a configured key. Used to distinguish "no key
 # configured" from "backend unknown" when a caller forces an explicit list.
 KEYED_BACKENDS = tuple(spec.name for spec in _SCRAPE_BACKENDS if spec.key_required)
 # Every generic backend is a third-party service that fetches the URL from its
 # own network; only these may skip the local DNS preflight.
-DELEGATED_BACKENDS = KNOWN_BACKENDS
+DELEGATED_BACKENDS = ACCEPTED_BACKENDS
 
 
 DEFAULT_SCRAPE_POLICY = {
@@ -200,7 +215,8 @@ class ScrapeContext:
     backend_timeout: float | None = None
 
     def keys_for(self, backend: str) -> list[KeyCandidate]:
-        return list(self.keys_by_backend.get(backend) or [])
+        """Key pool of the provider behind a channel (``jina_key`` → ``jina``)."""
+        return list(self.keys_by_backend.get(backend_provider(backend)) or [])
 
     def remaining_timeout(self) -> float:
         if self.deadline is None:
@@ -303,24 +319,6 @@ def _scrape_with_key_candidates(
     return last
 
 
-def _scrape_with_optional_key_pool(
-    provider: str,
-    candidates: list[KeyCandidate],
-    call: Callable[[str], dict],
-    *,
-    deadline: float | None = None,
-    key_manager=None,
-) -> dict | None:
-    """For backends that tolerate an anonymous call when no key is configured."""
-    if candidates:
-        return _scrape_with_key_candidates(
-            provider, candidates, call, deadline=deadline, key_manager=key_manager,
-        )
-    if deadline is not None and time.monotonic() >= deadline:
-        return None
-    return call("")
-
-
 def _validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
     """Validate a URL handed to a third-party fetch service and rebuild it.
 
@@ -416,6 +414,147 @@ def validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _scrape_jina_anon(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
+    call_timeout = ctx.attempt_timeout()
+    if call_timeout <= 0:
+        return {"url": target, "error": "scrape deadline exceeded"}
+    if _jina_anonymous_cooling_down():
+        return {
+            "url": target,
+            "error": "Jina: anonymous rate limit cooldown active",
+            "rate_limited": True,
+            "kind": _ERROR_KIND_RATE_LIMIT,
+            "origin": "provider",
+        }
+    # scrape_url_jina records an anonymous rate limit itself; record it in
+    # exactly one place so a cooldown is never applied twice.
+    attempt_started = time.monotonic()
+    result = scrape_url_jina(target, "", timeout=call_timeout, **policy["jina"])
+    debug_log.event(
+        "scrape_key_attempt", backend="jina_anon", key_id="anonymous", url=target,
+        elapsed_ms=debug_log.elapsed_ms(attempt_started),
+        error=result.get("error") if isinstance(result, dict) else None,
+    )
+    return result
+
+
+def _scrape_jina_key(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
+    def _call_one(key: str) -> dict:
+        call_timeout = ctx.attempt_timeout()
+        if call_timeout <= 0:
+            return {"url": target, "error": "scrape deadline exceeded"}
+        return scrape_url_jina(
+            target, key, timeout=call_timeout, skip_anonymous=True, **policy["jina"],
+        )
+
+    return _scrape_with_key_candidates(
+        "jina", ctx.keys_for("jina_key"), _call_one,
+        deadline=ctx.deadline, key_manager=ctx.key_manager,
+    )
+
+
+def _scrape_tavily(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
+    candidates = ctx.keys_for("tavily")
+
+    def _call_one(key: str) -> dict:
+        call_timeout = ctx.attempt_timeout()
+        if call_timeout <= 0:
+            return {"url": target, "error": "scrape deadline exceeded"}
+        options = policy["tavily"]
+        # Tavily may retry inside one call; the cap covers the whole attempt.
+        attempt_deadline = time.monotonic() + call_timeout
+        if options:
+            return scrape_url_tavily(
+                target, key, timeout=call_timeout, deadline=attempt_deadline, **options,
+            )
+        return scrape_url_tavily(target, key, timeout=call_timeout, deadline=attempt_deadline)
+
+    return _scrape_with_key_candidates(
+        "tavily", candidates, _call_one,
+        deadline=ctx.deadline, key_manager=ctx.key_manager,
+    )
+
+
+def _scrape_exa(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
+    candidates = ctx.keys_for("exa")
+
+    def _call_one(key: str) -> dict:
+        call_timeout = ctx.attempt_timeout()
+        if call_timeout <= 0:
+            return {"url": target, "error": "scrape deadline exceeded"}
+        return scrape_url_exa(
+            target, key, timeout=call_timeout, max_chars=ctx.scrape_chars,
+        )
+
+    return _scrape_with_key_candidates(
+        "exa", candidates, _call_one,
+        deadline=ctx.deadline, key_manager=ctx.key_manager,
+    )
+
+
+def _firecrawl_call(target: str, ctx: ScrapeContext) -> Callable[[str], dict]:
+    def _call_one(key: str) -> dict:
+        call_timeout = ctx.attempt_timeout()
+        if call_timeout <= 0:
+            return {"url": target, "error": "scrape deadline exceeded"}
+        return scrape_url_firecrawl(target, key, timeout=call_timeout)
+
+    return _call_one
+
+
+def _scrape_firecrawl_key(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
+    candidates = ctx.keys_for("firecrawl_key")
+    # A configured pool whose keys are all unusable is reported as such, so
+    # the chain's later anonymous channel cannot hide a quota problem.
+    if not candidates:
+        if ctx.firecrawl_keys_configured:
+            return {"url": target, "error": "Firecrawl: all configured keys are unavailable"}
+        return None
+    result = _scrape_with_key_candidates(
+        "firecrawl", candidates, _firecrawl_call(target, ctx),
+        deadline=ctx.deadline, key_manager=ctx.key_manager,
+    )
+    if result is None:
+        if ctx.remaining_timeout() <= 0:
+            return {"url": target, "error": "scrape deadline exceeded"}
+        return {"url": target, "error": "Firecrawl: all configured keys are unavailable"}
+    return result
+
+
+def _scrape_firecrawl_anon(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
+    if ctx.deadline is not None and time.monotonic() >= ctx.deadline:
+        return None
+    attempt_started = time.monotonic()
+    result = _firecrawl_call(target, ctx)("")
+    debug_log.event(
+        "scrape_key_attempt", backend="firecrawl_anon", key_id="anonymous", url=target,
+        elapsed_ms=debug_log.elapsed_ms(attempt_started),
+        error=result.get("error") if isinstance(result, dict) else None,
+    )
+    return result
+
+
+# ---- historical combined backends (``jina``, ``firecrawl``) ----
+
+
+def _scrape_with_optional_key_pool(
+    provider: str,
+    candidates: list[KeyCandidate],
+    call: Callable[[str], dict],
+    *,
+    deadline: float | None = None,
+    key_manager=None,
+) -> dict | None:
+    """For backends that tolerate an anonymous call when no key is configured."""
+    if candidates:
+        return _scrape_with_key_candidates(
+            provider, candidates, call, deadline=deadline, key_manager=key_manager,
+        )
+    if deadline is not None and time.monotonic() >= deadline:
+        return None
+    return call("")
+
+
 def _jina_anonymous_needs_keyed_retry(result: dict) -> bool:
     """Anonymous Jina failures that a configured key may bypass.
 
@@ -491,45 +630,6 @@ def _scrape_jina(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
     return keyed if keyed is not None else anon
 
 
-def _scrape_tavily(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
-    candidates = ctx.keys_for("tavily")
-
-    def _call_one(key: str) -> dict:
-        call_timeout = ctx.attempt_timeout()
-        if call_timeout <= 0:
-            return {"url": target, "error": "scrape deadline exceeded"}
-        options = policy["tavily"]
-        # Tavily may retry inside one call; the cap covers the whole attempt.
-        attempt_deadline = time.monotonic() + call_timeout
-        if options:
-            return scrape_url_tavily(
-                target, key, timeout=call_timeout, deadline=attempt_deadline, **options,
-            )
-        return scrape_url_tavily(target, key, timeout=call_timeout, deadline=attempt_deadline)
-
-    return _scrape_with_key_candidates(
-        "tavily", candidates, _call_one,
-        deadline=ctx.deadline, key_manager=ctx.key_manager,
-    )
-
-
-def _scrape_exa(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
-    candidates = ctx.keys_for("exa")
-
-    def _call_one(key: str) -> dict:
-        call_timeout = ctx.attempt_timeout()
-        if call_timeout <= 0:
-            return {"url": target, "error": "scrape deadline exceeded"}
-        return scrape_url_exa(
-            target, key, timeout=call_timeout, max_chars=ctx.scrape_chars,
-        )
-
-    return _scrape_with_key_candidates(
-        "exa", candidates, _call_one,
-        deadline=ctx.deadline, key_manager=ctx.key_manager,
-    )
-
-
 def _scrape_firecrawl(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
     candidates = ctx.keys_for("firecrawl")
 
@@ -556,9 +656,13 @@ def _scrape_firecrawl(target: str, ctx: ScrapeContext, policy: dict) -> dict | N
 
 
 _SCRAPE_DISPATCH: dict[str, Callable[[str, ScrapeContext, dict], dict | None]] = {
-    "jina": _scrape_jina,
-    "tavily": _scrape_tavily,
+    "jina_key": _scrape_jina_key,
+    "jina_anon": _scrape_jina_anon,
     "exa": _scrape_exa,
+    "tavily": _scrape_tavily,
+    "firecrawl_key": _scrape_firecrawl_key,
+    "firecrawl_anon": _scrape_firecrawl_anon,
+    "jina": _scrape_jina,
     "firecrawl": _scrape_firecrawl,
 }
 
@@ -665,7 +769,8 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
             spec = _BACKEND_BY_NAME[backend]
             if spec.key_required and not ctx.keys_for(backend):
                 return normalize_scrape_result(
-                    {"error": f"missing key for backend: {backend}"}, url=url, via=backend,
+                    {"error": f"missing key for backend: {backend}"}, url=url,
+                    via=backend_provider(backend),
                 )
 
     try:
@@ -713,14 +818,14 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                 elapsed_ms=debug_log.elapsed_ms(started),
             )
             continue
-        result = normalize_scrape_result(result, url=safe_url, via=backend)
+        result = normalize_scrape_result(result, url=safe_url, via=backend_provider(backend))
         elapsed_ms = int((time.monotonic() - started) * 1000)
         last = result
         blocked = policy["blocked"]
         if blocked and blocked(result.get("markdown") or ""):
             last = normalize_scrape_result({
                 "error": f"{backend}: {policy['name'].title()} blocked content fetch",
-            }, url=safe_url, via=backend)
+            }, url=safe_url, via=backend_provider(backend))
             _log_attempt(safe_url, backend, started, last, status="blocked")
             if ctx.site_memory is not None:
                 ctx.site_memory.record_attempt(ScrapeAttempt(

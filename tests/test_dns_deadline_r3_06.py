@@ -257,7 +257,10 @@ class DnsDeadlineTests(unittest.TestCase):
         for config in ({}, {"scrape_backends": None}, {"scrape_backends": ["firecrawl", "exa", "firecrawl"]}):
             with self.subTest(config=config):
                 chain = scrape_service.configured_scrape_backends(config)
+                # The factory chain's first channel is keyed Jina, which is
+                # skipped without a key; the anonymous Jina channel runs next.
                 expected = "firecrawl" if config.get("scrape_backends") else "jina"
+                first = "firecrawl" if config.get("scrape_backends") else "jina_key"
                 with mock.patch(
                     "multi_search_mcp.src.scrape.scrape._jina_anonymous_cooling_down", return_value=False,
                 ), mock.patch(
@@ -269,7 +272,7 @@ class DnsDeadlineTests(unittest.TestCase):
                         keys={}, config=config,
                     )
                 self.assertEqual(result["backend"], expected)
-                self.assertEqual(chain[0], expected)
+                self.assertEqual(chain[0], first)
                 self.assertEqual(len(chain), len(set(chain)))
                 backend.assert_called_once()
 

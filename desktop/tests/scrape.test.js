@@ -251,7 +251,8 @@ test('anonymous-only chains save without reading secrets or optional provider st
     root.querySelector('[data-action="save"]').click();
     await flush();
     assert.equal(saves, 1);
-    assert.deepEqual([...new Set(queried)].sort(), ['exa', 'tavily']);
+    // One status read per keyed service: Jina and Firecrawl key channels also need theirs.
+    assert.deepEqual([...new Set(queried)].sort(), ['exa', 'firecrawl', 'jina', 'tavily']);
     window.close();
   }
 });
@@ -1021,7 +1022,8 @@ function gatedCredentials(firstRound, rest = []) {
   const api = {
     settingsView: async () => settingsView({ scrape_backends: ['exa'] }),
     credentialStatus: async source => {
-      const index = Math.floor(state.calls++ / 2);
+      // One refresh round reads the four keyed services (jina, exa, tavily, firecrawl).
+      const index = Math.floor(state.calls++ / 4);
       if (index === 0) return { source, ...firstRound };
       const gate = state.rounds[index - 1] || (state.rounds[index - 1] = deferred());
       return gate.promise.then(value => ({ source, ...value }));
@@ -1052,7 +1054,7 @@ test('a refresh result replaces the previous one, and the next result replaces t
   assert.equal(backendState(root, 'exa').textContent, '待配置 Key');
   assert.match(root.querySelector('[data-info="chain-warning"]').textContent, /缺少可用 Key/);
   assert.equal(root.querySelector('[data-action="save"]').disabled, true);
-  assert.equal(state.calls, 6);
+  assert.equal(state.calls, 12);
   window.close();
 });
 
@@ -1060,7 +1062,7 @@ test('an unfinished refresh is not duplicated by a second click', async () => {
   const { window, root } = setup();
   const { state, api } = gatedCredentials({ store: { state: 'present' }, effective_source: 'credential_store' });
   await mountScrape(root, api);
-  assert.equal(state.calls, 2);
+  assert.equal(state.calls, 4);
   const button = root.querySelector('[data-action="refresh-chain"]');
   button.click();
   await flush();
@@ -1068,7 +1070,7 @@ test('an unfinished refresh is not duplicated by a second click', async () => {
   // 忙碌期间重复点击不得复制同一轮查询。
   button.click();
   await flush();
-  assert.equal(state.calls, 4, 'one refresh issued one pair of queries');
+  assert.equal(state.calls, 8, 'one refresh issued one round of queries');
   assert.equal(state.rounds.length, 1);
   state.rounds[0].resolve({ store: { state: 'absent' }, effective_source: 'none' });
   await flush(); await flush();
@@ -1327,8 +1329,8 @@ test('overlapping save clicks issue exactly one presave check and one write', as
   button.click();
   release();
   await flush();
-  // 一次复核 = 每个必需后端各读一次状态（exa、tavily）；重复点击与提交不再增加复核次数。
-  assert.equal(checks - checksBeforeClick, 2, 'exactly one presave pass (one read per required backend)');
+  // 一次复核 = 每个需要 Key 的服务商各读一次状态（jina、exa、tavily、firecrawl）；重复点击与提交不再增加复核次数。
+  assert.equal(checks - checksBeforeClick, 4, 'exactly one presave pass (one read per keyed service)');
   assert.equal(saves, 1, 'exactly one write');
   window.close();
 });

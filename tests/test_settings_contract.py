@@ -90,6 +90,16 @@ class SettingsBoundaryContractTests(unittest.TestCase):
             with self.subTest(value=bad), self.assertRaises(config.ConfigError):
                 config.resolve_backend_timeout({"scrape_backend_timeout": bad})
 
+    def test_scrape_channels_and_legacy_expansion_match_the_desktop(self):
+        from multi_search_mcp.src.support import backends
+
+        listed = re.search(r"pub const SCRAPE_BACKENDS: &\[&str\] =\s*&\[([^\]]*)\];", self.source)
+        self.assertIsNotNone(listed, "SCRAPE_BACKENDS missing from settings.rs")
+        self.assertEqual(tuple(re.findall(r'"([a-z_]+)"', listed.group(1))), backends.KNOWN_BACKENDS)
+        for legacy, channels in backends.LEGACY_BACKENDS.items():
+            quoted = ", ".join(f'"{name}"' for name in channels)
+            self.assertIn(f'("{legacy}", &[{quoted}])', self.source)
+
     def test_ranking_numeric_bounds_match_the_desktop(self):
         pairs = (
             ("RANKING_CANDIDATE_LIMIT_MIN", rerank.CANDIDATE_LIMIT_RANGE[0], "u32"),

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..support.backends import KNOWN_BACKENDS
+from ..support.backends import ACCEPTED_BACKENDS
 from .key_state import SQLiteKeyManager
 from .site_memory import SiteScraperMemory, normalize_site_key
 from .state_store import StateStore
@@ -40,7 +40,7 @@ def set_site_scraper_preference(
     store: StateStore | None = None,
 ) -> dict[str, Any]:
     """Pin a scraper for one site key. Unknown backends fail before any write."""
-    if scraper not in KNOWN_BACKENDS:
+    if scraper not in ACCEPTED_BACKENDS:
         raise ValueError(f"unknown scraper: {scraper!r}")
     site = normalize_site_key(site)
     SiteScraperMemory(store or StateStore()).set_preference(

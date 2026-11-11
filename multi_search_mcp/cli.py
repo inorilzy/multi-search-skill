@@ -28,7 +28,7 @@ from .src.state.operations import (
     site_scraper_stats,
 )
 from .src.support import debug_log
-from .src.support.backends import KNOWN_BACKENDS
+from .src.support.backends import ACCEPTED_BACKENDS
 from .src.support.format import format_scrapes, ranking_mode_label
 from .src.support.secrets import scrub_secrets
 
@@ -245,7 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
         "set-preference", help="pin a scraper for one site key",
     )
     site_preference_parser.add_argument("site")
-    site_preference_parser.add_argument("scraper", choices=KNOWN_BACKENDS)
+    site_preference_parser.add_argument("scraper", choices=ACCEPTED_BACKENDS)
     site_preference_parser.add_argument("--priority", type=int)
     site_preference_parser.add_argument("--note")
     _add_format_argument(site_preference_parser)
