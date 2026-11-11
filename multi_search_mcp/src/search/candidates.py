@@ -96,9 +96,11 @@ def run_search_candidates(
             sources=request.sources,
             timeout=request.timeout,
             output="json",
+            ranking=request.ranking,
         ),
         resolved_config,
     )
+    rerank_policy = RerankPolicy.from_config(resolved_config, request.ranking)  # fail before provider budget
     if keys is None:
         loaded = runtime.load_runtime_key_context(resolved_config)
         runtime_keys, runtime_key_errors = loaded.keys, loaded.errors
@@ -190,7 +192,6 @@ def run_search_candidates(
     )
     query_failure_rows = query_failures(query_runs)
     response_id = f"resp_{uuid.uuid4().hex}"
-    rerank_policy = RerankPolicy.from_config(resolved_config, request.ranking)
     limit = (
         max(rerank_policy.candidate_limit, SEARCH_RESULT_LIMIT)
         if rerank_policy.enabled

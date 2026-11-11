@@ -15,6 +15,7 @@ from ..support.config import (
     resolve_nonnegative,
 )
 from .capabilities import PROVIDER_CAPABILITIES
+from .rerank import RerankPolicy
 from .search_runner import (
     ALL_SOURCE_NAMES,
     ROUTE_ALIASES,
@@ -44,6 +45,11 @@ DEFAULT_COUNTS = {cap.count_key: DEFAULT_SOURCE_COUNT for cap in _COUNT_PROVIDER
 
 _ROUTE_ID_PATTERN = re.compile(r"[a-z0-9_-]{1,64}\Z", re.ASCII)
 
+# Route/global timeout bounds. Keep equal to the desktop editor's TIMEOUT_MIN /
+# TIMEOUT_MAX (desktop/src-tauri/src/settings.rs); a contract test checks both sides agree.
+TIMEOUT_MIN = 1
+TIMEOUT_MAX = 90
+
 
 @dataclass(frozen=True)
 class RouteDefinition:
@@ -72,6 +78,9 @@ class SearchPlanRequest:
     scrape_timeout: int | None = None
     scrape_concurrency: int | None = None
     output: str = "both"
+    # Per-request ranking override; None uses the config block. Validated with
+    # the config value before any provider is called.
+    ranking: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -129,6 +138,9 @@ def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSea
             f"unknown route: {route}; valid routes: {', '.join(sorted(routes))}"
         )
     route_definition = routes[route]
+    # Validate the merged ranking policy as part of plan resolution so `doctor`
+    # reports a bad block and search fails before any provider is called.
+    RerankPolicy.from_config(config, request.ranking)
     # Built-in route ids keep their behavior metadata even when the user
     # edits labels/sources; custom ids inherit the ``default`` metadata rather
     # than the bare DEFAULT_ROUTE_META floor.
@@ -229,9 +241,11 @@ def resolve_configured_routes(config: dict) -> dict[str, RouteDefinition]:
         if raw_timeout is not None and (
             isinstance(raw_timeout, bool)
             or not isinstance(raw_timeout, int)
-            or not 1 <= raw_timeout <= 60
+            or not TIMEOUT_MIN <= raw_timeout <= TIMEOUT_MAX
         ):
-            raise ConfigError(f"routes.{route_id}.timeout requires null or an integer from 1 to 60")
+            raise ConfigError(
+                f"routes.{route_id}.timeout requires null or an integer from {TIMEOUT_MIN} to {TIMEOUT_MAX}"
+            )
         routes[route_id] = RouteDefinition(
             label=label,
             description=description,
@@ -296,12 +310,20 @@ def _resolve_route_timeout(
     route_timeout: int | None,
     meta_timeout: int,
 ) -> int:
+    def bounded(value: Any, key: str) -> int:
+        # Historical lower clamping is kept (0 means an immediate batch
+        # deadline); the desktop's upper bound applies on both sides.
+        seconds = max(0, config_int(value, key))
+        if seconds > TIMEOUT_MAX:
+            raise ConfigError(f"{key} must be at most {TIMEOUT_MAX} seconds")
+        return seconds
+
     if request_timeout is not None:
-        return max(0, config_int(request_timeout, "timeout"))
+        return bounded(request_timeout, "timeout")
     if route_timeout is not None:
         return route_timeout
     if config.get("timeout") is not None:
-        return max(0, config_int(config.get("timeout"), "timeout"))
+        return bounded(config.get("timeout"), "timeout")
     return meta_timeout
 
 

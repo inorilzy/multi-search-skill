@@ -100,8 +100,8 @@ fn model_valid(value: &str) -> bool {
 }
 
 /// 宽容读取已保存的 `ranking`：块缺失或为 null 时回落默认且不报错；
-/// 块存在但任一键非法时回落默认并标记 invalid，供 UI 提示而不是假装有效。
-/// 未知的同级键不属错误，由 merge 原样保留。
+/// 块存在但任一已知键非法时回落默认并标记 invalid，供 UI 提示而不是假装有效。
+/// 未知的同级键读取时忽略，保存时丢弃。
 fn ranking_state(object: &Map<String, Value>) -> (RankingState, bool) {
     let value = match object.get("ranking") {
         None | Some(Value::Null) => return (default_ranking(), false),
@@ -365,8 +365,8 @@ pub struct SettingsInput {
     /// `None` 表示本次保存不动该键；`Some(vec)` 才写入。
     #[serde(default)]
     pub scrape_backends: Option<Vec<String>>,
-    /// `None` 表示本次保存整块 `ranking` 都不动；`Some` 时按块内已知键合并，
-    /// 块里不认识的同级键原样保留。
+    /// `None` 表示本次保存整块 `ranking` 都不动；`Some` 时按块内已知键整块重写，
+    /// 不认识的同级键会在保存时丢弃。
     #[serde(default)]
     pub ranking: Option<RankingInput>,
 }
@@ -765,17 +765,11 @@ fn merge(mut map: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
         map.insert("scrape_backends".into(), serde_json::json!(chain));
     }
     if let Some(ranking) = &valid.ranking {
-        // 合并进既有 ranking 对象而不是整块替换：块里不认识的同级键原样保留；
-        // 已有值不是对象时由校验后的完整块替换。
-        let mut block = match map.get("ranking") {
-            Some(Value::Object(existing)) => existing.clone(),
-            _ => Map::new(),
-        };
+        // 只写已知键：旧版本或手改留下的未知键会在保存时丢弃，否则 CLI 会拒绝整份配置。
+        let mut block = Map::new();
         block.insert("mode".into(), Value::String(ranking.mode.clone()));
         block.insert("base_url".into(), Value::String(ranking.base_url.clone()));
         block.insert("model".into(), Value::String(ranking.model.clone()));
-        // 旧版本写过 profile 键；新的 Base URL / 模型名取代了它。
-        block.remove("reranker_profile_id");
         block.insert("candidate_limit".into(), Value::from(ranking.candidate_limit));
         block.insert("batch_size".into(), Value::from(ranking.batch_size));
         block.insert("rerank_timeout".into(), Value::from(ranking.rerank_timeout));

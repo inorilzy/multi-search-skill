@@ -313,8 +313,8 @@ test('route validation covers id label source timeout and duplicate ids', async 
   chooseSource(editor, 'tavily', false); apply.click();
   assert.match(editor.querySelector('[data-edit-error]').textContent, /至少选择/);
   chooseSource(editor, 'tavily');
-  editor.querySelector('[data-edit="timeout"]').value = '61'; apply.click();
-  assert.match(editor.querySelector('[data-edit-error]').textContent, /1–60/);
+  editor.querySelector('[data-edit="timeout"]').value = '91'; apply.click();
+  assert.match(editor.querySelector('[data-edit-error]').textContent, /1–90/);
   window.close();
 });
 
