@@ -38,7 +38,7 @@ _CONTENT_MARKERS = (
 
 def is_zhihu_url(url: str) -> bool:
     try:
-        host = urllib.parse.urlparse(url).netloc.lower()
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
     except Exception:
         return False
     return host in _ZHIHU_HOSTS or host.endswith(_ZHIHU_HOST_SUFFIX)

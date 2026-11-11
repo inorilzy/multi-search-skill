@@ -225,6 +225,14 @@ def _is_target_failure(result: dict) -> bool:
     return result.get("origin") == "target" or result.get("error_origin") == "target"
 
 
+def _attempt_error_fields(result: dict) -> dict:
+    """Structured kind/origin for site memory; scrapers emit both spellings."""
+    return {
+        "error_type": str(result.get("kind") or result.get("error_type") or ""),
+        "error_origin": str(result.get("origin") or result.get("error_origin") or ""),
+    }
+
+
 def _result_is_rate_limited(result: dict) -> bool:
     return bool(result.get("rate_limited")) or result.get("kind") == _ERROR_KIND_RATE_LIMIT
 
@@ -765,6 +773,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                 content_length=len(result.get("markdown") or ""),
                 error_message=result.get("error"),
                 elapsed_ms=int((time.monotonic() - started) * 1000),
+                **_attempt_error_fields(result),
             ))
         return result
 
@@ -840,6 +849,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                     success=False,
                     content_length=0,
                     error_type="blocked",
+                    error_origin="target",
                     error_message=last["error"],
                     elapsed_ms=elapsed_ms,
                 ))
@@ -864,6 +874,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                 content_length=len(result.get("markdown") or ""),
                 error_message=str(result.get("error") or ""),
                 elapsed_ms=elapsed_ms,
+                **_attempt_error_fields(result),
             ))
     return last or normalize_scrape_result({"error": "no scrape backend available"}, url=safe_url)
 
