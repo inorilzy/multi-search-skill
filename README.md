@@ -367,7 +367,7 @@ search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
 search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，以及站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`，以及列出当前路由的 `routes`；`logs serve` 在本机网页里查看每次搜索的详细记录，`logs list` 列出记录。`search --no-fetch` 只返回融合排序的候选，不抓正文、不写正文缓存；`--no-state` 跳过 SQLite key 轮换、正文缓存与站点记忆。`search --rerank [--rerank-base-url URL] [--rerank-model MODEL]` 对本次请求启用模型重排（ranking 覆盖，默认仍纯 RRF；未给的端点取配置里的值），用法与回退语义见「配置和参数 → 可选模型重排」。
+CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`，列出当前路由的 `routes`，以及查看服务商余额的 `balance [--provider ID]... [--format json|text] [--refresh]`；`logs serve` 在本机网页里查看每次搜索的详细记录，`logs list` 列出记录。`search --no-fetch` 只返回融合排序的候选，不抓正文、不写正文缓存；`--no-state` 跳过 SQLite key 轮换、正文缓存与站点记忆。`search --rerank [--rerank-base-url URL] [--rerank-model MODEL]` 对本次请求启用模型重排（ranking 覆盖，默认仍纯 RRF；未给的端点取配置里的值），用法与回退语义见「配置和参数 → 可选模型重排」。
 
 ## 配置和参数
 
