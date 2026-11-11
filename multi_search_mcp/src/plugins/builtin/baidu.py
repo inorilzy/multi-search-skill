@@ -26,5 +26,5 @@ PLUGIN = ProviderPlugin(
     auth_methods=(
         AuthMethod("api", "API Key", "baidu"),
     ),
-    balance_note='搜索 Key 无余额接口，账户现金余额需要另外的 AK/SK 签名。',
+    balance_note='搜索 Key 无余额接口，免费额度无查询接口，现金余额需 AK/SK，暂不支持。',
 )

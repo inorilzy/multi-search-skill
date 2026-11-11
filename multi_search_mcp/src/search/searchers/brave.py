@@ -1,9 +1,12 @@
 """Brave Search API."""
 import json
+import logging
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
+from ...plugins.quota_record import record_quota
 from ...support.http import decompress_limited, read_limited, urlopen_retry
 from ...support.http_errors import http_error_row
 from ...support.query_limits import limit_query
@@ -14,6 +17,56 @@ BRAVE_QUERY_MAX_CHARS = 600
 BRAVE_QUERY_MAX_WORDS = 75
 # docs/brave/authentication.md, rate-limiting.md
 _BRAVE_HTTP_ERROR_KINDS = {401: "invalid", 403: "invalid", 429: "rate_limit"}
+
+logger = logging.getLogger(__name__)
+
+
+def _header_value(headers, name: str):
+    """Read a response header from urllib or a plain mapping, case-insensitively."""
+    if headers is None:
+        return None
+    try:
+        value = headers.get(name)
+        if value is not None:
+            return value
+        for key, candidate in headers.items():
+            if str(key).lower() == name.lower():
+                return candidate
+    except (AttributeError, TypeError):
+        return None
+    return None
+
+
+def _second_csv_number(value) -> int | None:
+    """Read the monthly value from a ``<per-second>, <monthly>`` header."""
+    if not isinstance(value, str):
+        return None
+    parts = value.split(",")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(float(parts[1].strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _record_brave_quota(api_key: str, headers) -> None:
+    """Persist the monthly quota advertised by a successful response."""
+    try:
+        remaining = _second_csv_number(_header_value(headers, "X-RateLimit-Remaining"))
+        limit = _second_csv_number(_header_value(headers, "X-RateLimit-Limit"))
+        reset = _second_csv_number(_header_value(headers, "X-RateLimit-Reset"))
+        if remaining is None or limit is None:
+            return
+        fields = {"remaining": remaining, "limit": limit, "unit": "requests", "period": "month"}
+        if reset is not None:
+            # The reset value is seconds until the monthly window resets.
+            fields["resets_at"] = (
+                datetime.now(timezone.utc) + timedelta(seconds=max(0, reset))
+            ).isoformat()
+        record_quota("brave", api_key, fields)
+    except Exception:  # noqa: BLE001 - quota observation must never affect search
+        logger.debug("failed to read Brave quota headers", exc_info=True)
 
 
 def search_brave(
@@ -50,6 +103,7 @@ def search_brave(
             if (resp.headers.get("Content-Encoding") or "").strip().lower() == "gzip":
                 raw = decompress_limited(raw, "gzip")
             data = json.loads(raw)
+            response_headers = resp.headers
     except urllib.error.HTTPError as e:
         row = http_error_row("brave", e, secret=api_key, kinds=_BRAVE_HTTP_ERROR_KINDS)
         reset = (e.headers.get("X-RateLimit-Reset") or "") if e.headers is not None else ""
@@ -62,6 +116,8 @@ def search_brave(
         return notes + [row]
     except Exception as e:
         return notes + [{"source": "brave", "error": scrub_secrets(e, api_key)}]
+
+    _record_brave_quota(api_key, response_headers)
 
     results = []
     for item in data.get("web", {}).get("results", []):

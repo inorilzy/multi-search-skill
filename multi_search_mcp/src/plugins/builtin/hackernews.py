@@ -20,5 +20,5 @@ PLUGIN = ProviderPlugin(
     key_provider=None,
     search_sources=('hackernews',),
     search_specs=search_specs,
-    balance_note='匿名 Hacker News 搜索不提供余额或配额查询。',
+    balance_note='匿名 Hacker News 搜索无配额查询接口，不支持余额查询。',
 )

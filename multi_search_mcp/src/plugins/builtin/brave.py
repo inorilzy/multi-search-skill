@@ -1,5 +1,11 @@
 """Brave Search provider declaration."""
-from ..base import AuthMethod, ProviderPlugin
+from ..base import AuthMethod, BalanceContext, BalanceReport, ProviderPlugin
+from ..quota_record import quota_report
+
+
+def balance_brave(credential: str, ctx: BalanceContext) -> BalanceReport:
+    """Read the monthly quota recorded by the last successful search."""
+    return quota_report("brave", credential, unit="requests", period="month")
 
 
 def search_specs():
@@ -26,5 +32,6 @@ PLUGIN = ProviderPlugin(
     auth_methods=(
         AuthMethod("api", "API Key", "brave"),
     ),
-    balance_note='搜索一次后显示本月配额，读取能力待实现。',
+    balance=balance_brave,
+    balance_note='搜索一次后显示本月配额。',
 )
