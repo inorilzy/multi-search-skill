@@ -152,7 +152,8 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
 
   async function refresh() {
     plan.disabled = true;
-    try { renderPlan(await api.installPlan()); await refreshPath(); }
+    // The install plan and the PATH plan are independent reads; fetch them together.
+    try { const pathRead = refreshPath(); renderPlan(await api.installPlan()); await pathRead; }
     catch (error) { renderPlan({ status: 'unavailable' }); showError(root.querySelector('[data-info="reason"]'), error, '无法检查安装计划，请重新检查。'); }
     finally { plan.disabled = busy; }
   }

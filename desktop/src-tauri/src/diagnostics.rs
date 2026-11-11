@@ -87,7 +87,6 @@ impl<'a> CliDiscovery<'a> {
     /// install and what the app and user PATH resolve to.
     pub(crate) fn detect(&self) -> CliStatus {
         let secrets = crate::redaction::secrets(self.environment);
-        let app = self.probe(find_cli(&self.environment.app_path), &secrets);
         let store_readable = self.user_path_store_readable();
         let paths = self.current_user_paths();
         let mut user_environment = self.environment.clone();
@@ -96,7 +95,32 @@ impl<'a> CliDiscovery<'a> {
                 .variables
                 .insert("PATH".into(), path.to_string_lossy().into_owned());
         }
-        let mut user = CliDiscovery::new(&user_environment, None, None).probe(find_cli(&paths), &secrets);
+        let app_path = find_cli(&self.environment.app_path);
+        let user_path = find_cli(&paths);
+        let managed_path = match &self.managed {
+            Some(path) if path.is_file() => Some(path.clone()),
+            _ => None,
+        };
+        // Each `--version` probe starts a Python runtime (~0.3 s). The app, user and managed
+        // rows usually name the same executable, so probe each distinct file once, and run
+        // the distinct ones in parallel instead of one after another.
+        let user_discovery = CliDiscovery::new(&user_environment, None, None);
+        let (app, mut user, managed_probe) = std::thread::scope(|scope| {
+            let app_task = scope.spawn(|| self.probe(app_path.clone(), &secrets));
+            let user_task = (user_path != app_path)
+                .then(|| scope.spawn(|| user_discovery.probe(user_path.clone(), &secrets)));
+            let managed_task = managed_path
+                .as_ref()
+                .filter(|path| Some(*path) != app_path.as_ref() && Some(*path) != user_path.as_ref())
+                .map(|path| scope.spawn(|| self.probe(Some(path.clone()), &secrets)));
+            let app = app_task.join().expect("app probe thread");
+            let user = match user_task {
+                Some(task) => task.join().expect("user probe thread"),
+                None => app.clone(),
+            };
+            let managed = managed_task.map(|task| task.join().expect("managed probe thread"));
+            (app, user, managed)
+        });
         // Truthful labelling: this row reflects the *registered* PATH entry,
         // not an executed login shell (which could run arbitrary config).
         // A shell we cannot inspect may still resolve differently — say so
@@ -107,13 +131,18 @@ impl<'a> CliDiscovery<'a> {
                 .into();
         }
         let restart_required = app.status != "ready" && user.status == "ready";
-        let (execution, managed) = match &self.managed {
+        let (execution, managed) = match &managed_path {
             // A verified managed install always wins, so a same-named file earlier on PATH
             // cannot shadow it.
-            Some(path) if path.is_file() => (self.probe(Some(path.clone()), &secrets), true),
-            _ if app.status == "ready" => (app.clone(), false),
-            _ if user.status == "ready" => (user.clone(), false),
-            _ => (app.clone(), false),
+            Some(path) => {
+                let probed = managed_probe.unwrap_or_else(|| {
+                    if Some(path) == app_path.as_ref() { app.clone() } else { user.clone() }
+                });
+                (probed, true)
+            }
+            None if app.status == "ready" => (app.clone(), false),
+            None if user.status == "ready" => (user.clone(), false),
+            None => (app.clone(), false),
         };
         CliStatus {
             app,

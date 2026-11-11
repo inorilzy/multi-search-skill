@@ -33,12 +33,18 @@ pub struct DesktopManager {
     /// Core's `doctor` key-source report, shared briefly: a page asks for several
     /// providers at once and each answer comes from the same doctor run.
     key_sources_cache: ShortCache<KeySources>,
+    /// The verified managed CLI path. Verifying re-hashes every installed file (~90 MB),
+    /// and every CLI-running command asks for it; install/update/uninstall clear it.
+    managed_cli_cache: ShortCache<Option<PathBuf>>,
 }
 
 type KeySources = std::collections::BTreeMap<String, crate::credential_commands::CoreKeySource>;
 /// Long enough to cover one page's parallel status reads, short enough that a key
 /// edited in a terminal shows up on the next refresh.
 const KEY_SOURCES_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+/// Covers one page load (several commands each resolve the CLI); a tampered or removed
+/// install is still caught within seconds, and install changes clear it at once.
+const MANAGED_CLI_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// A value shared for a short time. Callers serialize on one lock, so concurrent
 /// readers that arrive while the value is being produced reuse that one result.
@@ -82,6 +88,7 @@ impl DesktopManager {
             mutation: Mutex::new(()),
             log_viewer: Default::default(),
             key_sources_cache: ShortCache::new(KEY_SOURCES_TTL),
+            managed_cli_cache: ShortCache::new(MANAGED_CLI_TTL),
         }
     }
 
@@ -108,11 +115,8 @@ impl DesktopManager {
     fn discovery_view(&self) -> CliDiscovery<'_> {
         // Discovery prefers the verified managed install so a same-named file on PATH cannot
         // stand in for it. `managed_cli` never consults PATH itself.
-        CliDiscovery::new(
-            &self.environment,
-            self.user_path_store.as_ref(),
-            self.install_view().managed_cli(),
-        )
+        let managed = self.managed_cli_cache.get_or(|| self.install_view().managed_cli(), |_| true);
+        CliDiscovery::new(&self.environment, self.user_path_store.as_ref(), managed)
     }
 
     fn install_view(&self) -> InstallManager<'_> {
@@ -211,6 +215,12 @@ impl DesktopManager {
 
     // ---- install ------------------------------------------------------
 
+    /// The installed CLI changed: the cached path and doctor report may be stale.
+    fn forget_install_state(&self) {
+        self.managed_cli_cache.clear();
+        self.key_sources_cache.clear();
+    }
+
     pub fn install_plan(&self) -> InstallPlan {
         self.install_view().install_plan()
     }
@@ -227,7 +237,9 @@ impl DesktopManager {
         let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return InstallOutcome {
             status: "blocked".into(), steps: vec![], version: None, bin: None, path_hint: String::new(), reason,
         }};
-        self.install_view().uninstall()
+        let outcome = self.install_view().uninstall();
+        self.forget_install_state();
+        outcome
     }
 
     /// App and bundled-CLI versions for the sidebar footer. Read-only; takes no mutation guard.
@@ -245,14 +257,18 @@ impl DesktopManager {
         let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return InstallOutcome {
             status: "blocked".into(), steps: vec![], version: None, bin: None, path_hint: String::new(), reason,
         }};
-        self.install_view().install_from(bundled)
+        let outcome = self.install_view().install_from(bundled);
+        self.forget_install_state();
+        outcome
     }
 
     pub(crate) fn update_from(&self, bundled: Option<&std::path::Path>) -> InstallOutcome {
         let _guard = match self.mutation_guard() { Ok(guard) => guard, Err(reason) => return InstallOutcome {
             status: "blocked".into(), steps: vec![], version: None, bin: None, path_hint: String::new(), reason,
         }};
-        self.install_view().update_from(bundled)
+        let outcome = self.install_view().update_from(bundled);
+        self.forget_install_state();
+        outcome
     }
 
     // ---- skill --------------------------------------------------------

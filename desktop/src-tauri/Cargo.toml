@@ -172,3 +172,18 @@ features = []
 version = "2"
 optional = true
 features = []
+
+# The installer verifies every installed file by SHA-256 (~90 MB) when the CLI pages load.
+# Unoptimized sha2 is ~12x slower, which made `tauri dev` pages take seconds; release builds
+# are already optimized, so this only affects development and test builds.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.digest]
+opt-level = 3
+
+[profile.dev.package.block-buffer]
+opt-level = 3
+
+[profile.dev.package.cpufeatures]
+opt-level = 3
