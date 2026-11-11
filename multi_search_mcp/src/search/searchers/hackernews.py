@@ -65,11 +65,14 @@ def search_hackernews(query: str, count: int = 10, timeout: float = 20, deadline
             detail.append(f"by {author}")
         if created:
             detail.append(created[:10])
-        items.append({
+        row = {
             "source": "hackernews",
             "title": title,
             "url": story_url or hackernews_url,
             "description": " · ".join(detail),
             "content_kind": "metadata",
-        })
+        }
+        if isinstance(created, str) and created:
+            row["published_at"] = created
+        items.append(row)
     return items
