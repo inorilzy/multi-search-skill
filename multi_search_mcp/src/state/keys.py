@@ -81,6 +81,8 @@ KEY_ENV_PAIRS = (
     ("APPBUILDER_API_KEY", "baidu"),
     ("TAVILY_API_KEY", "tavily"),
     ("EXA_API_KEY", "exa"),
+    # Team Management service key: balance-only, never a search key pool.
+    ("EXA_SERVICE_KEY", "exa_admin"),
     ("JINA_API_KEY", "jina"),
     ("JINA_KEY", "jina"),
     ("GITHUB_TOKEN", "github"),
@@ -172,7 +174,8 @@ def count_jina_keys(value) -> tuple[int, int]:
 # The name is historical: the source catalog still publishes it as
 # ``credential_store_providers`` so desktop consumers need no change.
 # Twitter cookies are a separate reference (``twitter_cookies``) and are not
-# listed here.
+# listed here. Balance-only admin credentials (``exa_admin``) are also absent:
+# they must never enter a search key pool.
 # Resolution order: environment variable > ~/.multi-search/keys.json.
 # Environment variables always win so automation can override a saved key.
 CREDENTIAL_STORE_PROVIDERS = (

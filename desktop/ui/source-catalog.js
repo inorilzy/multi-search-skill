@@ -27,6 +27,9 @@ export const SOURCE_CATALOG = {
       "exa": [
         "EXA_API_KEY"
       ],
+      "exa_admin": [
+        "EXA_SERVICE_KEY"
+      ],
       "firecrawl": [
         "FIRECRAWL_API_KEY"
       ],
@@ -164,8 +167,8 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "需要单独的 Team Management service key，查询能力待实现。",
-      "balance_supported": false,
+      "balance_note": "需要联系 Exa 开通 Team Management API 后创建 service key（EXA_SERVICE_KEY）。",
+      "balance_supported": true,
       "id": "exa",
       "key_provider": "exa",
       "label": "Exa",
