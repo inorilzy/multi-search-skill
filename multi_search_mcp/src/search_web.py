@@ -27,6 +27,7 @@ def run_search_web(
     query_runs_observer: Callable[[list[tuple[str, list[dict]]]], None] | None = None,
     scraper=None,
     reranker=None,
+    plan=None,
     scrape_chars: int | None = None,
     scrape_timeout: int | None = None,
     scrape_concurrency: int | None = None,
@@ -35,6 +36,8 @@ def run_search_web(
 
     With ``request.no_fetch`` the flow stops after fusion: no body fetch, no
     body-cache write, and ``diagnostics.body_fetch_mode == "candidates"``.
+    ``plan`` lets a caller that already resolved the search plan reuse it
+    instead of resolving the same request twice.
     """
     if isinstance(request, dict):
         request = SearchWebRequest(**request)
@@ -61,7 +64,7 @@ def run_search_web(
         config=resolved_config,
         state_store=store, query_runs_observer=query_runs_observer,
         prefetched_bodies=prefetched, persist_bodies=not request.no_fetch,
-        reranker=reranker,
+        reranker=reranker, plan=plan,
     )
     if request.no_fetch:
         # Candidate-only mode: the response keeps the ranked hits and provider
