@@ -1,4 +1,4 @@
-//! Shared source, route, alias, and env catalog generated from Python core.
+//! Shared source, plugin, route, alias, and env catalog generated from Python core.
 //!
 //! `desktop/source-catalog.json` is rendered by `scripts/export_source_catalog.py`
 //! from `multi_search_mcp/src/search/catalog.py` and checked in. This module is
@@ -20,8 +20,38 @@ pub struct Catalog {
     pub env: EnvCatalog,
     pub credential_store_providers: Vec<String>,
     pub source_aliases: BTreeMap<String, String>,
+    /// Added after the initial catalog schema; older CLI catalogs omit it.
+    #[serde(default)]
+    pub plugins: Vec<Plugin>,
     pub sources: Vec<Source>,
     pub routes: Vec<Route>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Plugin {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub key_provider: Option<String>,
+    #[serde(default)]
+    pub search_sources: Vec<String>,
+    #[serde(default)]
+    pub scrape_channels: Vec<String>,
+    #[serde(default)]
+    pub auth_methods: Vec<AuthMethod>,
+    #[serde(default)]
+    pub balance_supported: bool,
+    #[serde(default)]
+    pub balance_note: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthMethod {
+    #[serde(rename = "type")]
+    pub method_type: String,
+    pub label: String,
+    pub credential: String,
+    pub purpose: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +70,9 @@ pub struct EnvCatalog {
 #[derive(Debug, Deserialize)]
 pub struct Source {
     pub name: String,
+    /// Owning plugin id; absent in catalogs generated before plugins existed.
+    #[serde(default)]
+    pub plugin: Option<String>,
     pub public_name: String,
     pub label: String,
     pub description: String,
@@ -93,6 +126,11 @@ impl Catalog {
         self.routes
             .iter()
             .find(|item| item.name == trimmed || item.aliases.iter().any(|alias| alias == trimmed))
+    }
+
+    /// Resolve an exact plugin id.
+    pub fn plugin(&self, id: &str) -> Option<&Plugin> {
+        self.plugins.iter().find(|plugin| plugin.id == id)
     }
 
     pub fn search_sources(&self) -> impl Iterator<Item = &Source> {

@@ -64,6 +64,270 @@ export const SOURCE_CATALOG = {
       "keys_file"
     ]
   },
+  "plugins": [
+    {
+      "auth_methods": [
+        {
+          "credential": "brave",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        }
+      ],
+      "balance_note": "搜索一次后显示本月配额，读取能力待实现。",
+      "balance_supported": false,
+      "id": "brave",
+      "key_provider": "brave",
+      "label": "Brave Search",
+      "scrape_channels": [],
+      "search_sources": [
+        "brave"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "parallel",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        },
+        {
+          "credential": "parallel_account",
+          "label": "浏览器登录（查余额用）",
+          "purpose": "balance_only",
+          "type": "oauth"
+        }
+      ],
+      "balance_note": "需要 Account API 登录后查询余额，查询能力待实现。",
+      "balance_supported": false,
+      "id": "parallel",
+      "key_provider": "parallel",
+      "label": "Parallel",
+      "scrape_channels": [],
+      "search_sources": [
+        "parallel"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "baidu",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        }
+      ],
+      "balance_note": "搜索 Key 无余额接口，账户现金余额需要另外的 AK/SK 签名。",
+      "balance_supported": false,
+      "id": "baidu",
+      "key_provider": "baidu",
+      "label": "百度千帆",
+      "scrape_channels": [],
+      "search_sources": [
+        "baidu"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "tavily",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        }
+      ],
+      "balance_note": "Key 与账户用量查询待实现。",
+      "balance_supported": false,
+      "id": "tavily",
+      "key_provider": "tavily",
+      "label": "Tavily",
+      "scrape_channels": [
+        "tavily"
+      ],
+      "search_sources": [
+        "tavily"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "exa",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        },
+        {
+          "credential": "exa_admin",
+          "label": "管理 Key（查余额用）",
+          "purpose": "balance_only",
+          "type": "api"
+        }
+      ],
+      "balance_note": "需要单独的 Team Management service key，查询能力待实现。",
+      "balance_supported": false,
+      "id": "exa",
+      "key_provider": "exa",
+      "label": "Exa",
+      "scrape_channels": [
+        "exa"
+      ],
+      "search_sources": [
+        "exa"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "serpapi",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        }
+      ],
+      "balance_note": "免费账户余额查询待实现。",
+      "balance_supported": false,
+      "id": "serpapi",
+      "key_provider": "serpapi",
+      "label": "SerpAPI",
+      "scrape_channels": [],
+      "search_sources": [
+        "serpapi"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "firecrawl",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        },
+        {
+          "credential": "firecrawl",
+          "label": "浏览器登录",
+          "purpose": "search_key",
+          "type": "oauth"
+        }
+      ],
+      "balance_note": "团队 credits 余额查询待实现。",
+      "balance_supported": false,
+      "id": "firecrawl",
+      "key_provider": "firecrawl",
+      "label": "Firecrawl",
+      "scrape_channels": [
+        "firecrawl_key",
+        "firecrawl_anon",
+        "firecrawl"
+      ],
+      "search_sources": [
+        "firecrawl"
+      ]
+    },
+    {
+      "auth_methods": [],
+      "balance_note": "匿名 SOV2EX 搜索不提供余额或配额查询。",
+      "balance_supported": false,
+      "id": "sov2ex",
+      "key_provider": null,
+      "label": "V2EX / SOV2EX",
+      "scrape_channels": [],
+      "search_sources": [
+        "sov2ex"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "github",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        }
+      ],
+      "balance_note": "搜索与代码搜索限额查询待实现，支持匿名查询。",
+      "balance_supported": false,
+      "id": "github",
+      "key_provider": "github",
+      "label": "GitHub",
+      "scrape_channels": [],
+      "search_sources": [
+        "github_repos",
+        "github_code"
+      ]
+    },
+    {
+      "auth_methods": [],
+      "balance_note": "匿名 Hacker News 搜索不提供余额或配额查询。",
+      "balance_supported": false,
+      "id": "hackernews",
+      "key_provider": null,
+      "label": "Hacker News",
+      "scrape_channels": [],
+      "search_sources": [
+        "hackernews"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "stackexchange",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        }
+      ],
+      "balance_note": "搜索一次后显示每日配额，读取能力待实现。",
+      "balance_supported": false,
+      "id": "stackexchange",
+      "key_provider": "stackexchange",
+      "label": "Stack Exchange",
+      "scrape_channels": [],
+      "search_sources": [
+        "stackoverflow"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "twitter",
+          "label": "Cookie 凭据",
+          "purpose": "search_key",
+          "type": "api"
+        }
+      ],
+      "balance_note": "Cookie 登录的 Twitter 搜索不提供余额查询。",
+      "balance_supported": false,
+      "id": "twitter",
+      "key_provider": "twitter",
+      "label": "Twitter / X",
+      "scrape_channels": [],
+      "search_sources": [
+        "twitter"
+      ]
+    },
+    {
+      "auth_methods": [
+        {
+          "credential": "jina",
+          "label": "API Key",
+          "purpose": "search_key",
+          "type": "api"
+        }
+      ],
+      "balance_note": "Token 余额查询待实现，使用未公开的 dashboard 接口。",
+      "balance_supported": false,
+      "id": "jina",
+      "key_provider": "jina",
+      "label": "Jina AI",
+      "scrape_channels": [
+        "jina_key",
+        "jina_anon",
+        "jina"
+      ],
+      "search_sources": []
+    }
+  ],
   "routes": [
     {
       "aliases": [
@@ -165,6 +429,7 @@ export const SOURCE_CATALOG = {
       "mark": "du",
       "max_count": 50,
       "name": "baidu",
+      "plugin": "baidu",
       "public_name": "baidu",
       "routes": [
         "default",
@@ -189,6 +454,7 @@ export const SOURCE_CATALOG = {
       "mark": "B",
       "max_count": 20,
       "name": "brave",
+      "plugin": "brave",
       "public_name": "brave",
       "routes": [
         "default",
@@ -211,6 +477,7 @@ export const SOURCE_CATALOG = {
       "mark": "P",
       "max_count": 20,
       "name": "parallel",
+      "plugin": "parallel",
       "public_name": "parallel",
       "routes": [
         "default",
@@ -233,6 +500,7 @@ export const SOURCE_CATALOG = {
       "mark": "t",
       "max_count": 20,
       "name": "tavily",
+      "plugin": "tavily",
       "public_name": "tavily",
       "routes": [
         "default",
@@ -256,6 +524,7 @@ export const SOURCE_CATALOG = {
       "mark": "X",
       "max_count": 100,
       "name": "exa",
+      "plugin": "exa",
       "public_name": "exa",
       "routes": [
         "default",
@@ -279,6 +548,7 @@ export const SOURCE_CATALOG = {
       "mark": "f",
       "max_count": 100,
       "name": "firecrawl",
+      "plugin": "firecrawl",
       "public_name": "firecrawl",
       "routes": [
         "default",
@@ -303,6 +573,7 @@ export const SOURCE_CATALOG = {
       "mark": "S",
       "max_count": 100,
       "name": "serpapi",
+      "plugin": "serpapi",
       "public_name": "serpapi",
       "routes": [
         "default",
@@ -329,6 +600,7 @@ export const SOURCE_CATALOG = {
       "mark": "GH",
       "max_count": 100,
       "name": "github_repos",
+      "plugin": "github",
       "public_name": "github-repos",
       "routes": [
         "dev",
@@ -354,6 +626,7 @@ export const SOURCE_CATALOG = {
       "mark": "</>",
       "max_count": 100,
       "name": "github_code",
+      "plugin": "github",
       "public_name": "github-code",
       "routes": [],
       "searchable": true
@@ -371,6 +644,7 @@ export const SOURCE_CATALOG = {
       "mark": "Y",
       "max_count": 100,
       "name": "hackernews",
+      "plugin": "hackernews",
       "public_name": "hackernews",
       "routes": [
         "dev",
@@ -393,6 +667,7 @@ export const SOURCE_CATALOG = {
       "mark": "≋",
       "max_count": 100,
       "name": "stackoverflow",
+      "plugin": "stackexchange",
       "public_name": "stackoverflow",
       "routes": [
         "dev",
@@ -415,6 +690,7 @@ export const SOURCE_CATALOG = {
       "mark": "V₂",
       "max_count": 50,
       "name": "sov2ex",
+      "plugin": "sov2ex",
       "public_name": "sov2ex",
       "routes": [
         "all"
@@ -436,6 +712,7 @@ export const SOURCE_CATALOG = {
       "mark": "𝕏",
       "max_count": 20,
       "name": "twitter",
+      "plugin": "twitter",
       "public_name": "twitter",
       "routes": [
         "social",
@@ -459,6 +736,7 @@ export const SOURCE_CATALOG = {
       "mark": "J",
       "max_count": null,
       "name": "jina",
+      "plugin": "jina",
       "public_name": "jina",
       "routes": [],
       "searchable": false

@@ -1,9 +1,12 @@
-"""Machine-readable source, route, alias, and environment catalog.
+"""Machine-readable source, plugin, route, alias, and environment catalog.
 
 This module is the single source of truth for the names the Python core, the
 CLI, and the desktop share. ``multi-search sources --format json`` exposes it,
 and ``scripts/export_source_catalog.py`` renders the checked-in desktop
 artifacts from it. Desktop code must not hand-copy these lists again.
+
+Plugin entries add each vendor's login methods and balance capability on top of
+the per-source metadata; the source entries name their owning plugin id.
 
 Source labels, descriptions, and display marks live here too because the
 desktop renders them next to the same names; keeping one catalog prevents a
@@ -13,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..plugins import ProviderPlugin, builtin_plugins
 from ..state.keys import CREDENTIAL_STORE_PROVIDERS, KEY_ENV_PAIRS
 from .capabilities import PROVIDER_CAPABILITIES
 from .search_runner import (
@@ -24,6 +28,8 @@ from .search_runner import (
     SOURCE_ALIASES,
 )
 
+# Additive fields (such as ``plugins``) keep this version: old readers ignore
+# unknown keys, and new Rust readers default missing fields to empty/None.
 SCHEMA_VERSION = 1
 
 # Credential resolution order in ``state.keys.load_keys``. Environment
@@ -134,11 +140,51 @@ def _routes_for(source_name: str) -> list[str]:
     return [route for route in ROUTE_SOURCE_ORDER if source_name in ROUTE_PROFILES[route]]
 
 
-def _source_entry(name: str) -> dict[str, Any]:
+def _plugin_ids_by_source(plugins: tuple[ProviderPlugin, ...]) -> dict[str, str]:
+    """Map every capability name to the id of the plugin that owns it.
+
+    Scrape-only capability entries (Jina) are covered by their plugin's channel
+    names; internal channel names such as ``jina_key`` are not catalog sources.
+    """
+    owners: dict[str, str] = {}
+    for plugin in plugins:
+        for name in plugin.search_sources:
+            owners[name] = plugin.id
+        for name in plugin.scrape_channels:
+            if name in PROVIDER_CAPABILITIES:
+                owners.setdefault(name, plugin.id)
+    return owners
+
+
+def _plugin_entry(plugin: ProviderPlugin) -> dict[str, Any]:
+    return {
+        "id": plugin.id,
+        "label": plugin.label,
+        "key_provider": plugin.key_provider,
+        "search_sources": list(plugin.search_sources),
+        "scrape_channels": list(plugin.scrape_channels),
+        "auth_methods": [
+            {
+                "type": method.type,
+                "label": method.label,
+                "credential": method.credential,
+                "purpose": method.purpose,
+            }
+            for method in plugin.auth_methods
+        ],
+        # The callable itself cannot cross the JSON boundary; consumers only
+        # need to know whether a balance query exists for this plugin.
+        "balance_supported": plugin.balance is not None,
+        "balance_note": plugin.balance_note,
+    }
+
+
+def _source_entry(name: str, plugin_id: str) -> dict[str, Any]:
     capability = PROVIDER_CAPABILITIES[name]
     key_provider = capability.operation.key_name or name
     return {
         "name": name,
+        "plugin": plugin_id,
         "public_name": capability.public_name,
         "label": SOURCE_LABELS[name],
         "description": SOURCE_DESCRIPTIONS[name],
@@ -208,6 +254,12 @@ def build_source_catalog() -> dict[str, Any]:
             f"(missing: {missing or 'none'}; stale: {stale or 'none'})"
         )
 
+    plugins = builtin_plugins()
+    plugin_ids = _plugin_ids_by_source(plugins)
+    unowned = sorted(expected - set(plugin_ids))
+    if unowned:
+        raise RuntimeError(f"catalog sources without an owning plugin: {unowned}")
+
     return {
         "schema_version": SCHEMA_VERSION,
         "key_resolution": {
@@ -225,6 +277,7 @@ def build_source_catalog() -> dict[str, Any]:
         },
         "credential_store_providers": list(CREDENTIAL_STORE_PROVIDERS),
         "source_aliases": dict(sorted(SOURCE_ALIASES.items())),
-        "sources": [_source_entry(name) for name in SOURCE_DISPLAY_ORDER],
+        "plugins": [_plugin_entry(plugin) for plugin in plugins],
+        "sources": [_source_entry(name, plugin_ids[name]) for name in SOURCE_DISPLAY_ORDER],
         "routes": [_route_entry(name) for name in ROUTE_SOURCE_ORDER],
     }
