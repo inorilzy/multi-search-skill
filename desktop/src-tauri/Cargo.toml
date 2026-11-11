@@ -74,6 +74,11 @@ path = "tests/skill_manage.rs"
 required-features = ["test-fixtures"]
 
 [[test]]
+name = "linux_skill_install"
+path = "tests/linux_skill_install.rs"
+required-features = ["test-fixtures"]
+
+[[test]]
 name = "credentials"
 path = "tests/credentials.rs"
 required-features = ["test-fixtures"]
