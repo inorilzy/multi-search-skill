@@ -206,8 +206,8 @@ test('sources page expands nothing on entry and sends no extra status request', 
   });
   await flush();
   assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0);
-  assert.equal(statusCalls.length, 10, 'one status read per keyed source, no automatic detail read');
-  assert.equal(new Set(statusCalls).size, 10);
+  assert.equal(statusCalls.length, 12, 'one status read per keyed or Cookie source, including Jina, no automatic detail read');
+  assert.equal(new Set(statusCalls).size, 12);
   mounted.dispose();
   window.close();
 });

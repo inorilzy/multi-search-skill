@@ -1,13 +1,18 @@
 import { SOURCES, mountCredentialBody } from './credentials.js';
 import { showError } from './api.js';
+import { SOURCE_CATALOG } from './source-catalog.js';
+
+const ENTRIES = [...SOURCES, ...SOURCE_CATALOG.sources
+  .filter(entry => !entry.searchable && entry.keyed)
+  .map(({ name, label, keyed, key_optional, cookie, description, mark }) => ({ source: name, label, keyed, keyOptional: key_optional, cookie, description, mark, search: false }))];
 
 // Catalog values are local constants, but escape them anyway: the template below is HTML.
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 
-const DESCRIPTIONS = Object.fromEntries(SOURCES.map(({ source, description }) => [source, description]));
-const MARKS = Object.fromEntries(SOURCES.map(({ source, mark }) => [source, mark]));
+const DESCRIPTIONS = Object.fromEntries(ENTRIES.map(({ source, description }) => [source, description]));
+const MARKS = Object.fromEntries(ENTRIES.map(({ source, mark }) => [source, mark]));
 const FILTERS = [['all', '全部'], ['enabled', '已启用'], ['unconfigured', '未配置']];
-const TOTAL = SOURCES.length;
+const TOTAL = ENTRIES.length;
 const IDLE = { kind: 'idle', title: '尚未测试', message: '' };
 const icon = name => {
   const paths = {
@@ -29,7 +34,7 @@ export function shortcutLabel(nav = globalThis.navigator) {
   return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘ K' : 'Ctrl K';
 }
 function statCard(key, label, symbol) {
-  return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${TOTAL}</small></strong></div></div>`;
+  return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${key === 'enabled' ? SOURCES.length : TOTAL}</small></strong></div></div>`;
 }
 
 /** @param {any} root page container (untyped DOM queries, as in the other pages) @param {any} api @param {{ signal?: AbortSignal, number?: string }} [options] */
@@ -75,7 +80,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     let visible = 0;
     for (const rec of rows.values()) {
       const text = `${rec.entry.label} ${rec.entry.source} ${DESCRIPTIONS[rec.entry.source]}`.toLowerCase();
-      const match = (!query || text.includes(query)) && (filter === 'all' || (filter === 'enabled' ? settingsState && rec.box.checked : rec.kind === 'absent'));
+      const match = (!query || text.includes(query)) && (filter === 'all' || (filter === 'enabled' ? settingsState && rec.box?.checked : rec.kind === 'absent'));
       rec.row.hidden = !match;
       if (match) visible += 1;
     }
@@ -86,7 +91,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     const all = [...rows.values()];
     const count = predicate => all.filter(predicate).length;
     const values = {
-      enabled: settingsState ? count(rec => rec.box.checked) : '—',
+      enabled: settingsState ? count(rec => rec.box?.checked) : '—',
       configured: count(rec => rec.kind === 'configured'),
       error: count(rec => rec.kind === 'error' || rec.test.kind === 'error'),
       absent: count(rec => rec.kind === 'absent'),
@@ -96,7 +101,8 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     applyFilter();
   }
   function renderToggle(rec) {
-    rec.row.querySelector('[data-toggle-label]').textContent = settingsState ? rec.box.checked ? '已启用' : '未启用' : '状态未知';
+    if (!rec.box) return;
+    rec.row.querySelector('[data-toggle-label]').textContent = settingsState ? rec.box?.checked ? '已启用' : '未启用' : '状态未知';
   }
   function applySettings(view) {
     const stamp = value => JSON.stringify([value?.route, value?.timeout, value?.disabled_sources, value?.twitter_cookies_path]);
@@ -108,11 +114,11 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     settingsState = view;
     const disabled = new Set(view.disabled_sources || []);
     for (const rec of rows.values()) {
-      rec.box.checked = !disabled.has(rec.entry.source);
-      rec.box.disabled = false;
+      if (rec.box) rec.box.checked = !disabled.has(rec.entry.source);
+      if (rec.box) rec.box.disabled = false;
       renderToggle(rec);
       if (rec.entry.cookie) {
-        const configured = Boolean(view.twitter_cookies_path || view.twitter_env_overrides);
+        const configured = Boolean(view.twitter_cookies_path || rec.cookieConfigured);
         setRow(rec, configured ? 'configured' : 'absent', configured ? 'Cookie 路径已配置' : '未配置 Cookie 路径');
       }
     }
@@ -120,7 +126,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
   }
   async function toggleEnabled(rec, enabled) {
     if (disposed) return;
-    for (const item of rows.values()) item.box.disabled = true;
+    for (const item of rows.values()) if (item.box) item.box.disabled = true;
     rec.error.textContent = '';
     try {
       const view = await api.settingsView();
@@ -152,6 +158,11 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     // Core's effective_source is the truth for how the CLI authenticates: env wins over the
     // keys file. A keys file that cannot be read is an error unless env already supplies the key.
     // Unknown future values stay readable.
+    if (rec.entry.cookie) {
+      rec.cookieConfigured = view.effective_source !== 'none';
+      const configured = rec.cookieConfigured || Boolean(settingsState?.twitter_cookies_path);
+      return setRow(rec, configured ? 'configured' : 'absent', configured ? 'Cookie 路径已配置' : '未配置 Cookie 路径');
+    }
     if (view.effective_source !== 'env' && view.store?.state === 'unavailable') return setRow(rec, 'error', 'Key 文件无法读取');
     if (view.effective_source === 'none') return setRow(rec, 'absent', '未配置');
     const labels = { env: '环境变量生效', file: 'Key 文件生效' };
@@ -161,6 +172,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     if (disposed) return;
     rec.test = { ...result };
     rec.result.dataset.kind = result.kind;
+    if (rec.entry.search === false) return;
     rec.result.querySelector('strong').textContent = ({ idle: '未测试', running: '正在测试', success: '连接成功', error: '测试失败' })[result.kind];
     rec.result.querySelector('small').textContent = result.kind === 'success' ? '本次连接已验证' : result.kind === 'error' ? result.title : rec.entry.cookie ? '使用本机 Cookie' : !rec.entry.keyed ? '无需 API Key' : rec.entry.keyOptional ? '无需 API Key，可选填 Key 提高额度' : '点击测试验证';
     rec.result.title = [result.title, result.message].filter(Boolean).join('\n');
@@ -175,10 +187,10 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     row.setAttribute('data-source-row', entry.source);
     row.innerHTML = `<div class="source-line"><span class="source-icon icon-${entry.source}" aria-hidden="true">${esc(MARKS[entry.source])}</span>
       <button type="button" class="source-pick" data-pick="${esc(entry.source)}" aria-expanded="false" aria-controls="detail-${entry.source}"><span class="source-name">${esc(entry.label)}</span><small class="source-desc">${esc(DESCRIPTIONS[entry.source])}</small></button>
-      <label class="source-toggle"><input type="checkbox" role="switch" data-toggle="${esc(entry.source)}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>
+      ${entry.search === false ? '<span class="source-toggle">仅用于抓取</span>' : `<label class="source-toggle"><input type="checkbox" role="switch" data-toggle="${esc(entry.source)}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>`}
       <div class="source-key"><span data-key-summary aria-hidden="true">—</span><span class="visually-hidden" data-key-summary-text>未配置</span></div><span class="source-state" data-row-status data-kind="unknown">读取中</span>
-      <div class="source-test-state" data-row-result data-kind="idle"><span class="test-state-symbol" aria-hidden="true"></span><div><strong>未测试</strong><small>${entry.cookie ? '需要 Cookie 文件' : entry.keyOptional ? '无需 API Key，可选填 Key 提高额度' : entry.keyed ? '点击测试验证' : '无需 API Key'}</small></div></div>
-      <button type="button" class="source-test-button" data-row-test aria-label="测试 ${esc(entry.label)}">${icon('play')}<span>测试</span></button><button type="button" class="source-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
+      <div class="source-test-state" data-row-result data-kind="idle"><span class="test-state-symbol" aria-hidden="true"></span><div><strong>${entry.search === false ? '仅用于抓取' : '未测试'}</strong><small>${entry.search === false ? '不提供搜索连接测试' : entry.cookie ? '需要 Cookie 文件' : entry.keyOptional ? '无需 API Key，可选填 Key 提高额度' : entry.keyed ? '点击测试验证' : '无需 API Key'}</small></div></div>
+      ${entry.search === false ? '<span class="source-test-button" aria-hidden="true"></span>' : `<button type="button" class="source-test-button" data-row-test aria-label="测试 ${esc(entry.label)}">${icon('play')}<span>测试</span></button>`}<button type="button" class="source-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
       <p class="row-error" data-row-error role="alert"></p><div id="detail-${esc(entry.source)}" class="source-detail" data-source-detail hidden></div>`;
     const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), summaryText: row.querySelector('[data-key-summary-text]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
     rows.set(entry.source, rec);
@@ -186,12 +198,12 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     if (!entry.keyed && !entry.cookie) setRow(rec, 'keyless', '无需凭据');
     rec.pick.addEventListener('click', () => { void toggleRow(entry.source); });
     row.querySelector('[data-expand]').addEventListener('click', () => { void toggleRow(entry.source); });
-    rec.box.addEventListener('change', event => {
+    rec.box?.addEventListener('change', event => {
       const enabled = event.target.checked;
-      for (const item of rows.values()) item.box.disabled = true;
+      for (const item of rows.values()) if (item.box) item.box.disabled = true;
       settingsQueue = settingsQueue.then(() => toggleEnabled(rec, enabled));
     });
-    rec.testButton.addEventListener('click', async () => {
+    rec.testButton?.addEventListener('click', async () => {
       rec.testButton.disabled = true;
       try {
         if (expanded !== entry.source) await toggleRow(entry.source);
@@ -271,14 +283,14 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     return { dispose() { stale = true; } };
   }
 
-  for (const entry of SOURCES) buildRow(entry);
+  for (const entry of ENTRIES) buildRow(entry);
   for (const button of root.querySelectorAll('[data-filter]')) button.addEventListener('click', () => {
     filter = button.dataset.filter;
     for (const other of root.querySelectorAll('[data-filter]')) other.setAttribute('aria-pressed', String(other === button));
     applyFilter();
   });
   search.addEventListener('input', applyFilter);
-  const loads = SOURCES.filter(entry => entry.keyed).map(entry => api.credentialStatus(entry.source).then(view => updateRow(rows.get(entry.source), view), error => { setRow(rows.get(entry.source), 'error', '状态读取失败'); showError(rows.get(entry.source).error, error, '状态读取失败，请重新进入本页重试。'); }));
+  const loads = ENTRIES.filter(entry => entry.keyed || entry.cookie).map(entry => api.credentialStatus(entry.source).then(view => updateRow(rows.get(entry.source), view), error => { setRow(rows.get(entry.source), 'error', '状态读取失败'); showError(rows.get(entry.source).error, error, '状态读取失败，请重新进入本页重试。'); }));
   const retrySettings = root.querySelector('[data-action="retry-settings"]');
   async function loadSettings() {
     try {

@@ -20,8 +20,7 @@ const SCRAPE_PROVIDERS = SOURCE_CATALOG.sources
   .filter(entry => entry.searchable === false && entry.keyed === true)
   .map(entry => ({ source: entry.name, label: entry.label, keyed: true, cookie: entry.cookie, search: false }));
 
-/// Scraper-only providers that own credentials (no search test). Today the catalog has none, so the
-/// section is simply absent instead of hardcoding a provider list.
+/// Scraper-only providers that own credentials (no search test).
 export function scrapeCredentialProviders() {
   return SCRAPE_PROVIDERS;
 }
@@ -90,7 +89,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       <div class="draft-controls"><button type="button" class="key-add" data-action="add" aria-label="新增一行 Key 输入">＋ 新增 Key</button>
       <button type="submit" class="primary" data-action="save" hidden>保存新增 Key</button></div>
     </form>
-    <div class="run-controls credential-actions"><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
+    <div class="run-controls credential-actions"><label data-test-key-label hidden>待测 Key<select data-test-key aria-label="选择待测的单把 Key"></select></label><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
       <span class="credential-note" data-info="application">正在确认申请链接与打开能力…</span></div>
     <div class="application-fallback" data-application-fallback hidden><label>固定申请链接（可选择并手动复制）<input type="text" readonly data-application-url spellcheck="false" aria-label="固定申请链接"></label></div>
     <p data-info="error" class="error-message"></p>
@@ -100,7 +99,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     </div>
     <details class="config-details"><summary>说明</summary><p data-keys-file-note class="credential-note" role="note"></p><p class="credential-note">保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details></div>
     <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong class="status-text" data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
-    <details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? `测试会向对应服务发送外部搜索请求，可能消耗额度。测试使用已保存的值；新增后请先提交。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details></div></div>`;
+    <details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? `测试会向对应服务发送外部搜索请求，可能消耗额度。每次只测试所选的一把 Key，默认选中最后一行；环境变量单独列出。新增后请先保存。测试不写入正式状态库。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details></div></div>`;
   if (keyOptional) root.querySelector('[data-key-optional]').hidden = false;
   root.querySelector('.credential-note').prepend(root.ownerDocument.createTextNode(`${label} `));
   const q = selector => /** @type {any} */ (root.querySelector(selector));
@@ -178,6 +177,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     for (const button of root.querySelectorAll('[data-action="copy"]')) button.disabled = value || !revealed.has(Number(button.dataset.rowIndex));
     for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || !readHealthy;
     renderApplication();
+    q('[data-test-key]').disabled = value;
     q('[data-action="test"]').disabled = value || !searchTest;
     q('[data-action="test"]').hidden = !searchTest;
     // Saved-row delete and draft add/submit are mutations; keep them disabled
@@ -188,6 +188,16 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     const list = q('[data-saved-list]');
     list.innerHTML = '';
     q('[data-saved-empty]').hidden = savedRows.length > 0;
+    const select = q('[data-test-key]');
+    select.replaceChildren();
+    const choices = savedRows.map((_, index) => [String(index), `已保存 Key 第 ${index + 1} 行`]);
+    if (current.effective_source === 'env') choices.push(['env', '环境变量中的 Key']);
+    for (const [value, label] of choices) {
+      const option = root.ownerDocument.createElement('option');
+      option.value = value; option.textContent = label; select.append(option);
+    }
+    select.value = savedRows.length ? String(savedRows.length - 1) : current.effective_source === 'env' ? 'env' : '';
+    q('[data-test-key-label]').hidden = !searchTest || choices.length === 0;
     savedRows.forEach((value, index) => {
       const row = root.ownerDocument.createElement('div');
       row.className = 'key-saved-row'; row.dataset.savedIndex = String(index);
@@ -435,9 +445,11 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   });
   q('[data-action="test"]').addEventListener('click', async () => {
     if (!searchTest) return;
-    setBusy(true); const testedGeneration = ++generation; const testedSource = sourceText(current); reportTest('running', '正在测试');
+    setBusy(true); const testedGeneration = ++generation; const testedSource = q('[data-test-key]').selectedOptions[0]?.textContent || sourceText(current); reportTest('running', '正在测试');
     try {
-      const outcome = await api.credentialTest(source);
+      const selected = q('[data-test-key]').value;
+      const selection = selected && selected !== 'env' ? { index: Number(selected), expected: readSnapshot } : undefined;
+      const outcome = selection ? await api.credentialTest(source, selection) : await api.credentialTest(source);
       if (testedGeneration === generation && !disposed) reportTest(outcome.result === 'success' ? 'success' : 'error', testText(outcome.result, label, testedSource), outcome.message || '');
     } catch (error) {
       // Launch failures go to the error slot; the test area only says the test did not run.
@@ -448,6 +460,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     }
     finally { if (!disposed) setBusy(false); }
   });
+  q('[data-test-key]').addEventListener('change', invalidateTest);
   q('[data-action="refresh"]').addEventListener('click', refresh);
   renderDrafts();
   await refresh();

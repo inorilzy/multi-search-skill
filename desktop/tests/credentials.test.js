@@ -655,7 +655,7 @@ test('the typed adapter sends no executable path with a credential test', async 
   const calls = [];
   const client = managementApi(async (cmd, args) => { calls.push([cmd, args]); return { result: 'success', message: '' }; });
   await client.credentialTest('tavily', 'C:\\evil\\multi-search.exe');
-  assert.deepEqual(calls, [['credential_test', { source: 'tavily' }]]);
+  assert.deepEqual(calls, [['credential_test', { source: 'tavily', index: null, expected: null }]]);
 });
 
 test('Core-reported provenance is labelled; the optional fields may be absent', async () => {

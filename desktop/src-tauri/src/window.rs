@@ -208,7 +208,7 @@ async fn credential_status(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
-    let entry = finish(crate::credential_commands::resolve_source(&source))?;
+    let entry = finish(crate::credential_commands::resolve_overview_source(&source))?;
     let manager = manager.inner().clone();
     offload_value(
         move || {
@@ -331,13 +331,20 @@ async fn credential_remove(
 async fn credential_test(
     manager: tauri::State<'_, Arc<DesktopManager>>,
     source: String,
+    index: Option<usize>,
+    expected: Option<String>,
 ) -> Result<crate::credential_commands::TestOutcome, String> {
     let entry = finish(crate::credential_commands::resolve_test_source(&source))?;
     let manager = manager.inner().clone();
     offload(
         move || {
             let cli = manager.execution_cli()?;
-            manager.test_source(cli, &entry, &format!("{} connectivity check", entry.source))
+            let query = format!("{} connectivity check", entry.source);
+            if index.is_none() && expected.is_none() {
+                manager.test_source(cli, &entry, &query)
+            } else {
+                manager.credential_manager().test_key(cli, &entry, &query, index, expected.as_deref())
+            }
         },
         "credential_test_failed",
     )

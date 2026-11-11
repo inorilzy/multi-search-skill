@@ -57,6 +57,13 @@ fn find_source(name: &str, keyed_only: bool) -> Result<SourceEntry, String> {
 pub(crate) fn resolve_source(name: &str) -> Result<SourceEntry, String> {
     find_source(name, true)
 }
+/// Cookie status is readable without granting access to the API-key mutation commands.
+pub(crate) fn resolve_overview_source(name: &str) -> Result<SourceEntry, String> {
+    if name.trim() == "twitter" {
+        return Ok(SourceEntry { provider: "twitter", ..resolve_test_source(name)? });
+    }
+    resolve_source(name)
+}
 pub(crate) fn resolve_test_source(name: &str) -> Result<SourceEntry, String> {
     find_source(name, false)
 }
@@ -109,10 +116,10 @@ pub struct CoreKeySource {
     pub file_key_count: usize,
 }
 
-/// Parse the per-provider section of a `doctor --format json` payload. Non-row entries
-/// (`env`, `file`, `state`) are skipped; a payload without `key_sources` yields an empty map.
+/// Parse Core's `doctor --format json` credential report. Non-row entries
+/// (`env`, `file`, `state`) are skipped; Cookie references come from `configured_keys`.
 pub(crate) fn core_key_sources(payload: &Value) -> BTreeMap<String, CoreKeySource> {
-    payload
+    let mut sources: BTreeMap<String, CoreKeySource> = payload
         .get("key_sources")
         .and_then(Value::as_object)
         .map(|rows| {
@@ -123,7 +130,18 @@ pub(crate) fn core_key_sources(payload: &Value) -> BTreeMap<String, CoreKeySourc
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Core reports Cookie references as configured booleans, outside the API-key provider rows.
+    // This includes env, config and keys-file references without exposing Cookie contents.
+    if let Some(configured) = payload.get("configured_keys").and_then(Value::as_object) {
+        let present = ["twitter", "twitter_cookies"].iter()
+            .any(|name| configured.get(*name).and_then(Value::as_bool) == Some(true));
+        sources.entry("twitter".into()).or_insert_with(|| CoreKeySource {
+            effective_source: if present { "configured" } else { "none" }.into(),
+            ..CoreKeySource::default()
+        });
+    }
+    sources
 }
 
 /// Overwrite the fields Core owns with Core's answer. Only called at the command
@@ -440,6 +458,7 @@ pub(crate) fn test_args(query: &str, entry: &SourceEntry) -> Vec<String> {
         "--source".into(),
         entry.source.into(),
         "--no-fetch".into(),
+        "--no-state".into(),
         "--timeout".into(),
         "15".into(),
         "--format".into(),
@@ -473,17 +492,74 @@ impl CredentialManager<'_> {
         entry: &SourceEntry,
         query: &str,
     ) -> Result<TestOutcome, String> {
-        self.require_storage_cli(&cli)?;
-        // Only this source's own key variables reach the child, so Core sees the same credential
-        // the UI page shows (env aliases win over the keys file in Core's resolution order).
-        let names: Vec<&str> = crate::source_catalog::catalog()
-            .source(entry.canonical)
-            .map(|source| source.env.iter().map(String::as_str).collect())
-            .unwrap_or_default();
+        self.test_key(cli, entry, query, None, None)
+    }
+
+    pub(crate) fn test_key(
+        &self,
+        cli: PathBuf,
+        entry: &SourceEntry,
+        query: &str,
+        index: Option<usize>,
+        expected: Option<&str>,
+    ) -> Result<TestOutcome, String> {
+        if index.is_none() && expected.is_some() {
+            return Err("请选择待测 Key 后重试。".into());
+        }
+        let source = crate::source_catalog::catalog().source(entry.canonical)
+            .ok_or("不支持的搜索源")?;
+        let names: Vec<&str> = source.env.iter().map(String::as_str).collect();
+        let key = if source.keyed {
+            if let Some(index) = index {
+                let saved = reveal(&self.environment.variables, entry)?;
+                if expected != Some(saved.snapshot.as_str()) {
+                    return Err("凭据已变化，请刷新后再测试。".into());
+                }
+                Some(saved.value.lines().nth(index).ok_or("待测 Key 已不存在，请刷新。")?.to_string())
+            } else {
+                // Match Core's alias priority; a file-backed default selects the newest saved row.
+                let env_key = names.iter().rev().find_map(|name| self.environment.variables.get(*name)
+                    .filter(|value| !value.is_empty()).cloned());
+                Some(match env_key {
+                    Some(key) => key,
+                    None => reveal(&self.environment.variables, entry)?.value
+                        .lines().last().unwrap_or("").to_string(),
+                })
+            }
+        } else {
+            if index.is_some() || expected.is_some() {
+                return Err("此搜索源不支持选择 API Key。".into());
+            }
+            None
+        };
+        if source.keyed && key.as_deref().is_none_or(str::is_empty) && !source.key_optional {
+            return Ok(classify("missing_key", entry.label));
+        }
+        let home = ProbeHome(crate::secure_temp::create_dir(&std::env::temp_dir(), "multi-search-key-test-")
+            .map_err(|_| "无法创建凭据测试目录".to_string())?);
+        let mut isolated = self.environment.clone();
+        isolated.variables = crate::process::child_variables(self.environment, &[]);
+        for name in ["MULTI_SEARCH_CONFIG", "MULTI_SEARCH_CONFIG_DB", "MULTI_SEARCH_STATE", "MULTI_SEARCH_STATE_DB", "MULTI_SEARCH_CREDENTIAL_NAMESPACE"] {
+            isolated.variables.retain(|key, _| !key.eq_ignore_ascii_case(name));
+        }
+        for name in ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"] {
+            isolated.variables.insert(name.into(), home.0.to_string_lossy().into_owned());
+        }
+        let config = home.0.join("config.json");
+        std::fs::write(&config, b"{}")
+            .map_err(|_| "无法创建凭据测试配置".to_string())?;
+        isolated.variables.insert("MULTI_SEARCH_CONFIG".into(), config.to_string_lossy().into_owned());
+        if let Some(key) = key.filter(|value| !value.is_empty()) {
+            let name = names.last().ok_or("此搜索源没有可用的 Key 环境变量")?;
+            isolated.variables.insert((*name).into(), key);
+        }
+        // Doctor may create its state store even with --no-keys: keep the handshake isolated too.
+        require_storage_cli(&isolated, &cli)?;
+        let environment = if source.keyed { &isolated } else { self.environment };
         let output = crate::process::bounded_with(
             &cli,
             &test_args(query, entry),
-            self.environment,
+            environment,
             &names,
             TEST_TIMEOUT,
         )
@@ -501,6 +577,14 @@ impl CredentialManager<'_> {
                 message: "CLI 未返回有效结果。".into(),
             }),
         }
+    }
+}
+
+/// An empty profile keeps Core from loading any saved Key pool or writing the user's state.
+struct ProbeHome(PathBuf);
+impl Drop for ProbeHome {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -540,6 +624,10 @@ pub(crate) fn require_storage_cli(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "credential_commands_t05.rs"]
+mod sources_t05;
 
 #[cfg(test)]
 mod tests {
