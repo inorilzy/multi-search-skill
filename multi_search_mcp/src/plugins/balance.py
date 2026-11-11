@@ -17,7 +17,7 @@ from ..support.models import (
     normalize_error_kind,
 )
 from ..support.secrets import _iter_secret_strings, scrub_secrets
-from . import registry
+from . import oauth_store, registry
 from .base import BalanceContext, BalanceReport, ProviderPlugin
 from .cache import BalanceCache
 
@@ -357,8 +357,21 @@ def collect_balances(
         )
         key_map = dict(load_keys()) if needs_keys else {}
     else:
-        key_map = keys
+        key_map = dict(keys)
+    # OAuth-backed balance credentials (Parallel Account API) live in
+    # oauth.json instead of keys.json; the plugin declares the entry via
+    # balance_credential, and an unreadable store behaves like no login.
+    try:
+        for entry, token in oauth_store.balance_credentials().items():
+            if not key_map.get(entry):
+                key_map[entry] = token
+    except oauth_store.OAuthStoreError:
+        pass
     known_secrets = list(_iter_secret_strings(key_map))
+    try:
+        known_secrets.extend(oauth_store.secret_values())
+    except oauth_store.OAuthStoreError:
+        pass
     cache = BalanceCache()
     try:
         reports = _collect_reports(plugins, key_map, cache, now, refresh, known_secrets)

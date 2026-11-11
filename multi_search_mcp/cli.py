@@ -211,19 +211,36 @@ def build_parser() -> argparse.ArgumentParser:
 
     login_parser = subparsers.add_parser(
         "login",
-        help="save a provider API key read from stdin",
+        help="save a provider credential (API key from stdin or OAuth browser login)",
     )
     login_parser.add_argument("provider", help="provider (plugin) id")
     login_parser.add_argument(
         "--method",
+        choices=("api", "oauth"),
         default="api",
-        help="login method: api (oauth is not supported yet)",
+        help="login method: api (stdin key) or oauth (browser/device code)",
     )
     login_parser.add_argument(
         "--credential",
         help="credential entry declared by the plugin (default: the plugin key provider)",
     )
-    _add_format_argument(login_parser)
+    login_parser.add_argument(
+        "--format",
+        choices=("json", "human", "markdown", "jsonl", "text"),
+        default=None,
+        help="output format: json/human/markdown for api, jsonl/text for oauth (default: json or text)",
+    )
+    login_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="oauth only: print the URL instead of opening a browser",
+    )
+    login_parser.add_argument(
+        "--timeout",
+        type=_bounded_int(1, None),
+        default=300,
+        help="oauth authorization timeout in seconds (default: 300)",
+    )
     login_parser.set_defaults(handler=_handle_login)
 
     logout_parser = subparsers.add_parser(
@@ -344,6 +361,8 @@ def main(
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
     try:
         args = parser.parse_args(raw_argv)
+        if getattr(args, "format", None) is None:
+            args.format = "text" if args.command == "login" and args.method == "oauth" else "json"
         if args.command in {"search", "fetch"}:
             debug_log.configure(getattr(args, "debug_log", None), setting=_debug_log_setting())
         else:
@@ -355,7 +374,13 @@ def main(
                 if key not in {"handler", "debug_log"}
             },
         )
-        payload = args.handler(args)
+        if args.command == "login":
+            payload = args.handler(args, stdout=stdout)
+        else:
+            payload = args.handler(args)
+        if args.command == "login" and args.method == "oauth":
+            # The OAuth handler already streamed its jsonl/text events.
+            return int(payload.get("exit_code", 0)) if isinstance(payload, dict) else 0
         _write_payload(payload, args.format, stdout)
         if args.command == "search":
             debug_log.event(
@@ -541,11 +566,45 @@ def _handle_balance(args: argparse.Namespace) -> dict[str, Any]:
         raise CLIUsageError(str(exc)) from exc
 
 
-def _handle_login(args: argparse.Namespace) -> dict[str, Any]:
+def _render_login_event(event: dict[str, Any]) -> str:
+    kind = event.get("event")
+    if kind == "open_url":
+        lines = [f"请在浏览器中打开：{event.get('url', '')}"]
+        if event.get("user_code"):
+            lines.append(f"验证码：{event['user_code']}")
+        return "\n".join(lines)
+    if kind == "waiting":
+        return "等待授权完成..."
+    if kind == "complete":
+        return f"登录完成：{event.get('credential', '')}"
+    return f"登录失败（{event.get('error_kind', 'error')}）：{event.get('message', '')}"
+
+
+def _login_event_emitter(stream: TextIO, output_format: str):
+    def emit(event: dict[str, Any]) -> None:
+        if output_format == "jsonl":
+            stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+        else:
+            stream.write(_render_login_event(event) + "\n")
+        stream.flush()
+
+    return emit
+
+
+def _handle_login(args: argparse.Namespace, *, stdout: TextIO | None = None) -> dict[str, Any]:
     from .src.plugins.login import LoginError, login
 
     try:
-        return login(args.provider, args.credential, method=args.method)
+        return login(
+            args.provider,
+            args.credential,
+            method=args.method,
+            stream=sys.stdin,
+            output_format=args.format,
+            no_browser=args.no_browser,
+            timeout=args.timeout,
+            emit=_login_event_emitter(stdout or sys.stdout, args.format),
+        )
     except LoginError as exc:
         raise CLIUsageError(str(exc)) from exc
 

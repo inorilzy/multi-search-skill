@@ -1,9 +1,10 @@
-"""API-key login and logout for built-in provider plugins.
+"""API-key and OAuth login/logout for built-in provider plugins.
 
-Credentials are read from stdin only and written through the same atomic keys
+API keys are read from stdin only and written through the same atomic keys
 file writer as the rest of the CLI, so a key never appears in argv, output or
-logs. OAuth is intentionally left for a later ticket; the dispatch seam lives in
-:func:`login`.
+logs. OAuth flows live in :mod:`multi_search_mcp.src.plugins.oauth`; this module
+resolves the declared credential entry and turns flow failures into the public
+jsonl/text error event.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from ..state.keys import (
     write_keys_file_atomic,
 )
 from ..support.secrets import scrub_secrets
-from . import registry
+from . import oauth, oauth_store, registry
 from .balance import collect_balances
 from .base import ProviderPlugin
 
@@ -63,6 +64,21 @@ def _resolve_api_credential(plugin: ProviderPlugin, credential: str | None) -> s
     entry = _resolve_credential(plugin, credential)
     if not any(method.type == "api" and method.credential == entry for method in plugin.auth_methods):
         raise LoginError(f"provider {plugin.id} does not declare an api login for credential: {entry}")
+    return entry
+
+
+def _resolve_oauth_credential(plugin: ProviderPlugin, credential: str | None) -> str:
+    entries = [method.credential for method in plugin.auth_methods if method.type == "oauth"]
+    if not entries:
+        raise LoginError(f"provider {plugin.id} 尚未支持 oauth 登录")
+    if credential:
+        entry = credential.strip()
+    elif len(entries) == 1:
+        entry = entries[0]
+    else:
+        raise LoginError(f"provider {plugin.id} declares multiple oauth credentials; pass --credential")
+    if entry not in entries:
+        raise LoginError(f"provider {plugin.id} does not declare an oauth login for credential: {entry}")
     return entry
 
 
@@ -110,19 +126,105 @@ def _save_key(entry: str, key: str) -> bool:
     return changed
 
 
+def _probe_balance(plugin: ProviderPlugin) -> dict | None:
+    """Run one post-login balance confirmation; a probe never rolls back a key."""
+    if plugin.balance is None:
+        return None
+    try:
+        return collect_balances(provider_ids=[plugin.id], refresh=True)
+    except Exception as exc:  # noqa: BLE001 - saving the credential already succeeded
+        return {"error": scrub_secrets(str(exc) or type(exc).__name__)}
+
+
+def _login_oauth(
+    plugin: ProviderPlugin,
+    credential: str | None,
+    *,
+    output_format: str | None,
+    no_browser: bool,
+    timeout: float,
+    stream: TextIO | None,
+    emit,
+) -> dict:
+    entry = _resolve_oauth_credential(plugin, credential)
+    fmt = output_format or "text"
+    if fmt not in {"jsonl", "text"}:
+        raise LoginError("oauth 登录只支持 --format jsonl 或 text")
+    emitter = emit or (lambda event: None)
+
+    try:
+        if plugin.id == "firecrawl":
+            oauth.firecrawl_login(
+                credential=entry,
+                emit=emitter,
+                save_credential=lambda key: _save_key(entry, key),
+                no_browser=no_browser,
+                timeout=timeout,
+                stdin=stream,
+            )
+            balance = _probe_balance(plugin)
+        elif plugin.id == "parallel":
+            oauth.parallel_login(
+                credential=entry,
+                emit=emitter,
+                no_browser=no_browser,
+                timeout=timeout,
+                stdin=stream,
+            )
+            balance = None
+        else:  # pragma: no cover - both oauth providers are handled above
+            raise LoginError(f"provider {plugin.id} 尚未支持 oauth 登录")
+    except oauth.OAuthFlowError as exc:
+        emitter({"event": "error", "error_kind": exc.kind, "message": exc.message})
+        return {"ok": False, "exit_code": 1}
+    except (oauth_store.OAuthStoreError, KeysError) as exc:
+        emitter({"event": "error", "error_kind": "error", "message": scrub_secrets(str(exc))})
+        return {"ok": False, "exit_code": 1}
+    except KeyboardInterrupt:
+        emitter({"event": "error", "error_kind": "cancelled", "message": "登录已取消。"})
+        return {"ok": False, "exit_code": 1}
+    except Exception as exc:  # noqa: BLE001 - keep the jsonl stream to event objects
+        emitter({
+            "event": "error",
+            "error_kind": "internal",
+            "message": scrub_secrets(str(exc) or type(exc).__name__),
+        })
+        return {"ok": False, "exit_code": 1}
+
+    return {
+        "ok": True,
+        "exit_code": 0,
+        "provider": plugin.id,
+        "credential": entry,
+        "balance": balance,
+    }
+
+
 def login(
     provider_id: str,
     credential: str | None = None,
     *,
     method: str = "api",
     stream: TextIO | None = None,
+    output_format: str | None = None,
+    no_browser: bool = False,
+    timeout: float = 300.0,
+    emit=None,
 ) -> dict:
-    """Save one API key for ``provider_id`` and report the resulting balance."""
+    """Save one credential for ``provider_id`` and report the resulting state."""
+    plugin = _plugin(provider_id)
     if method == "oauth":
-        raise LoginError("oauth 登录尚未支持")
+        return _login_oauth(
+            plugin,
+            credential,
+            output_format=output_format,
+            no_browser=no_browser,
+            timeout=timeout,
+            stream=stream,
+            emit=emit,
+        )
     if method != "api":
         raise LoginError(f"unsupported login method: {method}")
-    plugin = _plugin(provider_id)
     entry = _resolve_api_credential(plugin, credential)
     key = read_api_key(stream)
     changed = _save_key(entry, key)
@@ -140,10 +242,15 @@ def login(
     return payload
 
 
-def logout(provider_id: str, credential: str | None = None) -> dict:
-    """Delete one credential entry from the keys file; missing entries are OK."""
+def logout(provider_id: str, credential: str | None = None, *, http=None) -> dict:
+    """Delete one credential entry; OAuth-only accounts are revoked first."""
     plugin = _plugin(provider_id)
     entry = _resolve_credential(plugin, credential)
+    oauth_entries = {method.credential for method in plugin.auth_methods if method.type == "oauth"}
+    api_entries = {method.credential for method in plugin.auth_methods if method.type == "api"}
+    if entry in oauth_entries and entry not in api_entries:
+        result = oauth.parallel_logout(entry, http=http)
+        return {"provider": plugin.id, "credential": entry, **result}
     path = default_keys_file()
     data = _read_keys_for_write(path)
     if entry not in data:
