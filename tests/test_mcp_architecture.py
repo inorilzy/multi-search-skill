@@ -363,7 +363,7 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
             def fake_jina(url, key, timeout=0, **kwargs):
                 used.append(key)
                 if key == "":
-                    return {"url": url, "error": "Jina: anonymous blocked"}
+                    return {"url": url, "error": "Jina: HTTP 429 rate limit", "rate_limited": True}
                 return {"url": url, "markdown": "ok", "via": "jina"}
 
             with mock.patch("multi_search_mcp.src.scrape.scrape.scrape_url_jina", side_effect=fake_jina):
@@ -372,13 +372,12 @@ class PluginScrapeReviewFixTests(unittest.TestCase):
                     primary="jina",
                     backends=("jina",),
                     jina_keys=["jk1", "jk2"],
-                    jina_prefer_keyed=True,
                     key_manager=manager,
 
                 )
 
             self.assertNotIn("error", result)
-            self.assertEqual(used[0], "jk1")
+            self.assertEqual(used, ["", "jk1"])
             rows = {r["key_id"]: r for r in manager.status_rows("jina")}
             self.assertEqual(rows[key_id_for("jina", "jk1")]["use_count"], 1)
 

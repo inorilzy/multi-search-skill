@@ -245,12 +245,10 @@ def run_fetch_source(
 
 
 def _scope_keys(keys: dict, source_providers: list, backends) -> dict:
-    """Credentials relevant to this body: provider names plus their key ids."""
-    wanted = {str(name) for name in source_providers} | {str(name) for name in (backends or [])}
-    if "twitter" in wanted:
-        wanted.add("twitter_cookies_path")
-    if "github_repos" in wanted:
-        wanted.add("github")
+    """Body-affecting credentials: scrape backends and Twitter cookies, not search keys."""
+    wanted = {str(name) for name in (backends or [])}
+    if "twitter" in {str(name) for name in source_providers}:
+        wanted.update({"twitter_cookies_path", "twitter", "twitter_cookies"})
     for name in list(wanted):
         capability = PROVIDER_CAPABILITIES.get(name)
         key_name = getattr(getattr(capability, "operation", None), "key_name", None)

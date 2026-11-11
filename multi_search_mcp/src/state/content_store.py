@@ -9,8 +9,11 @@ from .state_store import StateStore
 
 
 DEFAULT_CONTENT_TTL_SECONDS = 60 * 60
-DEFAULT_MAX_OBJECT_BYTES = 256 * 1024
-DEFAULT_MAX_TOTAL_BYTES = 5 * 1024 * 1024
+# 1 MiB stores about 349K CJK characters (three UTF-8 bytes each) in one object.
+DEFAULT_MAX_OBJECT_BYTES = 1024 * 1024
+# Keep room for roughly the same number of maximum-size bodies as before
+# (5 MiB used to hold twenty 256 KiB bodies).
+DEFAULT_MAX_TOTAL_BYTES = 20 * 1024 * 1024
 
 
 def _utc_now() -> datetime:
@@ -35,15 +38,15 @@ class ContentTooLargeError(ContentStoreError):
 
 
 def max_acquisition_chars(max_object_bytes: int = DEFAULT_MAX_OBJECT_BYTES) -> int:
-    """Largest body, in characters, that can still fit ``max_object_bytes``.
+    """Largest body, in characters, that always fits ``max_object_bytes``.
 
-    Every character is at least one UTF-8 byte, so a body longer than the byte
-    limit in characters can never be stored, while a shorter one may (ASCII) or
-    may not (CJK is three bytes per character). Acquiring up to this many
-    characters therefore never discards a storable body; whether the acquired
-    body fits is decided in bytes by :meth:`ContentStore.put`.
+    A UTF-8 character takes at most four bytes, so a quarter of the byte
+    budget is guaranteed to fit whatever the script. Acquiring up to this many
+    characters therefore never yields a body too large for the per-object
+    cache limit; whether the acquired body fits is still decided in bytes by
+    :meth:`ContentStore.put`.
     """
-    return max(1, int(max_object_bytes))
+    return max(1, int(max_object_bytes) // 4)
 
 
 class ContentStore:

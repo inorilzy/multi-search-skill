@@ -63,8 +63,13 @@ def run_search_candidates(
     prefetched_bodies: dict[str, str] | None = None,
     persist_bodies: bool = True,
     reranker=None,
+    plan=None,
 ) -> dict:
-    """Return compact SearchHits and optionally fill the selected-body map."""
+    """Return compact SearchHits and optionally fill the selected-body map.
+
+    ``plan`` is an already resolved plan for this request; callers that need
+    the same plan for presentation reuse it so one request resolves it once.
+    """
     if isinstance(request, dict):
         request = SearchWebRequest(**request)
     if not request.query:
@@ -89,16 +94,12 @@ def run_search_candidates(
     query_weights = query_policy.weights(queries, query_plan.primary_query)
     debug_log.log_query_plan(request, expand, query_plan, query_policy, query_weights)
 
-    plan = resolve_search_plan(
-        SearchPlanRequest(
-            route=request.route,
-            count=request.count,
-            sources=request.sources,
-            timeout=request.timeout,
-            output="json",
-        ),
-        resolved_config,
-    )
+    if plan is None:
+        plan = resolve_search_plan(SearchPlanRequest(
+            route=request.route, count=request.count, sources=request.sources,
+            timeout=request.timeout, output="json", ranking=request.ranking,
+        ), resolved_config)
+    rerank_policy = RerankPolicy.from_config(resolved_config, request.ranking)  # fail before provider budget
     if keys is None:
         loaded = runtime.load_runtime_key_context(resolved_config)
         runtime_keys, runtime_key_errors = loaded.keys, loaded.errors
@@ -190,7 +191,6 @@ def run_search_candidates(
     )
     query_failure_rows = query_failures(query_runs)
     response_id = f"resp_{uuid.uuid4().hex}"
-    rerank_policy = RerankPolicy.from_config(resolved_config, request.ranking)
     limit = (
         max(rerank_policy.candidate_limit, SEARCH_RESULT_LIMIT)
         if rerank_policy.enabled

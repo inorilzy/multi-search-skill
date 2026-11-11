@@ -88,8 +88,11 @@ export async function mountInstall(root, api, { number = '02' } = {}) {
     if (!unsupported && status.status !== 'ready') root.querySelector('[data-info="reason"]').textContent = status.reason || '';
     install.disabled = busy || status.status !== 'ready';
     update.disabled = busy || status.status !== 'update_available';
-    uninstall.disabled = busy || status.status !== 'installed';
-    if (status.status !== 'installed') closeUninstall({ restoreFocus: false });
+    // An older managed install can be removed just like a current one; only
+    // states that are not an owned, verified install cannot be uninstalled.
+    const uninstallable = ['installed', 'update_available'].includes(status.status);
+    uninstall.disabled = busy || !uninstallable;
+    if (!uninstallable) closeUninstall({ restoreFocus: false });
   }
 
   function renderSteps(steps) {

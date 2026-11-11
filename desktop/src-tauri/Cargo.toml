@@ -25,6 +25,11 @@ path = "tests/execution.rs"
 required-features = ["test-fixtures"]
 
 [[test]]
+name = "test_search_credentials"
+path = "tests/test_search_credentials.rs"
+required-features = ["test-fixtures"]
+
+[[test]]
 name = "install"
 path = "tests/install.rs"
 required-features = ["install-test-boundary", "test-fixtures"]

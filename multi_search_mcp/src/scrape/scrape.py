@@ -14,9 +14,10 @@ import unicodedata
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
-from ..state.key_state import KeyCandidate, key_fingerprint, key_id_for
+from ..state.key_state import KeyCandidate, _now, key_fingerprint, key_id_for
 from ..state.site_memory import ScrapeAttempt
 from ..support import debug_log
 from ..support.auth import is_key_retryable_error
@@ -46,6 +47,9 @@ _jina_anonymous_cooling_down = jina_anonymous_cooling_down
 # Rate-limit metadata emitted by the scrapers; the credential classifier reads
 # the shared ``kind`` taxonomy once it lands.
 _ERROR_KIND_RATE_LIMIT = "rate_limit"
+
+# The scrapers' shared HTTP error text format: ``HTTP <code>: <detail>``.
+_HTTP_STATUS_RE = re.compile(r"\bhttp(?: status)?\s*(\d{3})\b", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -183,8 +187,10 @@ class ScrapeContext:
     key_manager: Any = None
     scrape_chars: int | None = None
     timeout: float = _DEFAULT_SCRAPE_TIMEOUT_SECONDS
-    jina_prefer_keyed: bool = False
     twitter_cookies: Any = ""
+    # Firecrawl falls back to its anonymous channel only when no key is
+    # configured; a configured-but-unusable pool must surface a real error.
+    firecrawl_keys_configured: bool = False
     primary: str | None = None
     backends: tuple[str, ...] | list[str] | None = None
     # True only for caller-forced backend lists (``--backend``): configuration
@@ -225,12 +231,18 @@ def _result_is_rate_limited(result: dict) -> bool:
 
 def _record_key_result(
     provider: str, candidate: KeyCandidate, result: dict, key_manager,
+    *, started_at: datetime | None = None,
 ) -> None:
     # A target-page failure is neutral to credential health, including any
     # auth failure another in-flight request may already have recorded.
     if key_manager is None or _is_target_failure(result):
         return
-    key_manager.record_result(provider, candidate, key_manager.classify_result(provider, result))
+    outcome = key_manager.classify_result(provider, result)
+    try:
+        key_manager.record_result(provider, candidate, outcome, started_at=started_at)
+    except TypeError:
+        # Managers that predate causal gating keep the plain signature.
+        key_manager.record_result(provider, candidate, outcome)
 
 
 def _scrape_with_key_candidates(
@@ -242,14 +254,32 @@ def _scrape_with_key_candidates(
     key_manager=None,
 ) -> dict | None:
     """Run ``call`` against each candidate; return the first non-error row or the
-    last error row. Iteration stops when the failure is not key-retryable."""
+    last error row. Iteration stops when the failure is not key-retryable.
+
+    State-aware managers reserve the least-recently-used eligible key under a
+    write lock, so concurrent scrapes spread across the pool instead of all
+    retrying the head of one snapshot.
+    """
     last: dict | None = None
-    for candidate in candidates:
+    remaining = list(candidates)
+    while remaining:
         if deadline is not None and time.monotonic() >= deadline:
             break
-        if key_manager is not None:
-            key_manager.record_use(provider, candidate)
+        if callable(getattr(key_manager, "reserve", None)) and all(
+            isinstance(candidate, KeyCandidate) for candidate in remaining
+        ):
+            candidate = key_manager.reserve(provider, remaining)
+            if candidate is None:
+                break
+            remaining.remove(candidate)
+        else:
+            candidate = remaining.pop(0)
+            if key_manager is not None:
+                key_manager.record_use(provider, candidate)
         attempt_started = time.monotonic()
+        # Generation marker for causal gating: a failure recorded after this
+        # call started is newer evidence than a success returned by it.
+        started_at = _now()
         result = call(candidate.key)
         if not isinstance(result, dict):
             return result
@@ -258,7 +288,7 @@ def _scrape_with_key_candidates(
             elapsed_ms=debug_log.elapsed_ms(attempt_started),
             error=result.get("error"), url=result.get("url"),
         )
-        _record_key_result(provider, candidate, result, key_manager)
+        _record_key_result(provider, candidate, result, key_manager, started_at=started_at)
         last = result
         if "error" not in result:
             return result
@@ -498,6 +528,24 @@ def validate_delegated_url(url: str, *, deadline: float | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _jina_anonymous_needs_keyed_retry(result: dict) -> bool:
+    """Anonymous Jina failures that a configured key may bypass.
+
+    The shared anonymous reader can be blocked by the target site or fail
+    upstream; the paid channel is independent. Rate limiting keeps its existing
+    retry path, and timed-out/5xx attempts are not credential verdicts.
+    """
+    if _result_is_rate_limited(result):
+        return True
+    if result.get("kind") in {"timeout", "network"} or result.get("error_type") in {"timeout", "network"}:
+        return True
+    message = str(result.get("error") or "").lower()
+    if "blocked" in message or "timed out" in message or "timeout" in message:
+        return True
+    statuses = {int(match.group(1)) for match in _HTTP_STATUS_RE.finditer(message)}
+    return 403 in statuses or any(500 <= status <= 599 for status in statuses)
+
+
 def _scrape_jina(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
     candidates = ctx.keys_for("jina")
 
@@ -544,19 +592,12 @@ def _scrape_jina(target: str, ctx: ScrapeContext, policy: dict) -> dict | None:
     if not candidates:
         return _scrape_anonymous()
 
-    # With keys present, "white-label first" stays the default to conserve paid
-    # quota; ``jina_prefer_keyed`` flips to keyed-first for users who want to
-    # bypass the shared anonymous quota entirely.
-    if ctx.jina_prefer_keyed:
-        keyed = keyed_pool()
-        if keyed is not None and "error" not in keyed:
-            return keyed
-        return keyed if keyed is not None else _scrape_anonymous()
-
+    # With keys present, anonymous stays first to conserve paid quota; only a
+    # block/5xx/timeout (or the existing rate limit) justifies one keyed retry.
     anon = _scrape_anonymous()
     if "error" not in anon:
         return anon
-    if not _result_is_rate_limited(anon):
+    if not _jina_anonymous_needs_keyed_retry(anon):
         return anon
     keyed = keyed_pool()
     return keyed if keyed is not None else anon
@@ -610,10 +651,20 @@ def _scrape_firecrawl(target: str, ctx: ScrapeContext, policy: dict) -> dict | N
             return {"url": target, "error": "scrape deadline exceeded"}
         return scrape_url_firecrawl(target, key, timeout=call_timeout)
 
-    return _scrape_with_optional_key_pool(
+    # Firecrawl supports keyless scraping, but only when no key is configured.
+    # A configured pool whose keys are all unusable is a real error, not a
+    # reason to silently spend the anonymous channel instead.
+    if not candidates and ctx.firecrawl_keys_configured:
+        return {"url": target, "error": "Firecrawl: all configured keys are unavailable"}
+    result = _scrape_with_optional_key_pool(
         "firecrawl", candidates, _call_one,
         deadline=ctx.deadline, key_manager=ctx.key_manager,
     )
+    if result is None and ctx.firecrawl_keys_configured:
+        if ctx.remaining_timeout() <= 0:
+            return {"url": target, "error": "scrape deadline exceeded"}
+        return {"url": target, "error": "Firecrawl: all configured keys are unavailable"}
+    return result
 
 
 _SCRAPE_DISPATCH: dict[str, Callable[[str, ScrapeContext, dict], dict | None]] = {
@@ -626,7 +677,7 @@ _SCRAPE_DISPATCH: dict[str, Callable[[str, ScrapeContext, dict], dict | None]] =
 
 _LEGACY_OPTION_KEYS = frozenset({
     "timeout", "primary", "backends", "deadline", "site_memory", "key_manager",
-    "scrape_chars", "jina_prefer_keyed", "twitter_cookies",
+    "scrape_chars", "twitter_cookies", "firecrawl_keys_configured",
     "jina_key", "jina_keys", "exa_key", "exa_keys", "firecrawl_key",
     "firecrawl_keys", "tavily_key", "tavily_keys", "strict_backends",
     "backend_timeout",
@@ -661,8 +712,8 @@ def _legacy_context(options: dict) -> ScrapeContext:
         key_manager=options.get("key_manager"),
         scrape_chars=options.get("scrape_chars"),
         timeout=options.get("timeout", _DEFAULT_SCRAPE_TIMEOUT_SECONDS),
-        jina_prefer_keyed=bool(options.get("jina_prefer_keyed", False)),
         twitter_cookies=options.get("twitter_cookies", ""),
+        firecrawl_keys_configured=bool(options.get("firecrawl_keys_configured", False)),
         primary=options.get("primary"),
         backends=tuple(backends) if backends is not None else None,
         # A caller-forced backend list must fail eagerly on a missing key; a
