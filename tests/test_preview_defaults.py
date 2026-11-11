@@ -11,7 +11,7 @@ from multi_search_mcp.src import service
 from multi_search_mcp.src.search.resolve import SearchPlanRequest, resolve_search_plan
 from multi_search_mcp.src.search.search_runner import ProviderSpec
 from multi_search_mcp.src.state import state_store
-from multi_search_mcp.src.state.content_store import DEFAULT_MAX_OBJECT_BYTES
+from multi_search_mcp.src.state.content_store import max_acquisition_chars
 from multi_search_mcp.src.state.state_store import StateStore
 from multi_search_mcp.src.support.config import load_config
 
@@ -74,7 +74,7 @@ class PreviewDefaultTests(unittest.TestCase):
         self.assertGreater(len(page["markdown"].encode("utf-8")), 1200)
         self.assertEqual(page["length"], len(BODY))
         self.assertTrue(page["truncated"])
-        self.assertEqual(self.scraper.call_args.kwargs["scrape_chars"], DEFAULT_MAX_OBJECT_BYTES)
+        self.assertEqual(self.scraper.call_args.kwargs["scrape_chars"], max_acquisition_chars())
 
         continuation = service.run_read_source(
             service.ReadSourceRequest(source_id=page["source_id"], offset=1400, limit=80),
