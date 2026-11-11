@@ -191,6 +191,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_format_argument(doctor_parser)
     doctor_parser.set_defaults(handler=_handle_doctor)
 
+    balance_parser = subparsers.add_parser(
+        "balance",
+        help="show provider balances and quotas (JSON by default)",
+    )
+    balance_parser.add_argument(
+        "--provider", action="append", dest="providers", default=[],
+        help="only this provider id (repeatable)",
+    )
+    balance_parser.add_argument(
+        "--format", choices=("json", "text"), default="json",
+        help="output format (default: json)",
+    )
+    balance_parser.add_argument(
+        "--refresh", action="store_true",
+        help="ignore cached reports and query every provider",
+    )
+    balance_parser.set_defaults(handler=_handle_balance)
+
     sources_parser = subparsers.add_parser(
         "sources",
         help="print the shared source, route, alias, and env catalog (JSON by default)",
@@ -482,6 +500,18 @@ def _handle_doctor(args: argparse.Namespace) -> dict[str, Any]:
     return doctor_data(include_keys=not args.no_keys, include_network=args.network)
 
 
+def _handle_balance(args: argparse.Namespace) -> dict[str, Any]:
+    from .src.plugins.balance import UnknownProviderError, collect_balances
+
+    try:
+        return collect_balances(
+            provider_ids=list(args.providers or []) or None,
+            refresh=args.refresh,
+        )
+    except UnknownProviderError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
 def _handle_sources(args: argparse.Namespace) -> dict[str, Any]:
     # Imported lazily so the light search CLI paths do not grow their import graph.
     from .src.search.catalog import build_configured_source_catalog
@@ -574,6 +604,11 @@ def _write_payload(payload: Any, output_format: str, stream: TextIO) -> None:
         stream.write(_render_human(payload))
     elif output_format == "markdown":
         stream.write(_render_markdown(payload))
+    elif output_format == "text":
+        if isinstance(payload, dict) and "providers" in payload:
+            stream.write(_render_balance_text(payload))
+        else:
+            stream.write(_render_human(payload))
     else:  # pragma: no cover - argparse constrains values
         raise CLIUsageError(f"unsupported format: {output_format}")
     stream.write("\n")
@@ -770,6 +805,58 @@ def _route_summary(route: dict[str, Any]) -> str:
 
 def _table_cell(value: Any) -> str:
     return str("" if value is None else value).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _render_balance_text(payload: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for provider in payload.get("providers") or []:
+        label = str(provider.get("label") or provider.get("id") or "?")
+        reports = provider.get("reports") or []
+        if not reports:
+            lines.append(f"{label} · 无报告")
+            continue
+        lines.extend(_render_balance_line(label, report) for report in reports)
+    return "\n".join(lines) if lines else "（没有匹配的服务商）"
+
+
+def _render_balance_line(label: str, report: dict[str, Any]) -> str:
+    parts = [label]
+    fingerprint = report.get("key_fingerprint")
+    if fingerprint:
+        parts.append(str(fingerprint))
+    status = report.get("status")
+    message = " ".join(str(report.get("message") or "").split())
+    if status == "ok":
+        unit = str(report.get("unit") or "requests")
+        remaining = report.get("remaining")
+        limit = report.get("limit")
+        if remaining is None and limit is None:
+            amount = f"用量未知（{unit}）"
+        else:
+            amount = f"剩余 {'未知' if remaining is None else _number_text(remaining)}"
+            if limit is not None:
+                amount += f"/{_number_text(limit)}"
+            amount += f" {unit}"
+        parts.append(amount)
+        used = report.get("used")
+        if used is not None:
+            parts.append(f"已用 {_number_text(used)}")
+        if report.get("resets_at"):
+            parts.append(f"重置 {report['resets_at']}")
+    elif status == "unsupported":
+        parts.append(f"不支持：{message or '无余额查询'}")
+    elif status == "needs_credential":
+        parts.append(f"需要凭据：{message or '未配置'}")
+    else:
+        kind = report.get("error_kind")
+        parts.append(f"错误（{kind}）：{message}" if kind else f"错误：{message or '未知错误'}")
+    return " · ".join(parts)
+
+
+def _number_text(value: Any) -> str:
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def _render_key_rows(rows: list[dict[str, Any]], *, markdown: bool) -> list[str]:
