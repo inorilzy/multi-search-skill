@@ -66,6 +66,7 @@ def summarize_status_rows(rows: list[dict]) -> list[dict]:
         "last_error_type": row.get("last_error_type"),
         "cooldown_until": row.get("cooldown_until"),
         "exhausted_until": row.get("exhausted_until"),
+        "manually_disabled": bool(row.get("manually_disabled")),
     } for row in rows]
 
 
@@ -277,6 +278,8 @@ class SQLiteKeyManager(BasicKeyManager):
             # A success may only clear a verdict that predates its own request;
             # a failure committed while this request was in flight is newer
             # evidence and must survive. Success counters still advance.
+            # ``exhausted_until`` is cleared only once its deadline has passed:
+            # a future deadline belongs to a verdict this success cannot explain.
             started = _iso(started_at) if started_at is not None else now
             gated = "updated_at > ?"
             self.store.execute(
@@ -287,13 +290,18 @@ class SQLiteKeyManager(BasicKeyManager):
                     last_error_type = CASE WHEN {gated} THEN last_error_type ELSE NULL END,
                     last_error_message = CASE WHEN {gated} THEN last_error_message ELSE NULL END,
                     cooldown_until = CASE WHEN {gated} THEN cooldown_until ELSE NULL END,
+                    exhausted_until = CASE
+                        WHEN {gated} THEN exhausted_until
+                        WHEN exhausted_until > ? THEN exhausted_until
+                        ELSE NULL
+                    END,
                     invalid_strikes = CASE WHEN {gated} THEN invalid_strikes ELSE 0 END,
                     updated_at = ?
                 WHERE provider = ? AND key_id = ?
                 """,
                 (
                     started, ACTIVE, now,
-                    started, started, started, started,
+                    started, started, started, started, now, started,
                     now, provider, candidate.key_id,
                 ),
             )

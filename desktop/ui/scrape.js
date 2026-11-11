@@ -349,11 +349,11 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     chain.splice(Math.min(to, chain.length), 0, moved);
     setDirty('抓取顺序已在草稿中调整');
     renderChain();
-    // 重新渲染后把焦点还给该后端的新手柄。
+    // 重新渲染后把焦点还给该后端的新手柄。焦点只是增强：浏览器拒绝聚焦或
+    // 测试环境没有焦点实现时，不能打断排序提交与屏幕阅读器播报。
     if (name) {
       const next = q(`[data-chain-row="${name}"] .scrape-drag-handle`);
-      next?.focus?.();
-      if (root.ownerDocument.activeElement !== next) root.ownerDocument.activeElement = next;
+      try { next?.focus?.(); } catch { /* 保留当前焦点，继续播报 */ }
     }
     announceSort(`${labelOf(moved)} 已移到第 ${to + 1} 位，尚未保存`);
   }

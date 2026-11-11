@@ -157,9 +157,11 @@ class RerankPolicy:
     ) -> "RerankPolicy":
         """Merge ``ranking`` config with a per-request override and validate.
 
-        Unknown fields, wrong types, and out-of-range values are
-        ``ConfigError``s — nothing is silently ignored, matching
-        ``QueryFusionPolicy.from_config``.
+        A stored block with ``mode="rrf"`` is checked for its mode only: the
+        rest of the block belongs to a disabled stage, so fields written by a
+        newer build or left behind by hand cannot break every search. An
+        enabled policy (``rrf_model``) and per-request overrides stay strict:
+        unknown fields, wrong types and out-of-range values are ``ConfigError``s.
         """
         merged: dict = {}
         if "ranking" in config:
@@ -173,6 +175,9 @@ class RerankPolicy:
             merged.update(request_override)
         for key in _LEGACY_RANKING_KEYS:
             merged.pop(key, None)
+        if request_override is None and merged.get("mode", "rrf") == "rrf":
+            # Reranking is off; only the mode itself matters.
+            return cls()
         if set(merged) - _RANKING_KEYS:
             raise ConfigError("ranking contains unsupported fields")
         return cls(**merged)
