@@ -47,7 +47,11 @@ async fn cookie_import(
 ) -> Result<crate::cookie::CookieStatus, String> {
     let manager = manager.inner().clone();
     offload(
-        move || crate::cookie::import(&manager.environment, std::path::Path::new(&path), confirmed),
+        move || {
+            let result = crate::cookie::import(&manager.environment, std::path::Path::new(&path), confirmed);
+            manager.invalidate_key_sources();
+            result
+        },
         "cookie_import_failed",
     )
     .await
@@ -58,8 +62,15 @@ async fn cookie_delete(
     confirmed: bool,
 ) -> Result<crate::cookie::CookieStatus, String> {
     let manager = manager.inner().clone();
-    offload(move || crate::cookie::delete(&manager.environment, confirmed), "cookie_delete_failed")
-        .await
+    offload(
+        move || {
+            let result = crate::cookie::delete(&manager.environment, confirmed);
+            manager.invalidate_key_sources();
+            result
+        },
+        "cookie_delete_failed",
+    )
+    .await
 }
 
 #[tauri::command]
@@ -255,6 +266,8 @@ fn with_core(
     result: Result<crate::credential_commands::CredentialOverview, String>,
 ) -> Result<crate::credential_commands::CredentialOverview, String> {
     let mut overview = result?;
+    // The keys file just changed: the cached doctor report is stale.
+    manager.invalidate_key_sources();
     let key_sources = manager.key_sources();
     crate::credential_commands::apply_core_source(&mut overview, key_sources.get(entry.provider));
     Ok(overview)

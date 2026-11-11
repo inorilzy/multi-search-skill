@@ -30,6 +30,45 @@ pub struct DesktopManager {
     pub(crate) closed: AtomicBool,
     mutation: Mutex<()>,
     log_viewer: crate::log_viewer::LogViewerSlot,
+    /// Core's `doctor` key-source report, shared briefly: a page asks for several
+    /// providers at once and each answer comes from the same doctor run.
+    key_sources_cache: ShortCache<KeySources>,
+}
+
+type KeySources = std::collections::BTreeMap<String, crate::credential_commands::CoreKeySource>;
+/// Long enough to cover one page's parallel status reads, short enough that a key
+/// edited in a terminal shows up on the next refresh.
+const KEY_SOURCES_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A value shared for a short time. Callers serialize on one lock, so concurrent
+/// readers that arrive while the value is being produced reuse that one result.
+pub(crate) struct ShortCache<T> {
+    ttl: std::time::Duration,
+    slot: Mutex<Option<(std::time::Instant, T)>>,
+}
+
+impl<T: Clone> ShortCache<T> {
+    pub(crate) fn new(ttl: std::time::Duration) -> Self {
+        Self { ttl, slot: Mutex::new(None) }
+    }
+
+    /// Return the fresh value, or produce one. `keep` decides whether a produced value
+    /// may be cached (a failed answer must not be).
+    pub(crate) fn get_or(&self, produce: impl FnOnce() -> T, keep: impl FnOnce(&T) -> bool) -> T {
+        let mut slot = self.slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((at, value)) = slot.as_ref() {
+            if at.elapsed() < self.ttl {
+                return value.clone();
+            }
+        }
+        let value = produce();
+        *slot = keep(&value).then(|| (std::time::Instant::now(), value.clone()));
+        value
+    }
+
+    pub(crate) fn clear(&self) {
+        *self.slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
 }
 
 impl DesktopManager {
@@ -42,6 +81,7 @@ impl DesktopManager {
             closed: AtomicBool::new(false),
             mutation: Mutex::new(()),
             log_viewer: Default::default(),
+            key_sources_cache: ShortCache::new(KEY_SOURCES_TTL),
         }
     }
 
@@ -117,10 +157,18 @@ impl DesktopManager {
 
     /// Core's own per-provider credential-source report (`doctor --format json`).
     #[cfg_attr(not(feature = "native-window"), allow(dead_code))]
-    pub(crate) fn key_sources(
-        &self,
-    ) -> std::collections::BTreeMap<String, crate::credential_commands::CoreKeySource> {
-        self.discovery_view().key_sources()
+    ///
+    /// Concurrent callers wait on one lock, so N parallel status reads run doctor once.
+    /// Writes that change keys call `invalidate_key_sources` first.
+    pub(crate) fn key_sources(&self) -> KeySources {
+        // An empty answer means doctor failed or timed out; never cache a failure.
+        self.key_sources_cache
+            .get_or(|| self.discovery_view().key_sources(), |sources| !sources.is_empty())
+    }
+
+    /// Drop the shared doctor report so the next read reflects a key change.
+    pub(crate) fn invalidate_key_sources(&self) {
+        self.key_sources_cache.clear();
     }
 
     /// Keep diagnostics truthful about the old app PATH, while UI commands can use the
@@ -328,5 +376,57 @@ mod tests {
             Err(reason) => reason.contains("Another management operation"),
             Ok(_) => false,
         });
+    }
+}
+
+#[cfg(test)]
+mod short_cache_tests {
+    use super::ShortCache;
+    use std::sync::{atomic::{AtomicUsize, Ordering}, Arc};
+    use std::time::Duration;
+
+    #[test]
+    fn concurrent_readers_share_one_production() {
+        let cache = Arc::new(ShortCache::new(Duration::from_secs(5)));
+        let runs = Arc::new(AtomicUsize::new(0));
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let (cache, runs) = (cache.clone(), runs.clone());
+                std::thread::spawn(move || {
+                    cache.get_or(
+                        || {
+                            runs.fetch_add(1, Ordering::SeqCst);
+                            std::thread::sleep(Duration::from_millis(50));
+                            7
+                        },
+                        |_| true,
+                    )
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert_eq!(handle.join().unwrap(), 7);
+        }
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn failures_are_not_cached_and_clear_forces_a_new_read() {
+        let cache = ShortCache::new(Duration::from_secs(5));
+        let runs = AtomicUsize::new(0);
+        let read = |value: i32| cache.get_or(|| { runs.fetch_add(1, Ordering::SeqCst); value }, |v| *v != 0);
+        assert_eq!(read(0), 0);
+        assert_eq!(read(1), 1, "a failed answer is not reused");
+        assert_eq!(read(2), 1, "a good answer is reused within the ttl");
+        cache.clear();
+        assert_eq!(read(3), 3);
+        assert_eq!(runs.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn expired_values_are_produced_again() {
+        let cache = ShortCache::new(Duration::from_millis(0));
+        assert_eq!(cache.get_or(|| 1, |_| true), 1);
+        assert_eq!(cache.get_or(|| 2, |_| true), 2);
     }
 }

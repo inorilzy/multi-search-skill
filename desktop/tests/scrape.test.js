@@ -1032,6 +1032,25 @@ function gatedCredentials(firstRound, rest = []) {
   return { state, api, rest };
 }
 
+test('the chain is shown from settings before the slow credential reads return', async () => {
+  const { window, root } = setup();
+  const gate = deferred();
+  const mounting = mountScrape(root, api({
+    settingsView: async () => settingsView({ scrape_backends: ['exa', 'jina'] }),
+    credentialStatus: async source => { await gate.promise; return { source, store: { state: 'present' }, effective_source: 'credential_store' }; },
+  }));
+  await flush(); await flush();
+  assert.deepEqual([...root.querySelectorAll('[data-chain-row]')].map(row => row.getAttribute('data-chain-row')), ['exa', 'jina']);
+  assert.equal(backendState(root, 'exa').textContent, '状态待确认');
+  assert.equal(root.querySelector('[data-action="save"]').disabled, true, 'save waits for the credential answer');
+  gate.resolve();
+  await mounting;
+  await flush(); await flush();
+  assert.equal(backendState(root, 'exa').textContent, 'Key 已配置');
+  assert.equal(root.querySelector('[data-action="save"]').disabled, false);
+  window.close();
+});
+
 test('a refresh result replaces the previous one, and the next result replaces that', async () => {
   const { window, root } = setup();
   const { state, api } = gatedCredentials({ store: { state: 'absent' }, effective_source: 'none' });

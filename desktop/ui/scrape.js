@@ -479,7 +479,15 @@ export async function mountScrape(root, api, { number = '06' } = {}) {
     q('[data-action="refresh-chain"]').disabled = true;
     validateChain();
     try {
-      const [view, states] = await Promise.all([api.settingsView(), readCredentialStates()]);
+      // 设置是本地读取，很快；凭据状态要等 CLI 的 doctor，较慢。先用设置画出链，
+      // Key 状态先显示「状态待确认」，两者都返回后再整体更新（保存仍在两者都返回后才放开）。
+      const statesPromise = readCredentialStates();
+      const view = await api.settingsView();
+      if (!disposed && ticket === refreshTicket && (force || !dirty) && !loadedView) {
+        fillChain(view);
+        renderChain();
+      }
+      const states = await statesPromise;
       // force 路径已由用户确认丢弃草稿；否则迟到的响应不能覆盖更新的草稿。
       if (!disposed && ticket === refreshTicket && (force || !dirty)) {
         credentialStates = states;
