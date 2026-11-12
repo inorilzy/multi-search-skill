@@ -1,6 +1,8 @@
 import { el, pageRoot, disposePage } from './dom.js';
 import { showError } from './api.js';
 import { formatTimestamp } from './balance.js';
+import { createMeter, createAlertBadge } from './meter.js';
+import { SOURCE_CATALOG } from './source-catalog.js';
 
 const UNITS = { credits: 'credits', tokens: 'tokens', searches: '次搜索', usd: '美元', requests: '次请求' };
 const SCOPES = { key: 'Key', team: '团队', account: '账户' };
@@ -21,19 +23,43 @@ function paceText(pace) {
   return `${rate}，预计用完时间未知`;
 }
 
-function quota(doc, row) {
-  const section = el(doc, 'div', { class: 'usage-quota' });
-  section.append(el(doc, 'p', { class: 'usage-scope' }, `${scopeLabel(row.scope)}额度`));
-  section.append(el(doc, 'p', { class: 'usage-amount' },
-    `剩余 ${amount(row.remaining)} / 上限 ${amount(row.limit)} ${unitLabel(row.unit)}`));
-  if (typeof row.remaining === 'number' && typeof row.limit === 'number' && row.limit > 0) {
-    const progress = el(doc, 'progress', { max: String(row.limit),
-      value: String(Math.max(0, Math.min(row.limit, row.remaining))),
-      'aria-label': `${scopeLabel(row.scope)}剩余额度（${unitLabel(row.unit)}）` });
-    section.append(progress);
+const quotaText = row => `剩余 ${amount(row?.remaining)} / 上限 ${amount(row?.limit)} ${unitLabel(row?.unit)}`;
+const visibleAccounts = provider => provider.accounts.filter(account =>
+  account.id !== 'default' || account.keys.length || provider.accounts.length === 1);
+
+/** @param {Document} doc @param {import('./types.js').UsageProvider} provider */
+function accountList(doc, provider) {
+  const list = el(doc, 'ul', { class: 'account-list', 'aria-label': '账号用量' });
+  for (const account of visibleAccounts(provider)) {
+    const row = el(doc, 'li', { class: 'account-row', 'data-account': account.id });
+    const summary = el(doc, 'div', { class: 'account-summary' });
+    const identity = el(doc, 'div', { class: 'account-identity' });
+    identity.append(el(doc, 'h3', { class: 'account-name' }, account.name),
+      el(doc, 'p', { class: 'account-source' },
+        ({ oauth: '浏览器登录', manual: '手动添加' })[account.source] || account.source || '未知来源'));
+    summary.append(identity);
+    if (provider.balance_supported) {
+      identity.append(el(doc, 'p', { class: 'provider-note' }, quotaText(account.total)));
+      summary.append(createMeter(doc, account.total, { label: `${account.name}剩余额度` }));
+    }
+    const keys = el(doc, 'ul', { class: 'account-keys', 'aria-label': `${account.name}的 Key` });
+    for (const key of account.keys) {
+      const keyRow = el(doc, 'li', { class: 'key-row' });
+      const keyIdentity = el(doc, 'div', { class: 'key-identity' });
+      keyIdentity.append(el(doc, 'span', { class: 'key-fingerprint' }, key.key_fingerprint));
+      keyRow.append(keyIdentity);
+      if (provider.balance_supported) {
+        keyIdentity.append(el(doc, 'p', { class: 'provider-note' }, quotaText(key.report)),
+          el(doc, 'p', { class: 'key-kind' }, key.report
+            ? `${scopeLabel(key.report.scope)}额度 · ${STATUSES[key.report.status] || '未知状态'}` : '余额未知（无缓存）'));
+        keyRow.append(createMeter(doc, key.report, { label: `${key.key_fingerprint}剩余额度` }));
+      }
+      keys.append(keyRow);
+    }
+    row.append(summary, keys);
+    list.append(row);
   }
-  if (row.message) section.append(el(doc, 'p', { class: 'usage-note' }, row.message));
-  return section;
+  return list;
 }
 
 /** Draw each fingerprint separately: different units and account scopes must never be added. */
@@ -104,13 +130,18 @@ function chart(doc, history, scope, unit) {
 
 /** @param {Document} doc @param {import('./types.js').UsageProvider} provider */
 function cardBody(doc, provider) {
-  const body = el(doc, 'div', { class: 'usage-card-body' });
+  const body = el(doc, 'div', { 'data-body': '' });
+  body.append(accountList(doc, provider));
   if (provider.balance_supported) {
     if (!provider.current.length) body.append(el(doc, 'p', {}, '暂无余额信息，数据不足。'));
     for (const status of new Set(provider.current.map(row => row.status))) {
       body.append(el(doc, 'p', { class: 'usage-status', 'data-kind': status }, STATUSES[status] || '未知状态'));
     }
-    for (const total of provider.totals) body.append(quota(doc, total));
+    for (const total of provider.totals) {
+      body.append(el(doc, 'p', { class: 'provider-note', 'data-total': '' },
+        `${scopeLabel(total.scope)}额度：${quotaText(total)}`));
+      if (total.message) body.append(el(doc, 'p', { class: 'provider-note' }, total.message));
+    }
     for (const report of provider.current) {
       const identity = provider.current.length > 1 ? `${report.key_fingerprint || '指纹未知'}：` : '';
       body.append(el(doc, 'p', { class: 'usage-note' },
@@ -126,27 +157,8 @@ function cardBody(doc, provider) {
     const groups = new Map();
     for (const row of [...provider.totals, ...provider.history]) groups.set(JSON.stringify([row.scope, row.unit]), row);
     for (const { scope, unit } of groups.values()) body.append(chart(doc, provider.history, scope, unit));
-    const fingerprints = new Set(provider.current.map(row => row.key_fingerprint).filter(Boolean));
-    if (fingerprints.size > 1) {
-      const details = doc.createElement('details');
-      details.className = 'usage-keys';
-      const summary = el(doc, 'summary', {}, `展开 ${fingerprints.size} 个 Key`);
-      details.append(summary);
-      const rows = el(doc, 'div');
-      for (const report of provider.current) {
-        const row = quota(doc, { ...report, message: '' });
-        row.prepend(el(doc, 'strong', {}, report.key_fingerprint || '指纹未知'));
-        row.append(el(doc, 'p', {}, STATUSES[report.status] || '未知状态'));
-        rows.append(row);
-      }
-      details.append(rows);
-      details.addEventListener('toggle', () => {
-        summary.textContent = details.open ? `收起 ${fingerprints.size} 个 Key` : `展开 ${fingerprints.size} 个 Key`;
-      });
-      body.append(details);
-    }
   } else {
-    body.append(el(doc, 'p', { class: 'usage-status' }, '不支持余额查询'));
+    body.append(el(doc, 'p', { class: 'usage-status' }, '无余额接口'));
     body.append(el(doc, 'p', { class: 'usage-note' }, provider.balance_note
       || provider.current.find(row => row.message)?.message || '该服务商未提供余额查询接口。'));
   }
@@ -170,15 +182,14 @@ export async function mountUsage(root, api, { number = '05', signal, navigate } 
   root = pageRoot(root);
   root.classList.add('usage-page');
   const doc = root.ownerDocument;
-  root.innerHTML = `<section class="heading usage-head"><div><p class="eyebrow"></p>
-    <h1 tabindex="-1">用量</h1><p>查看各服务商的剩余额度、配速与近 30 天走势。</p></div>
-    <button type="button" class="primary" data-action="refresh-all">刷新全部</button></section>
-    <p class="usage-note">刷新遵守服务商缓存时长。本机统计不等于服务商计费次数；历史只保留 30 天。</p>
-    <p class="usage-note" data-updated role="status">更新时间：未知</p>
+  root.innerHTML = `<p class="eyebrow visually-hidden"></p><h1 class="visually-hidden" tabindex="-1">用量</h1>
+    <section class="usage-head" aria-label="用量刷新">
+      <button type="button" class="primary" data-action="refresh-all">刷新全部</button>
+      <p class="provider-note" data-updated role="status">更新时间：未知</p></section>
     <p class="error-message" data-error role="alert"></p>
-    <p class="usage-note" data-notice role="status"></p>
-    <div class="usage-grid" data-providers></div>
-    <section data-local-only hidden><h2>仅本机统计</h2><div class="usage-grid" data-local-providers></div></section>`;
+    <p class="provider-note" data-notice role="status"></p>
+    <div class="provider-list" data-providers></div>
+    <p class="provider-note" data-footnote>刷新遵守服务商缓存时长。本机统计不等于服务商计费次数；历史只保留 30 天。</p>`;
   root.querySelector('.eyebrow').textContent = `${number} / USAGE`;
   const refreshAll = /** @type {HTMLButtonElement} */ (root.querySelector('[data-action="refresh-all"]'));
   const errorSlot = root.querySelector('[data-error]');
@@ -190,28 +201,59 @@ export async function mountUsage(root, api, { number = '05', signal, navigate } 
   function renderCard(provider) {
     let card = cards.get(provider.id);
     if (!card) {
-      card = el(doc, 'article', { class: 'usage-card panel', 'data-provider': provider.id });
-      const head = el(doc, 'div', { class: 'usage-card-head' });
-      const title = el(doc, 'h3', {}, provider.label);
-      const actions = el(doc, 'div', { class: 'usage-actions' });
-      const refresh = el(doc, 'button', { type: 'button', 'data-action': 'refresh-provider',
-        'aria-label': `刷新 ${provider.label} 用量` }, '刷新');
-      const settings = el(doc, 'button', { type: 'button', 'data-action': 'settings',
-        'aria-label': `${provider.label}：去设置` }, '去设置');
+      card = doc.createElement('details');
+      card.className = 'provider-row';
+      card.setAttribute('data-provider', provider.id);
+      const head = el(doc, 'summary', { class: 'provider-summary' });
+      const identity = el(doc, 'div', { class: 'provider-identity' });
+      identity.append(el(doc, 'h2', { class: 'provider-name' }), el(doc, 'p', { class: 'provider-counts' }));
+      const expand = el(doc, 'span', { class: 'provider-expand', 'aria-hidden': 'true' });
+      expand.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m7 9 5 5 5-5"/></svg>';
+      head.append(el(doc, 'span', { class: 'provider-icon', 'aria-hidden': 'true' }), identity,
+        el(doc, 'div', { class: 'provider-meter' }), el(doc, 'span', { class: 'provider-status' }), expand);
+      const details = el(doc, 'div', { class: 'provider-details' });
+      const actions = el(doc, 'div', { class: 'provider-actions' });
+      const refresh = el(doc, 'button', { type: 'button', 'data-action': 'refresh-provider' }, '刷新');
+      const settings = el(doc, 'button', { type: 'button', 'data-action': 'settings' }, '去设置');
       refresh.addEventListener('click', () => { void load(provider.id); });
       settings.addEventListener('click', () => navigate?.('sources'));
       actions.append(refresh, settings);
-      head.append(title, actions);
-      card.append(head, cardBody(doc, provider));
+      details.append(actions, el(doc, 'div', { 'data-body': '' }));
+      card.append(head, details);
       cards.set(provider.id, card);
-    } else {
-      card.querySelector('h3').textContent = provider.label;
-      const oldDetails = card.querySelector('details');
-      const body = cardBody(doc, provider);
-      if (oldDetails?.open && body.querySelector('details')) body.querySelector('details').open = true;
-      card.querySelector('.usage-card-body').replaceWith(body);
     }
-    const target = root.querySelector(provider.balance_supported ? '[data-providers]' : '[data-local-providers]');
+    card.querySelector('.provider-icon').textContent = SOURCE_CATALOG.sources.find(source => source.plugin === provider.id)?.mark
+      || provider.label.slice(0, 1);
+    card.querySelector('.provider-name').textContent = provider.label;
+    const accounts = visibleAccounts(provider);
+    card.querySelector('.provider-counts').textContent =
+      `${accounts.length} 个账号 · ${accounts.reduce((sum, account) => sum + account.keys.length, 0)} 个 Key`;
+    const meter = card.querySelector('.provider-meter');
+    const status = card.querySelector('.provider-status');
+    meter.replaceChildren();
+    status.replaceChildren();
+    if (provider.balance_supported) {
+      const total = createMeter(doc, provider.total, { label: `${provider.label}合计剩余额度` });
+      // The summary has one reminder, selected by Core's alert priority.
+      total.querySelector('.meter-state')?.remove();
+      meter.append(total);
+      const alert = createAlertBadge(doc, provider.alert);
+      if (alert) status.append(alert);
+      else {
+        const reset = provider.current.map(row => row.resets_at).filter(value => Number.isFinite(Date.parse(value)))
+          .sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+        status.textContent = provider.current.some(row => row.status === 'error') ? '查询失败'
+          : !provider.current.length ? '数据不足' : `重置时间：${timestamp(reset)}`;
+      }
+    } else {
+      const { search, scrape } = provider.calls.today;
+      const today = typeof search === 'number' && typeof scrape === 'number' ? search + scrape : null;
+      status.textContent = `无余额接口 · 今天调用 ${amount(today)} 次`;
+    }
+    card.querySelector('[data-action="refresh-provider"]').setAttribute('aria-label', `刷新 ${provider.label} 用量`);
+    card.querySelector('[data-action="settings"]').setAttribute('aria-label', `${provider.label}：去设置`);
+    card.querySelector('[data-body]').replaceWith(cardBody(doc, provider));
+    const target = root.querySelector('[data-providers]');
     if (card.parentNode !== target) target.append(card);
   }
 
@@ -236,12 +278,10 @@ export async function mountUsage(root, api, { number = '05', signal, navigate } 
       notice.textContent = updateRequired ? (view.message || '请更新 CLI 后查看用量。')
         : view.usage_error || (!view.providers.length ? '暂无服务商用量信息。' : '');
       if (!provider || updateRequired) {
-        cards.clear();
-        root.querySelector('[data-providers]').replaceChildren();
-        root.querySelector('[data-local-providers]').replaceChildren();
+        const ids = new Set(updateRequired ? [] : view.providers.map(item => item.id));
+        for (const [id, card] of cards) if (!ids.has(id)) card.remove();
       }
       if (!updateRequired) for (const item of view.providers) renderCard(item);
-      root.querySelector('[data-local-only]').toggleAttribute('hidden', !root.querySelector('[data-local-providers]').children.length);
       root.querySelector('[data-updated]').textContent = `更新时间：${updateRequired ? '未知' : timestamp(new Date().toISOString())}`;
     } catch (error) {
       if (!disposed) showError(errorSlot, error, '用量读取失败，请重试。');
