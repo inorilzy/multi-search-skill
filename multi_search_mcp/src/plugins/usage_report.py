@@ -1,4 +1,14 @@
-"""Local usage views, quota pace and per-scope totals shared by CLI consumers."""
+"""Local usage views, quota pace and per-scope totals shared by CLI consumers.
+
+Account keys contain search-key fingerprints and their reports (None on a cache
+miss); balance-only credentials contribute reports to totals, never key counts.
+The additive ``total`` keeps remaining/limit/percent/unit/relative on every row.
+For one unit, shared account/team quotas take precedence over key quotas and
+retain the latest observation instead of adding duplicates. Key quotas add;
+unknown values propagate. Mixed units return an unknown total, not a sum.
+Without a limit, percent uses the cycle's historical maximum (relative=True);
+without history there is no percent. Existing ``current``/``totals`` stay intact.
+"""
 from __future__ import annotations
 
 import calendar
@@ -8,7 +18,7 @@ from typing import Any
 
 from ..state.key_state import key_fingerprint
 from ..support.secrets import _iter_secret_strings
-from . import balance, oauth_store, usage_store
+from . import accounts, balance, oauth_store, usage_store
 from .cache import BalanceCache
 
 
@@ -113,6 +123,83 @@ def _totals(current: list[dict]) -> list[dict]:
     return totals
 
 
+def _total(current: list[dict], history: list[dict], now: datetime, *, missing: bool = False) -> dict:
+    total = dict(remaining=None, limit=None, percent=None, unit=None, relative=False)
+    if not current or len({row["unit"] for row in current}) != 1:
+        return total
+    shared = [row for row in current if row["scope"] in {"team", "account"}]
+    selected = [max(shared, key=lambda row: _moment(row["fetched_at"]))] if shared else current
+    values = _totals(selected)[0]
+    if values["remaining"] is None and values["limit"] is None:
+        return total
+    total.update({field: values[field] for field in ("remaining", "limit", "unit")})
+    if missing and not shared:
+        total.update(remaining=None, limit=None)
+        return total
+    denominator = total["limit"]
+    if denominator is None:
+        total["relative"] = True
+        maxima = []
+        for report in selected:
+            start = _cycle_start(report, now)
+            points = [row["remaining"] for row in history
+                      if row["scope"] == report["scope"] and row["unit"] == report["unit"]
+                      and (shared or row["key_fingerprint"] == report["key_fingerprint"])
+                      and start <= _moment(row["fetched_at"]) <= now and row["remaining"] is not None]
+            if not points:
+                break
+            maxima.append(max(points))
+        denominator = sum(maxima) if len(maxima) == len(selected) else None
+    if total["remaining"] is not None and denominator is not None and denominator > 0:
+        total["percent"] = max(0, min(100, total["remaining"] / denominator * 100))
+    return total
+
+
+def _account_views(plugin, current: list[dict], key_map: dict, history: list[dict], now: datetime) -> list[dict]:
+    groups = accounts.list_accounts(plugin.id)[plugin.id]
+    claimed = {fp for group in groups for fp in group["keys"]}
+    # Environment/injected keys have no persistent owner, so remain virtual.
+    groups[0]["keys"].extend(fp for key in balance._credential_values(key_map.get(plugin.key_provider))
+                             if (fp := key_fingerprint(key)) not in claimed)
+    claimed_reports = {fp for group in groups
+                       for fp in [*group["keys"], *group["balance_credentials"].values()]}
+    views = []
+    for group in groups:
+        fingerprints = {*group["keys"], *group["balance_credentials"].values()}
+        reports = [row for row in current if row["key_fingerprint"] in fingerprints
+                   or (group["id"] == accounts.DEFAULT_ACCOUNT_ID
+                       and row["key_fingerprint"] not in claimed_reports)]
+        keys = []
+        for fp in group["keys"]:
+            candidates = [row for row in reports if row["key_fingerprint"] == fp]
+            report = max(candidates, key=lambda row: (row["scope"] == "key", _moment(row["fetched_at"])),
+                         default=None)
+            keys.append({"key_fingerprint": fp, "report": report})
+        missing = plugin.balance_credential == plugin.key_provider and any(row["report"] is None for row in keys)
+        report_fps = {row["key_fingerprint"] for row in reports}
+        account_history = [row for row in history if row["key_fingerprint"] in report_fps]
+        views.append({**{field: group[field] for field in ("id", "name", "source")}, "keys": keys,
+                      "total": _total(reports, account_history, now, missing=missing)})
+    return views
+
+
+def _alert(total: dict, pace: list[dict], current: list[dict], account_views: list[dict], plugin) -> str | None:
+    percent = total["percent"]
+    if percent is not None and percent < 5:
+        return "critical"
+    active = {(row["key_fingerprint"], row["scope"], row["unit"]) for row in current}
+    if any(row["lasts_until_reset"] is False and
+           (row["key_fingerprint"], row["scope"], row["unit"]) in active for row in pace):
+        return "wont_last"
+    if percent is not None and percent < 20:
+        return "low"
+    if any(row["status"] == "needs_credential" for row in current) or any(
+        plugin.key_provider and row["source"] == "oauth" and not row["keys"] for row in account_views
+    ):
+        return "needs_credential"
+    return None
+
+
 def _calls(daily: list[dict], now: datetime, days: int, unavailable: bool) -> dict:
     today = now.astimezone().date()
     buckets: dict[str, dict] = {}
@@ -172,9 +259,9 @@ def collect_usage(provider_ids=None, *, days: int = 30, refresh: bool = False,
     if moment.tzinfo is None:
         moment = moment.astimezone()
     plugins = balance._select_plugins(provider_ids)
-    needs_keys = any(plugin.balance is not None and (plugin.balance_credential or plugin.key_provider)
-                     for plugin in plugins)
-    key_map = dict(keys) if keys is not None else dict(balance.load_keys()) if needs_keys else {}
+    key_map = dict(keys) if keys is not None else dict(balance.load_keys())
+    # Account IDs and fingerprints are public metadata, not credential values.
+    key_map.pop("accounts", None)
     try:
         for entry, token in oauth_store.balance_credentials().items():
             if not key_map.get(entry):
@@ -195,13 +282,23 @@ def collect_usage(provider_ids=None, *, days: int = 30, refresh: bool = False,
     for provider in providers:
         history = [row for row in snapshot.history if row["provider"] == provider["id"]]
         current = provider["reports"]
+        plugin = next(plugin for plugin in plugins if plugin.id == provider["id"])
+        account_views = _account_views(plugin, current, key_map, history, moment)
+        missing = plugin.balance_credential == plugin.key_provider and any(
+            key["report"] is None for account in account_views for key in account["keys"]
+        )
+        total = _total(current, history, moment, missing=missing)
+        pace = _pace(history, current, moment)
         payload["providers"].append({
             **{field: provider[field] for field in ("id", "label", "balance_supported", "balance_note")},
             "current": current,
             "totals": _totals(current),
             "history": [{field: row[field] for field in _HISTORY_FIELDS} for row in history
                         if _moment(row["fetched_at"]) >= moment - timedelta(days=days)],
-            "pace": _pace(history, current, moment),
+            "pace": pace,
+            "accounts": account_views,
+            "total": total,
+            "alert": _alert(total, pace, current, account_views, plugin),
             "calls": _calls([row for row in snapshot.daily if row["provider"] == provider["id"]],
                             moment, days, snapshot.usage_error is not None),
         })
@@ -238,6 +335,25 @@ def render_usage_text(payload: dict) -> str:
                     lines.append(f"重置 {report['resets_at']}")
                 if report.get("status") != "ok":
                     lines.append(report.get("message") or "余额未知")
+        number = lambda value: "未知" if value is None else f"{value:g}"
+        for account in provider.get("accounts", []):
+            total = account["total"]
+            if (account["id"] == accounts.DEFAULT_ACCOUNT_ID and not account["keys"]
+                    and total["unit"] is None and len(provider["accounts"]) > 1):
+                continue
+            amount = f"剩余 {number(total['remaining'])}/{number(total['limit'])} {total['unit'] or ''}".rstrip()
+            if total["percent"] is not None:
+                amount += f" · {total['percent']:g}%" + ("（相对值）" if total["relative"] else "")
+            lines.append(f"账号 {account['name']}（{account['id']}）：{amount}")
+            for key in account["keys"]:
+                report = key["report"]
+                detail = (f"剩余 {number(report['remaining'])}/{number(report['limit'])} {report['unit']}"
+                          if report else "余额未知（无缓存）")
+                lines.append(f"  Key {key['key_fingerprint']}：{detail}")
+        alerts = {"critical": "余额严重不足", "wont_last": "撑不到重置", "low": "余额偏低",
+                  "needs_credential": "需要凭据"}
+        if provider.get("alert"):
+            lines.append(f"提醒：{alerts[provider['alert']]}")
         for pace in provider["pace"]:
             identity = f"{pace.get('key_fingerprint') or '匿名'} · {pace['scope']} · {pace['unit']}"
             if pace["reason"]:

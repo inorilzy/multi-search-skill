@@ -91,7 +91,8 @@ class UsageCliTests(unittest.TestCase):
         self.assertEqual(payload["retention_days"], 30)
         provider = payload["providers"][0]
         self.assertEqual(set(provider), {"id", "label", "balance_supported", "balance_note",
-                                        "current", "history", "pace", "calls", "totals"})
+                                        "current", "history", "pace", "calls", "totals",
+                                        "accounts", "total", "alert"})
         self.assertEqual(provider["current"], [report().to_dict()])
         self.assertEqual(set(provider["history"][0]),
                          {"key_fingerprint", "scope", "unit", "remaining", "limit", "fetched_at"})
