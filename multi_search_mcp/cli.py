@@ -217,6 +217,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     balance_parser.set_defaults(handler=_handle_balance)
 
+    usage_parser = subparsers.add_parser(
+        "usage", help="show local balance history, quota pace and call counts",
+    )
+    usage_parser.add_argument(
+        "--provider", action="append", dest="providers", default=[],
+        help="only this provider id (repeatable)",
+    )
+    usage_parser.add_argument("--days", type=_bounded_int(1, 30), default=30)
+    usage_parser.add_argument("--format", choices=("json", "text"), default="json")
+    usage_parser.add_argument(
+        "--refresh", action="store_true",
+        help="update balances while honoring each provider's cache TTL",
+    )
+    usage_parser.set_defaults(handler=_handle_usage)
+
     login_parser = subparsers.add_parser(
         "login",
         help="save a provider credential (API key from stdin or OAuth browser login)",
@@ -579,6 +594,20 @@ def _handle_balance(args: argparse.Namespace) -> dict[str, Any]:
         raise CLIUsageError(str(exc)) from exc
 
 
+def _handle_usage(args: argparse.Namespace) -> dict[str, Any]:
+    from .src.plugins.balance import UnknownProviderError
+    from .src.plugins.usage_report import collect_usage
+
+    try:
+        return collect_usage(
+            provider_ids=list(args.providers or []) or None,
+            days=args.days,
+            refresh=args.refresh,
+        )
+    except UnknownProviderError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
 def _render_login_event(event: dict[str, Any]) -> str:
     kind = event.get("event")
     if kind == "open_url":
@@ -724,7 +753,11 @@ def _write_payload(payload: Any, output_format: str, stream: TextIO) -> None:
     elif output_format == "markdown":
         stream.write(_render_markdown(payload))
     elif output_format == "text":
-        if isinstance(payload, dict) and "providers" in payload:
+        if isinstance(payload, dict) and "providers" in payload and "retention_days" in payload:
+            from .src.plugins.usage_report import render_usage_text
+
+            stream.write(render_usage_text(payload))
+        elif isinstance(payload, dict) and "providers" in payload:
             stream.write(_render_balance_text(payload))
         else:
             stream.write(_render_human(payload))
