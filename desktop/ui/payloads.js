@@ -12,6 +12,7 @@
 //   'b'  = boolean
 //   'sn' = string | null
 //   'nn' = number | null
+//   'bn' = boolean | null
 //   'sa' = Array<string>
 //   'san' = Array<string> | null
 //   'a'  = Array<unknown>     (any array, contents untyped)
@@ -98,6 +99,17 @@ export const schemas = {
     balance_supported: 'b', balance_note: 's', reports: 'BalanceReport[]',
   }),
   BalanceView: schema({ schema_version: 'n', providers: 'BalanceProvider[]' }),
+  UsageHistoryPoint: schema({ key_fingerprint: 'sn', scope: 's', unit: 's', remaining: 'nn', limit: 'nn', fetched_at: 's' }),
+  UsagePace: schema({ key_fingerprint: 'sn', scope: 's', unit: 's', rate_per_day: 'nn', projected_empty_at: 'sn', lasts_until_reset: 'bn', reason: 'sn' }),
+  UsageTotal: schema({ scope: 's', unit: 's', key_count: 'n', message: 's', remaining: 'nn', limit: 'nn' }),
+  UsageCallCounts: schema({ search: 'no', scrape: 'no', failures: 'no' }),
+  UsageDailyCalls: schema({ day: 's', search: 'n', scrape: 'n', failures: 'n' }),
+  UsageCalls: schema({ today: 'UsageCallCounts', last_7_days: 'UsageCallCounts', daily: 'UsageDailyCalls[]' }),
+  UsageProvider: schema({
+    id: 's', label: 's', balance_supported: 'b', balance_note: 's', current: 'BalanceReport[]',
+    totals: 'UsageTotal[]', history: 'UsageHistoryPoint[]', pace: 'UsagePace[]', calls: 'UsageCalls',
+  }),
+  UsageView: schema({ status: 's', message: 's', schema_version: 'n', retention_days: 'n', providers: 'UsageProvider[]', usage_error: 'so' }),
   ProviderInfo: schema({
     source: 's', cliSource: 's', provider: 'sn', label: 's',
     keyed: 'b', search: 'b', cookie: 'b', aliases: 'sa',
@@ -151,6 +163,7 @@ function typeOk(tag, value) {
   if (tag === 'b') return typeof value === 'boolean';
   if (tag === 'sn') return value === null || typeof value === 'string';
   if (tag === 'nn') return value === null || (typeof value === 'number' && Number.isFinite(value));
+  if (tag === 'bn') return value === null || typeof value === 'boolean';
   if (tag === 'sa') return Array.isArray(value) && value.every(v => typeof v === 'string');
   if (tag === 'san') return value === null || typeOk('sa', value);
   if (tag === 'a') return Array.isArray(value);

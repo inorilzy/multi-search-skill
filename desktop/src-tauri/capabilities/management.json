@@ -47,6 +47,7 @@
     "allow-scrape-backend-timeout-save",
     "allow-provider-list",
     "allow-balance-view",
+    "allow-usage-view",
     "allow-scrape-memory-view",
     "allow-scrape-memory-pin",
     "allow-scrape-memory-reset"

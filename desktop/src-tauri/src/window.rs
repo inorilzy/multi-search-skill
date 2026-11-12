@@ -539,6 +539,20 @@ async fn balance_view(
     .await
 }
 
+#[tauri::command]
+async fn usage_view(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    provider: Option<String>,
+    refresh: bool,
+) -> Result<crate::usage::UsageView, String> {
+    let manager = manager.inner().clone();
+    offload(
+        move || manager.usage_view(provider.as_deref(), refresh),
+        "usage_view_failed",
+    )
+    .await
+}
+
 /// Provider manifest for the sources/settings pages. Returns the same rows the
 /// desktop uses internally; the UI keeps no copy of this table.
 #[tauri::command]
@@ -716,6 +730,7 @@ pub fn run() {
             scrape_backend_timeout_save,
             provider_list,
             balance_view,
+            usage_view,
             scrape_memory_view,
             scrape_memory_pin,
             scrape_memory_reset

@@ -25,6 +25,7 @@ export interface CommandContracts {
   log_viewer_open: { args: Record<string, never>; result: T.LogViewerInfo };
   scrape_backend_timeout_save: { args: ScrapeBackendTimeoutSaveArgs; result: T.SettingsView };
   balance_view: { args: { provider: string | null; refresh: boolean }; result: T.BalanceView };
+  usage_view: { args: { provider: string | null; refresh: boolean }; result: T.UsageView };
   oauth_login_start: { args: { provider: string }; result: number };
   oauth_login_poll: { args: { id: number }; result: T.OAuthLoginStatus };
   oauth_login_cancel: { args: { id: number }; result: T.OAuthLoginStatus };
@@ -60,6 +61,14 @@ export interface ContractMap {
   BalanceReport: T.BalanceReport;
   BalanceProvider: T.BalanceProvider;
   BalanceView: T.BalanceView;
+  UsageHistoryPoint: T.UsageHistoryPoint;
+  UsagePace: T.UsagePace;
+  UsageTotal: T.UsageTotal;
+  UsageCallCounts: T.UsageCallCounts;
+  UsageDailyCalls: T.UsageDailyCalls;
+  UsageCalls: T.UsageCalls;
+  UsageProvider: T.UsageProvider;
+  UsageView: T.UsageView;
   ProviderInfo: T.ProviderInfo;
   RouteConfig: T.RouteConfig;
   RankingInput: T.RankingInput;

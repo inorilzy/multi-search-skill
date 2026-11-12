@@ -147,6 +147,11 @@ name = "balance"
 path = "tests/balance.rs"
 required-features = ["test-fixtures"]
 
+[[test]]
+name = "usage"
+path = "tests/usage.rs"
+required-features = ["test-fixtures"]
+
 [[bin]]
 name = "multi-search-desktop"
 path = "src/main.rs"

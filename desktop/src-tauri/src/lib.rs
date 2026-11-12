@@ -28,6 +28,7 @@ mod skill_common;
 pub mod skill_manage;
 pub mod source_catalog;
 pub mod user_path;
+pub mod usage;
 mod windows_util;
 #[cfg(feature = "native-window")]
 mod window;
@@ -69,6 +70,10 @@ pub mod contract {
         InstallState, RemoveOutcome, RemovePlan, SkillStatus, UpdateOutcome, UpdatePlan,
     };
     pub use crate::user_path::{PathPlan, PathReceipt, PathValue};
+    pub use crate::usage::{
+        UsageCallCounts, UsageCalls, UsageDailyCalls, UsageHistoryPoint, UsagePace,
+        UsageProvider, UsageTotal, UsageView,
+    };
 }
 
 /// Test seam for the settings writer. Not a supported public API.
@@ -217,6 +222,21 @@ pub mod balance_fixture {
         timeout: Duration,
     ) -> Result<BalanceView, String> {
         crate::balance::view_with_timeout(environment, cli, provider, refresh, timeout)
+    }
+}
+
+/// Test seam for the usage process deadline. Not a supported public API.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub mod usage_fixture {
+    pub fn view_with_timeout(
+        environment: &crate::RuntimeEnvironment,
+        cli: &std::path::Path,
+        provider: Option<&str>,
+        refresh: bool,
+        timeout: std::time::Duration,
+    ) -> Result<crate::usage::UsageView, String> {
+        crate::usage::view_with_timeout(environment, cli, provider, refresh, timeout)
     }
 }
 

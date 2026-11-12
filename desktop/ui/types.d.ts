@@ -410,3 +410,22 @@ export type UpdatePlan = {
  * absent | current | unknown | ready | needs_confirmation, or a new value added later; UI must fall back to a raw string.
  */
 status: string, reason: string, state: InstallState, backup_required: boolean, modified_files: Array<string>, unknown_entries: Array<string>, can_update: boolean, };
+
+/**
+ * Core emits an empty object when the usage store cannot be read. Missing counts stay unknown.
+ */
+export type UsageCallCounts = { search?: number, scrape?: number, failures?: number, };
+
+export type UsageCalls = { today: UsageCallCounts, last_7_days: UsageCallCounts, daily: Array<UsageDailyCalls>, };
+
+export type UsageDailyCalls = { day: string, search: number, scrape: number, failures: number, };
+
+export type UsageHistoryPoint = { key_fingerprint: string | null, scope: string, unit: string, remaining: number | null, limit: number | null, fetched_at: string, };
+
+export type UsagePace = { key_fingerprint: string | null, scope: string, unit: string, rate_per_day: number | null, projected_empty_at: string | null, lasts_until_reset: boolean | null, reason: string | null, };
+
+export type UsageProvider = { id: string, label: string, balance_supported: boolean, balance_note: string, current: Array<BalanceReport>, totals: Array<UsageTotal>, history: Array<UsageHistoryPoint>, pace: Array<UsagePace>, calls: UsageCalls, };
+
+export type UsageTotal = { scope: string, unit: string, key_count: number, message: string, remaining: number | null, limit: number | null, };
+
+export type UsageView = { status: string, message: string, schema_version: number, retention_days: number, providers: Array<UsageProvider>, usage_error?: string, };
