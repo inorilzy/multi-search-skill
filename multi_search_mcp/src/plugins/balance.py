@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from ..state.key_state import key_fingerprint
-from ..state.keys import load_keys
+from ..state.keys import credential_entries, load_keys
 from ..support.auth import classify_error
 from ..support.concurrency import BoundedDaemonExecutor
 from ..support.models import (
@@ -372,7 +372,7 @@ def collect_balances(
                 key_map[entry] = token
     except oauth_store.OAuthStoreError:
         pass
-    known_secrets = list(_iter_secret_strings(key_map))
+    known_secrets = list(_iter_secret_strings(credential_entries(key_map)))
     try:
         known_secrets.extend(oauth_store.secret_values())
     except oauth_store.OAuthStoreError:
