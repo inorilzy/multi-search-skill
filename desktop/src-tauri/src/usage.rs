@@ -42,6 +42,36 @@ pub struct UsageTotal {
     pub limit: Option<f64>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct UsageQuotaTotal {
+    pub remaining: Option<f64>,
+    pub limit: Option<f64>,
+    pub percent: Option<f64>,
+    pub unit: Option<String>,
+    pub relative: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct UsageAccountKey {
+    pub key_fingerprint: String,
+    pub report: Option<BalanceReport>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export_to = "types.d.ts"))]
+pub struct UsageAccount {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub keys: Vec<UsageAccountKey>,
+    pub total: UsageQuotaTotal,
+}
+
 /// Core emits an empty object when the usage store cannot be read. Missing counts stay unknown.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -90,6 +120,9 @@ pub struct UsageProvider {
     pub history: Vec<UsageHistoryPoint>,
     pub pace: Vec<UsagePace>,
     pub calls: UsageCalls,
+    pub accounts: Vec<UsageAccount>,
+    pub total: UsageQuotaTotal,
+    pub alert: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -126,7 +159,22 @@ fn usage_args(provider: Option<&str>, refresh: bool) -> Vec<String> {
 }
 
 fn parse_usage_view(stdout: &str) -> Result<UsageView, String> {
-    let mut view: UsageView = serde_json::from_str(stdout.trim())
+    let payload: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|_| "CLI 未返回有效的用量结果。".to_string())?;
+    // CLI versions with usage but without account grouping need an upgrade as well.
+    if payload["schema_version"] == 1 && payload["providers"].as_array().is_some_and(|rows| {
+        rows.iter().any(|row| row.is_object() && ["accounts", "total", "alert"].iter().any(|field| row.get(field).is_none()))
+    }) {
+        return Ok(UsageView {
+            status: "cli_update_required".into(),
+            message: "当前 CLI 不支持账号用量，请更新 CLI 后重试。".into(),
+            schema_version: 1,
+            retention_days: 30,
+            providers: vec![],
+            usage_error: None,
+        });
+    }
+    let mut view: UsageView = serde_json::from_value(payload)
         .map_err(|_| "CLI 未返回有效的用量结果。".to_string())?;
     if view.schema_version != 1 {
         return Err("CLI 返回了不支持的用量结果版本。".into());

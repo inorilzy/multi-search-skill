@@ -99,6 +99,12 @@ export const schemas = {
     balance_supported: 'b', balance_note: 's', reports: 'BalanceReport[]',
   }),
   BalanceView: schema({ schema_version: 'n', providers: 'BalanceProvider[]' }),
+  ProviderAccount: schema({ id: 's', name: 's', source: 's', login_identity: 'so', keys: 'sa', balance_credentials: 'StringMap' }),
+  AccountsView: schema({ status: 's', message: 's', accounts: 'AccountMap' }),
+  AccountMutation: schema({ status: 's', message: 's', provider: 's', account: 'ProviderAccountN', removed: 'b' }),
+  UsageQuotaTotal: schema({ remaining: 'nn', limit: 'nn', percent: 'nn', unit: 'sn', relative: 'b' }),
+  UsageAccountKey: schema({ key_fingerprint: 's', report: 'BalanceReportN' }),
+  UsageAccount: schema({ id: 's', name: 's', source: 's', keys: 'UsageAccountKey[]', total: 'UsageQuotaTotal' }),
   UsageHistoryPoint: schema({ key_fingerprint: 'sn', scope: 's', unit: 's', remaining: 'nn', limit: 'nn', fetched_at: 's' }),
   UsagePace: schema({ key_fingerprint: 'sn', scope: 's', unit: 's', rate_per_day: 'nn', projected_empty_at: 'sn', lasts_until_reset: 'bn', reason: 'sn' }),
   UsageTotal: schema({ scope: 's', unit: 's', key_count: 'n', message: 's', remaining: 'nn', limit: 'nn' }),
@@ -108,6 +114,7 @@ export const schemas = {
   UsageProvider: schema({
     id: 's', label: 's', balance_supported: 'b', balance_note: 's', current: 'BalanceReport[]',
     totals: 'UsageTotal[]', history: 'UsageHistoryPoint[]', pace: 'UsagePace[]', calls: 'UsageCalls',
+    accounts: 'UsageAccount[]', total: 'UsageQuotaTotal', alert: 'sn',
   }),
   UsageView: schema({ status: 's', message: 's', schema_version: 'n', retention_days: 'n', providers: 'UsageProvider[]', usage_error: 'so' }),
   ProviderInfo: schema({
@@ -173,6 +180,10 @@ function typeOk(tag, value) {
   if (tag === 'so') return value === undefined || typeof value === 'string';
   if (tag === 'no') return value === undefined || (typeof value === 'number' && Number.isFinite(value));
   if (tag === 'bo') return value === undefined || typeof value === 'boolean';
+  if (tag === 'StringMap') return isRecord(value) && Object.values(value).every(v => typeof v === 'string');
+  if (tag === 'AccountMap') return isRecord(value) && Object.values(value).every(v => typeOk('ProviderAccount[]', v));
+  if (tag === 'ProviderAccountN') return value === null || checkShape(schemas.ProviderAccount.fields, value) === null;
+  if (tag === 'BalanceReportN') return value === null || checkShape(schemas.BalanceReport.fields, value) === null;
   if (tag === 'NumMap') return isRecord(value) && Object.values(value).every(v => typeof v === 'number' && Number.isFinite(v));
   if (tag === 'RouteMap') return isRecord(value) && Object.values(value).every(v => checkShape(schemas.RouteConfig.fields, v) === null);
   if (tag === 'RouteMapN') return value === null || typeOk('RouteMap', value);

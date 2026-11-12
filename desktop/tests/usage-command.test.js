@@ -5,6 +5,7 @@ import { check } from '../ui/payloads.js';
 
 const provider = () => ({
   id: 'tavily', label: 'Tavily', balance_supported: true, balance_note: '',
+  accounts: [], total: { remaining: null, limit: null, percent: null, unit: null, relative: false }, alert: null,
   current: [{
     provider: 'tavily', status: 'ok', scope: 'key', unit: 'credits', remaining: null,
     limit: 1000.5, used: 0, resets_at: null, period: 'month', key_fingerprint: null,

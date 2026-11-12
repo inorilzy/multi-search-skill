@@ -43,6 +43,11 @@ const ERROR_MESSAGES = {
   credential_application_failed: '无法打开系统浏览器，请重试或手动复制固定申请链接。',
   balance_view_failed: '余额读取失败，请重试。',
   usage_view_failed: '用量读取失败，请重试。',
+  accounts_view_failed: '账号读取失败，请重试。',
+  accounts_add_failed: '账号新建失败，请重试。',
+  accounts_rename_failed: '账号重命名失败，请重试。',
+  accounts_remove_failed: '账号删除失败，请重试。',
+  accounts_move_key_failed: 'Key 移动失败，请重试。',
   cookie_status_failed: 'Cookie 状态读取失败，请重试。',
   cookie_import_failed: 'Cookie 导入失败，原文件与已导入的 Cookie 都没有改动。',
   cookie_delete_failed: 'Cookie 删除失败，请重试。',
@@ -225,6 +230,11 @@ export function managementApi(invoke) {
     },
     balanceView: (provider, refresh = false) => call('balance_view', { provider: provider ?? null, refresh: Boolean(refresh) }, 'BalanceView'),
     usageView: (provider, refresh = false) => call('usage_view', { provider: provider ?? null, refresh: Boolean(refresh) }, 'UsageView'),
+    accountsView: provider => call('accounts_view', { provider: provider ?? null }, 'AccountsView'),
+    accountsAdd: (provider, name) => call('accounts_add', { provider, name }, 'AccountMutation'),
+    accountsRename: (provider, accountId, name) => call('accounts_rename', { provider, accountId, name }, 'AccountMutation'),
+    accountsRemove: (provider, accountId, deleteKeys = false) => call('accounts_remove', { provider, accountId, deleteKeys }, 'AccountMutation'),
+    accountsMoveKey: (provider, fingerprint, accountId) => call('accounts_move_key', { provider, fingerprint, accountId }, 'AccountMutation'),
     cookieStatus: () => call('cookie_status', undefined, 'CookieStatus'),
     cookieImport: async (path, confirmed) => {
       if (confirmed !== true || typeof path !== 'string' || !path.trim()) {

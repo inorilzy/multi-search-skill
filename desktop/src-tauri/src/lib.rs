@@ -1,4 +1,5 @@
 //! Native management boundary; the CLI remains the search implementation.
+pub mod accounts;
 pub mod balance;
 pub(crate) mod config_db;
 pub mod cookie;
@@ -48,6 +49,7 @@ pub use skill_manage::{
 /// the same Rust types each `#[tauri::command]` already returns or accepts;
 /// no new public surface is added beyond what the IPC layer exposes.
 pub mod contract {
+    pub use crate::accounts::{AccountMutation, AccountsView, ProviderAccount};
     pub use crate::balance::{BalanceAuthMethod, BalanceProvider, BalanceReport, BalanceView};
     pub use crate::cookie::CookieStatus;
     pub use crate::credential::CredentialStatus;
@@ -72,7 +74,7 @@ pub mod contract {
     pub use crate::user_path::{PathPlan, PathReceipt, PathValue};
     pub use crate::usage::{
         UsageCallCounts, UsageCalls, UsageDailyCalls, UsageHistoryPoint, UsagePace,
-        UsageProvider, UsageTotal, UsageView,
+        UsageAccount, UsageAccountKey, UsageProvider, UsageQuotaTotal, UsageTotal, UsageView,
     };
 }
 
@@ -222,6 +224,20 @@ pub mod balance_fixture {
         timeout: Duration,
     ) -> Result<BalanceView, String> {
         crate::balance::view_with_timeout(environment, cli, provider, refresh, timeout)
+    }
+}
+
+/// Test seam for the accounts process deadline. Not a supported public API.
+#[cfg(feature = "test-fixtures")]
+#[doc(hidden)]
+pub mod accounts_fixture {
+    pub fn view_with_timeout(
+        environment: &crate::RuntimeEnvironment,
+        cli: &std::path::Path,
+        provider: Option<&str>,
+        timeout: std::time::Duration,
+    ) -> Result<crate::accounts::AccountsView, String> {
+        crate::accounts::view_with_timeout(environment, cli, provider, timeout)
     }
 }
 

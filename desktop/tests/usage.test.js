@@ -22,6 +22,7 @@ const point = (overrides = {}) => ({
 const counts = { search: 4, scrape: 2, failures: 1 };
 const provider = (overrides = {}) => ({
   id: 'tavily', label: 'Tavily', balance_supported: true, balance_note: '', current: [report()],
+  accounts: [], total: { remaining: 600, limit: 1000, percent: 60, unit: 'credits', relative: false }, alert: null,
   totals: [{ scope: 'key', unit: 'credits', key_count: 1, remaining: 600, limit: 1000, message: '' }],
   history: [point(), point({ remaining: 600, fetched_at: '2026-11-12T00:00:00Z' })], pace: [pace()],
   calls: { today: counts, last_7_days: { search: 12, scrape: 5, failures: 2 }, daily: [] }, ...overrides,

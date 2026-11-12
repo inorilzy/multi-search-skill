@@ -48,6 +48,11 @@
     "allow-provider-list",
     "allow-balance-view",
     "allow-usage-view",
+    "allow-accounts-view",
+    "allow-accounts-add",
+    "allow-accounts-rename",
+    "allow-accounts-remove",
+    "allow-accounts-move-key",
     "allow-scrape-memory-view",
     "allow-scrape-memory-pin",
     "allow-scrape-memory-reset"
