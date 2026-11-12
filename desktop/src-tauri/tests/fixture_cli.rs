@@ -161,6 +161,26 @@ fn main() {
         }
         return;
     }
+    if args.first().map(String::as_str) == Some("accounts") {
+        match env::var("FIXTURE_ACCOUNTS").as_deref() {
+            Ok("hang") => thread::sleep(Duration::from_secs(60)),
+            Ok("legacy") => {
+                eprintln!("usage error: argument command: invalid choice: 'accounts'");
+                std::process::exit(2);
+            }
+            Ok("failure") => {
+                eprintln!("usage error: cannot read configuration");
+                std::process::exit(1);
+            }
+            Ok("invalid-option") => {
+                eprintln!("usage error: unrecognized arguments: --format");
+                std::process::exit(2);
+            }
+            Ok("truncated") => println!("{}", "x".repeat(5 * 1024 * 1024)),
+            _ => println!("{}", env::var("FIXTURE_ACCOUNTS_JSON").unwrap_or_else(|_| r#"{"accounts":{}}"#.into())),
+        }
+        return;
+    }
     if args.first().map(String::as_str) == Some("usage") {
         match env::var("FIXTURE_USAGE").as_deref() {
             Ok("hang") => thread::sleep(Duration::from_secs(60)),

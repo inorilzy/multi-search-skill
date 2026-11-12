@@ -553,6 +553,58 @@ async fn usage_view(
     .await
 }
 
+#[tauri::command]
+async fn accounts_view(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    provider: Option<String>,
+) -> Result<crate::accounts::AccountsView, String> {
+    let manager = manager.inner().clone();
+    offload(move || manager.accounts_view(provider.as_deref()), "accounts_view_failed").await
+}
+
+#[tauri::command]
+async fn accounts_add(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    provider: String,
+    name: String,
+) -> Result<crate::accounts::AccountMutation, String> {
+    let manager = manager.inner().clone();
+    offload(move || manager.accounts_add(&provider, &name), "accounts_add_failed").await
+}
+
+#[tauri::command]
+async fn accounts_rename(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    provider: String,
+    account_id: String,
+    name: String,
+) -> Result<crate::accounts::AccountMutation, String> {
+    let manager = manager.inner().clone();
+    offload(move || manager.accounts_rename(&provider, &account_id, &name), "accounts_rename_failed").await
+}
+
+#[tauri::command]
+async fn accounts_remove(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    provider: String,
+    account_id: String,
+    delete_keys: bool,
+) -> Result<crate::accounts::AccountMutation, String> {
+    let manager = manager.inner().clone();
+    offload(move || manager.accounts_remove(&provider, &account_id, delete_keys), "accounts_remove_failed").await
+}
+
+#[tauri::command]
+async fn accounts_move_key(
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    provider: String,
+    fingerprint: String,
+    account_id: String,
+) -> Result<crate::accounts::AccountMutation, String> {
+    let manager = manager.inner().clone();
+    offload(move || manager.accounts_move_key(&provider, &fingerprint, &account_id), "accounts_move_key_failed").await
+}
+
 /// Provider manifest for the sources/settings pages. Returns the same rows the
 /// desktop uses internally; the UI keeps no copy of this table.
 #[tauri::command]
@@ -731,6 +783,11 @@ pub fn run() {
             provider_list,
             balance_view,
             usage_view,
+            accounts_view,
+            accounts_add,
+            accounts_rename,
+            accounts_remove,
+            accounts_move_key,
             scrape_memory_view,
             scrape_memory_pin,
             scrape_memory_reset

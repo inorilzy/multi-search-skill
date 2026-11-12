@@ -77,6 +77,12 @@ macro_rules! for_each_contract_type {
             contract::BalanceReport,
             contract::BalanceProvider,
             contract::BalanceView,
+            contract::ProviderAccount,
+            contract::AccountsView,
+            contract::AccountMutation,
+            contract::UsageQuotaTotal,
+            contract::UsageAccountKey,
+            contract::UsageAccount,
             contract::UsageHistoryPoint,
             contract::UsagePace,
             contract::UsageTotal,
@@ -257,7 +263,11 @@ fn normalise_ts_type(ty: &str) -> String {
             let inner = ty
                 .trim_start_matches("{ [key in string]: ")
                 .trim_end_matches(" }");
-            if inner == "number" {
+            if inner == "string" {
+                "StringMap".into()
+            } else if inner == "Array<ProviderAccount>" {
+                "AccountMap".into()
+            } else if inner == "number" {
                 "NumMap".into()
             } else if inner == "RouteConfig" {
                 "RouteMap".into()
@@ -291,6 +301,8 @@ fn normalise_js_tag(tag: &str) -> String {
         "xn" => "x|null".into(),
         "RouteMapN" => "RouteMap|null".into(),
         "RankingInputN" => "RankingInput|null".into(),
+        "ProviderAccountN" => "ProviderAccount|null".into(),
+        "BalanceReportN" => "BalanceReport|null".into(),
         // Compound type names are quoted in payloads.js (`'Discovery'`).
         other => other.to_string(),
     }

@@ -148,6 +148,11 @@ path = "tests/balance.rs"
 required-features = ["test-fixtures"]
 
 [[test]]
+name = "accounts"
+path = "tests/accounts.rs"
+required-features = ["test-fixtures"]
+
+[[test]]
 name = "usage"
 path = "tests/usage.rs"
 required-features = ["test-fixtures"]

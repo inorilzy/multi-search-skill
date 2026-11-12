@@ -191,6 +191,38 @@ impl DesktopManager {
         crate::usage::view(&self.environment, &cli, provider.as_deref(), refresh)
     }
 
+    pub fn accounts_view(&self, provider: Option<&str>) -> Result<crate::accounts::AccountsView, String> {
+        let provider = crate::accounts::validate_provider(provider)?;
+        let cli = self.execution_cli()?;
+        crate::accounts::view(&self.environment, &cli, provider.as_deref())
+    }
+
+    pub fn accounts_add(&self, provider: &str, name: &str) -> Result<crate::accounts::AccountMutation, String> {
+        self.accounts_write(provider, crate::accounts::Action::Add { name })
+    }
+
+    pub fn accounts_rename(&self, provider: &str, account_id: &str, name: &str) -> Result<crate::accounts::AccountMutation, String> {
+        self.accounts_write(provider, crate::accounts::Action::Rename { account_id, name })
+    }
+
+    pub fn accounts_remove(&self, provider: &str, account_id: &str, delete_keys: bool) -> Result<crate::accounts::AccountMutation, String> {
+        self.accounts_write(provider, crate::accounts::Action::Remove { account_id, delete_keys })
+    }
+
+    pub fn accounts_move_key(&self, provider: &str, fingerprint: &str, account_id: &str) -> Result<crate::accounts::AccountMutation, String> {
+        self.accounts_write(provider, crate::accounts::Action::MoveKey { fingerprint, account_id })
+    }
+
+    fn accounts_write(&self, provider: &str, action: crate::accounts::Action<'_>) -> Result<crate::accounts::AccountMutation, String> {
+        // Validate all arguments before discovery, which itself probes the executable.
+        let args = crate::accounts::mutation_args(provider, action)?;
+        let _guard = self.mutation_guard()?;
+        let cli = self.execution_cli()?;
+        let result = crate::accounts::write(&self.environment, &cli, provider, &args)?;
+        if result.status == "ready" { self.invalidate_key_sources(); }
+        Ok(result)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn current_user_paths(&self) -> Vec<PathBuf> {
         self.discovery_view().current_user_paths()

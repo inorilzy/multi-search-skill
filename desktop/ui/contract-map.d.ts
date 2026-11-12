@@ -26,6 +26,11 @@ export interface CommandContracts {
   scrape_backend_timeout_save: { args: ScrapeBackendTimeoutSaveArgs; result: T.SettingsView };
   balance_view: { args: { provider: string | null; refresh: boolean }; result: T.BalanceView };
   usage_view: { args: { provider: string | null; refresh: boolean }; result: T.UsageView };
+  accounts_view: { args: { provider: string | null }; result: T.AccountsView };
+  accounts_add: { args: { provider: string; name: string }; result: T.AccountMutation };
+  accounts_rename: { args: { provider: string; accountId: string; name: string }; result: T.AccountMutation };
+  accounts_remove: { args: { provider: string; accountId: string; deleteKeys: boolean }; result: T.AccountMutation };
+  accounts_move_key: { args: { provider: string; fingerprint: string; accountId: string }; result: T.AccountMutation };
   oauth_login_start: { args: { provider: string }; result: number };
   oauth_login_poll: { args: { id: number }; result: T.OAuthLoginStatus };
   oauth_login_cancel: { args: { id: number }; result: T.OAuthLoginStatus };
@@ -61,6 +66,12 @@ export interface ContractMap {
   BalanceReport: T.BalanceReport;
   BalanceProvider: T.BalanceProvider;
   BalanceView: T.BalanceView;
+  ProviderAccount: T.ProviderAccount;
+  AccountsView: T.AccountsView;
+  AccountMutation: T.AccountMutation;
+  UsageQuotaTotal: T.UsageQuotaTotal;
+  UsageAccountKey: T.UsageAccountKey;
+  UsageAccount: T.UsageAccount;
   UsageHistoryPoint: T.UsageHistoryPoint;
   UsagePace: T.UsagePace;
   UsageTotal: T.UsageTotal;
