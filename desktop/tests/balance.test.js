@@ -150,7 +150,7 @@ test('Exa detail renders a balance-only admin editor and saves through exa_admin
   const admin = root.querySelector('.exa-admin-key');
   assert.ok(admin, 'Exa detail exposes the admin key section');
   assert.match(admin.textContent, /管理 Key（仅用于查余额）/);
-  assert.equal(root.querySelector('.balance-block') !== null, true, 'Exa detail also shows the balance block');
+  assert.equal(root.querySelector('.balance-block'), null, 'Exa keeps its admin editor without mounting a balance block');
 
   admin.querySelector('[data-action="add"]').click();
   const input = admin.querySelector('[data-draft-list] input');
@@ -164,7 +164,7 @@ test('Exa detail renders a balance-only admin editor and saves through exa_admin
   window.close();
 });
 
-test('search source details show a balance block for keyed and keyless providers', async () => {
+test('search source details omit the balance block for keyed and keyless providers', async () => {
   const { window, root } = setup();
   const overview = {
     source: '',
@@ -192,8 +192,8 @@ test('search source details show a balance block for keyed and keyless providers
   for (const name of ['tavily', 'hackernews']) {
     await mount(name);
     const detail = root.querySelector('[data-source-row][data-expanded="true"] [data-source-detail]');
-    assert.match(detail.textContent, /该服务商不支持余额查询/);
-    assert.ok(detail.querySelector('[data-action="refresh-balance"]'), `${name} exposes the refresh control`);
+    assert.doesNotMatch(detail.textContent, /该服务商不支持余额查询/);
+    assert.equal(detail.querySelector('[data-action="refresh-balance"]'), null, `${name} has no balance refresh control`);
   }
   mounted.dispose();
   window.close();

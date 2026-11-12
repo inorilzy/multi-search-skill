@@ -43,7 +43,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
     assert.ok(detailOf(root).querySelector('[data-action="add"]'), `${name} detail exposes its add-key control`);
   }
   assert.deepEqual(seen.slice(0, KEYED.length), KEYED, 'each keyed source is queried for the initial overview');
-  assert.deepEqual(seen.slice(KEYED.length + 2), KEYED, 'each keyed source refreshes when its detail opens');
+  assert.deepEqual(seen.slice(KEYED.length + 2), [...KEYED.slice(0, 5), 'exa_admin', ...KEYED.slice(5)], 'each keyed detail refreshes its own credentials, including Exa’s admin key');
 
   await pick(root, 'stackoverflow');
   assert.match(detailOf(root).textContent, /无需 API Key 也能使用/, 'an optional key says the source works without one');
