@@ -100,9 +100,10 @@ def prune(directory: Path, *, keep: int = KEEP_RUNS, max_age_days: float = KEEP_
 
 
 def disable() -> None:
-    global _path
+    global _path, _progress
     with _lock:
         _path = None
+        _progress = None
         _secrets.clear()
 
 
@@ -110,9 +111,92 @@ def enabled() -> bool:
     return _path is not None
 
 
+def wanted() -> bool:
+    """True when any sink (the file log or the progress stream) records events."""
+    return _path is not None or _progress is not None
+
+
+# Progress stream: the desktop's live search diagram. It carries a small,
+# fixed projection of a few event kinds (no page bodies, snippets or rows) so a
+# caller can show which stage a search is in without turning on the file log.
+PROGRESS_PREFIX = "@@progress "
+PROGRESS_MAX_EVENTS = 2_000
+_ERROR_CHARS = 200
+_progress = None
+_progress_count = 0
+_PROGRESS_FIELDS: dict[str, tuple[str, ...]] = {
+    "query_plan": ("primary_query", "executed_queries"),
+    "route": ("requested_route", "resolved_route", "route_sources", "active_sources",
+              "disabled_sources", "search_timeout_s"),
+    "provider_start": ("query", "source"),
+    "provider_done": ("query", "source", "elapsed_ms", "status", "hit_count", "error_count",
+                      "error_type"),
+    "provider_result": ("query", "source", "elapsed_ms", "status", "hit_count", "errors"),
+    "query_providers_done": ("query", "elapsed_ms"),
+    "search_stage_done": ("elapsed_ms", "raw_row_count", "fused_candidate_count"),
+    "rerank_start": ("model", "candidate_count"),
+    "rerank": ("elapsed_ms", "mode_requested", "mode_used", "fallback_reason", "model",
+               "candidate_count", "scored_count", "model_weight", "moves"),
+    "final_order": ("keys", "max_results_per_site"),
+    "scrape_chain": ("url", "order"),
+    "scrape_attempt": ("url", "backend", "status", "elapsed_ms", "content_length", "error"),
+    "fetch_source": ("source_id", "url", "how", "backend", "elapsed_ms", "content_length",
+                     "error"),
+    "search_response": ("elapsed_ms", "outcome", "result_count"),
+}
+
+
+def enable_progress(stream) -> None:
+    """Write the progress projection of later events to ``stream``, one line each."""
+    global _progress, _progress_count
+    with _lock:
+        _progress = stream
+        _progress_count = 0
+
+
+def _progress_record(kind: str, fields: dict) -> dict | None:
+    keep = _PROGRESS_FIELDS.get(kind)
+    if keep is None:
+        return None
+    record: dict[str, Any] = {"event": kind, "t_ms": elapsed_ms(_started)}
+    for name in keep:
+        value = fields.get(name)
+        if value is None:
+            continue
+        if name == "errors" and isinstance(value, list):
+            value = [
+                {"error_type": item.get("error_type"), "error": clip(item.get("error"), _ERROR_CHARS)}
+                for item in value if isinstance(item, dict)
+            ][:5]
+        elif name == "error":
+            value = clip(value, _ERROR_CHARS)
+        record[name] = value
+    return record
+
+
+def _emit_progress(kind: str, fields: dict, secrets: tuple[str, ...]) -> None:
+    global _progress_count
+    stream = _progress
+    if stream is None:
+        return
+    try:
+        record = _progress_record(kind, fields)
+        if record is None:
+            return
+        line = PROGRESS_PREFIX + json.dumps(_scrub(record, secrets), ensure_ascii=False, default=str)
+        with _lock:
+            if _progress_count >= PROGRESS_MAX_EVENTS:
+                return
+            _progress_count += 1
+            stream.write(line + "\n")
+            stream.flush()
+    except Exception:  # noqa: BLE001 - progress must never break a search
+        pass
+
+
 def add_secrets(values: Any) -> None:
     """Register runtime credential values so they are redacted from every line."""
-    if _path is None:
+    if not wanted():
         return
     with _lock:
         _secrets.update(_iter_secret_strings(values))
@@ -137,6 +221,10 @@ def elapsed_ms(started: float) -> int:
 
 
 def event(kind: str, **fields: Any) -> None:
+    if _progress is not None:
+        with _lock:
+            progress_secrets = tuple(_secrets)
+        _emit_progress(kind, fields, progress_secrets)
     path = _path
     if path is None:
         return
@@ -197,7 +285,7 @@ def row_summary(row: dict, *, snippet_chars: int = SNIPPET_CHARS) -> dict:
 
 def log_search_response(response: dict, started: float) -> None:
     """What the caller receives: ranked hits with snippets and body previews."""
-    if not enabled():
+    if not wanted():
         return
     previews = {
         row.get("source_id"): row for row in response.get("scrapes") or []
@@ -297,11 +385,66 @@ def log_fusion(hits: list[dict], raw_row_count: int, started: float) -> None:
         ])
 
 
-def log_rerank(hits: list[dict], meta: dict, started: float) -> None:
+def _rerank_scope(hits: list[dict], policy: Any) -> dict:
+    """Which model scores how many candidates; ``policy`` is a ``RerankPolicy``."""
+    if policy is None:
+        return {}
+    return {
+        "model": getattr(policy, "model", "") or None,
+        "candidate_count": min(len(hits), max(0, int(getattr(policy, "candidate_limit", 0) or 0))),
+    }
+
+
+# The desktop shows how the model moved each candidate; titles are clipped so a
+# 50-candidate rerank stays a small progress line.
+_MOVE_TITLE_CHARS = 120
+_rrf_order: list[Any] = []
+
+
+def _hit_key(hit: dict) -> Any:
+    return hit.get("source_id") or hit.get("url")
+
+
+def log_rerank_start(hits: list[dict], policy: Any) -> float:
+    """Mark the start of model scoring (the desktop diagram's rerank stage); returns its clock."""
+    global _rrf_order
+    # Remember the fused (RRF) order so the finished event can say what moved.
+    _rrf_order = [_hit_key(hit) for hit in hits] if wanted() else []
+    event("rerank_start", **_rerank_scope(hits, policy))
+    return time.monotonic()
+
+
+def _rerank_moves(hits: list[dict], blend: dict) -> list[dict]:
+    before = {key: index for index, key in enumerate(_rrf_order, 1)}
+    moves = []
+    for index, hit in enumerate(hits, 1):
+        parts = blend.get(str(hit.get("source_id"))) or {}
+        moves.append({
+            "key": _hit_key(hit), "rrf_rank": before.get(_hit_key(hit)), "rank": index,
+            "relevance_score": hit.get("relevance_score"),
+            "rrf_score": hit.get("rrf_score"),
+            "model_norm": parts.get("model_norm"), "rrf_norm": parts.get("rrf_norm"),
+            "blended": parts.get("blended"),
+            "title": clip(hit.get("title"), _MOVE_TITLE_CHARS), "url": hit.get("url"),
+        })
+    return moves
+
+
+def log_rerank(hits: list[dict], meta: dict, started: float, *, policy: Any = None) -> None:
+    blend = meta.get("blend") or {}
+    meta = {key: value for key, value in meta.items() if key != "blend"}
     event(
-        "rerank", elapsed_ms=elapsed_ms(started), **meta,
+        "rerank", elapsed_ms=elapsed_ms(started), **meta, **_rerank_scope(hits, policy),
+        scored_count=sum(1 for hit in hits if hit.get("relevance_score") is not None),
         order=[
             {"rank": index, "url": hit.get("url"), "relevance_score": hit.get("relevance_score")}
             for index, hit in enumerate(hits, 1)
         ],
+        moves=_rerank_moves(hits, blend),
     )
+
+
+def log_final_order(hits: list[dict], per_site: int | None = None) -> None:
+    """Which candidates made the returned list after the per-site cap (the diagram marks them)."""
+    if wanted():
+        event("final_order", keys=[_hit_key(hit) for hit in hits], max_results_per_site=per_site)

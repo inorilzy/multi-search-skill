@@ -24,7 +24,7 @@ function setup() {
 }
 test.afterEach(() => { try { current?.close(); } catch { /* already closed */ } current = null; });
 
-const RANKING_DEFAULTS = { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10 };
+const RANKING_DEFAULTS = { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10, model_weight: 0.5 };
 const KEY_NONE = { source: 'none', keys_file: '/home/u/.search-keys.json', env_var: 'SYSTEMONE_API_KEY' };
 const RANKING_BOUNDS_FIELDS = {
   ranking_candidate_limit_min: 10,
@@ -69,6 +69,7 @@ function view(overrides = {}) {
     scrape_backend_timeout_invalid: false,
     scrape_backend_timeout_min: 1,
     scrape_backend_timeout_max: 60,
+    max_results_per_site: 3, max_results_per_site_invalid: false, max_results_per_site_min: 1, max_results_per_site_max: 15,
     status: 'ok',
     message: '',
     ...overrides,
@@ -719,7 +720,7 @@ test('ranking toggle is off by default and saving without touching it submits an
   assert.equal(root.querySelector('[data-ranking-advanced]').hidden, true);
   root.querySelector('[data-settings-form]').dispatchEvent(new window.Event('submit', { cancelable: true }));
   await flush();
-  assert.deepEqual(sent.ranking, { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10 });
+  assert.deepEqual(sent.ranking, { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10, model_weight: 0.5 });
   window.close();
 });
 
@@ -757,10 +758,60 @@ test('enabling model rerank reveals Base URL, model, key and advanced fields and
   await flush();
   assert.deepEqual(sent.ranking, {
     mode: 'rrf_model', base_url: 'http://127.0.0.1:3425/v1', model: 'group/jev',
-    candidate_limit: 80, batch_size: 20, rerank_timeout: 9,
+    candidate_limit: 80, batch_size: 20, rerank_timeout: 9, model_weight: 0.5,
   });
   // The key is never part of the settings payload.
   assert.equal(JSON.stringify(sent).includes('api_key'), false);
+  window.close();
+});
+
+test('the per-site cap is kept as stored unless edited, and an edit is bounded', async () => {
+  const { window, root } = setup();
+  const sent = [];
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    settingsSave: async input => { sent.push(input); return savedView(input); },
+  }));
+  const field = root.querySelector('[data-field="max-per-site"]');
+  assert.equal(field.value, '3');
+  assert.equal(field.max, '15');
+  assert.match(root.querySelector('[data-info="max-per-site"]').textContent, /15 表示不限/);
+  submit(window, root);
+  await flush();
+  assert.equal(sent[0].max_results_per_site, null, 'untouched means keep the stored value');
+  field.value = '16';
+  field.dispatchEvent(new window.Event('input'));
+  submit(window, root);
+  await flush();
+  assert.equal(sent.length, 1, 'an out-of-range cap is refused locally');
+  assert.match(root.textContent, /同一网站最多条数必须是 1 到 15/);
+  field.value = '6';
+  field.dispatchEvent(new window.Event('input'));
+  submit(window, root);
+  await flush();
+  assert.equal(sent[1].max_results_per_site, 6);
+  window.close();
+});
+
+test('the Jev weight slider shows both shares and submits the chosen fraction', async () => {
+  const { window, root } = setup();
+  let sent = null;
+  await mountSettings(root, ({
+    settingsView: async () => view(),
+    settingsSave: async input => { sent = input; return savedView(input); },
+  }));
+  enable(window, root, {});
+  const slider = root.querySelector('[data-field="model-weight"]');
+  assert.equal(slider.disabled, false);
+  assert.equal(slider.value, '50');
+  assert.equal(root.querySelector('[data-info="ranking-weight"]').textContent, 'Jev 50% · RRF 50%');
+  assert.match(root.querySelector('.ranking-weight').textContent, /归一化/);
+  slider.value = '70';
+  slider.dispatchEvent(new window.Event('input'));
+  assert.equal(root.querySelector('[data-info="ranking-weight"]').textContent, 'Jev 70% · RRF 30%');
+  submit(window, root);
+  await flush();
+  assert.equal(sent.ranking.model_weight, 0.7);
   window.close();
 });
 

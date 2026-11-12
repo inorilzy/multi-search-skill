@@ -56,6 +56,11 @@ pub fn scrape_channels(name: &str) -> Vec<&'static str> {
 pub const SCRAPE_BACKEND_TIMEOUT_DEFAULT: u32 = 10;
 pub const SCRAPE_BACKEND_TIMEOUT_MIN: u32 = 1;
 pub const SCRAPE_BACKEND_TIMEOUT_MAX: u32 = 60;
+/// 最终 15 条里同一网站最多几条（设置键 `max_results_per_site`）；与 core 的
+/// `MAX_RESULTS_PER_SITE_DEFAULT/MIN/MAX` 一致。15 等于不限。
+pub const MAX_RESULTS_PER_SITE_DEFAULT: u32 = 3;
+pub const MAX_RESULTS_PER_SITE_MIN: u32 = 1;
+pub const MAX_RESULTS_PER_SITE_MAX: u32 = 15;
 
 /// 模型重排的可编辑边界（与 core 的 `ranking` 配置键一致）。
 /// mode 只允许 "rrf" / "rrf_model"；开启时必须同时配置 System One 的 base_url 与 model。
@@ -66,6 +71,10 @@ pub const RANKING_BATCH_SIZE_MIN: u32 = 1;
 pub const RANKING_BATCH_SIZE_MAX: u32 = 50;
 pub const RANKING_RERANK_TIMEOUT_MIN: u32 = 1;
 pub const RANKING_RERANK_TIMEOUT_MAX: u32 = 60;
+/// Jev（模型）在混合排序中的权重，其余给 RRF；与 core 的 `MODEL_WEIGHT_RANGE` 一致。
+pub const RANKING_MODEL_WEIGHT_MIN: f64 = 0.0;
+pub const RANKING_MODEL_WEIGHT_MAX: f64 = 1.0;
+pub const RANKING_MODEL_WEIGHT_DEFAULT: f64 = 0.5;
 /// 与 core 的 `BASE_URL_MAX` / `MODEL_MAX` 一致（按字符计）。
 pub const RANKING_BASE_URL_MAX: usize = 2048;
 pub const RANKING_MODEL_MAX: usize = 200;
@@ -84,7 +93,12 @@ fn default_ranking() -> RankingState {
         candidate_limit: 50,
         batch_size: 20,
         rerank_timeout: 10,
+        model_weight: RANKING_MODEL_WEIGHT_DEFAULT,
     }
+}
+
+fn model_weight_valid(value: f64) -> bool {
+    value.is_finite() && (RANKING_MODEL_WEIGHT_MIN..=RANKING_MODEL_WEIGHT_MAX).contains(&value)
 }
 
 /// 与 core `_valid_base_url` 同义：http(s)、有主机、无 query 与 fragment、前后无空白。
@@ -145,6 +159,17 @@ fn ranking_state(object: &Map<String, Value>) -> (RankingState, bool) {
             Some(value) => value.as_u64().map(Some),
         }
     }
+    fn fraction(map: &Map<String, Value>, key: &str) -> Option<Option<f64>> {
+        match map.get(key) {
+            None => Some(None),
+            // A JSON bool is not a number here, matching core's rejection of True/False.
+            Some(Value::Number(n)) => n.as_f64().map(Some),
+            Some(_) => None,
+        }
+    }
+    let Some(model_weight) = fraction(map, "model_weight") else {
+        return (defaults, true);
+    };
     let (Some(mode), Some(base_url), Some(model), Some(candidate_limit), Some(batch_size), Some(rerank_timeout)) = (
         text(map, "mode"),
         text(map, "base_url"),
@@ -162,6 +187,7 @@ fn ranking_state(object: &Map<String, Value>) -> (RankingState, bool) {
         candidate_limit: candidate_limit.unwrap_or(defaults.candidate_limit as u64).min(u32::MAX as u64) as u32,
         batch_size: batch_size.unwrap_or(defaults.batch_size as u64).min(u32::MAX as u64) as u32,
         rerank_timeout: rerank_timeout.unwrap_or(defaults.rerank_timeout as u64).min(u32::MAX as u64) as u32,
+        model_weight: model_weight.unwrap_or(defaults.model_weight),
     };
     let enabled = state.mode == "rrf_model";
     let valid = RANKING_MODES.contains(&state.mode.as_str())
@@ -170,7 +196,8 @@ fn ranking_state(object: &Map<String, Value>) -> (RankingState, bool) {
         && (!enabled || (!state.base_url.is_empty() && !state.model.is_empty()))
         && (RANKING_CANDIDATE_LIMIT_MIN..=RANKING_CANDIDATE_LIMIT_MAX).contains(&state.candidate_limit)
         && (RANKING_BATCH_SIZE_MIN..=RANKING_BATCH_SIZE_MAX).contains(&state.batch_size)
-        && (RANKING_RERANK_TIMEOUT_MIN..=RANKING_RERANK_TIMEOUT_MAX).contains(&state.rerank_timeout);
+        && (RANKING_RERANK_TIMEOUT_MIN..=RANKING_RERANK_TIMEOUT_MAX).contains(&state.rerank_timeout)
+        && model_weight_valid(state.model_weight);
     if valid {
         (state, false)
     } else {
@@ -264,6 +291,8 @@ pub struct RankingInput {
     pub candidate_limit: u32,
     pub batch_size: u32,
     pub rerank_timeout: u32,
+    /// Jev 分数在混合排序中的权重（0–1），RRF 占 `1 - model_weight`；两边先各自归一化。
+    pub model_weight: f64,
 }
 
 /// `SettingsView` 回传的当前生效 `ranking`；非法存储值被回退成出厂默认并伴随
@@ -278,6 +307,7 @@ pub struct RankingState {
     pub candidate_limit: u32,
     pub batch_size: u32,
     pub rerank_timeout: u32,
+    pub model_weight: f64,
 }
 
 /// System One 密钥的来源（只报来源，绝不回传值）。
@@ -393,6 +423,9 @@ pub struct SettingsInput {
     /// 不认识的同级键会在保存时丢弃。
     #[serde(default)]
     pub ranking: Option<RankingInput>,
+    /// `None` 表示本次保存不动 `max_results_per_site`。
+    #[serde(default)]
+    pub max_results_per_site: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -404,6 +437,7 @@ pub struct Validated {
     pub twitter_cookies_path: Option<String>,
     pub scrape_backends: Option<Vec<String>>,
     pub ranking: Option<RankingState>,
+    pub max_results_per_site: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -444,6 +478,12 @@ pub struct SettingsView {
     pub scrape_backend_timeout_invalid: bool,
     pub scrape_backend_timeout_min: u32,
     pub scrape_backend_timeout_max: u32,
+    /// 最终结果里同一网站最多几条（1–15，15 = 不限）；缺失时为出厂值 3。
+    pub max_results_per_site: u32,
+    /// 已保存的值不是 1–15 的整数；此时显示出厂值，CLI 会报配置错误。
+    pub max_results_per_site_invalid: bool,
+    pub max_results_per_site_min: u32,
+    pub max_results_per_site_max: u32,
     pub active_sources: Vec<String>,
     /// 当前生效的 `ranking` 块（缺失/非法时回退出厂默认）。
     pub ranking: RankingState,
@@ -653,6 +693,13 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
         }
     };
     let ranking = input.ranking.as_ref().map(validate_ranking).transpose()?;
+    if let Some(cap) = input.max_results_per_site {
+        if !(MAX_RESULTS_PER_SITE_MIN..=MAX_RESULTS_PER_SITE_MAX).contains(&cap) {
+            return Err(format!(
+                "同一网站最多条数需为 {MAX_RESULTS_PER_SITE_MIN} 到 {MAX_RESULTS_PER_SITE_MAX} 之间的整数"
+            ));
+        }
+    }
     Ok(Validated {
         route,
         timeout: input.timeout,
@@ -661,6 +708,7 @@ pub fn validate(input: &SettingsInput) -> Result<Validated, String> {
         twitter_cookies_path: twitter,
         scrape_backends,
         ranking,
+        max_results_per_site: input.max_results_per_site,
     })
 }
 
@@ -700,6 +748,9 @@ fn validate_ranking(input: &RankingInput) -> Result<RankingState, String> {
             "重排超时必须在 {RANKING_RERANK_TIMEOUT_MIN} 到 {RANKING_RERANK_TIMEOUT_MAX} 秒之间"
         ));
     }
+    if !model_weight_valid(input.model_weight) {
+        return Err("Jev 权重必须在 0 到 1 之间".into());
+    }
     Ok(RankingState {
         mode: mode.to_string(),
         base_url: base_url.to_string(),
@@ -707,6 +758,7 @@ fn validate_ranking(input: &RankingInput) -> Result<RankingState, String> {
         candidate_limit: input.candidate_limit,
         batch_size: input.batch_size,
         rerank_timeout: input.rerank_timeout,
+        model_weight: input.model_weight,
     })
 }
 
@@ -802,6 +854,9 @@ fn merge(mut map: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
     if let Some(timeout) = valid.timeout {
         map.insert("timeout".into(), Value::from(timeout));
     }
+    if let Some(cap) = valid.max_results_per_site {
+        map.insert("max_results_per_site".into(), Value::from(cap));
+    }
     // Known entries are replaced by the edit; entries the desktop does not recognise (a newer
     // CLI's source, or a non-string value) are never dropped.
     let unknown: Vec<Value> = map
@@ -846,6 +901,7 @@ fn merge(mut map: Map<String, Value>, valid: &Validated) -> Map<String, Value> {
         block.insert("candidate_limit".into(), Value::from(ranking.candidate_limit));
         block.insert("batch_size".into(), Value::from(ranking.batch_size));
         block.insert("rerank_timeout".into(), Value::from(ranking.rerank_timeout));
+        block.insert("model_weight".into(), Value::from(ranking.model_weight));
         map.insert("ranking".into(), Value::Object(block));
     }
     map
@@ -905,6 +961,18 @@ pub fn save_scrape_backends(environment: &RuntimeEnvironment, backends: &[String
         .map_err(|_| "保存失败，原设置未改变".to_string())?;
     transaction.commit().map_err(|_| "保存失败，原设置未改变".to_string())?;
     Ok(view(environment))
+}
+
+fn max_per_site_state(object: &Map<String, Value>) -> (u32, bool) {
+    match object.get("max_results_per_site") {
+        None | Some(Value::Null) => (MAX_RESULTS_PER_SITE_DEFAULT, false),
+        Some(value) => match value.as_u64() {
+            Some(cap) if (MAX_RESULTS_PER_SITE_MIN as u64..=MAX_RESULTS_PER_SITE_MAX as u64).contains(&cap) => {
+                (cap as u32, false)
+            }
+            _ => (MAX_RESULTS_PER_SITE_DEFAULT, true),
+        },
+    }
 }
 
 fn backend_timeout_state(object: &Map<String, Value>) -> (u32, bool) {
@@ -1006,6 +1074,10 @@ fn unreadable_view(path: Option<PathBuf>, environment: &RuntimeEnvironment) -> S
         scrape_backend_timeout_invalid: false,
         scrape_backend_timeout_min: SCRAPE_BACKEND_TIMEOUT_MIN,
         scrape_backend_timeout_max: SCRAPE_BACKEND_TIMEOUT_MAX,
+        max_results_per_site: MAX_RESULTS_PER_SITE_DEFAULT,
+        max_results_per_site_invalid: false,
+        max_results_per_site_min: MAX_RESULTS_PER_SITE_MIN,
+        max_results_per_site_max: MAX_RESULTS_PER_SITE_MAX,
         active_sources: vec![],
         ranking: default_ranking(),
         ranking_invalid: false,
@@ -1104,6 +1176,7 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
     let (scrape_backends, scrape_backends_invalid) = scrape_chain(&object);
     let (ranking, ranking_invalid) = ranking_state(&object);
     let (scrape_backend_timeout, scrape_backend_timeout_invalid) = backend_timeout_state(&object);
+    let (max_results_per_site, max_results_per_site_invalid) = max_per_site_state(&object);
     SettingsView {
         config_path: path.map(|path| path.to_string_lossy().into_owned()),
         path_source: if environment
@@ -1143,6 +1216,10 @@ pub fn view(environment: &RuntimeEnvironment) -> SettingsView {
         scrape_backend_timeout_invalid,
         scrape_backend_timeout_min: SCRAPE_BACKEND_TIMEOUT_MIN,
         scrape_backend_timeout_max: SCRAPE_BACKEND_TIMEOUT_MAX,
+        max_results_per_site,
+        max_results_per_site_invalid,
+        max_results_per_site_min: MAX_RESULTS_PER_SITE_MIN,
+        max_results_per_site_max: MAX_RESULTS_PER_SITE_MAX,
         active_sources,
         ranking,
         ranking_invalid,

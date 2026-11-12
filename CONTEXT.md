@@ -34,7 +34,11 @@
 
 ## 排序
 
-**重排（Rerank）**：在两级 RRF 融合之后、正文抓取之前，用可选的外部模型给候选打相关性分数（`relevance_score`，[0,1]）并重新排序；默认关闭，排序完全由 RRF 决定且不产生任何模型调用。
+**重排（Rerank）**：在两级 RRF 融合之后、正文抓取之前，用可选的外部模型给候选打相关性分数（`relevance_score`，[0,1]），再与 RRF 分数按权重综合后重新排序；默认关闭，排序完全由 RRF 决定且不产生任何模型调用。
+
+**综合排序（Blended rerank）**：模型分和 RRF 分先各自在本次被打分的候选里按最高、最低值缩放到 0–1，再按 `ranking.model_weight`（模型的份额，默认 0.5，其余给 RRF）加权求和，按这个综合分排序；归一化让权重不受两边原始数值大小影响。`model_weight=1` 只看模型，`0` 保持 RRF 顺序。`relevance_score` 始终是模型自己的分数，综合分只出现在过程数据里。
+
+**同站上限（Per-site cap）**：最终 15 条里同一网站（去掉 `www.` 的主机名）最多保留 `max_results_per_site` 条（默认 3，1–15，15 即不限）；超出的页面排到其他网站之后，其他网站候选不够时才补回。它在重排或 RRF 之后执行，所以重排名次靠前的页面也可能因所在网站已满而不在最终结果里。
 
 **重排端点（Rerank endpoint）**：打分模型所在的 System One 服务，由 `ranking.base_url` 与 `ranking.model` 指定，请求发往 `{base_url}/systemone`；开启重排时两者都必填。API 密钥不属于设置，保存在 `~/.multi-search/keys.json` 的 `systemone` 条目，环境变量 `SYSTEMONE_API_KEY` 优先。
 

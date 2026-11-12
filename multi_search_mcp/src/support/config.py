@@ -227,6 +227,27 @@ def resolve_backend_timeout(config: dict | None) -> int:
     return value
 
 
+MAX_RESULTS_PER_SITE_DEFAULT = 3
+# Keep equal to the desktop's MAX_RESULTS_PER_SITE_MIN/MAX (page 05 editor bounds).
+# 15 is the final result count, so it means "no per-site cap".
+MAX_RESULTS_PER_SITE_MIN = 1
+MAX_RESULTS_PER_SITE_MAX = 15
+
+
+def resolve_max_results_per_site(config: dict | None) -> int:
+    """How many of the final results one site may hold while other sites still have candidates."""
+    raw = (config or {}).get("max_results_per_site", MAX_RESULTS_PER_SITE_DEFAULT)
+    if raw is None:
+        return MAX_RESULTS_PER_SITE_DEFAULT
+    if isinstance(raw, bool) or not isinstance(raw, int) or not (
+        MAX_RESULTS_PER_SITE_MIN <= raw <= MAX_RESULTS_PER_SITE_MAX
+    ):
+        raise ConfigError(
+            f"max_results_per_site must be an integer {MAX_RESULTS_PER_SITE_MIN}-{MAX_RESULTS_PER_SITE_MAX}"
+        )
+    return raw
+
+
 def config_bool(config: dict, key: str, default: bool = False) -> bool:
     if key not in config:
         return default

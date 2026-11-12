@@ -68,6 +68,7 @@ fn input(route: &str, timeout: u32) -> SettingsInput {
         twitter_cookies_path: None,
         scrape_backends: None,
         ranking: None,
+        max_results_per_site: None,
     }
 }
 

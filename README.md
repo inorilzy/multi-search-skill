@@ -58,7 +58,7 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys stat
 | 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI：Windows 到 `%LOCALAPPDATA%\MultiSearch\cli`，macOS 到 `~/Library/Application Support/MultiSearch/cli`，Linux 到 `$XDG_DATA_HOME/MultiSearch/cli`（否则 `~/.local/share/MultiSearch/cli`）；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本。加入用户 PATH 需单独确认：Windows 写当前用户 PATH，macOS 只在登录 Shell 配置末尾追加带标记的区块，新开终端才生效，已运行的宿主需重启；Linux 暂不支持自动注册 shell PATH，但已安装的受管 CLI 可被发现和运行。 |
 | 03 Agent Skill | 安装到通用 Agents 目录（`.agents/skills`，Codex、Gemini CLI、OpenCode 等读取）或 Claude Code（`.claude/skills`），以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
 | 04 搜索源与凭据 | 列出 13 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），所有平台都可逐行新增、删除、显式显示，并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。每个服务商显示余额行（剩余 / 上限、单位、重置时间、更新时间，可刷新），`unsupported` / `needs_credential` 显示原因；Firecrawl 与 Parallel 提供「浏览器登录」按钮、进行中状态和取消，Exa 额外提供「管理 Key（查余额用）」输入行。默认只显示掩码，测试可能消耗额度。 |
-| 05 搜索设置 | 读写默认路由、全局超时（1–90 秒）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另有「模型重排」开关（默认关闭）：开启后填写 System One 的 Base URL 与模型名（必填）以及候选数 / 批量 / 超时高级项，写入配置块的 `ranking` 键；保存时只写入已知 `ranking` 键、丢弃未知字段（重新保存即可自愈），非法的已存 `ranking` 块回退默认值并提示。API 密钥单独保存到 `~/.multi-search/keys.json` 的 `systemone` 条目（Unix 上为 0600），不写进设置，也从不回显；环境变量 `SYSTEMONE_API_KEY` 优先。另可填写 Twitter Cookie 文件路径，并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
+| 05 搜索设置 | 读写默认路由、全局超时（1–90 秒）、同一网站最多条数（1–15，默认 3）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另有「模型重排」开关（默认关闭）：开启后填写 System One 的 Base URL 与模型名（必填）、Jev 与 RRF 的排序权重滑块（默认各 50%）以及候选数 / 批量 / 超时高级项，写入配置块的 `ranking` 键；保存时只写入已知 `ranking` 键、丢弃未知字段（重新保存即可自愈），非法的已存 `ranking` 块回退默认值并提示。API 密钥单独保存到 `~/.multi-search/keys.json` 的 `systemone` 条目（Unix 上为 0600），不写进设置，也从不回显；环境变量 `SYSTEMONE_API_KEY` 优先。另可填写 Twitter Cookie 文件路径，并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
 | 06 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）和单个后端时限（`scrape_backend_timeout`，默认 10 秒，立即保存）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。 |
 | 07 Cookie 导入 | 用户显式确认后，把选定的 Twitter/X Cookie JSON 校验并复制到 `~/.multi-search/twitter-cookies.json`（0600），同时设置 `twitter_cookies_path`；删除只移除这份副本。原文件不修改也不删除，本页不显示 Cookie 内容。 |
 
@@ -344,7 +344,7 @@ flowchart LR
 术语固定如下：
 
 - **Service 服务层**：`multi_search_mcp/src/service.py` 是对外 facade；实现按职责拆在 `search/candidates.py`（候选搜索）、`search_web.py`（搜索+抓取编排）、`scrape/fetch.py`（抓取）、`read.py`（缓存读取）、`multi_search.py`（兼容展示）、`diagnostics.py`（诊断）、`state/runtime.py`（配置、凭据与 Cookie 模式的运行时装配）等模块，CLI 只做参数适配。
-- **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口；分数相同按 canonical URL 排序。归一化时路径中连续的 `/` 合并为一个、去掉路径末尾的 `/`，并去掉追踪和仅用于显示的参数（`utm_*`、`fbclid`、`highlight`、`featured_on` 等），未知业务参数保留。取前 15 条时每个网站（去掉 `www.` 的主机名）最多 3 条，超出的页面排到其他网站之后，其他网站候选不够时才补回。`ranking.mode="rrf_model"` 时融合先扩展到 `candidate_limit` 条供模型重排，重排或回退后再按同样的网站上限截取前 15 条。
+- **Candidate normalization / RRF**：`multi_search_mcp/src/search/candidate.py`，保守归一化 URL，先在每个 query 内融合 provider 排名；有 `expand` 时再融合 query 排名。固定 `k=40`、无中间窗口；分数相同按 canonical URL 排序。归一化时路径中连续的 `/` 合并为一个、去掉路径末尾的 `/`，并去掉追踪和仅用于显示的参数（`utm_*`、`fbclid`、`highlight`、`featured_on` 等），未知业务参数保留。取前 15 条时每个网站（去掉 `www.` 的主机名）最多 `max_results_per_site` 条（默认 3，可设 1–15，15 即不限；桌面端「05 搜索设置 → 默认路由与全局超时」可改），超出的页面排到其他网站之后，其他网站候选不够时才补回。`ranking.mode="rrf_model"` 时融合先扩展到 `candidate_limit` 条供模型重排，重排或回退后再按同样的网站上限截取前 15 条。
 - **SourceRegistry / ContentStore**：短期 SQLite 状态。前者把本次响应的 `source_id` 映射到 URL；后者按 TTL、单条/总容量限制保存正文并以内容哈希去重。provider 的 retention policy 可禁止保存结果、摘要或正文。
 
 同 canonical URL、相同来源集合、显式后端顺序及凭据上下文的有效抓取正文可跨响应复用，每次响应仍生成独立 `source_id`。关联新 ID 不延长原正文 TTL；来源策略更严格时服从当前限制。不同来源上下文（包括 direct 与搜索来源）、provider 预取正文及旧的无复用元数据缓存不跨 ID 混用。凭据上下文只存 SHA-256 摘要；旧缓存仍可按原 ID 读取。SQLite 首次运行自动兼容增加 URL/scope 字段与索引。
@@ -470,7 +470,7 @@ JSON 配置支持 `disabled_sources`（默认为 `[]`）用来全局关闭某些
 
 ### 可选模型重排（默认关闭）
 
-排序默认是纯两级 RRF（`k=40`），最终取前 15 条，不调用任何模型。配置块 `ranking` 可以把 RRF 之后、正文抓取之前的这一段换成模型重排：RRF 先融合出最多 `candidate_limit` 条候选，模型给每条打 `relevance_score`（[0,1]），被打分的候选按分数降序写回自己原来的 RRF 槽位（同分保持 RRF 顺序，未打分的候选不动），最后再取前 15 条并抓取正文。模型分数不与 RRF 分数相加。
+排序默认是纯两级 RRF（`k=40`），最终取前 15 条，不调用任何模型。配置块 `ranking` 可以把 RRF 之后、正文抓取之前的这一段换成模型重排：RRF 先融合出最多 `candidate_limit` 条候选，模型给每条打 `relevance_score`（[0,1]）。随后模型分和 RRF 分各自在这批被打分的候选里按最高、最低值缩放到 0–1（min-max 归一化），再按 `综合分 = model_weight × 模型归一 + (1 − model_weight) × RRF 归一` 合成一个分数；被打分的候选按综合分降序写回自己原来的 RRF 槽位（同分保持 RRF 顺序，未打分的候选不动），最后再取前 15 条并抓取正文。先归一化再加权，是因为两边的原始数值尺度不同：模型分常挤在 0.8–1.0，RRF 分是很小的倒数和、并随搜索源和改写词变多而变大，不归一化时权重就失去了意义。某一边的分数全部相同时，它对每个候选贡献相同，排序由另一边决定。
 
 | `ranking` 键 | 默认 | 取值 | 说明 |
 |---|---|---|---|
@@ -480,8 +480,9 @@ JSON 配置支持 `disabled_sources`（默认为 `[]`）用来全局关闭某些
 | `candidate_limit` | `50` | 整数 10–200，超出即报错 | 进入重排的融合候选数；不足时全部候选参与。 |
 | `batch_size` | `20` | 整数 1–50，超出即报错 | 每批送模型打分的候选数；任一批失败即整段回退。 |
 | `rerank_timeout` | `10` | 数值 1–60（秒），超出即报错 | 重排阶段的总时间预算。 |
+| `model_weight` | `0.5` | 数值 0–1，超出即报错 | 模型分在综合排序中的份额，其余给 RRF；`1` 只按模型排序，`0` 保持 RRF 顺序。桌面端「05 搜索设置 → 模型重排」用滑块调整。 |
 
-上述区间由 core（`rerank.py` 的 `CANDIDATE_LIMIT_RANGE` / `BATCH_SIZE_RANGE` / `RERANK_TIMEOUT_RANGE`）硬校验，与桌面端设置页的上下界一致，二者接受的配置相同。`mode="rrf_model"` 却没有 `base_url` 或 `model` 是配置错误，不会静默回退。API 密钥**不是** `ranking` 的键。`mode="rrf_model"` 时对 `ranking` 严格校验：未知键、错误类型、越界值是 `ConfigError`（CLI 退出码 1，Python 适配层报 `invalid_request`），不会静默忽略或回退；`mode="rrf"`（关闭重排）时只校验 `mode`，块内其余字段被忽略，旧版本或手改留下的未知键不会让 CLI 启动失败。桌面端保存时只写入已知 `ranking` 键、丢弃未知字段，重新保存即可自愈；`doctor` 在发出任何搜索请求前解析并校验 `ranking`，坏配置在诊断时就暴露。按评审结论刻意不提供的键：`rrf_k`（RRF 常数固定 40 且计入快照指纹，可调会使全部已冻结评测资产失效）、`top_k`（输出恒为前 15 条）、`keep_per_source`（每源召回只有 10–20 条时恒为死配置）。
+上述区间由 core（`rerank.py` 的 `CANDIDATE_LIMIT_RANGE` / `BATCH_SIZE_RANGE` / `RERANK_TIMEOUT_RANGE` / `MODEL_WEIGHT_RANGE`）硬校验，与桌面端设置页的上下界一致，二者接受的配置相同。`mode="rrf_model"` 却没有 `base_url` 或 `model` 是配置错误，不会静默回退。API 密钥**不是** `ranking` 的键。`mode="rrf_model"` 时对 `ranking` 严格校验：未知键、错误类型、越界值是 `ConfigError`（CLI 退出码 1，Python 适配层报 `invalid_request`），不会静默忽略或回退；`mode="rrf"`（关闭重排）时只校验 `mode`，块内其余字段被忽略，旧版本或手改留下的未知键不会让 CLI 启动失败。桌面端保存时只写入已知 `ranking` 键、丢弃未知字段，重新保存即可自愈；`doctor` 在发出任何搜索请求前解析并校验 `ranking`，坏配置在诊断时就暴露。按评审结论刻意不提供的键：`rrf_k`（RRF 常数固定 40 且计入快照指纹，可调会使全部已冻结评测资产失效）、`top_k`（输出恒为前 15 条）、`keep_per_source`（每源召回只有 10–20 条时恒为死配置）。
 
 **默认关闭且关闭时零模型调用**：不设置 `ranking` 或 `mode="rrf"` 时，不构造重排器、不读密钥、不产生任何模型请求。单次请求可用 CLI `search --rerank`（等价 `ranking={"mode":"rrf_model"}`）与 `--rerank-base-url` / `--rerank-model` 覆盖；端点参数不带 `--rerank` 是用法错误（退出码 2）。CLI 没有密钥参数：命令行会出现在 `ps` 里。Python 适配层 `search_web_tool` / `multi_search_tool` 暴露 `rerank` / `rerank_base_url` / `rerank_model` 参数；Core 请求 `SearchWebRequest.ranking` / `MultiSearchRequest.ranking` 也可直接传入同名字典覆盖。
 

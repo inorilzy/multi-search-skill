@@ -348,6 +348,11 @@ impl OwnedProcess {
         let bytes = self.stdout.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         buffered_lines(&bytes, cursor, false)
     }
+    /// Complete stderr lines written since `cursor`; same contract as `take_stdout_lines`.
+    pub(crate) fn take_stderr_lines(&self, cursor: &mut usize) -> Vec<String> {
+        let bytes = self.stderr.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        buffered_lines(&bytes, cursor, false)
+    }
     pub(crate) fn poll(&mut self) -> io::Result<Option<i32>> {
         Ok(self.child.try_wait()?.map(|s| s.code().unwrap_or(1)))
     }

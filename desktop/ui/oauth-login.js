@@ -127,7 +127,9 @@ export async function mountOAuthLogin(root, api, { source, label, pollInterval =
       if (!ACTIVE_PHASES.has(next.phase)) {
         id = null;
         stopTimer();
-        if (next.phase === 'error') showError(errorSlot, next.message || '登录失败，请重试。', '登录失败，请重试。');
+        // The CLI's own message (already secret-scrubbed) is the diagnosis; showError
+        // would replace a provider's English text with a generic line.
+        if (next.phase === 'error') errorSlot.textContent = next.message || '登录失败，请重试。';
         else clearError();
         return;
       }

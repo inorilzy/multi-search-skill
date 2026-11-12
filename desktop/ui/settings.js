@@ -25,7 +25,7 @@ const routesObject = routes => Object.fromEntries([...routes].map(([id, route]) 
 const charLength = value => Array.from(value).length;
 
 // core 的出厂 ranking 块；SettingsView 缺失字段时的兜底展示值。
-const RANKING_FACTORY = { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10 };
+const RANKING_FACTORY = { mode: 'rrf', base_url: '', model: '', candidate_limit: 50, batch_size: 20, rerank_timeout: 10, model_weight: 0.5 };
 const RANKING_BOUNDS = {
   candidate_limit: [10, 200],
   batch_size: [1, 50],
@@ -57,7 +57,10 @@ const cloneRanking = ranking => ({
   candidate_limit: Number(ranking?.candidate_limit ?? RANKING_FACTORY.candidate_limit),
   batch_size: Number(ranking?.batch_size ?? RANKING_FACTORY.batch_size),
   rerank_timeout: Number(ranking?.rerank_timeout ?? RANKING_FACTORY.rerank_timeout),
+  model_weight: Number(ranking?.model_weight ?? RANKING_FACTORY.model_weight),
 });
+// Percent text for the weight slider: 「Jev 50% · RRF 50%」.
+const weightText = weight => `Jev ${Math.round(weight * 100)}% · RRF ${100 - Math.round(weight * 100)}%`;
 
 function validateRoute(id, route, routes, timeoutBounds, originalId = null) {
   if (!ID_PATTERN.test(id) || id === 'web') return '标识需为 1–64 个 ASCII 小写字母、数字、下划线或连字符，且不能使用 web。';
@@ -87,7 +90,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       <p data-info="error" class="error-message" role="alert"></p><button type="button" data-action="retry" hidden>重试读取</button>
 
       <section class="panel settings-defaults"><div class="section-title"><div><p class="eyebrow">DEFAULTS</p><h2>默认路由与全局超时</h2></div><span class="draft-badge" data-dirty hidden>有未保存修改</span></div>
-        <div class="settings-default-grid"><label>默认路由<select data-field="route" disabled></select></label><label>全局超时（秒）<input data-field="timeout" type="number" step="1" disabled></label></div>
+        <div class="settings-default-grid"><label>默认路由<select data-field="route" disabled></select></label><label>全局超时（秒）<input data-field="timeout" type="number" step="1" disabled></label><label>同一网站最多条数<input data-field="max-per-site" type="number" step="1" inputmode="numeric" disabled><small data-info="max-per-site">最终 15 条里，一个网站超出这个数的页面排到其他网站之后；15 表示不限。</small></label></div>
       </section>
 
       <section class="panel route-panel"><div class="section-title"><div><p class="eyebrow">ROUTE GROUPS</p><h2>搜索分组</h2></div><div class="route-actions"><button type="button" data-action="new-route" disabled>新建分组</button><button type="button" data-action="restore" disabled>恢复内置五组</button></div></div>
@@ -107,6 +110,10 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
             <div class="run-controls"><button type="button" data-action="rerank-key-save" disabled>保存密钥</button><button type="button" data-action="rerank-key-clear" disabled>清除密钥</button></div>
             <p class="note" data-status="rerank-key" role="status"></p>
           </div>
+          <div class="ranking-weight"><label for="ranking-weight">排序权重<output data-info="ranking-weight" for="ranking-weight"></output></label>
+            <input id="ranking-weight" data-field="model-weight" type="range" min="0" max="100" step="5" disabled>
+            <div class="ranking-weight-ends" aria-hidden="true"><span>只看 RRF 融合</span><span>只看 Jev 评分</span></div>
+            <p class="note">两边的分数先各自归一化到 0–1，再按这个比例加权求和，所以分数数值大的一方不会天然占优。</p></div>
           <div class="settings-default-grid"><label>候选数<input data-field="candidate-limit" type="number" step="1" disabled></label><label>重排批量<input data-field="batch-size" type="number" step="1" disabled></label><label>重排超时（秒）<input data-field="rerank-timeout" type="number" step="1" disabled></label></div>
         </div>
       </section>
@@ -138,6 +145,9 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   // The timeout exactly as loaded: saving sends `timeout: null` unless the user changed it, so the
   // stored value (or its absence) is never silently rewritten.
   let loadedTimeout = '';
+  // The per-site cap exactly as loaded; saving sends null (keep it) unless the user changed it.
+  let loadedMaxPerSite = '';
+  let maxPerSiteBounds = [1, 15];
   let effectiveTimeouts = new Map();
   let disabledSources = new Set();
   let twitterPath = '';
@@ -161,11 +171,11 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   let refreshTicket = 0;
 
   function setEnabled(enabled) {
-    for (const selector of ['[data-field="route"]', '[data-field="timeout"]', '[data-field="twitter"]', '[data-field="ranking-enabled"]', '[data-action="new-route"]', '[data-action="restore"]', '[data-action="save"]']) {
+    for (const selector of ['[data-field="route"]', '[data-field="timeout"]', '[data-field="max-per-site"]', '[data-field="twitter"]', '[data-field="ranking-enabled"]', '[data-action="new-route"]', '[data-action="restore"]', '[data-action="save"]']) {
       const node = q(selector);
       if (node) node.disabled = !enabled || (selector === '[data-action="save"]' && saving);
     }
-    for (const selector of ['[data-field="rerank-base-url"]', '[data-field="rerank-model"]', '[data-field="rerank-api-key"]', '[data-action="rerank-key-save"]', '[data-action="rerank-key-clear"]', '[data-field="candidate-limit"]', '[data-field="batch-size"]', '[data-field="rerank-timeout"]']) {
+    for (const selector of ['[data-field="rerank-base-url"]', '[data-field="rerank-model"]', '[data-field="rerank-api-key"]', '[data-action="rerank-key-save"]', '[data-action="rerank-key-clear"]', '[data-field="candidate-limit"]', '[data-field="batch-size"]', '[data-field="rerank-timeout"]', '[data-field="model-weight"]']) {
       const node = q(selector);
       if (node) node.disabled = !enabled || !rankingEnabled;
     }
@@ -483,6 +493,10 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       node.value = String(ranking[key]);
       node.disabled = off;
     }
+    const weight = q('[data-field="model-weight"]');
+    weight.value = String(Math.round(ranking.model_weight * 100));
+    weight.disabled = off;
+    text('[data-info="ranking-weight"]', weightText(ranking.model_weight));
     renderRerankKey();
     const boundsText = Object.entries(fields).map(([key]) => `${RANKING_FIELD_NAMES[key]} ${rankingBounds[key][0]}–${rankingBounds[key][1]}`).join('，');
     text('[data-info="ranking-warning"]', rankingInvalid ? `已保存的重排配置非法（开启时需要 Base URL 与模型名；${boundsText}），当前显示默认值；重新保存可修复。` : '');
@@ -507,6 +521,9 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       }
       ranking[key] = value;
     }
+    const weight = Number(q('[data-field="model-weight"]').value);
+    if (!Number.isFinite(weight) || weight < 0 || weight > 100) return '排序权重必须在 0% 到 100% 之间。';
+    ranking.model_weight = Math.round(weight) / 100;
     return null;
   }
 
@@ -633,6 +650,12 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     timeoutField.max = String(timeoutMax);
     timeoutField.value = String(globalTimeout);
     loadedTimeout = timeoutField.value;
+    maxPerSiteBounds = [Number(view.max_results_per_site_min ?? 1), Number(view.max_results_per_site_max ?? 15)];
+    const perSiteField = q('[data-field="max-per-site"]');
+    perSiteField.min = String(maxPerSiteBounds[0]);
+    perSiteField.max = String(maxPerSiteBounds[1]);
+    perSiteField.value = String(Number(view.max_results_per_site ?? 3));
+    loadedMaxPerSite = perSiteField.value;
     q('[data-field="twitter"]').value = twitterPath;
     text('[data-status="path"]', view.config_path || '无法确定配置文件位置');
     text('[data-status="path-source"]', view.path_source === 'env' ? `隔离数据库 MULTI_SEARCH_CONFIG_DB（${view.file_present ? '已存在' : '尚未创建'}）` : `用户 SQLite 配置（${view.file_present ? '已存在' : '尚未创建'}）`);
@@ -643,6 +666,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     if (view.timeout_out_of_range) notes.push(`已保存的超时 ${view.timeout} 秒超出 ${timeoutMin} 到 ${timeoutMax} 秒；不修改则原样保留。`);
     if (view.unknown_disabled_sources?.length) notes.push(`配置中还有无法识别的禁用项（${view.unknown_disabled_sources.join('、')}），保存时会原样保留。`);
     if (rankingInvalid) notes.push('已保存的模型重排配置非法，当前按默认值显示；请修正后重新保存。');
+    if (view.max_results_per_site_invalid) notes.push(`已保存的「同一网站最多条数」不是 ${maxPerSiteBounds[0]} 到 ${maxPerSiteBounds[1]} 的整数，当前显示默认值 3；修改后保存可修复。`);
     text('[data-info="env"]', notes.join(' '));
     text('[data-info="config-source"]', view.read_source === 'cli_env' ? CLI_ENV_NOTICE : '');
     dirty = false;
@@ -687,6 +711,16 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       globalTimeout = value;
       timeout = value;
     }
+    const rawPerSite = q('[data-field="max-per-site"]').value.trim();
+    let maxPerSite = null;
+    if (rawPerSite !== loadedMaxPerSite) {
+      const value = Number(rawPerSite);
+      const [low, high] = maxPerSiteBounds;
+      if (!rawPerSite || !Number.isInteger(value) || value < low || value > high) {
+        throw new Error(`同一网站最多条数必须是 ${low} 到 ${high} 之间的整数。`);
+      }
+      maxPerSite = value;
+    }
     twitterPath = q('[data-field="twitter"]').value;
     const error = validateDraft();
     if (error) throw new Error(error);
@@ -696,8 +730,9 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
       disabled_sources: [...disabledSources],
       routes: routesObject(routes),
       twitter_cookies_path: twitterPath,
+      max_results_per_site: maxPerSite,
       // 关闭时提交 rrf 块（保留已填的端点与数值草稿），core 完全不调用模型。密钥不在这里。
-      ranking: { mode: rankingEnabled ? 'rrf_model' : 'rrf', base_url: ranking.base_url, model: ranking.model, candidate_limit: ranking.candidate_limit, batch_size: ranking.batch_size, rerank_timeout: ranking.rerank_timeout },
+      ranking: { mode: rankingEnabled ? 'rrf_model' : 'rrf', base_url: ranking.base_url, model: ranking.model, candidate_limit: ranking.candidate_limit, batch_size: ranking.batch_size, rerank_timeout: ranking.rerank_timeout, model_weight: ranking.model_weight },
     };
   }
 
@@ -795,6 +830,7 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
     renderRoutes();
     renderSummary();
   });
+  q('[data-field="max-per-site"]').addEventListener('input', () => setDirty());
   q('[data-field="timeout"]').addEventListener('input', event => {
     globalTimeout = Number(event.target.value);
     setDirty();
@@ -810,6 +846,11 @@ export async function mountSettings(root, api, { number = '05' } = {}) {
   });
   q('[data-field="rerank-base-url"]').addEventListener('input', event => { ranking.base_url = event.target.value; setDirty(); });
   q('[data-field="rerank-model"]').addEventListener('input', event => { ranking.model = event.target.value; setDirty(); });
+  q('[data-field="model-weight"]').addEventListener('input', event => {
+    ranking.model_weight = Math.round(Number(event.target.value)) / 100;
+    text('[data-info="ranking-weight"]', weightText(ranking.model_weight));
+    setDirty();
+  });
   q('[data-action="rerank-key-save"]').addEventListener('click', () => { void saveRerankKey(false); });
   q('[data-action="rerank-key-clear"]').addEventListener('click', () => { void saveRerankKey(true); });
   for (const [key, selector] of Object.entries({ candidate_limit: '[data-field="candidate-limit"]', batch_size: '[data-field="batch-size"]', rerank_timeout: '[data-field="rerank-timeout"]' })) {

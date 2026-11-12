@@ -83,6 +83,7 @@ fn main() {
     if args.first().map(String::as_str) == Some("doctor") {
         if env::var("FIXTURE_STORAGE").as_deref() == Ok("legacy") { println!("{{\"outcome\":\"success\"}}"); }
         else if env::var("FIXTURE_STORAGE").as_deref() == Ok("corrupt") { println!("{{\"config_storage\":{{\"backend\":\"keys-file\",\"schema_version\":1}},\"config_error\":\"unreadable\"}}"); std::process::exit(1); }
+        else if env::var("FIXTURE_PROGRESS").as_deref() == Ok("1") { println!("{{\"config_storage\":{{\"backend\":\"keys-file\",\"schema_version\":1}},\"search_progress\":{{\"prefix\":\"@@progress \",\"schema_version\":1}}}}"); }
         else { println!("{{\"config_storage\":{{\"backend\":\"keys-file\",\"schema_version\":1}}}}"); }
         return;
     }
@@ -183,6 +184,17 @@ fn main() {
         let mut names: Vec<String> = env::vars().map(|(name, _)| name).collect();
         names.sort();
         println!("{{\"outcome\":\"success\",\"results\":[],\"errors\":[],\"env\":{:?}}}", names);
+        return;
+    }
+    if query == "progress" {
+        // Two stage events, a pause the poll loop can observe, then an ordinary stderr line.
+        eprintln!("@@progress {{\"event\":\"route\",\"t_ms\":1,\"active_sources\":[\"brave\"]}}");
+        eprintln!("@@progress {{\"event\":\"provider_start\",\"t_ms\":2,\"source\":\"brave\",\"error\":\"{}\"}}", env::var("FIXTURE_SECRET").unwrap_or_default());
+        eprintln!("@@progress not-json");
+        thread::sleep(Duration::from_millis(400));
+        eprintln!("@@progress {{\"event\":\"provider_done\",\"t_ms\":300,\"source\":\"brave\",\"status\":\"ok\",\"hit_count\":3}}");
+        eprintln!("plain warning");
+        println!("{{\"outcome\":\"success\",\"results\":[],\"errors\":[]}}");
         return;
     }
     if query == "empty" { println!("{{\"outcome\":\"empty\",\"results\":[],\"errors\":[]}}"); return; }

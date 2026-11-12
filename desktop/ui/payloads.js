@@ -39,7 +39,7 @@ export const schemas = {
   CliStatus: schema({ app: 'Discovery', user: 'Discovery', restart_required: 'b', execution: 'Discovery', managed: 'b' }),
   AppInfo: schema({ app_version: 's', bundled_cli_version: 'sn' }),
   SearchOptions: schema({ query: 's', route: 's', sources: 'sa', timeout: 'n' }),
-  ExecutionStatus: schema({ id: 'n', status: 's', exit_code: 'nn', payload: 'xn', error: 's' }),
+  ExecutionStatus: schema({ id: 'n', status: 's', exit_code: 'nn', payload: 'xn', error: 's', progress: 'a' }),
   OAuthLoginStatus: schema({ id: 'n', provider: 's', phase: 's', url: 'so', user_code: 'so', message: 'so' }),
   InstallPlan: schema({
     status: 's', root: 's', bin: 's', version: 'sn', current_version: 'sn', source: 'sn',
@@ -103,8 +103,8 @@ export const schemas = {
     keyed: 'b', search: 'b', cookie: 'b', aliases: 'sa',
   }),
   RouteConfig: schema({ label: 's', description: 'sn', sources: 'sa', timeout: 'nn' }),
-  RankingInput: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
-  RankingState: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n' }),
+  RankingInput: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n', model_weight: 'n' }),
+  RankingState: schema({ mode: 's', base_url: 's', model: 's', candidate_limit: 'n', batch_size: 'n', rerank_timeout: 'n', model_weight: 'n' }),
   RerankKeyStatus: schema({ source: 's', keys_file: 'sn', env_var: 's' }),
   ScrapeBackendOption: schema({ name: 's', label: 's' }),
   ScrapeMemoryRow: schema({
@@ -118,6 +118,7 @@ export const schemas = {
   SettingsInput: schema({
     route: 's', timeout: 'nn', disabled_sources: 'sa', routes: 'RouteMapN',
     twitter_cookies_path: 'sn', scrape_backends: 'san', ranking: 'RankingInputN',
+    max_results_per_site: 'nn',
   }),
   SettingsView: schema({
     config_path: 'sn', path_source: 's', file_present: 'b', read_source: 's',
@@ -130,6 +131,8 @@ export const schemas = {
     builtin_scrape_backends: 'sa', scrape_backend_options: 'ScrapeBackendOption[]',
     scrape_backend_timeout: 'n', scrape_backend_timeout_invalid: 'b',
     scrape_backend_timeout_min: 'n', scrape_backend_timeout_max: 'n',
+    max_results_per_site: 'n', max_results_per_site_invalid: 'b',
+    max_results_per_site_min: 'n', max_results_per_site_max: 'n',
     active_sources: 'sa', ranking: 'RankingState', ranking_invalid: 'b',
     ranking_candidate_limit_min: 'n', ranking_candidate_limit_max: 'n',
     ranking_batch_size_min: 'n', ranking_batch_size_max: 'n',

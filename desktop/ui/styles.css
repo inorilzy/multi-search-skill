@@ -2873,6 +2873,474 @@
   .ms-form .note {
     margin-top: 20px;
   }
+  /* 模型重排：Jev 与 RRF 的权重滑块。 */
+  .ranking-weight {
+    display: grid;
+    gap: 6px;
+    margin: 14px 0;
+  }
+  .ranking-weight label {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .ranking-weight output {
+    font-variant-numeric: tabular-nums;
+    color: var(--teal-strong);
+    font-weight: 600;
+  }
+  .ranking-weight input[type=range] {
+    width: 100%;
+    accent-color: var(--teal);
+  }
+  .ranking-weight-ends {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .ranking-weight .note {
+    margin: 0;
+  }
+  /* 测试搜索的历史：一次点按重新搜索，按钮按车间触屏尺寸做大。 */
+  .search-history {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0 4px;
+  }
+  .search-history-label {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .search-history ul {
+    display: contents;
+    list-style: none;
+  }
+  .search-history li {
+    display: inline-flex;
+    align-items: stretch;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .search-history-run {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 280px;
+    min-height: 36px;
+    margin: 0;
+    padding: 0 8px 0 14px;
+    line-height: 1;
+    border: 0;
+    background: none;
+    color: var(--ink);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+  .search-history-run small {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .search-history-run:hover:not(:disabled), .search-history-run:focus-visible {
+    background: var(--scrape-tint);
+    color: var(--teal-strong);
+  }
+  .search-history-run:disabled {
+    color: var(--muted);
+    cursor: default;
+  }
+  .search-history-remove {
+    min-width: 34px;
+    margin: 0;
+    padding: 0;
+    line-height: 1;
+    border: 0;
+    border-left: 1px solid var(--line);
+    background: none;
+    color: var(--muted);
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .search-history-remove:hover, .search-history-remove:focus-visible {
+    color: var(--red);
+  }
+  .search-history-clear {
+    min-height: 36px;
+    font-size: 12px;
+  }
+  /* 测试搜索的过程图：查询 → 路由 → 搜索器（瀑布时间条）→ 融合 → 抓取。 */
+  .search-flow {
+    margin-top: 17px;
+    padding: 18px 18px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+  }
+  .flow-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .flow-head h3 {
+    margin: 0;
+    font-size: 14px;
+  }
+  .flow-state {
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .search-flow[data-mode=live] .flow-state, .search-flow[data-mode=replay] .flow-state {
+    color: var(--teal-strong);
+  }
+  .flow-replay {
+    margin-left: auto;
+  }
+  .flow-stage {
+    display: grid;
+    grid-template-columns:
+      minmax(96px,.9fr) 18px minmax(84px,.7fr) 18px
+      minmax(220px,2.6fr) 18px minmax(84px,.7fr) 18px minmax(84px,.7fr);
+    align-items: center;
+  }
+  .flow-stage[data-steps="6"] {
+    grid-template-columns:
+      minmax(90px,.8fr) 14px minmax(76px,.6fr) 14px minmax(220px,2.6fr) 14px
+      minmax(76px,.6fr) 14px minmax(84px,.7fr) 14px minmax(76px,.6fr);
+  }
+  .flow-node[data-lit=busy] {
+    border-color: var(--teal);
+  }
+  .flow-node[data-lit=warn] {
+    border-color: var(--scrape-warning-border);
+    background: var(--scrape-warning-bg);
+  }
+  .flow-node[data-lit=warn] .flow-node-extra {
+    color: var(--amber);
+  }
+  .flow-node-rerank .flow-node-extra {
+    overflow-wrap: anywhere;
+  }
+  .flow-node, .flow-column {
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+    min-width: 0;
+  }
+  .flow-node {
+    display: grid;
+    gap: 2px;
+  }
+  .flow-node[data-lit=on], .flow-column[data-lit=on] {
+    border-color: var(--teal);
+    background: var(--scrape-tint);
+  }
+  .flow-node[data-lit=off] .flow-node-value {
+    color: var(--muted);
+  }
+  .flow-node-label {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .flow-node-value {
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+  .flow-node-query .flow-node-value {
+    font-size: 15px;
+  }
+  .flow-node-extra {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .flow-wire {
+    position: relative;
+    height: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .flow-wire[data-flow=on] {
+    background: linear-gradient(90deg, var(--line) 0%, var(--teal) 50%, var(--line) 100%);
+    background-size: 200% 100%;
+  }
+  .flow-sources {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+  }
+  .flow-source {
+    display: grid;
+    grid-template-columns: 8px 7.5em minmax(60px,1fr) 9.5em;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .flow-source-empty {
+    display: block;
+    color: var(--muted);
+  }
+  .flow-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1.5px solid var(--muted);
+  }
+  .flow-source[data-state=running] .flow-dot {
+    border-color: var(--teal);
+  }
+  .flow-source[data-state=ok] .flow-dot, .flow-source[data-state=partial] .flow-dot {
+    border-color: var(--teal);
+    background: var(--teal);
+  }
+  .flow-source[data-state=empty] .flow-dot {
+    border-color: var(--amber);
+    background: var(--amber);
+  }
+  .flow-source[data-state=error] .flow-dot {
+    border-color: var(--red);
+    background: var(--red);
+  }
+  .flow-source-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .flow-track {
+    position: relative;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line);
+  }
+  .flow-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: 2px;
+    background: var(--teal);
+  }
+  .flow-source[data-state=running] .flow-bar {
+    background: var(--teal-strong);
+  }
+  .flow-source[data-state=empty] .flow-bar {
+    background: var(--amber);
+  }
+  .flow-source[data-state=error] .flow-bar {
+    background: var(--red);
+  }
+  .flow-source-detail {
+    color: var(--muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .flow-source[data-state=error] .flow-source-detail, .flow-source[data-state=skipped] .flow-source-detail {
+    color: var(--red);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .flow-rerank {
+    margin-top: 18px;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+  }
+  .flow-rerank summary {
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .flow-rerank-note {
+    margin: 6px 0 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .flow-rerank-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .flow-rerank-table th {
+    text-align: left;
+    font-weight: normal;
+    color: var(--muted);
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .flow-rerank-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  .flow-rerank-rank, .flow-rerank-score, .flow-rerank-change {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .flow-rerank-rank, .flow-rerank-blend {
+    font-weight: 600;
+  }
+  .flow-rerank-before, .flow-rerank-after {
+    color: var(--muted);
+    font-weight: normal;
+  }
+  .flow-rerank-final {
+    color: var(--teal-strong);
+  }
+  .flow-rerank-table tr[data-move=up] .flow-rerank-change {
+    color: var(--teal-strong);
+    font-weight: 600;
+  }
+  .flow-rerank-table tr[data-move=down] .flow-rerank-change {
+    color: var(--red);
+  }
+  .flow-rerank-table tr[data-move=same] .flow-rerank-change {
+    color: var(--muted);
+  }
+  .flow-rerank-title span {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+  .flow-rerank-title small {
+    display: inline-block;
+    margin-right: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .flow-rerank-table tr[data-dropped] td {
+    color: var(--muted);
+  }
+  .flow-rerank-title .flow-rerank-cut {
+    color: var(--amber);
+  }
+  .flow-scrapes h4 {
+    margin: 18px 0 8px;
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: normal;
+  }
+  .flow-scrape-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 5px;
+  }
+  .flow-scrape {
+    display: grid;
+    grid-template-columns: minmax(120px,1.2fr) minmax(0,2fr) minmax(80px,auto);
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+  }
+  .flow-scrape-host {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .flow-chain {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .flow-chip {
+    padding: 1px 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .flow-chip[data-state=trying] {
+    border-color: var(--teal);
+    color: var(--teal-strong);
+  }
+  .flow-chip[data-state=ok] {
+    border-color: var(--teal);
+    background: var(--teal);
+    color: var(--panel);
+  }
+  .flow-chip[data-state=error], .flow-chip[data-state=blocked] {
+    border-color: var(--red);
+    color: var(--red);
+    text-decoration: line-through;
+  }
+  .flow-chip[data-state=skipped] {
+    border-style: dashed;
+  }
+  .flow-scrape-result {
+    text-align: right;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .flow-scrape[data-state=error] .flow-scrape-result {
+    color: var(--red);
+  }
+  .flow-story {
+    margin: 16px 0 0;
+    padding: 12px 0 0 18px;
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: 4px;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  @media (max-width:880px) {
+    .flow-stage, .flow-stage[data-steps="6"] {
+      grid-template-columns: 1fr;
+      gap: 0;
+    }
+    .flow-wire {
+      width: 2px;
+      height: 14px;
+      margin-left: 20px;
+    }
+    .flow-scrape {
+      grid-template-columns: 1fr auto;
+      row-gap: 4px;
+    }
+    .flow-scrape-list {
+      gap: 12px;
+    }
+    .flow-chain {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+  /* The one moving thing: a pulse along the wire into the stage that is working right now. */
+  @media (prefers-reduced-motion: no-preference) {
+    .flow-wire[data-flow=on] {
+      animation: flow-pulse 1.1s linear infinite;
+    }
+    .flow-source[data-state=running] .flow-dot, .flow-chip[data-state=trying],
+    .flow-node[data-lit=busy] .flow-node-value {
+      animation: flow-breathe 1.2s ease-in-out infinite;
+    }
+    .flow-node, .flow-column {
+      transition: border-color .3s, background .3s;
+    }
+  }
+  @keyframes flow-pulse {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: -100% 0;
+    }
+  }
+  @keyframes flow-breathe {
+    50% {
+      opacity: .35;
+    }
+  }
 }
 
 /* The `hidden` attribute must win over layout rules such as `.run-controls { display: flex }`. */

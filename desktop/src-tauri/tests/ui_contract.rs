@@ -235,6 +235,8 @@ fn normalise_ts_type(ty: &str) -> String {
         "number" => "n".into(),
         "boolean" => "b".into(),
         "Array<string>" => "sa".into(),
+        // Untyped event lists (ExecutionStatus.progress) are checked as "any array".
+        "Array<JsonValue>" => "a".into(),
         "JsonValue" => "x".into(),
         // String unions (InstallState) are validated as a plain string so a
         // new Rust variant degrades to the raw wire value.

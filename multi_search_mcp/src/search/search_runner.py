@@ -417,6 +417,20 @@ def _log_provider_results(
                     source_timings_ms=timings)
 
 
+def _row_stats(rows) -> dict:
+    """Status of one source's rows for the progress stream; ``None`` means it raised."""
+    if rows is None:
+        return {"status": "error", "hit_count": 0, "error_count": 1}
+    dicts = as_dicts(rows)
+    errors = [row for row in dicts if row.get("error")]
+    hits = sum(1 for row in dicts if row.get("url") and not row.get("error"))
+    status = "error" if errors and not hits else "partial" if errors else "ok" if hits else "empty"
+    stats = {"status": status, "hit_count": hits, "error_count": len(errors)}
+    if errors:
+        stats["error_type"] = errors[0].get("error_type") or errors[0].get("kind")
+    return stats
+
+
 def _search_pool_workers() -> int:
     """Worker budget for the shared search pool, tunable per process.
 
@@ -453,7 +467,7 @@ class SearchRunner:
         started = time.monotonic()
         timings: dict[str, int] = {}
         results = self._run(query, deadline=deadline, timings=timings)
-        if debug_log.enabled():
+        if debug_log.wanted():
             _log_provider_results(query, results, timings, debug_log.elapsed_ms(started))
         return results
 
@@ -505,7 +519,7 @@ class SearchRunner:
                     error=scrub_secrets(exc, self.config.keys),
                 )
                 raise
-            if debug_log.enabled():
+            if debug_log.wanted():
                 row_dicts = as_dicts(rows or [])
                 debug_log.event(
                     "provider_attempt", query=query, source=spec.public_name,
@@ -557,10 +571,20 @@ class SearchRunner:
         def timed(name: str, call: Callable[[], list]) -> Callable[[], list]:
             def run_timed() -> list:
                 job_started = time.monotonic()
+                debug_log.event("provider_start", query=query, source=name)
+                rows = None
                 try:
-                    return call()
+                    rows = call()
+                    return rows
                 finally:
-                    timings[name] = debug_log.elapsed_ms(job_started)
+                    elapsed = debug_log.elapsed_ms(job_started)
+                    timings[name] = elapsed
+                    # Per-source completion as it happens; provider_result only
+                    # arrives after every source has finished.
+                    debug_log.event(
+                        "provider_done", query=query, source=name, elapsed_ms=elapsed,
+                        **_row_stats(rows),
+                    )
             return run_timed
 
         for name, call in jobs:

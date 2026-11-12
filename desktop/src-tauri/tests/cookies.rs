@@ -30,7 +30,7 @@ impl Sandbox {
         // Create the schema and the record through the desktop, then replace the record.
         multi_search_desktop::settings_fixture::save(&self.env(), &multi_search_desktop::settings_fixture::SettingsInput {
             route: "default".into(), timeout: None, disabled_sources: vec![], routes: None,
-            twitter_cookies_path: None, scrape_backends: None, ranking: None,
+            twitter_cookies_path: None, scrape_backends: None, ranking: None, max_results_per_site: None,
         }).unwrap();
         let c = rusqlite::Connection::open(self.db()).unwrap();
         c.execute("UPDATE settings SET data=?1 WHERE id=1", [body]).unwrap();

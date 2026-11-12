@@ -85,5 +85,59 @@ class SiteDiversityTests(unittest.TestCase):
         self.assertEqual(sum("example.com" in hit["url"] for hit in hits), MAX_RESULTS_PER_SITE)
 
 
+class ConfigurablePerSiteCapTests(unittest.TestCase):
+    def _docs_and_others(self):
+        docs = [f"https://docs.python.org/3.{minor}/library/asyncio.html" for minor in range(4, 14)]
+        # Enough other sites that deferred docs pages never back-fill the 15 slots.
+        others = [f"https://site{index}.example/page" for index in range(20)]
+        rows = [_row("parallel", url, rank) for rank, url in enumerate(docs + others, start=1)]
+        return fuse_search_results([("q", rows)], response_id="cap", limit=100)
+
+    def test_the_default_cap_is_three_and_config_can_raise_or_remove_it(self):
+        from multi_search_mcp.src.support.config import (
+            MAX_RESULTS_PER_SITE_DEFAULT, resolve_max_results_per_site,
+        )
+
+        self.assertEqual(MAX_RESULTS_PER_SITE_DEFAULT, MAX_RESULTS_PER_SITE)
+        self.assertEqual(resolve_max_results_per_site({}), 3)
+        self.assertEqual(resolve_max_results_per_site({"max_results_per_site": None}), 3)
+        for cap in (1, 6, 15):
+            with self.subTest(cap=cap):
+                self.assertEqual(resolve_max_results_per_site({"max_results_per_site": cap}), cap)
+                hits = diversify_by_site(self._docs_and_others(), SEARCH_RESULT_LIMIT, cap)
+                hosts = [hit["url"].split("/")[2] for hit in hits]
+                self.assertEqual(hosts.count("docs.python.org"), min(cap, 10))
+
+    def test_invalid_caps_are_config_errors(self):
+        from multi_search_mcp.src.support.config import ConfigError, resolve_max_results_per_site
+
+        for bad in (0, 16, -1, 2.5, "3", True):
+            with self.subTest(bad=bad), self.assertRaises(ConfigError):
+                resolve_max_results_per_site({"max_results_per_site": bad})
+
+    def test_the_search_plan_carries_the_configured_cap(self):
+        from multi_search_mcp.src.search.resolve import SearchPlanRequest, resolve_search_plan
+        from multi_search_mcp.src.support.config import ConfigError
+
+        self.assertEqual(resolve_search_plan(SearchPlanRequest(), {}).max_results_per_site, 3)
+        plan = resolve_search_plan(SearchPlanRequest(), {"max_results_per_site": 5})
+        self.assertEqual(plan.max_results_per_site, 5)
+        with self.assertRaises(ConfigError):
+            resolve_search_plan(SearchPlanRequest(), {"max_results_per_site": 0})
+
+    def test_finalize_uses_the_given_cap_for_scored_and_unscored_hits(self):
+        from multi_search_mcp.src.search.notices import finalize_results
+
+        hits = self._docs_and_others()
+        # Every hit scored, as after a full rerank: one pass, one cap.
+        for hit in hits:
+            hit["relevance_score"] = 0.9
+        final = finalize_results(hits, SEARCH_RESULT_LIMIT, 5)
+        self.assertEqual(sum("docs.python.org" in hit["url"] for hit in final), 5)
+        self.assertEqual(
+            sum("docs.python.org" in hit["url"] for hit in finalize_results(hits, SEARCH_RESULT_LIMIT, 2)), 2,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

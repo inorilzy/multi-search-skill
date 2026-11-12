@@ -440,6 +440,64 @@ fn shutdown_terminates_its_execution_without_disabling_the_standalone_cli() {
 }
 
 
+fn progress_search(profile: &common::Profile) -> (DesktopManager, u64) {
+    let manager = DesktopManager::new(profile.environment.clone());
+    let id = manager
+        .start_search(SearchOptions {
+            query: "progress".into(),
+            route: "default".into(),
+            sources: vec![],
+            timeout: 5,
+        })
+        .unwrap();
+    (manager, id)
+}
+
+#[test]
+fn progress_events_stream_while_running_and_stay_out_of_the_error_text() {
+    let mut profile = common::Profile::new();
+    profile.environment.variables.insert("FIXTURE_PROGRESS".into(), "1".into());
+    profile.environment.variables.insert("EXA_API_KEY".into(), "fixture-private-key".into());
+    profile.environment.variables.insert("FIXTURE_SECRET".into(), "fixture-private-key".into());
+    let args_path = profile.root.join("progress-args.json");
+    profile.environment.variables.insert("FIXTURE_ARGS_PATH".into(), args_path.display().to_string());
+    let (manager, id) = progress_search(&profile);
+    let started = Instant::now();
+    let live = loop {
+        let status = manager.execution(id).unwrap();
+        if !status.progress.is_empty() || status.status != "running" {
+            break status;
+        }
+        assert!(started.elapsed() < Duration::from_secs(5));
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(live.status, "running", "events arrive before the CLI exits");
+    assert_eq!(live.progress[0]["event"], "route");
+
+    let done = finished(&manager, id);
+    assert_eq!(done.status, "success");
+    let kinds: Vec<&str> = done.progress.iter().filter_map(|e| e["event"].as_str()).collect();
+    assert_eq!(kinds, ["route", "provider_start", "provider_done"], "malformed lines are dropped");
+    assert_eq!(done.error, "plain warning", "progress lines never reach the error text");
+    let all = serde_json::to_string(&done.progress).unwrap();
+    assert!(!all.contains("fixture-private-key"));
+    let args = std::fs::read_to_string(&args_path).unwrap();
+    assert!(args.contains("--progress-events"));
+}
+
+#[test]
+fn a_cli_without_the_progress_protocol_is_not_asked_for_it() {
+    let profile = common::Profile::new();
+    let args_path = profile.root.join("plain-args.json");
+    let mut profile = profile;
+    profile.environment.variables.insert("FIXTURE_ARGS_PATH".into(), args_path.display().to_string());
+    let (manager, id) = progress_search(&profile);
+    let done = finished(&manager, id);
+    assert!(!std::fs::read_to_string(&args_path).unwrap().contains("--progress-events"));
+    // An old CLI's stray prefixed lines are still parsed, never shown as errors.
+    assert_eq!(done.error, "plain warning");
+}
+
 fn finished(manager: &DesktopManager, id: u64) -> multi_search_desktop::ExecutionStatus {
     let started = Instant::now();
     loop {

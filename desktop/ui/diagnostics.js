@@ -1,5 +1,7 @@
 import { ROUTES, SEARCH_SOURCES } from './catalog.js';
 import { normalizeError, showError } from './api.js';
+import { mountSearchFlow } from './search-flow.js';
+import { createHistory } from './search-history.js';
 
 const statusLabels = { ready: '可调用', missing: '未发现', not_executable: '不可执行', version_failed: '版本检查失败', unavailable: '不可用' };
 const routeOptions = ROUTES.map(({ name, label }) => `<option value="${name}">${label} / ${name}</option>`).join('');
@@ -7,8 +9,8 @@ const sourceOptions = [
   '<option value="">按路由配置</option>',
   ...SEARCH_SOURCES.map(source => `<option value="${source.name}">${source.label}${source.keyed ? '' : '（无需 API Key）'}</option>`),
 ].join('');
-/** @param {any} root page container (untyped DOM queries, as in the other pages) @param {any} api @param {{ pollInterval?: number, signal?: AbortSignal, number?: string }} [options] */
-export async function mountDiagnostics(root, api, { pollInterval = 150, signal, number = '01' } = {}) {
+/** @param {any} root page container (untyped DOM queries, as in the other pages) @param {any} api @param {{ pollInterval?: number, signal?: AbortSignal, number?: string, storage?: any }} [options] */
+export async function mountDiagnostics(root, api, { pollInterval = 150, signal, number = '01', storage } = {}) {
   root.innerHTML = `<section class="heading"><p class="eyebrow">${number} / LOCAL RUNTIME</p><h1 tabindex="-1">搜索，从本机开始。</h1><p>桌面应用只负责管理。搜索由独立 CLI 按需执行，关闭窗口后仍可使用。</p></section>
     <section class="runtime panel"><div class="section-title"><h2>CLI 概览</h2><button type="button" data-action="refresh">重新检测</button></div>
       <p class="note">测试搜索使用 <strong data-status="execution-cli">检测中</strong><span data-info="execution-cli"></span></p>
@@ -16,9 +18,10 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
       <p data-info="restart" class="note"></p><p data-info="error" role="alert"></p></section>
     <section class="panel test-search"><div class="section-title"><h2>一次测试搜索</h2><span class="eyebrow">ON DEMAND / NO SERVICE</span></div>
       <form data-search-form><label>搜索词<input data-field="query" required maxlength="2000" placeholder="例如：Python SQLite 缓存"></label>
+      <div class="search-history" data-history hidden><span class="search-history-label" id="search-history-label">最近搜索</span><ul data-history-list aria-labelledby="search-history-label"></ul><button type="button" class="search-history-clear" data-action="history-clear">清空</button></div>
       <div class="search-options"><label>路由<select data-field="route">${routeOptions}</select></label><label>搜索源<select data-field="sources">${sourceOptions}</select></label><label>超时 / 秒<input data-field="timeout" type="number" min="1" max="90" value="15"></label></div>
       <div class="run-controls"><button type="submit" data-action="search" class="primary" disabled>开始测试</button><button type="button" data-action="cancel" disabled>取消本次执行</button><strong data-status="execution" aria-live="polite">等待测试</strong></div></form>
-      <p data-execution-error role="alert"></p><div data-results class="search-results" tabindex="0" role="region" aria-label="搜索结果"><p class="search-results-empty">结果会显示在这里。</p></div></section>`;
+      <p data-execution-error role="alert"></p><section data-flow class="search-flow" aria-label="搜索过程" hidden></section><div data-results class="search-results" tabindex="0" role="region" aria-label="搜索结果"><p class="search-results-empty">结果会显示在这里。</p></div></section>`;
   let appReady = false, activeId = null, timer = null, disposed = false, starting = false, cancelling = false, cancelIntent = false;
   // Cancel failures keep the execution id and mark the cancel as unconfirmed until a real terminal state arrives.
   // pollSeq invalidates polls that were already in flight when a cancel started.
@@ -41,7 +44,58 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   const search = root.querySelector('[data-action="search"]');
   const cancel = root.querySelector('[data-action="cancel"]');
   const executionError = root.querySelector('[data-execution-error]');
-  function controls(running) { search.disabled = running || !appReady || cancelling; cancel.disabled = !running || cancelling; root.querySelector('[data-action="refresh"]').disabled = running; }
+  const flow = mountSearchFlow(root.querySelector('[data-flow]'));
+  // Storage is injectable for tests; the page falls back to no history when the webview has none.
+  let historyStorage = storage;
+  if (historyStorage === undefined) { try { historyStorage = root.ownerDocument.defaultView?.localStorage; } catch { historyStorage = null; } }
+  const history = createHistory(historyStorage);
+  const field = name => root.querySelector(`[data-field="${name}"]`);
+  function selectValue(select, value) {
+    // A route or source that no longer exists falls back to the select's current value.
+    if ([...select.options].some(option => option.value === value)) select.value = value;
+  }
+  function renderHistory(items = history.list()) {
+    const box = root.querySelector('[data-history]');
+    const list = root.querySelector('[data-history-list]');
+    list.replaceChildren();
+    box.hidden = items.length === 0;
+    items.forEach((item, index) => {
+      const row = root.ownerDocument.createElement('li');
+      const run = root.ownerDocument.createElement('button');
+      run.type = 'button'; run.className = 'search-history-run'; run.dataset.historyIndex = String(index);
+      run.textContent = item.query;
+      const where = [item.route !== 'default' ? item.route : '', item.sources.join('、')].filter(Boolean).join(' · ');
+      if (where) { const tag = root.ownerDocument.createElement('small'); tag.textContent = where; run.append(tag); }
+      run.title = `再搜一次：${item.query}${where ? `（${where}）` : ''}`;
+      const remove = root.ownerDocument.createElement('button');
+      remove.type = 'button'; remove.className = 'search-history-remove'; remove.dataset.historyRemove = String(index);
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `删除历史：${item.query}`);
+      row.append(run, remove);
+      list.append(row);
+    });
+    for (const button of list.querySelectorAll('.search-history-run')) button.disabled = search.disabled;
+  }
+  renderHistory();
+  root.querySelector('[data-history]').addEventListener('click', event => {
+    const target = event.target.closest('button');
+    if (!target) return;
+    if (target.dataset.action === 'history-clear') { renderHistory(history.clear()); return; }
+    if (target.dataset.historyRemove !== undefined) { renderHistory(history.remove(Number(target.dataset.historyRemove))); return; }
+    const item = history.list()[Number(target.dataset.historyIndex)];
+    if (!item) return;
+    // One tap fills the form and starts the search; a running search keeps the form as it is.
+    if (activeId !== null || starting || cancelling || !appReady) return;
+    field('query').value = item.query;
+    selectValue(field('route'), item.route);
+    selectValue(field('sources'), item.sources.join(','));
+    if (item.timeout !== null) field('timeout').value = String(item.timeout);
+    root.querySelector('[data-search-form]').requestSubmit();
+  });
+  function controls(running) {
+    search.disabled = running || !appReady || cancelling; cancel.disabled = !running || cancelling; root.querySelector('[data-action="refresh"]').disabled = running;
+    for (const button of root.querySelectorAll('.search-history-run')) button.disabled = search.disabled;
+  }
   function setExecutionError(message) { executionError.textContent = message; }
   const statusLabel = (labels, value) => labels[value] || `未知状态（${value ?? '无'}）`;
   // Results are a readable list. Provider text is set with textContent/createElement only; the
@@ -129,6 +183,8 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
     root.querySelector('[data-status="execution"]').textContent = cancelUnconfirmed ? '取消未确认' : statusLabel(labels, status.status);
     setExecutionError(cancelUnconfirmed ? `取消未确认，${UNCONFIRMED_NOTE}` : (status.error || ''));
     if (status.payload) renderResults(status.payload);
+    // An older CLI sends no progress; the diagram then stays hidden.
+    flow.update(Array.isArray(status.progress) ? status.progress : [], status.status === 'running');
     controls(status.status === 'running');
   }
   async function poll(id = activeId, run = ownerRun) {
@@ -196,11 +252,14 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
   root.querySelector('[data-search-form]').addEventListener('submit', async event => {
     event.preventDefault(); if (!appReady || activeId !== null || starting || cancelling) return;
     const run = startRound();
-    starting = true; cancelIntent = false; cancelUnconfirmed = false; controls(true); root.querySelector('[data-results]').textContent = '';
+    starting = true; cancelIntent = false; cancelUnconfirmed = false; controls(true); root.querySelector('[data-results]').textContent = ''; flow.reset();
     renderExecution({ status: 'running' });
     try {
-      const id = await api.start({ query: root.querySelector('[data-field="query"]').value, route: root.querySelector('[data-field="route"]').value, sources: root.querySelector('[data-field="sources"]').value.split(',').filter(Boolean), timeout: Number(root.querySelector('[data-field="timeout"]').value) });
+      const options = { query: field('query').value, route: field('route').value, sources: field('sources').value.split(',').filter(Boolean), timeout: Number(field('timeout').value) };
+      const id = await api.start(options);
       if (disposed) { await Promise.resolve(api.cancel(id)).catch(() => {}); return; }
+      // Only a search the backend accepted is remembered; a page that already left renders nothing.
+      renderHistory(history.add(options));
       activeId = id;
       if (cancelIntent) {
         // The user already clicked cancel: cancel this execution before showing it as running.
@@ -282,6 +341,7 @@ export async function mountDiagnostics(root, api, { pollInterval = 150, signal, 
     if (disposed) return;
     disposed = true;
     clearTimeout(timer);
+    flow.dispose();
     const id = activeId;
     activeId = null;
     signal?.removeEventListener('abort', dispose);

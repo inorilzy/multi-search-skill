@@ -80,7 +80,7 @@ _RERANK_POOL = BoundedDaemonExecutor(
 )
 
 _RANKING_KEYS = frozenset(
-    {"mode", "base_url", "model", "candidate_limit", "batch_size", "rerank_timeout"}
+    {"mode", "base_url", "model", "candidate_limit", "batch_size", "rerank_timeout", "model_weight"}
 )
 # Written by an unreleased build of this branch; ignored rather than rejected
 # so a stale settings row cannot break every search.
@@ -96,6 +96,10 @@ SYSTEMONE_KEY_NAME = "systemone"
 CANDIDATE_LIMIT_RANGE = (10, 200)
 BATCH_SIZE_RANGE = (1, 50)
 RERANK_TIMEOUT_RANGE = (1, 60)  # seconds
+# Share of the blended score given to the model; the rest goes to the RRF score.
+# 1.0 orders by the model alone, 0.0 keeps the RRF order.
+MODEL_WEIGHT_RANGE = (0.0, 1.0)
+DEFAULT_MODEL_WEIGHT = 0.5
 BASE_URL_MAX = 2048
 MODEL_MAX = 200
 
@@ -113,6 +117,7 @@ class RerankPolicy:
     candidate_limit: int = 50
     batch_size: int = 20
     rerank_timeout: float = 10.0  # seconds; total budget for the rerank stage
+    model_weight: float = DEFAULT_MODEL_WEIGHT
 
     def __post_init__(self) -> None:
         if self.mode not in {"rrf", "rrf_model"}:
@@ -146,6 +151,14 @@ class RerankPolicy:
             or not low <= self.rerank_timeout <= high
         ):
             raise ConfigError(f"ranking.rerank_timeout must be a number in {low}-{high}")
+        low, high = MODEL_WEIGHT_RANGE
+        if (
+            isinstance(self.model_weight, bool)
+            or not isinstance(self.model_weight, (int, float))
+            or not math.isfinite(self.model_weight)
+            or not low <= self.model_weight <= high
+        ):
+            raise ConfigError(f"ranking.model_weight must be a number in {low:g}-{high:g}")
 
     @property
     def enabled(self) -> bool:
@@ -250,12 +263,14 @@ def apply_rerank(
     policy: RerankPolicy,
     deadline: float,
 ) -> tuple[list[dict], dict]:
-    """Reorder ``hits`` with model scores, or fall back to the RRF order.
+    """Reorder ``hits`` by a weighted blend of model and RRF scores, or fall back to RRF.
 
-    Never raises.  The scored candidates are sorted by ``relevance_score``
+    Never raises.  Each scored candidate gets
+    ``model_weight × normalized model score + (1 − model_weight) × normalized RRF score``
+    (see :func:`blend_scores`); the scored candidates are sorted by that blend
     descending (ties keep RRF order) and placed back into the exact RRF slots
-    they occupied; unscored hits do not move.  Model scores are never added to
-    RRF scores and appearance counts earn no bonus.
+    they occupied; unscored hits do not move.  ``relevance_score`` stays the
+    model's own score; the normalized parts are returned in ``meta["blend"]``.
     """
     meta = {
         "mode_requested": policy.mode,
@@ -317,26 +332,71 @@ def apply_rerank(
             _RERANK_POOL.abandon(pending)
         return fail(failure)
 
-    # Highest relevance first; equal scores keep their RRF order.  The scored
-    # hits are then written back into the RRF slots they originally occupied.
+    # Blend both opinions, then write the scored hits back into the RRF slots
+    # they originally occupied.  Equal blended scores keep their RRF order.
     scored_positions = [
         index
         for index, hit in enumerate(hits)
         if str(hit["source_id"]) in scores
     ]
+    blended = blend_scores(
+        [hits[index].get("rrf_score") for index in scored_positions],
+        [scores[str(hits[index]["source_id"])] for index in scored_positions],
+        policy.model_weight,
+    )
+    by_position = dict(zip(scored_positions, blended))
     ranked_positions = sorted(
-        scored_positions,
-        key=lambda index: (-scores[str(hits[index]["source_id"])], index),
+        scored_positions, key=lambda index: (-by_position[index]["blended"], index),
     )
     reordered = list(hits)
     for slot, source_index in zip(scored_positions, ranked_positions):
         reordered[slot] = hits[source_index]
-    for hit in reordered:
-        source_id = str(hit["source_id"])
-        if source_id in scores:
-            hit["relevance_score"] = scores[source_id]
+    for position in scored_positions:
+        hit = hits[position]
+        hit["relevance_score"] = scores[str(hit["source_id"])]
     meta["mode_used"] = policy.mode
+    meta["model_weight"] = policy.model_weight
+    # Per-candidate normalized parts for the progress stream; not a response field.
+    meta["blend"] = {
+        str(hits[position]["source_id"]): parts for position, parts in by_position.items()
+    }
     return reordered, meta
+
+
+def _min_max(values: list[float]) -> list[float]:
+    low, high = min(values), max(values)
+    if high - low <= 1e-12:
+        # Every candidate looks the same to this side: it cannot separate them.
+        return [1.0 for _ in values]
+    return [(value - low) / (high - low) for value in values]
+
+
+def blend_scores(
+    rrf_scores: list[Any], model_scores: list[float], model_weight: float,
+) -> list[dict]:
+    """``model_weight × model + (1 − model_weight) × RRF`` after min-max normalizing each side.
+
+    Both sides are rescaled to [0, 1] over the scored candidates first, so the
+    weight means the same thing whatever their raw spread is: Jev scores cluster
+    near the top of [0, 1] while RRF sums are small and grow with every extra
+    provider or query.  A side whose values are all equal normalizes to 1.0
+    and therefore contributes the same amount to every candidate.
+    """
+    if not model_scores:
+        return []
+    rrf = [float(value) if isinstance(value, (int, float)) and math.isfinite(value) else 0.0
+           for value in rrf_scores]
+    rrf_norm = _min_max(rrf)
+    model_norm = _min_max([float(value) for value in model_scores])
+    weight = float(model_weight)
+    return [
+        {
+            "rrf_norm": round(r, 4),
+            "model_norm": round(m, 4),
+            "blended": round(weight * m + (1.0 - weight) * r, 6),
+        }
+        for r, m in zip(rrf_norm, model_norm)
+    ]
 
 
 # The 0-4 grading scale sent as System One ``criteria`` (one label per grade).

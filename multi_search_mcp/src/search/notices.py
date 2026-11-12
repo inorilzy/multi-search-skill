@@ -8,7 +8,7 @@ its structural line limit.
 """
 from __future__ import annotations
 
-from .candidate import diversify_by_site
+from .candidate import MAX_RESULTS_PER_SITE, diversify_by_site
 
 
 def notice_row(source: str, message: str) -> dict:
@@ -33,13 +33,13 @@ def collect_notices(query_runs: list[tuple[str, list[dict]]]) -> list[dict]:
     return notices
 
 
-def finalize_results(hits: list[dict], limit: int) -> list[dict]:
+def finalize_results(hits: list[dict], limit: int, per_site: int = MAX_RESULTS_PER_SITE) -> list[dict]:
     """Apply the site cap without putting a scored hit behind unscored fillers."""
     scored = [hit for hit in hits if hit.get("relevance_score") is not None]
     unscored = [hit for hit in hits if hit.get("relevance_score") is None]
-    ordered = diversify_by_site(scored, limit)
+    ordered = diversify_by_site(scored, limit, per_site)
     if len(ordered) < limit:
-        ordered += diversify_by_site(unscored, limit - len(ordered))
+        ordered += diversify_by_site(unscored, limit - len(ordered), per_site)
     return ordered
 
 

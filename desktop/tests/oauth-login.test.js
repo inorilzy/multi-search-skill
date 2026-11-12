@@ -172,6 +172,22 @@ test('pagehide stops polling and cancels the managed login child', async () => {
   ctx.window.close();
 });
 
+test('a provider error the CLI reports in English is shown, not replaced by a generic line', async () => {
+  // The login used to fail with only "登录失败，请重试。": the CLI's
+  // "Parallel: HTTP 400: client_name or redirect_uris is required" was hidden.
+  const message = 'Parallel: HTTP 400: client_name or redirect_uris is required to derive a client_id';
+  const ctx = await mountDetail('firecrawl', {
+    oauthLoginStart: async () => 6,
+    oauthLoginPoll: async () => login('error', { id: 6, message }),
+    oauthLoginCancel: async () => { throw new Error('terminal state must not cancel'); },
+  }, { oauthPollInterval: 1 });
+  ctx.root.querySelector('[data-action="oauth-start"]').click();
+  await until(() => /登录失败/.test(ctx.root.querySelector('[data-oauth-status]').textContent), 'error phase not rendered');
+  assert.match(ctx.root.querySelector('[data-info="oauth-error"]').textContent, /client_name or redirect_uris is required/);
+  ctx.mounted.dispose();
+  ctx.window.close();
+});
+
 test('error phase shows the CLI message and allows a retry', async () => {
   const ctx = await mountDetail('firecrawl', {
     oauthLoginStart: async () => 5,

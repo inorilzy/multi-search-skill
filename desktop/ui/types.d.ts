@@ -123,7 +123,11 @@ export type ExecutionStatus = { id: number,
 /**
  * One of `running`, `success`, `empty`, `partial`, `failed`, `cancelled`, `timed_out`, or a new value added later; UI must fall back to a raw string.
  */
-status: string, exit_code: number | null, payload: JsonValue | null, error: string, };
+status: string, exit_code: number | null, payload: JsonValue | null, error: string, 
+/**
+ * Stage events (`@@progress` lines) in arrival order; empty for a CLI without the protocol.
+ */
+progress: Array<JsonValue>, };
 
 export type InstallOutcome = { 
 /**
@@ -210,13 +214,17 @@ mode: string,
 /**
  * System One 的 Base URL，例如 `http://127.0.0.1:3425/v1`；请求发往 `{base_url}/systemone`。
  */
-base_url: string, model: string, candidate_limit: number, batch_size: number, rerank_timeout: number, };
+base_url: string, model: string, candidate_limit: number, batch_size: number, rerank_timeout: number, 
+/**
+ * Jev 分数在混合排序中的权重（0–1），RRF 占 `1 - model_weight`；两边先各自归一化。
+ */
+model_weight: number, };
 
 /**
  * `SettingsView` 回传的当前生效 `ranking`；非法存储值被回退成出厂默认并伴随
  * `ranking_invalid` 标志。
  */
-export type RankingState = { mode: string, base_url: string, model: string, candidate_limit: number, batch_size: number, rerank_timeout: number, };
+export type RankingState = { mode: string, base_url: string, model: string, candidate_limit: number, batch_size: number, rerank_timeout: number, model_weight: number, };
 
 export type RemoveOutcome = { 
 /**
@@ -287,7 +295,11 @@ scrape_backends: Array<string> | null,
  * `None` 表示本次保存整块 `ranking` 都不动；`Some` 时按块内已知键整块重写，
  * 不认识的同级键会在保存时丢弃。
  */
-ranking: RankingInput | null, };
+ranking: RankingInput | null, 
+/**
+ * `None` 表示本次保存不动 `max_results_per_site`。
+ */
+max_results_per_site: number | null, };
 
 export type SettingsView = { config_path: string | null, path_source: string, file_present: boolean, read_source: string, route: string, timeout: number, timeout_configured: boolean, 
 /**
@@ -319,7 +331,15 @@ scrape_backend_timeout: number,
 /**
  * 已保存的值不是 1–60 的整数；此时 `scrape_backend_timeout` 是出厂值，CLI 会报配置错误。
  */
-scrape_backend_timeout_invalid: boolean, scrape_backend_timeout_min: number, scrape_backend_timeout_max: number, active_sources: Array<string>, 
+scrape_backend_timeout_invalid: boolean, scrape_backend_timeout_min: number, scrape_backend_timeout_max: number, 
+/**
+ * 最终结果里同一网站最多几条（1–15，15 = 不限）；缺失时为出厂值 3。
+ */
+max_results_per_site: number, 
+/**
+ * 已保存的值不是 1–15 的整数；此时显示出厂值，CLI 会报配置错误。
+ */
+max_results_per_site_invalid: boolean, max_results_per_site_min: number, max_results_per_site_max: number, active_sources: Array<string>, 
 /**
  * 当前生效的 `ranking` 块（缺失/非法时回退出厂默认）。
  */

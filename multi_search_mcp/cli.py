@@ -137,6 +137,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-state", action="store_true",
         help="skip SQLite key rotation, content cache, and site memory (clean test/debug runs)",
     )
+    search_parser.add_argument(
+        "--progress-events", action="store_true",
+        help=(
+            "write one '@@progress <json>' line to stderr per search stage (route, "
+            "each searcher start/finish, fusion, each scrape attempt) as it happens; "
+            "no page bodies or snippets, and stdout is unchanged"
+        ),
+    )
     _add_debug_log_argument(search_parser)
     _add_format_argument(search_parser)
     search_parser.set_defaults(handler=_handle_search)
@@ -365,6 +373,8 @@ def main(
             args.format = "text" if args.command == "login" and args.method == "oauth" else "json"
         if args.command in {"search", "fetch"}:
             debug_log.configure(getattr(args, "debug_log", None), setting=_debug_log_setting())
+            if getattr(args, "progress_events", False):
+                debug_log.enable_progress(stderr)
         else:
             debug_log.disable()
         debug_log.event(
@@ -551,7 +561,10 @@ def _handle_read(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _handle_doctor(args: argparse.Namespace) -> dict[str, Any]:
-    return doctor_data(include_keys=not args.no_keys, include_network=args.network)
+    data = doctor_data(include_keys=not args.no_keys, include_network=args.network)
+    # Lets the desktop pass `search --progress-events` only to a CLI that knows it.
+    data["search_progress"] = {"prefix": debug_log.PROGRESS_PREFIX, "schema_version": 1}
+    return data
 
 
 def _handle_balance(args: argparse.Namespace) -> dict[str, Any]:

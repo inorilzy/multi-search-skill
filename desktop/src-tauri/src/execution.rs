@@ -84,6 +84,33 @@ pub struct ExecutionStatus {
     pub exit_code: Option<i32>,
     pub payload: Option<Value>,
     pub error: String,
+    /// Stage events (`@@progress` lines) in arrival order; empty for a CLI without the protocol.
+    pub progress: Vec<Value>,
+}
+
+/// Line prefix of the CLI progress protocol (`multi_search_mcp.src.support.debug_log`).
+pub(crate) const PROGRESS_PREFIX: &str = "@@progress ";
+/// Mirrors the CLI's own cap so a misbehaving child cannot grow the poll payload without bound.
+const PROGRESS_LIMIT: usize = 2_000;
+
+/// Parse progress events out of stderr lines. Every other line is returned as ordinary stderr.
+pub(crate) fn split_progress(lines: &[String], secrets: &[String]) -> (Vec<Value>, Vec<String>) {
+    let mut events = Vec::new();
+    let mut rest = Vec::new();
+    for line in lines {
+        match line.strip_prefix(PROGRESS_PREFIX) {
+            Some(json) => {
+                if let Ok(mut value) = serde_json::from_str::<Value>(json) {
+                    if value.is_object() {
+                        crate::redaction::scrub_json(&mut value, secrets);
+                        events.push(value);
+                    }
+                }
+            }
+            None => rest.push(line.clone()),
+        }
+    }
+    (events, rest)
 }
 pub(crate) struct Execution {
     pub state: ExecutionStatus,
@@ -91,6 +118,7 @@ pub(crate) struct Execution {
     started: Instant,
     timeout: Duration,
     secrets: Vec<String>,
+    stderr_cursor: usize,
 }
 
 impl Execution {
@@ -120,8 +148,15 @@ impl Execution {
                 self.state.error = "CLI 未返回有效的 JSON 结果".into();
             }
         }
-        if !output.stderr.trim().is_empty() {
-            self.state.error = crate::redaction::scrub(&output.stderr, &self.secrets);
+        // The finished stderr is authoritative: it also holds lines the poll loop had not read.
+        let lines: Vec<String> = output.stderr.lines().map(str::to_string).collect();
+        let (events, rest) = split_progress(&lines, &self.secrets);
+        if !events.is_empty() {
+            self.state.progress = events.into_iter().take(PROGRESS_LIMIT).collect();
+        }
+        let stderr = rest.join("\n");
+        if !stderr.trim().is_empty() {
+            self.state.error = crate::redaction::scrub(&stderr, &self.secrets);
         }
     }
 }
@@ -170,7 +205,8 @@ impl ExecutionManager<'_> {
         }
         // Never a caller-supplied executable: discovery resolves the managed install, then PATH.
         let cli = self.discovery.execution_path()?;
-        crate::credential_commands::require_storage_cli(self.environment, &cli)?;
+        let doctor = crate::credential_commands::storage_cli_doctor(self.environment, &cli)?;
+        let progress = crate::credential_commands::supports_search_progress(&doctor);
         let mut slot = self
             .execution_slot
             .lock()
@@ -197,6 +233,9 @@ impl ExecutionManager<'_> {
             "--format".into(),
             "json".into(),
         ];
+        if progress {
+            args.push("--progress-events".into());
+        }
         for source in options.sources {
             args.push("--source".into());
             args.push(source);
@@ -212,22 +251,32 @@ impl ExecutionManager<'_> {
                 exit_code: None,
                 payload: None,
                 error: String::new(),
+                progress: Vec::new(),
             },
             process: Some(process),
             started: Instant::now(),
             timeout: Duration::from_secs((options.timeout + 10) as u64),
             secrets: crate::redaction::secrets(&self.environment),
+            stderr_cursor: 0,
         }));
         *slot = Some(execution.clone());
         thread::spawn(move || loop {
             let mut run = execution.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if run.state.status != "running" { break; }
+            let mut cursor = run.stderr_cursor;
             let Some(process) = run.process.as_mut() else {
                 drop(run);
                 thread::sleep(Duration::from_millis(10));
                 continue;
             };
+            let lines = process.take_stderr_lines(&mut cursor);
             let finished = process.poll();
+            run.stderr_cursor = cursor;
+            if !lines.is_empty() {
+                let (events, _) = split_progress(&lines, &run.secrets);
+                let room = PROGRESS_LIMIT.saturating_sub(run.state.progress.len());
+                run.state.progress.extend(events.into_iter().take(room));
+            }
             let timed_out = run.started.elapsed() >= run.timeout;
             if matches!(finished, Ok(None)) && !timed_out {
                 drop(run);

@@ -212,19 +212,21 @@ def run_search_candidates(
         # reranker (tests, offline replay) takes precedence.
         if reranker is None:
             reranker = build_reranker(rerank_policy)
-        rerank_started = time.monotonic()
+        rerank_started = debug_log.log_rerank_start(hits, rerank_policy)
         hits, rerank_meta = apply_rerank(
             hits, request.query, reranker, policy=rerank_policy,
             deadline=time.monotonic() + rerank_policy.rerank_timeout,
         )
-        debug_log.log_rerank(hits, rerank_meta, rerank_started)
+        debug_log.log_rerank(hits, rerank_meta, rerank_started, policy=rerank_policy)
+        rerank_meta.pop("blend", None)
     else:
         for hit in hits:
             hit["relevance_score"] = None
         rerank_meta = {
             "mode_requested": "rrf", "mode_used": "rrf", "fallback_reason": None,
         }
-    hits = finalize_results(hits, SEARCH_RESULT_LIMIT)
+    hits = finalize_results(hits, SEARCH_RESULT_LIMIT, plan.max_results_per_site)
+    debug_log.log_final_order(hits, plan.max_results_per_site)
     primary_rows = query_results[query_plan.primary_query]
     primary_has_candidates = bool(fuse_search_results(
         [(query_plan.primary_query, primary_rows)], response_id=response_id, limit=1,

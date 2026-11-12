@@ -11,6 +11,7 @@ from ..support.config import (
     config_int,
     config_list,
     resolve_backend_timeout,
+    resolve_max_results_per_site,
     resolve_int,
     resolve_nonnegative,
 )
@@ -101,6 +102,7 @@ class ResolvedSearchPlan:
     show_answer: bool
     show_snippet: bool
     serpapi_engine: str
+    max_results_per_site: int = 3
 
 
 # Keys that no longer affect execution. They are ignored (not validated) and
@@ -153,8 +155,9 @@ def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSea
     )
     scrape_timeout = resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
     scrape_timeout = resolve_nonnegative(request.scrape_timeout, config, "scrape_timeout", 60)
-    # Reject a bad per-backend cap before any provider is called.
+    # Reject a bad per-backend cap or per-site result cap before any provider is called.
     resolve_backend_timeout(config)
+    max_per_site = resolve_max_results_per_site(config)
 
     return ResolvedSearchPlan(
         route=route,
@@ -173,6 +176,7 @@ def resolve_search_plan(request: SearchPlanRequest, config: dict) -> ResolvedSea
         show_answer=bool(meta.get("show_answer")),
         show_snippet=bool(meta.get("show_snippet")),
         serpapi_engine=str(config.get("serpapi_engine", "google_light")),
+        max_results_per_site=max_per_site,
     )
 
 

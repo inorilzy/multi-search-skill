@@ -608,6 +608,15 @@ pub(crate) fn require_storage_cli(
     environment: &crate::RuntimeEnvironment,
     cli: &Path,
 ) -> Result<(), String> {
+    storage_cli_doctor(environment, cli).map(|_| ())
+}
+
+/// The same storage gate, returning the CLI's `doctor --no-keys` report so a caller can read
+/// other capabilities from the one probe it already pays for.
+pub(crate) fn storage_cli_doctor(
+    environment: &crate::RuntimeEnvironment,
+    cli: &Path,
+) -> Result<Value, String> {
     let output = crate::process::bounded(
         cli,
         &[
@@ -636,7 +645,15 @@ pub(crate) fn require_storage_cli(
             "CLI 无法读取当前的配置数据库或 Key 文件（~/.multi-search/keys.json），请检查后重试。".into(),
         );
     }
-    Ok(())
+    Ok(payload)
+}
+
+/// Whether the CLI accepts `search --progress-events` (protocol 1, `@@progress ` lines on stderr).
+pub(crate) fn supports_search_progress(doctor: &Value) -> bool {
+    doctor.get("search_progress").is_some_and(|v| {
+        v.get("schema_version").and_then(Value::as_i64) == Some(1)
+            && v.get("prefix").and_then(Value::as_str) == Some(crate::execution::PROGRESS_PREFIX)
+    })
 }
 
 #[cfg(test)]

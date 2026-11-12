@@ -56,6 +56,7 @@ fn input(route: &str, timeout: u32, disabled: &[&str]) -> SettingsInput {
         twitter_cookies_path: None,
         scrape_backends: None,
         ranking: None,
+        max_results_per_site: None,
     }
 }
 fn ranking_input() -> RankingInput {
@@ -66,6 +67,7 @@ fn ranking_input() -> RankingInput {
         candidate_limit: 50,
         batch_size: 20,
         rerank_timeout: 10,
+        model_weight: 0.5,
     }
 }
 #[test]
@@ -1132,6 +1134,7 @@ fn absent_ranking_reports_factory_defaults_without_flag() {
     assert_eq!(view.ranking.candidate_limit, 50);
     assert_eq!(view.ranking.batch_size, 20);
     assert_eq!(view.ranking.rerank_timeout, 10);
+    assert_eq!(view.ranking.model_weight, 0.5, "Jev and RRF share the blend equally by default");
     assert_eq!(
         (view.ranking_candidate_limit_min, view.ranking_candidate_limit_max),
         (10, 200)
@@ -1154,7 +1157,7 @@ fn valid_ranking_writes_and_round_trips() {
     let view = fixture::save(&e, &request).unwrap();
     assert_eq!(
         s.object()["ranking"],
-        serde_json::json!({"mode":"rrf_model","base_url":"http://127.0.0.1:3425/v1","model":"group/jev","candidate_limit":50,"batch_size":20,"rerank_timeout":10})
+        serde_json::json!({"mode":"rrf_model","base_url":"http://127.0.0.1:3425/v1","model":"group/jev","candidate_limit":50,"batch_size":20,"rerank_timeout":10,"model_weight":0.5})
     );
     assert_eq!(view.ranking.mode, "rrf_model");
     assert!(!view.ranking_invalid);
@@ -1191,6 +1194,9 @@ fn invalid_ranking_input_is_rejected_without_writing() {
         RankingInput { batch_size: 51, ..ranking_input() },
         RankingInput { rerank_timeout: 0, ..ranking_input() },
         RankingInput { rerank_timeout: 61, ..ranking_input() },
+        RankingInput { model_weight: -0.1, ..ranking_input() },
+        RankingInput { model_weight: 1.01, ..ranking_input() },
+        RankingInput { model_weight: f64::NAN, ..ranking_input() },
     ];
     for ranking in cases {
         let label = format!("{ranking:?}");
@@ -1207,6 +1213,30 @@ fn invalid_ranking_input_is_rejected_without_writing() {
     let mut bad_limit = input("default", 60, &[]);
     bad_limit.ranking = Some(RankingInput { candidate_limit: 0, ..ranking_input() });
     assert!(fixture::save(&e, &bad_limit).unwrap_err().contains("候选数必须在"));
+    let mut bad_weight = input("default", 60, &[]);
+    bad_weight.ranking = Some(RankingInput { model_weight: 2.0, ..ranking_input() });
+    assert!(fixture::save(&e, &bad_weight).unwrap_err().contains("Jev 权重"));
+}
+
+#[test]
+fn model_weight_round_trips_and_an_old_block_without_it_reads_as_half() {
+    let s = Sandbox::new("ranking-weight");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    // A block saved before the weight existed is valid and means 0.5.
+    s.replace(&format!(r#"{{"type":"default","ranking":{{{STORED_ON}}}}}"#));
+    let view = fixture::view(&e);
+    assert!(!view.ranking_invalid);
+    assert_eq!(view.ranking.model_weight, 0.5);
+    let mut request = input("default", 60, &[]);
+    request.ranking = Some(RankingInput { model_weight: 0.7, ..ranking_input() });
+    let view = fixture::save(&e, &request).unwrap();
+    assert_eq!(s.object()["ranking"]["model_weight"], 0.7);
+    assert_eq!(view.ranking.model_weight, 0.7);
+    for bad in [r#""half""#, "true", "1.5", "-1"] {
+        s.replace(&format!(r#"{{"type":"default","ranking":{{{STORED_ON},"model_weight":{bad}}}}}"#));
+        assert!(fixture::view(&e).ranking_invalid, "model_weight {bad} must be flagged");
+    }
 }
 
 #[test]
@@ -1225,7 +1255,7 @@ fn unknown_keys_inside_ranking_are_dropped_by_a_save_and_the_legacy_profile_is_d
     fixture::save(&e, &request).unwrap();
     assert_eq!(
         s.object()["ranking"],
-        serde_json::json!({"mode":"rrf_model","base_url":"http://127.0.0.1:3425/v1","model":"group/jev","candidate_limit":66,"batch_size":20,"rerank_timeout":10}),
+        serde_json::json!({"mode":"rrf_model","base_url":"http://127.0.0.1:3425/v1","model":"group/jev","candidate_limit":66,"batch_size":20,"rerank_timeout":10,"model_weight":0.5}),
         "save writes only the known ranking keys"
     );
 }
@@ -1355,4 +1385,33 @@ fn invalid_key_input_is_rejected_and_clearing_an_absent_key_is_a_no_op() {
     assert!(!keys_file(&s).exists());
     fixture::save_systemone_key(&e, "").unwrap();
     assert!(!keys_file(&s).exists(), "clearing nothing must not create the file");
+}
+
+#[test]
+fn max_results_per_site_saves_reads_back_and_is_bounded() {
+    let s = Sandbox::new("per-site-cap");
+    let e = s.env(&[]);
+    fixture::save(&e, &input("default", 60, &[])).unwrap();
+    let view = fixture::view(&e);
+    assert_eq!((view.max_results_per_site, view.max_results_per_site_invalid), (3, false));
+    assert_eq!((view.max_results_per_site_min, view.max_results_per_site_max), (1, 15));
+    // None keeps whatever is stored (here: absent).
+    assert!(s.object().get("max_results_per_site").is_none());
+    let view = fixture::save(&e, &SettingsInput { max_results_per_site: Some(6), ..input("default", 60, &[]) }).unwrap();
+    assert_eq!(s.object()["max_results_per_site"], 6);
+    assert_eq!(view.max_results_per_site, 6);
+    fixture::save(&e, &input("default", 30, &[])).unwrap();
+    assert_eq!(s.object()["max_results_per_site"], 6, "an unrelated save keeps the cap");
+    let before = std::fs::read(s.db()).unwrap();
+    for bad in [0, 16] {
+        let error = fixture::save(&e, &SettingsInput { max_results_per_site: Some(bad), ..input("default", 60, &[]) }).unwrap_err();
+        assert!(error.contains("同一网站最多条数"), "{error}");
+        assert_eq!(std::fs::read(s.db()).unwrap(), before);
+    }
+    for stored in ["0", "16", "2.5", "\"3\"", "true"] {
+        s.replace(&format!(r#"{{"type":"default","max_results_per_site":{stored}}}"#));
+        let view = fixture::view(&e);
+        assert!(view.max_results_per_site_invalid, "{stored} must be flagged");
+        assert_eq!(view.max_results_per_site, 3);
+    }
 }

@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import os
+import platform
 import secrets
 import select
 import time
@@ -35,6 +36,23 @@ from .builtin.firecrawl import (
 
 PARALLEL_REGISTER_URL = "https://platform.parallel.ai/getServiceKeys/register"
 PARALLEL_DEVICE_CODE_URL = "https://platform.parallel.ai/getServiceKeys/device/code"
+PARALLEL_CLIENT_NAME = "multi-search"
+
+
+def _parallel_registration() -> dict[str, Any]:
+    """The documented register body: a client name plus the platform it runs on.
+
+    Parallel rejects an empty body with HTTP 400 ("client_name or redirect_uris
+    is required to derive a client_id").  Only coarse OS facts are sent.
+    """
+    uname = platform.uname()
+    return {
+        "client_name": PARALLEL_CLIENT_NAME,
+        "platform": {
+            "machine": uname.machine, "os_name": os.name, "processor": uname.processor,
+            "release": uname.release, "system": uname.system, "version": uname.version,
+        },
+    }
 PARALLEL_TOKEN_URL = "https://platform.parallel.ai/getServiceKeys/token"
 PARALLEL_REVOKE_URL = "https://platform.parallel.ai/getServiceKeys/token/revoke"
 PARALLEL_SCOPE = "balance:read"
@@ -119,6 +137,17 @@ def _stdin_closed(stream: TextIO | None) -> bool:
         return os.read(descriptor, 1) == b""
     except OSError:
         return True
+
+
+def _watched_stdin(stdin: TextIO | None) -> TextIO | None:
+    """The stdin to watch for a cancel, or None when it was never an open pipe.
+
+    Closing an open stdin cancels the flow (a terminal user or a parent that
+    hangs up).  A stdin already at EOF when the flow starts — ``/dev/null``,
+    which is how the desktop starts this CLI, or a finished heredoc — carries
+    no such signal, so it must not end the login before the user can authorize.
+    """
+    return None if _stdin_closed(stdin) else stdin
 
 
 def _check_cancelled(stdin: TextIO | None, cancel_event: Any) -> None:
@@ -224,7 +253,14 @@ def _request(
         raise
     except TimeoutError:
         raise OAuthFlowError(f"{prefix}请求超时。", kind="timeout") from None
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError):
+            # The flow's own time budget ran out mid-request; nothing is wrong with the network.
+            raise OAuthFlowError(f"{prefix}请求超时。", kind="timeout") from None
+        raise OAuthFlowError(
+            scrub_secrets(f"{prefix}网络错误：{exc}", secrets), kind="network",
+        ) from None
+    except (OSError, ValueError) as exc:
         raise OAuthFlowError(
             scrub_secrets(f"{prefix}网络错误：{exc}", secrets), kind="network",
         ) from None
@@ -321,8 +357,11 @@ def firecrawl_login(
     sleep = _sleep if sleep is None else sleep
     clock = _now if clock is None else clock
     opener = webbrowser.open if open_browser is None else open_browser
-    session_id = secrets.token_urlsafe(32)
-    verifier = secrets.token_urlsafe(64)
+    # Firecrawl rejects other shapes ("Invalid session_id format" / "Invalid
+    # code_verifier format"); both match its documented generator: a 64-hex
+    # `openssl rand -hex 32` session id and a 43-char base64url verifier.
+    session_id = secrets.token_hex(32)
+    verifier = secrets.token_urlsafe(32)[:43]
     challenge = code_challenge_s256(verifier)
     query = urllib.parse.urlencode({"code_challenge": challenge, "source": "coding-agent"})
     url = f"{FIRECRAWL_CLI_AUTH_URL}?{query}#session_id={session_id}"
@@ -332,6 +371,7 @@ def firecrawl_login(
         opener(url)
     _emit(emit, {"event": "waiting"})
 
+    stdin = _watched_stdin(stdin)
     deadline = clock() + float(timeout)
     secrets_guard = [verifier]
     while True:
@@ -414,7 +454,7 @@ def parallel_login(
     if not client_id:
         registered = _post_json(
             PARALLEL_REGISTER_URL,
-            {},
+            _parallel_registration(),
             http=http,
             deadline=None,
             prefix="Parallel: ",
@@ -452,6 +492,7 @@ def parallel_login(
 
     interval = max(0.0, _number(device.get("interval"), PARALLEL_DEFAULT_INTERVAL_SECONDS))
     expires_in = _number(device.get("expires_in"), PARALLEL_DEFAULT_EXPIRES_SECONDS)
+    stdin = _watched_stdin(stdin)
     deadline = min(clock() + float(timeout), clock() + expires_in)
     secrets_guard = [device_code, client_id]
 

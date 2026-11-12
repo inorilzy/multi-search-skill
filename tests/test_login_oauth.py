@@ -111,8 +111,18 @@ class FakeClock:
         self.now += seconds
 
 
-class ClosedStdin:
-    closed = True
+class HangsUpStdin:
+    """Open when the login starts, then closed by the parent (a terminal or wrapper hanging up)."""
+
+    def __init__(self, open_checks=1):
+        self.open_checks = open_checks
+
+    @property
+    def closed(self):
+        if self.open_checks > 0:
+            self.open_checks -= 1
+            return False
+        return True
 
 
 class RecordingStream(io.StringIO):
@@ -261,6 +271,40 @@ class FirecrawlOAuthTests(OAuthTestCase):
         self.assertEqual(posted["session_id"], session_id)
         self.assertEqual(oauth_module.code_challenge_s256(posted["code_verifier"]), query["code_challenge"][0])
         self.assertNotIn(posted["code_verifier"], stdout)
+        # Firecrawl answers HTTP 400 "Invalid session_id format" to anything but the
+        # documented `openssl rand -hex 32` shape, and "Invalid code_verifier format" to
+        # anything but its 43-char base64url verifier.
+        self.assertRegex(session_id, r"^[0-9a-f]{64}$")
+        self.assertRegex(posted["code_verifier"], r"^[A-Za-z0-9_-]{43}$")
+
+    def test_oauth_with_stdin_at_eof_from_the_start_is_not_a_cancellation(self):
+        # The desktop starts the CLI with stdin=/dev/null: EOF at once, never "closed later".
+        key = "fc-devnull-key"
+        http = FakeHTTP({FIRECRAWL_STATUS_URL: [{"status": "pending"}, {"status": "complete", "apiKey": key}]})
+        with open(os.devnull, encoding="utf-8") as devnull, \
+                mock.patch("multi_search_mcp.src.support.http.urlopen_retry", http), \
+                mock.patch.object(oauth_module, "_sleep", lambda _seconds: None):
+            code, stdout, stderr = self.run_cli_with_stdin(
+                ["login", "firecrawl", "--method", "oauth", "--format", "jsonl",
+                 "--no-browser", "--timeout", "10"],
+                devnull,
+            )
+        self.assertEqual(code, 0, stdout + stderr)
+        self.assertEqual(self.events(stdout)[-1]["event"], "complete")
+
+    def test_a_poll_cut_off_by_the_flow_deadline_is_a_timeout_not_a_network_error(self):
+        # urllib wraps the HTTP layer's deadline TimeoutError in URLError.
+        deadline_hit = urllib.error.URLError(TimeoutError("HTTP request deadline exceeded"))
+        http = FakeHTTP({FIRECRAWL_STATUS_URL: deadline_hit})
+        with mock.patch("multi_search_mcp.src.support.http.urlopen_retry", http):
+            code, stdout, stderr = self.run_cli(
+                ["login", "firecrawl", "--method", "oauth", "--format", "jsonl",
+                 "--no-browser", "--timeout", "10"]
+            )
+        self.assertEqual(code, 1)
+        error = self.events(stdout)[-1]
+        self.assertEqual(error["error_kind"], "timeout")
+        self.assertNotIn("网络错误", error["message"])
 
     def test_firecrawl_oauth_one_second_timeout_still_checks_status_once(self):
         key = "fc-one-second-key"
@@ -312,13 +356,15 @@ class FirecrawlOAuthTests(OAuthTestCase):
         self.assertFalse(self.keys_file.exists())
 
     def test_firecrawl_oauth_closed_stdin_emits_a_cancelled_error_event(self):
+        # Hanging up an open stdin cancels; a stdin that was never open does not
+        # (see test_oauth_with_stdin_at_eof_from_the_start_is_not_a_cancellation).
         http = FakeHTTP(firecrawl_routes("fc-never-issued"))
 
         with mock.patch("multi_search_mcp.src.support.http.urlopen_retry", http):
             code, stdout, stderr = self.run_cli_with_stdin(
                 ["login", "firecrawl", "--method", "oauth", "--format", "jsonl",
                  "--no-browser", "--timeout", "10"],
-                ClosedStdin(),
+                HangsUpStdin(),
             )
 
         self.assertEqual(code, 1)
@@ -451,6 +497,14 @@ class ParallelOAuthTests(OAuthTestCase):
 
         register = http.requests_for(PARALLEL_REGISTER_URL)
         self.assertEqual(len(register), 1)
+        # Parallel answers HTTP 400 "client_name or redirect_uris is required" to an
+        # empty body; the documented request names the client and its platform.
+        body = json_body(register[0])
+        self.assertEqual(body["client_name"], "multi-search")
+        self.assertEqual(
+            set(body["platform"]), {"machine", "os_name", "processor", "release", "system", "version"},
+        )
+        self.assertTrue(all(isinstance(value, str) for value in body["platform"].values()))
         device = form_body(http.requests_for(PARALLEL_DEVICE_URL)[0])
         self.assertEqual(device, {"client_id": "client-1", "scope": "balance:read"})
         token_requests = http.requests_for(PARALLEL_TOKEN_URL)

@@ -125,7 +125,11 @@ class ApplyRerankTests(unittest.TestCase):
         # Everything not named here scores 0.5.
         reranker = _FakeReranker({rrf_order[0]: 0.9, rrf_order[2]: 1.0})
         # The tail beyond candidate_limit (slots 10, 11) is never sent.
-        policy = RerankPolicy(mode="rrf_model", base_url=BASE, model=MODEL, candidate_limit=10, batch_size=20)
+        # model_weight=1.0 orders by the model alone (the blend is covered below).
+        policy = RerankPolicy(
+            mode="rrf_model", base_url=BASE, model=MODEL, candidate_limit=10, batch_size=20,
+            model_weight=1.0,
+        )
 
         reordered, meta = apply_rerank(
             hits, "query", reranker, policy=policy,
@@ -144,6 +148,57 @@ class ApplyRerankTests(unittest.TestCase):
         self.assertEqual(reordered[1]["relevance_score"], 0.9)
         self.assertIsNone(reordered[10]["relevance_score"])
         self.assertIsNone(reordered[11]["relevance_score"])
+
+    def test_default_weight_blends_normalized_model_and_rrf_scores_half_and_half(self):
+        from multi_search_mcp.src.search.rerank import (
+            DEFAULT_MODEL_WEIGHT, RerankPolicy, apply_rerank,
+        )
+
+        self.assertEqual(DEFAULT_MODEL_WEIGHT, 0.5)
+        hits = _fused_hits(10)
+        order = [hit["source_id"] for hit in hits]
+        # The model loves the 10th RRF candidate and is lukewarm on the rest.
+        reranker = _FakeReranker({order[9]: 1.0})
+        policy = RerankPolicy(mode="rrf_model", base_url=BASE, model=MODEL)
+        reordered, meta = apply_rerank(
+            hits, "q", reranker, policy=policy, deadline=time.monotonic() + 5,
+        )
+        positions = [order.index(hit["source_id"]) for hit in reordered]
+        # Normalized: RRF rank 10 -> 0.0, model 1.0 -> 1.0, blend 0.5.  RRF rank 1
+        # -> 1.0 with model 0.5 -> 0.0, blend 0.5 too: the tie keeps RRF order.
+        self.assertEqual(positions[0], 0)
+        self.assertEqual(positions[1], 9, "a strong model score lifts the last candidate to 2nd")
+        self.assertEqual(meta["model_weight"], 0.5)
+        parts = meta["blend"][order[9]]
+        self.assertEqual((parts["rrf_norm"], parts["model_norm"], parts["blended"]), (0.0, 1.0, 0.5))
+        self.assertEqual(reordered[1]["relevance_score"], 1.0, "relevance_score stays the raw model score")
+
+    def test_normalization_removes_scale_so_the_weight_means_what_it_says(self):
+        from multi_search_mcp.src.search.rerank import blend_scores
+
+        # RRF sums are tiny and model scores cluster near 1; raw, the model would dominate.
+        rrf = [0.050, 0.040, 0.010]
+        model = [0.90, 0.95, 1.00]
+        half = [row["blended"] for row in blend_scores(rrf, model, 0.5)]
+        self.assertAlmostEqual(half[0], 0.5 * 0.0 + 0.5 * 1.0)
+        self.assertAlmostEqual(half[1], 0.5 * 0.5 + 0.5 * 0.75, places=4)
+        self.assertAlmostEqual(half[2], 0.5 * 1.0 + 0.5 * 0.0)
+        # Scaling either side by any constant leaves the blend unchanged.
+        scaled = [row["blended"] for row in blend_scores([v * 1000 for v in rrf], [v / 10 for v in model], 0.5)]
+        for a, b in zip(half, scaled):
+            self.assertAlmostEqual(a, b, places=5)
+        # The two ends of the knob are pure RRF and pure model.
+        self.assertEqual([r["blended"] for r in blend_scores(rrf, model, 0.0)], [1.0, 0.75, 0.0])
+        self.assertEqual([r["blended"] for r in blend_scores(rrf, model, 1.0)], [0.0, 0.5, 1.0])
+
+    def test_a_side_with_identical_values_gives_everyone_the_same_share(self):
+        from multi_search_mcp.src.search.rerank import blend_scores
+
+        rows = blend_scores([0.02, 0.01], [0.8, 0.8], 0.5)
+        self.assertEqual([r["model_norm"] for r in rows], [1.0, 1.0])
+        self.assertGreater(rows[0]["blended"], rows[1]["blended"], "RRF alone then decides")
+        self.assertEqual(blend_scores([], [], 0.5), [])
+        self.assertEqual(blend_scores([None], [0.4], 0.5)[0]["rrf_norm"], 1.0)
 
     def test_model_only_sees_public_candidate_fields(self):
         from multi_search_mcp.src.search.rerank import (
@@ -615,7 +670,8 @@ class CoreAdapterConstructionTests(unittest.TestCase):
 
     def test_rrf_model_without_injection_calls_the_real_adapter(self):
         opener = _FakeSystemOneOpener()
-        response, _built = self._run(ranking=dict(ON), opener=opener)
+        # Model-only weight so the fake's single grade-4 answer decides the top slot.
+        response, _built = self._run(ranking={**ON, "model_weight": 1.0}, opener=opener)
         self.assertEqual(len(opener.requests), 1)
         self.assertEqual(opener.requests[0]["auth"], "Bearer test-key")
         self.assertEqual(opener.requests[0]["url"], BASE + "/systemone")
@@ -781,6 +837,19 @@ class NumericBoundsTests(unittest.TestCase):
         "batch_size": {0: False, 1: True, 50: True, 51: False},
         "rerank_timeout": {0: False, 1: True, 60: True, 61: False},
     }
+
+    def test_model_weight_bounds_and_types(self):
+        from multi_search_mcp.src.search.rerank import MODEL_WEIGHT_RANGE, RerankPolicy
+        from multi_search_mcp.src.support.config import ConfigError
+
+        self.assertEqual(MODEL_WEIGHT_RANGE, (0.0, 1.0))
+        for value in (0, 0.0, 0.25, 0.5, 1, 1.0):
+            with self.subTest(value=value):
+                self.assertEqual(RerankPolicy.from_config({"ranking": {**ON, "model_weight": value}}).model_weight, value)
+        for value in (-0.01, 1.01, float("nan"), float("inf"), True, "0.5", None):
+            with self.subTest(value=value), self.assertRaises(ConfigError):
+                RerankPolicy.from_config({"ranking": {**ON, "model_weight": value}})
+        self.assertEqual(RerankPolicy.from_config({"ranking": dict(ON)}).model_weight, 0.5)
 
     def test_boundary_values(self):
         from multi_search_mcp.src.search.rerank import RerankPolicy
