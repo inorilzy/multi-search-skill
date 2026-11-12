@@ -42,7 +42,7 @@ uv run --locked multi-search read src_... --keyword 'TaskGroup' --limit 2000
 - `multi_search_mcp/src/providers/`：第三方调用适配（XKit / Tavily），含托管 Twitter Cookie 的运行时装配；搜索器和抓取器通过这里取得客户端。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
 
-CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys status|reset`、`site stats|set-preference|reset`、`routes`、`balance`、`usage`（本机余额历史、配速与调用统计）、`accounts list|add|rename|remove|move-key`、`login` 和 `logout`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留，但只作为 CLI/Core 之上的薄包装。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
+CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys status|reset`、`site stats|set-preference|reset`、`routes`、`balance`、`usage`（本机余额历史、账号分组、配速与调用统计）、`accounts list|add|rename|remove|move-key`（本地账号管理）、`login` 和 `logout`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留，但只作为 CLI/Core 之上的薄包装。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
 
 边界约定：凭据按 **环境变量（`env`）> `~/.multi-search/keys.json`（`keys_file`）** 解析，所有平台相同；非敏感行为配置按 `MULTI_SEARCH_CONFIG` → `config.sqlite` 的 settings 记录（桌面端写入，存在即权威）→ `~/.multi-search/multi-search-config.json` → 仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。桌面端首次写入 `config.sqlite` 设置记录时会先导入可解析的用户级 JSON 配置（见「配置和参数」）。CLI 不需要任何 MCP 客户端启动配置。
 
@@ -57,8 +57,8 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys stat
 | 01 概览与测试 | 检测应用继承的 PATH、已登记的用户 PATH（Windows 为注册表，macOS 为本工具追加到登录 Shell 配置的受管区块）中的 CLI（Windows `multi-search.exe`／macOS、Linux `multi-search`），显示版本、实际路径和来源；Linux 没有用户 PATH 注册后端，用户 PATH 存储读取失败时回退到进程 PATH；运行或取消一次测试搜索，结果以结构化列表展示，来源错误单列，原始 JSON 折叠保留。新终端可发现不意味着已打开的终端或 Agent 已刷新环境。 |
 | 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI：Windows 到 `%LOCALAPPDATA%\MultiSearch\cli`，macOS 到 `~/Library/Application Support/MultiSearch/cli`，Linux 到 `$XDG_DATA_HOME/MultiSearch/cli`（否则 `~/.local/share/MultiSearch/cli`）；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本。加入用户 PATH 需单独确认：Windows 写当前用户 PATH，macOS 只在登录 Shell 配置末尾追加带标记的区块，新开终端才生效，已运行的宿主需重启；Linux 暂不支持自动注册 shell PATH，但已安装的受管 CLI 可被发现和运行。 |
 | 03 Agent Skill | 安装到通用 Agents 目录（`.agents/skills`，Codex、Gemini CLI、OpenCode 等读取）或 Claude Code（`.claude/skills`），以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
-| 04 服务商 | 列出 13 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），所有平台都可逐行新增、删除、显式显示，并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。余额与本机用量在「05 用量」页查看；Firecrawl 与 Parallel 提供「浏览器登录」按钮、进行中状态和取消，Exa 额外提供「管理 Key（查余额用）」输入行。默认只显示掩码，测试可能消耗额度。 |
-| 05 用量 | 每个服务商显示剩余 / 上限、单位、重置时间、配速和近 30 天剩余走势；多个 Key 默认显示合计，可展开指纹与各自额度。不支持余额的服务商集中在「仅本机统计」区域。显示今天与近 7 天本机调用次数（不等于服务商计费次数），支持刷新全部、单卡刷新及跳到服务商设置；刷新遵守服务商缓存时长，旧 CLI 提示更新。 |
+| 04 服务商 | 一列一行一家服务商，页面标题与侧边栏一致为「服务商」（eyebrow `PROVIDERS`）。收起行 = 图标、名称、「N 个账号 · M 个 Key」、合计余额细进度条、状态提醒、启用开关；展开 = 按账号分组的管理面板：浏览器登录、新建账号、给账号加 Key、删除 Key、重命名 / 删除账号、连接测试。登录后拿不到搜索 Key 的服务商（Parallel）提示「请为这个账号添加搜索 Key」；Exa 管理 Key 与 Parallel 账户令牌显示在账号下并标「仅查余额」。页面仍保留搜索源概览、筛选与连接测试；Jina 可维护静态 `exhausted` 标记。Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），余额与本机用量在「05 用量」页查看；默认只显示掩码，测试可能消耗额度。 |
+| 05 用量 | 一列一行一家服务商。收起行 = 图标、名称、合计剩余进度条与百分比（相对值显示数值与「相对」标记）、「N 个账号 · M 个 Key」、一句状态提醒（撑不到重置 / 需要凭据 / 重置时间）和展开箭头；展开 = 账号行（名称、来源、进度条、数值）→ Key 行（指纹、进度条、数值），再加近 30 天走势、配速句与本机调用，并提供单家刷新与「去设置」。没有上限的余额以本周期历史最高剩余为满格标「相对值」；完全没有余额接口的服务商显示「无余额接口 · 今天调用 N 次」。说明性文字只出现在展开后或页面底部一行小字。展开状态在刷新后保持，页面顶部只有「刷新全部」与一行小字更新时间。刷新遵守服务商缓存时长，本机调用统计不等于服务商计费次数，历史只保留 30 天。 |
 | 06 搜索设置 | 读写默认路由、全局超时（1–90 秒）、同一网站最多条数（1–15，默认 3）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另有「模型重排」开关（默认关闭）：开启后填写 System One 的 Base URL 与模型名（必填）、Jev 与 RRF 的排序权重滑块（默认各 50%）以及候选数 / 批量 / 超时高级项，写入配置块的 `ranking` 键；保存时只写入已知 `ranking` 键、丢弃未知字段（重新保存即可自愈），非法的已存 `ranking` 块回退默认值并提示。API 密钥单独保存到 `~/.multi-search/keys.json` 的 `systemone` 条目（Unix 上为 0600），不写进设置，也从不回显；环境变量 `SYSTEMONE_API_KEY` 优先。另可填写 Twitter Cookie 文件路径，并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
 | 07 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）和单个后端时限（`scrape_backend_timeout`，默认 10 秒，立即保存）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。 |
 | 08 Cookie 导入 | 用户显式确认后，把选定的 Twitter/X Cookie JSON 校验并复制到 `~/.multi-search/twitter-cookies.json`（0600），同时设置 `twitter_cookies_path`；删除只移除这份副本。原文件不修改也不删除，本页不显示 Cookie 内容。 |
@@ -269,6 +269,20 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 
 每个服务商由一个内置插件声明（`multi_search_mcp/src/plugins/`）：插件统一给出 id、展示名、Key 提供者、负责的搜索源与抓取通道、登录方式和余额查询。插件 id 与 keys.json 的条目名一致；当前只加载内置插件，不支持第三方或外部插件加载。字段映射见[术语表](docs/glossary.md#7-插件余额与登录)。
 
+### 账号
+
+凭据按 **服务商 → 账号 → Key** 三层组织。账号和 Key 指纹都保存在 `~/.multi-search/keys.json` 的顶层 `accounts` 条目里（不含明文），Key 本身仍在同一文件的既有条目中。账号来源有两种：`oauth`（浏览器登录得到，按登录身份命名或复用）与 `manual`（手动新建）。每个账号下 0–N 个搜索 Key；只用于查余额的凭据挂在账号下并标注「仅查余额」。某家所有未被任何账号引用的 Key 组成虚拟的「默认账号」（id `default`），升级后旧 Key 自动进入默认账号，无需迁移；默认账号不能重命名或删除。
+
+`multi-search accounts` 子命令（默认 `--format json`，`--format text` 为精简文本）：
+
+- `accounts list [--provider <id>]`：按服务商列出账号与 Key 指纹。
+- `accounts add <provider> --name <名称>`：新建手动账号。
+- `accounts rename <provider> <账号 id> --name <名称>`：重命名账号。
+- `accounts remove <provider> <账号 id> [--delete-keys]`：删除账号；默认把搜索 Key 移到默认账号，`--delete-keys` 连同搜索 Key 一起删除（仅查余额的凭据始终保留）。
+- `accounts move-key <provider> <指纹> --to <账号 id>`：把某个 Key 移到另一个账号，`--to default` 移回默认账号。
+
+登录时用 `login <provider> --method api --account <账号 id>` 可把新 Key 直接挂到指定账号，缺省进默认账号。
+
 ### 余额
 
 `multi-search balance [--provider <id>]... [--format json|text] [--refresh]`
@@ -300,15 +314,17 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 
 - 默认输出 JSON（`schema_version` 为 1，`retention_days` 为 30）；`--format text` 按服务商逐段显示。`--provider` 可重复，只输出指定插件。
 - 每个服务商给出当前余额、近 `--days` 天（默认 30）的余额历史、配速与「能否撑到重置」，以及本机调用次数（今天 / 近 7 天 / 按天）。多个 Key 在相同作用域与单位下的额度合计，任一 Key 未知时合计显示「未知」。
+- JSON 每个服务商新增按账号分组的 `accounts: [{id, name, source, keys: [{key_fingerprint, report}], total}]`、服务商级 `total`（`remaining`/`limit`/`percent`/`unit`/`relative`）与 `alert`（`low`/`critical`/`wont_last`/`needs_credential`/null）；原有 `current`/`totals` 等字段保留，向后兼容。合计里 Key 级相加，team / account 级不相加，任一为 null 时合计为 null；没有上限时以本周期历史最高剩余为满格并把 `relative` 置 `true`。提醒阈值：剩余 < 20% 为 `low`、< 5% 为 `critical`，配速判断撑不到重置为 `wont_last`，优先级 `critical` > `wont_last` > `low` > `needs_credential`。
+- 桌面端「05 用量」一列一行一家服务商：收起只显示合计进度条与百分比、「N 个账号 · M 个 Key」和一句提醒；展开后按「账号 → Key」两级列出进度条，再加走势、配速与本机调用。
 - 不加 `--refresh` 只读本机数据，不发任何网络请求；加 `--refresh` 先按 `balance` 的规则（含各插件缓存时长）查询一次余额并写入历史。**余额只在打开用量页、运行 `usage --refresh` 或点「刷新」时查询**，搜索流程不触发余额查询。
 - 本机调用次数是「本机统计」，只统计本机实际发出的调用，不等于服务商侧的计费次数（服务商内部重试、一次请求扣多个积分等都不计入）。`--no-state` 的搜索不写统计；写入失败不影响搜索结果和退出码。
 - 用量库位于 `~/.multi-search/usage.sqlite`（Unix 上 0600），只存本机数据；余额历史与本机调用统计都保留 30 天，过期行在每次写入时顺带删除。库不可读时历史与调用为空并给出 `usage_error`，命令仍退出 0。
 
 ### 登录与退出
 
-`multi-search login <provider> [--method api|oauth] [--credential <entry>] [--format json|human|markdown|jsonl|text] [--no-browser] [--timeout <秒>]`（`json`/`human`/`markdown` 用于 api，`jsonl`/`text` 用于 oauth）
+`multi-search login <provider> [--method api|oauth] [--credential <entry>] [--account <id>] [--format json|human|markdown|jsonl|text] [--no-browser] [--timeout <秒>]`（`json`/`human`/`markdown` 用于 api，`jsonl`/`text` 用于 oauth）
 
-- `--method api`（默认）：从 stdin 读取一行 Key，终端下不回显；写入 `~/.multi-search/keys.json` 的对应条目，保留其他条目，已有相同 Key 不重复追加。插件支持余额时会立即查一次并输出（只用于确认，失败不回滚已保存的 Key）。Exa 的余额管理 Key 用 `--credential exa_admin` 保存，环境变量 `EXA_SERVICE_KEY` 优先。
+- `--method api`（默认）：从 stdin 读取一行 Key，终端下不回显；写入 `~/.multi-search/keys.json` 的对应条目，保留其他条目，已有相同 Key 不重复追加。插件支持余额时会立即查一次并输出（只用于确认，失败不回滚已保存的 Key）。Exa 的余额管理 Key 用 `--credential exa_admin` 保存，环境变量 `EXA_SERVICE_KEY` 优先。`--account <id>`（仅 api）在写入后把该 Key 挂到指定账号，缺省进默认账号。
 - `--method oauth`：逐行输出事件，默认 text；`--format jsonl` 输出 `open_url` / `waiting` / `complete` / `error` 对象。`--no-browser` 只输出 URL，不打开浏览器。Firecrawl 用 PKCE 浏览器授权，换到的 API Key 写入 `keys.json` 的 `firecrawl` 条目；Parallel 用 RFC 8628 设备码，得到只用于查余额的 Account API 令牌，写入 `~/.multi-search/oauth.json` 的 `parallel_account` 条目。默认超时 300 秒。
 - `multi-search logout <provider> [--credential <entry>]`：删除对应凭据条目。Parallel 的 `parallel_account` 会先调用 revoke 再删除；条目不存在时输出 `removed: false`，不视为错误。
 
@@ -316,6 +332,7 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 uv run --locked multi-search balance --format text
 uv run --locked multi-search balance --provider tavily --provider exa --refresh
 uv run --locked multi-search login tavily --method api
+uv run --locked multi-search login tavily --method api --account acc_3f1a
 uv run --locked multi-search login exa --credential exa_admin --method api
 uv run --locked multi-search login firecrawl --method oauth --no-browser --format jsonl
 uv run --locked multi-search login parallel --method oauth
@@ -433,7 +450,7 @@ search_web({ "query": "rust async runtime", "sources": ["brave", "exa"] })
 search_web({ "query": "python", "sources": ["sov2ex"] })
 ```
 
-CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`，列出当前路由的 `routes`，查看服务商余额的 `balance [--provider ID]... [--format json|text] [--refresh]`，以及登录/退出服务商的 `login <provider> [--method api] [--credential ENTRY]`、`logout <provider> [--credential ENTRY]`（api 方式从 stdin 读取 Key，不经过 argv；Exa 管理 Key 用 `--credential exa_admin`）；`logs serve` 在本机网页里查看每次搜索的详细记录，`logs list` 列出记录。`search --no-fetch` 只返回融合排序的候选，不抓正文、不写正文缓存；`--no-state` 跳过 SQLite key 轮换、正文缓存与站点记忆。`search --rerank [--rerank-base-url URL] [--rerank-model MODEL]` 对本次请求启用模型重排（ranking 覆盖，默认仍纯 RRF；未给的端点取配置里的值），用法与回退语义见「配置和参数 → 可选模型重排」。
+CLI 使用相同 Core：`multi-search search [选项] -- '<query>'`（选项写在前、查询写在 `--` 之后，避免以 `-` 开头的查询被当作选项）、`multi-search fetch <source_id> --full-content`、`multi-search read <source_id>`；`--format json|human|markdown`，默认稳定 JSON。另有 `sources`（源/路由/别名/env 目录，`--key-status` / `--scraper-stats` 可附带状态）、`doctor`、`keys status`、`keys reset`，站点抓取记忆的 `site stats [site]`、`site set-preference <site> <scraper> [--priority N] [--note TEXT]`、`site reset [site]`，列出当前路由的 `routes`，查看服务商余额的 `balance [--provider ID]... [--format json|text] [--refresh]`，按账号管理凭据的 `accounts list|add|rename|remove|move-key`，以及登录/退出服务商的 `login <provider> [--method api] [--credential ENTRY] [--account ID]`、`logout <provider> [--credential ENTRY]`（api 方式从 stdin 读取 Key，不经过 argv；Exa 管理 Key 用 `--credential exa_admin`，`--account` 把新 Key 挂到指定账号）；`logs serve` 在本机网页里查看每次搜索的详细记录，`logs list` 列出记录。`search --no-fetch` 只返回融合排序的候选，不抓正文、不写正文缓存；`--no-state` 跳过 SQLite key 轮换、正文缓存与站点记忆。`search --rerank [--rerank-base-url URL] [--rerank-model MODEL]` 对本次请求启用模型重排（ranking 覆盖，默认仍纯 RRF；未给的端点取配置里的值），用法与回退语义见「配置和参数 → 可选模型重排」。
 
 ## 配置和参数
 

@@ -20,7 +20,11 @@
 
 **登录方式（Auth method：api / oauth）**：插件声明的一种凭据取得方式。`api` 从标准输入读取 Key（不经过命令行参数）并写入 Key 文件；`oauth` 用浏览器授权或设备码换到凭据，其中 Firecrawl 换到的 API Key 存入 Key 文件，Parallel 的账户令牌存入独立的 OAuth 文件。一个插件可以同时声明多种登录方式，`login` / `logout` 只操作已声明的凭据条目。
 
-**管理凭据（Balance-only credential）**：只用于查询余额、不用于搜索的独立凭据条目，例如 Exa 的 `exa_admin`（Team Management service key）和 Parallel 的 `parallel_account`（设备码登录得到的 Account API 令牌）。它与搜索 Key 分开保存；缺失时余额显示「需要凭据」，登录或退出只影响余额查询。
+**账号（Account）**：某个服务商下的一组凭据，把凭据关系从「服务商 → Key」扩展为「服务商 → 账号 → Key」。账号来源有两种：`oauth`（浏览器登录得到，按登录身份命名或复用）和 `manual`（用户手动新建）。每个账号下 0–N 个搜索 Key；只用于查余额的凭据也挂在账号下并标注「仅查余额」。账号只保存 `id`、`name`、`source`、可选的 `login_identity`、搜索 Key 指纹 `keys` 与仅查余额凭据条目到指纹的映射 `balance_credentials`，不存明文，统一随 Key 一起放在 `~/.multi-search/keys.json` 的 `accounts` 顶层条目里。
+
+**默认账号（Default account）**：虚拟账号，不写入文件。某个服务商所有未被任何已保存账号引用的 Key 组成 id 为 `default` 的「默认账号」，保证升级零迁移；旧版工具新增的 Key 与没有持久归属的环境变量 Key 也自然出现在这里。它不能重命名或删除；当它没有 Key、也没有仅查余额的凭据，且该服务商已有其他账号时，界面隐藏它。
+
+**仅查余额的凭据（Balance-only credential）**：只用于查询余额、不用于搜索的独立凭据条目，例如 Exa 的 `exa_admin`（Team Management service key）和 Parallel 的 `parallel_account`（设备码登录得到的 Account API 令牌）。它与搜索 Key 分开保存，在新账号层下挂在某个账号的 `balance_credentials` 里并在界面标注「仅查余额」；新增的 Exa 管理 Key 落在默认账号下。缺失时余额显示「需要凭据」，登录或退出只影响余额查询。
 
 ## 路由
 
@@ -48,7 +52,7 @@
 
 ## 用量
 
-**用量（Usage）**：本机的用量视图，按服务商汇总余额、余额历史、配速与本机调用统计，供 `multi-search usage` 与桌面端「05 用量」页展示。它只读本机数据：不加 `--refresh` 时不发任何网络请求，加 `--refresh` 时按 `balance` 的规则（含各插件缓存时长）查询一次余额。数值未知一律显示为「未知」，不填 0。
+**用量（Usage）**：本机的用量视图，供 `multi-search usage` 与桌面端「05 用量」页展示。它按服务商一行汇总余额、余额历史、配速与本机调用统计，并给出按账号分组的明细：收起时只有该行的合计剩余与百分比、「N 个账号 · M 个 Key」和一句状态提醒；展开后按「账号 → Key」两级列出各自进度条，再加走势、配速与本机调用。合计里 Key 级相加，team / account 级不相加，任一为 null 时合计为 null；没有上限时以本周期历史最高剩余为满格（相对值）。提醒按剩余与配速给出 `critical` / `wont_last` / `low` / `needs_credential`。它只读本机数据：不加 `--refresh` 时不发任何网络请求，加 `--refresh` 时按 `balance` 的规则（含各插件缓存时长）查询一次余额。数值未知一律显示为「未知」，不填 0。
 
 **余额历史（Balance history）**：每次真正向服务商查询（非缓存命中）得到成功（`ok`）余额报告时，在本机追加一条记录；缓存命中和非 `ok` 报告不写。记录按 Key 指纹、作用域、单位与查询时间去重，保留最近 30 天，过期记录随每次写入顺带清理。
 
