@@ -20,13 +20,24 @@ const point = (overrides = {}) => ({
   fetched_at: '2026-11-10T00:00:00Z', ...overrides,
 });
 const counts = { search: 4, scrape: 2, failures: 1 };
-const provider = (overrides = {}) => ({
-  id: 'tavily', label: 'Tavily', balance_supported: true, balance_note: '', current: [report()],
-  accounts: [], total: { remaining: 600, limit: 1000, percent: 60, unit: 'credits', relative: false }, alert: null,
-  totals: [{ scope: 'key', unit: 'credits', key_count: 1, remaining: 600, limit: 1000, message: '' }],
-  history: [point(), point({ remaining: 600, fetched_at: '2026-11-12T00:00:00Z' })], pace: [pace()],
-  calls: { today: counts, last_7_days: { search: 12, scrape: 5, failures: 2 }, daily: [] }, ...overrides,
+const total = (overrides = {}) => ({
+  remaining: 600, limit: 1000, percent: 60, unit: 'credits', relative: false, ...overrides,
 });
+const account = (overrides = {}) => ({
+  id: 'default', name: '默认账号', source: 'manual', total: total(),
+  keys: [{ key_fingerprint: 'fp-one', report: report() }], ...overrides,
+});
+const provider = (overrides = {}) => {
+  const current = overrides.current || [report()];
+  return {
+    id: 'tavily', label: 'Tavily', balance_supported: true, balance_note: '', current,
+    accounts: [account({ keys: current.filter(row => row.key_fingerprint)
+      .map(row => ({ key_fingerprint: row.key_fingerprint, report: row })) })], total: total(), alert: null,
+    totals: [{ scope: 'key', unit: 'credits', key_count: 1, remaining: 600, limit: 1000, message: '' }],
+    history: [point(), point({ remaining: 600, fetched_at: '2026-11-12T00:00:00Z' })], pace: [pace()],
+    calls: { today: counts, last_7_days: { search: 12, scrape: 5, failures: 2 }, daily: [] }, ...overrides,
+  };
+};
 const view = (providers = [provider()], overrides = {}) => ({
   status: 'ready', message: '', schema_version: 1, retention_days: 30, providers, ...overrides,
 });
@@ -37,6 +48,137 @@ function setup() {
   return { window, root };
 }
 const card = (root, id = 'tavily') => root.querySelector(`[data-provider="${id}"]`);
+
+test('T06: collapsed rows contain only the provider summary and the page has one footer note', async () => {
+  const { window, root } = setup();
+  const mounted = await mountUsage(root, { usageView: async () => view() });
+  const row = card(root);
+  assert.equal(row.tagName, 'DETAILS');
+  assert.equal(row.open, false);
+  const summary = row.querySelector('summary');
+  assert.deepEqual([...summary.children].map(node => node.className), [
+    'provider-icon', 'provider-identity', 'provider-meter', 'provider-status', 'provider-expand',
+  ]);
+  assert.equal(summary.querySelector('.provider-icon').textContent, 't');
+  assert.equal(summary.querySelector('.provider-name').textContent, 'Tavily');
+  assert.equal(summary.querySelector('.provider-counts').textContent, '1 个账号 · 1 个 Key');
+  assert.equal(summary.querySelector('.meter-value').textContent, '60%');
+  assert.equal(summary.querySelector('.provider-status').textContent, '重置时间：2026-12-01 00:00 UTC');
+  assert.doesNotMatch(summary.textContent, /本机|配速|走势|刷新|去设置|手动添加|默认账号/);
+  assert.equal(summary.querySelector('button, .account-list, .usage-chart'), null);
+  assert.equal(row.querySelector('.provider-details').parentNode, row);
+  assert.equal(row.querySelector('[data-action="refresh-provider"]').closest('.provider-details'),
+    row.querySelector('.provider-details'));
+  assert.deepEqual([...root.querySelector('.usage-head').children].map(node => node.textContent),
+    ['刷新全部', root.querySelector('[data-updated]').textContent]);
+  assert.equal(root.querySelectorAll('[data-footnote]').length, 1);
+  assert.equal(root.querySelector('.usage-page').lastElementChild, root.querySelector('[data-footnote]'));
+  assert.equal(root.querySelector('[data-footnote]').textContent,
+    '刷新遵守服务商缓存时长。本机统计不等于服务商计费次数；历史只保留 30 天。');
+  mounted.dispose();
+  window.close();
+});
+
+test('T06: expanded account and Key meters use supplied totals and keep missing reports unknown', async () => {
+  const { window, root } = setup();
+  const personal = account({ id: 'acc_personal', name: '个人', source: 'oauth',
+    total: total({ remaining: 300, percent: 30 }), keys: [
+      { key_fingerprint: 'fp-one', report: report({ remaining: 100, limit: 500 }) },
+      { key_fingerprint: 'fp-two', report: report({ remaining: 200, limit: 500 }) },
+    ] });
+  const work = account({ id: 'acc_work', name: '公司', source: 'manual',
+    total: total({ remaining: 250, limit: 500, percent: 50 }),
+    keys: [{ key_fingerprint: 'fp-missing', report: null }] });
+  const mounted = await mountUsage(root, { usageView: async () => view([provider({
+    total: total({ remaining: 550, limit: 1500, percent: 36.67 }),
+    accounts: [account({ keys: [] }), personal, work],
+  })]) });
+  const row = card(root);
+  assert.equal(row.querySelector('.provider-counts').textContent, '2 个账号 · 3 个 Key');
+  assert.equal(row.querySelector('.provider-meter [role="progressbar"]').getAttribute('aria-valuenow'), '36.67');
+  row.querySelector('summary').click();
+  const accounts = [...row.querySelectorAll('.account-row')];
+  assert.deepEqual(accounts.map(node => node.dataset.account), ['acc_personal', 'acc_work']);
+  assert.deepEqual(accounts.map(node => node.querySelector('.account-name').textContent), ['个人', '公司']);
+  assert.deepEqual(accounts.map(node => node.querySelector('.account-source').textContent), ['浏览器登录', '手动添加']);
+  assert.deepEqual(accounts.map(node => node.querySelector('.account-summary [role="progressbar"]')
+    .getAttribute('aria-valuenow')), ['30', '50']);
+  assert.deepEqual(accounts.map(node => node.querySelector('.account-identity .provider-note').textContent),
+    ['剩余 300 / 上限 1,000 credits', '剩余 250 / 上限 500 credits']);
+  const keys = [...accounts[0].querySelectorAll('.account-keys > .key-row')];
+  assert.deepEqual(keys.map(node => node.querySelector('[role="progressbar"]').getAttribute('aria-valuenow')), ['20', '40']);
+  assert.deepEqual(keys.map(node => node.querySelector('.provider-note').textContent),
+    ['剩余 100 / 上限 500 credits', '剩余 200 / 上限 500 credits']);
+  assert.equal(keys[0].querySelector('[role="progressbar"]').getAttribute('aria-label'), 'fp-one剩余额度');
+  const missing = accounts[1].querySelector('.key-row');
+  assert.equal(missing.querySelector('.key-fingerprint').textContent, 'fp-missing');
+  assert.equal(missing.querySelector('[role="progressbar"]'), null);
+  assert.equal(missing.querySelector('.meter-value').textContent, '剩余 未知');
+  assert.equal(missing.querySelector('.key-kind').textContent, '余额未知（无缓存）');
+  mounted.dispose();
+  window.close();
+});
+
+test('T06: collapsed reminders follow Core priority and meter thresholds without repeating the reminder', async () => {
+  const { window, root } = setup();
+  const providers = [
+    ['critical', 4.99, 'critical', '余额即将用尽'], ['wont_last', 10, 'low', '撑不到重置'],
+    ['low', 19.99, 'low', '余额低'], ['needs_credential', 20, 'normal', '需要凭据'],
+  ];
+  const mounted = await mountUsage(root, { usageView: async () => view(providers.map(([alert, percent]) =>
+    provider({ id: alert, total: total({ percent }), alert }))) });
+  for (const [id, percent, level, text] of providers) {
+    const summary = card(root, id).querySelector('summary');
+    assert.equal(summary.querySelector('.meter').dataset.level, level, `${percent}%`);
+    assert.equal(summary.querySelector('.provider-status').textContent, text);
+    assert.equal(summary.querySelectorAll('.meter-alert').length, 1);
+    assert.equal(summary.querySelector('.meter-alert').dataset.kind, id);
+    assert.equal(summary.querySelector('.meter-state'), null);
+    assert.doesNotMatch(summary.querySelector('.provider-status').textContent, /重置时间/);
+  }
+  mounted.dispose();
+  window.close();
+});
+
+test('T06: relative provider and account totals use Core percent and no history invents no bar', async () => {
+  const { window, root } = setup();
+  const relative = total({ remaining: 12.5, limit: null, percent: 25, unit: 'usd', relative: true });
+  const fresh = total({ remaining: 12.5, limit: null, percent: null, unit: 'usd', relative: true });
+  const mounted = await mountUsage(root, { usageView: async () => view([
+    provider({ total: relative, accounts: [account({ total: relative })], history: [] }),
+    provider({ id: 'fresh', total: fresh, accounts: [account({ total: fresh, keys: [] })], history: [] }),
+  ]) });
+  const summary = card(root).querySelector('summary');
+  assert.equal(summary.querySelector('.meter-value').textContent, '剩余 12.5 美元');
+  assert.equal(summary.querySelector('.meter-relative').textContent, '相对');
+  assert.equal(summary.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '25');
+  assert.match(summary.querySelector('[role="progressbar"]').getAttribute('aria-valuetext'), /相对值 25%/);
+  summary.click();
+  assert.equal(card(root).querySelector('.account-summary .meter-relative').textContent, '相对');
+  assert.equal(card(root).querySelector('.account-summary [role="progressbar"]').getAttribute('aria-valuenow'), '25');
+  const freshSummary = card(root, 'fresh').querySelector('summary');
+  assert.equal(freshSummary.querySelector('[role="progressbar"]'), null);
+  assert.equal(freshSummary.querySelector('.meter-value').textContent, '剩余 12.5 美元');
+  assert.equal(freshSummary.querySelector('.meter-empty').textContent, '暂无上限');
+  assert.equal(freshSummary.querySelector('.provider-counts').textContent, '1 个账号 · 0 个 Key');
+  mounted.dispose();
+  window.close();
+});
+
+test('T06: unsupported providers count search and scrape without adding failures and retain zero or unknown', async () => {
+  const { window, root } = setup();
+  const mounted = await mountUsage(root, { usageView: async () => view([
+    provider({ id: 'zero', balance_supported: false, calls: {
+      today: { search: 0, scrape: 0, failures: 0 }, last_7_days: {}, daily: [],
+    } }),
+    provider({ id: 'unknown', balance_supported: false, calls: { today: {}, last_7_days: {}, daily: [] } }),
+  ]) });
+  assert.equal(card(root, 'zero').querySelector('.provider-status').textContent, '无余额接口 · 今天调用 0 次');
+  assert.equal(card(root, 'unknown').querySelector('.provider-status').textContent, '无余额接口 · 今天调用 未知 次');
+  assert.equal(root.querySelector('[role="progressbar"]'), null);
+  mounted.dispose();
+  window.close();
+});
 
 test('T06: sidebar places 04 服务商 and 05 用量 before renumbered settings', () => {
   assert.deepEqual(pages.slice(3).map(({ id, label, number }) => [id, label, number]), [
@@ -49,24 +191,29 @@ test('T06: quota, reset, pace, accessible static chart and local calls render to
   const { window, root } = setup();
   const mounted = await mountUsage(root, { usageView: async () => view() });
   assert.match(root.querySelector('.eyebrow').textContent, /^05 \/ /);
+  assert.equal(root.querySelector('.eyebrow').classList.contains('visually-hidden'), true);
   assert.equal(root.querySelector('h1').getAttribute('tabindex'), '-1');
+  assert.equal(root.querySelector('h1').className, 'visually-hidden');
+  card(root).querySelector('summary').click();
+  assert.equal(card(root).open, true);
   assert.match(card(root).textContent, /正常/);
   assert.match(card(root).textContent, /剩余 600 \/ 上限 1,000 credits/);
   assert.match(card(root).textContent, /重置时间：2026-12-01 00:00 UTC/);
   assert.match(card(root).textContent, /每天消耗 10 credits，能撑到重置/);
   assert.match(card(root).textContent, /本机调用 · 今天搜索 4 次，抓取 2 次，失败 1 次/);
   assert.match(card(root).textContent, /本机调用 · 近 7 天搜索 12 次，抓取 5 次，失败 2 次/);
-  const progress = card(root).querySelector('progress');
-  assert.equal(progress.value, 600);
-  assert.equal(progress.max, 1000);
+  const progress = card(root).querySelector('[role="progressbar"]');
+  assert.equal(progress.getAttribute('aria-valuenow'), '60');
+  assert.equal(progress.getAttribute('aria-valuemax'), '100');
   assert.match(progress.getAttribute('aria-label'), /剩余额度/);
-  const svg = card(root).querySelector('svg');
+  const svg = card(root).querySelector('.usage-chart svg');
   assert.equal(svg.getAttribute('role'), 'img');
   assert.match(svg.getAttribute('aria-label'), /近 30 天剩余走势/);
   assert.equal(svg.querySelectorAll('polyline').length, 1);
   assert.equal(svg.querySelectorAll('circle').length, 2);
-  assert.equal(root.querySelector('[data-local-only]').hidden, true);
-  assert.match(root.textContent, /本机统计不等于服务商计费次数/);
+  assert.equal(root.querySelectorAll('.provider-list').length, 1);
+  assert.equal(card(root).parentNode, root.querySelector('[data-providers]'));
+  assert.match(root.querySelector('[data-footnote]').textContent, /本机统计不等于服务商计费次数/);
   mounted.dispose();
   window.close();
 });
@@ -74,7 +221,8 @@ test('T06: quota, reset, pace, accessible static chart and local calls render to
 test('T06: credential, unsupported, error and insufficient-data states name their reasons', async () => {
   const { window, root } = setup();
   const providers = [
-    provider({ id: 'exa', label: 'Exa', current: [report({ status: 'needs_credential', message: '请配置管理 Key。' })] }),
+    provider({ id: 'exa', label: 'Exa', alert: 'needs_credential',
+      current: [report({ status: 'needs_credential', message: '请配置管理 Key。' })] }),
     provider({ id: 'jina', label: 'Jina', current: [report({ status: 'error', message: '服务商查询超时。' })] }),
     provider({ id: 'new', label: 'New', current: [], totals: [], history: [], pace: [] }),
     provider({ id: 'brave', label: 'Brave', balance_supported: false, balance_note: '没有余额查询接口。',
@@ -84,11 +232,13 @@ test('T06: credential, unsupported, error and insufficient-data states name thei
   assert.match(card(root, 'exa').textContent, /需要凭据.*请配置管理 Key/);
   assert.match(card(root, 'jina').textContent, /查询失败.*服务商查询超时/);
   assert.match(card(root, 'new').textContent, /数据不足/);
-  assert.equal(root.querySelector('[data-local-only]').hidden, false);
-  assert.equal(card(root, 'brave').parentNode, root.querySelector('[data-local-providers]'));
-  assert.match(card(root, 'brave').textContent, /不支持余额查询.*没有余额查询接口/);
-  assert.equal(card(root, 'brave').querySelector('svg'), null);
-  assert.equal(card(root, 'brave').querySelector('progress'), null);
+  assert.equal(root.querySelectorAll('.provider-list').length, 1);
+  assert.equal(card(root, 'brave').parentNode, root.querySelector('[data-providers]'));
+  assert.equal(card(root, 'brave').querySelector('.provider-status').textContent, '无余额接口 · 今天调用 6 次');
+  card(root, 'brave').querySelector('summary').click();
+  assert.match(card(root, 'brave').textContent, /无余额接口.*没有余额查询接口/);
+  assert.equal(card(root, 'brave').querySelector('.usage-chart'), null);
+  assert.equal(card(root, 'brave').querySelector('[role="progressbar"]'), null);
   mounted.dispose();
   window.close();
 });
@@ -97,13 +247,17 @@ test('T06: null quotas, timestamps, rate and missing call counts stay unknown, w
   const { window, root } = setup();
   const unknown = provider({
     current: [report({ remaining: null, limit: null, unit: '', resets_at: null, fetched_at: null })],
+    total: total({ remaining: null, limit: null, percent: null, unit: null }),
+    accounts: [account({ total: total({ remaining: null, limit: null, percent: null, unit: null }),
+      keys: [{ key_fingerprint: 'fp-one', report: report({ remaining: null, limit: null, unit: '' }) }] })],
     totals: [{ scope: 'key', unit: '', key_count: 1, remaining: null, limit: null, message: '' }],
     history: [], pace: [pace({ rate_per_day: null, reason: null })],
     calls: { today: {}, last_7_days: { search: 0, scrape: 0, failures: 0 }, daily: [] },
   });
   const mounted = await mountUsage(root, { usageView: async () => view([unknown]) });
-  assert.equal(card(root).querySelector('.usage-amount').textContent, '剩余 未知 / 上限 未知 未知');
-  assert.equal(card(root).querySelector('progress'), null);
+  card(root).querySelector('summary').click();
+  assert.equal(card(root).querySelector('.account-identity .provider-note').textContent, '剩余 未知 / 上限 未知 未知');
+  assert.equal(card(root).querySelector('[role="progressbar"]'), null);
   assert.match(card(root).textContent, /重置时间：未知；更新时间：未知/);
   assert.match(card(root).textContent, /配速未知/);
   const values = [...card(root).querySelectorAll('.usage-calls dd')].map(node => node.textContent);
@@ -121,32 +275,41 @@ test('T06: pace shows projected exhaustion and insufficient data without derivin
   ]) {
     const { window, root } = setup();
     const mounted = await mountUsage(root, { usageView: async () => view([provider({ pace: [value] })]) });
+    card(root).querySelector('summary').click();
     assert.match(card(root).querySelector('.usage-pace').textContent, expected);
     mounted.dispose();
     window.close();
   }
 });
 
-test('T06: multiple keys start collapsed, use Core totals and expand to fingerprint-only rows', async () => {
+test('T06: provider starts collapsed, uses Core totals and expands to account and fingerprint-only rows', async () => {
   const { window, root } = setup();
-  const total = { scope: 'key', unit: 'credits', key_count: 2, remaining: null, limit: 2000, message: '部分 Key 未知' };
+  const combined = total({ remaining: null, limit: 2000, percent: null });
+  const reports = [report(), report({ key_fingerprint: 'fp-two', remaining: null })];
   const mounted = await mountUsage(root, { usageView: async () => view([provider({
-    current: [report(), report({ key_fingerprint: 'fp-two', remaining: null })], totals: [total],
+    current: reports, total: combined,
+    accounts: [account({ total: combined,
+      keys: reports.map(row => ({ key_fingerprint: row.key_fingerprint, report: row })) })],
+    totals: [{ scope: 'key', unit: 'credits', key_count: 2, remaining: null, limit: 2000, message: '部分 Key 未知' }],
   })]) });
-  assert.equal(card(root).querySelector('.usage-amount').textContent, '剩余 未知 / 上限 2,000 credits');
-  assert.match(card(root).textContent, /部分 Key 未知/);
-  const details = card(root).querySelector('details');
+  const details = card(root);
   assert.equal(details.open, false);
-  assert.equal(details.querySelector('summary').textContent, '展开 2 个 Key');
-  assert.deepEqual([...details.querySelectorAll('strong')].map(node => node.textContent), ['fp-one', 'fp-two']);
-  details.querySelector('summary').click();
+  const summary = details.querySelector('summary');
+  assert.equal(summary.querySelector('.provider-counts').textContent, '1 个账号 · 2 个 Key');
+  assert.equal(summary.querySelector('.meter-value').textContent, '剩余 未知');
+  assert.equal(summary.querySelector('[role="progressbar"]'), null);
+  summary.click();
   await flush();
   assert.equal(details.open, true);
-  assert.equal(details.querySelector('summary').textContent, '收起 2 个 Key');
-  details.querySelector('summary').click();
+  assert.equal(details.querySelector('.account-identity .provider-note').textContent, '剩余 未知 / 上限 2,000 credits');
+  assert.match(details.querySelector('[data-body]').textContent, /部分 Key 未知/);
+  assert.deepEqual([...details.querySelectorAll('.account-keys .key-fingerprint')].map(node => node.textContent),
+    ['fp-one', 'fp-two']);
+  assert.equal(details.querySelectorAll('.account-row').length, 1);
+  assert.equal(details.querySelectorAll('.account-keys .key-row').length, 2);
+  summary.click();
   await flush();
   assert.equal(details.open, false);
-  assert.equal(details.querySelector('summary').textContent, '展开 2 个 Key');
   mounted.dispose();
   window.close();
 });
@@ -159,7 +322,10 @@ test('T06: shared team totals are displayed once and different units have separa
     history: [point({ scope: 'team' }), point({ scope: 'team', remaining: 600, fetched_at: '2026-11-12T00:00:00Z' }),
       point({ unit: 'usd' }), point({ unit: 'usd', remaining: 200, fetched_at: '2026-11-12T00:00:00Z' })],
   })]) });
-  assert.equal(card(root).querySelector('.usage-amount').textContent, '剩余 600 / 上限 1,000 credits');
+  card(root).querySelector('summary').click();
+  assert.equal(card(root).querySelector('[data-total]').textContent, '团队额度：剩余 600 / 上限 1,000 credits');
+  assert.equal(card(root).querySelectorAll('[data-total]').length, 1);
+  assert.equal(card(root).querySelector('.provider-meter [role="progressbar"]').getAttribute('aria-valuenow'), '60');
   assert.equal(card(root).querySelectorAll('figure').length, 2);
   mounted.dispose();
   window.close();
@@ -171,22 +337,36 @@ test('T06: initial read, refresh all and single-card refresh use the API and pre
   const other = provider({ id: 'exa', label: 'Exa' });
   const mounted = await mountUsage(root, { usageView: async (id, refresh) => {
     calls.push([id, refresh]);
-    return view(id ? [provider({ totals: [{ scope: 'key', unit: 'credits', key_count: 1, remaining: 500, limit: 1000, message: '' }] })]
+    return view(id ? [provider({ total: total({ remaining: 500, percent: 50 }),
+      totals: [{ scope: 'key', unit: 'credits', key_count: 1, remaining: 500, limit: 1000, message: '' }] })]
       : [provider(), other]);
   } });
   assert.deepEqual(calls, [[null, true]]);
-  const otherChart = card(root, 'exa').querySelector('svg');
+  card(root).querySelector('summary').click();
+  card(root, 'exa').querySelector('summary').click();
+  const otherChart = card(root, 'exa').querySelector('.usage-chart svg');
   const refresh = card(root).querySelector('[data-action="refresh-provider"]');
   refresh.focus();
   refresh.click();
   await flush();
   assert.deepEqual(calls.at(-1), ['tavily', true]);
-  assert.equal(card(root, 'exa').querySelector('svg'), otherChart);
-  assert.match(card(root).querySelector('.usage-amount').textContent, /剩余 500/);
+  assert.equal(card(root, 'exa').querySelector('.usage-chart svg'), otherChart);
+  assert.match(card(root).querySelector('[data-total]').textContent, /剩余 500/);
+  assert.equal(card(root).querySelector('.provider-meter .meter-value').textContent, '50%');
+  assert.equal(card(root).open, true);
+  assert.equal(card(root, 'exa').open, true);
   assert.equal(window.document.activeElement, refresh);
   root.querySelector('[data-action="refresh-all"]').click();
   await flush();
   assert.deepEqual(calls, [[null, true], ['tavily', true], [null, true]]);
+  assert.equal(card(root).open, true);
+  assert.equal(card(root, 'exa').open, true);
+  assert.equal(card(root).querySelector('[data-action="refresh-provider"]'), refresh);
+  card(root, 'exa').querySelector('summary').click();
+  root.querySelector('[data-action="refresh-all"]').click();
+  await flush();
+  assert.equal(card(root).open, true);
+  assert.equal(card(root, 'exa').open, false);
   mounted.dispose();
   window.close();
 });
@@ -200,12 +380,12 @@ test('T06: charts never schedule animation, retain null gaps and remain unchange
     point(), point({ remaining: null, fetched_at: '2026-11-11T00:00:00Z' }),
     point({ remaining: 600, fetched_at: '2026-11-12T00:00:00Z' }),
   ] })]) });
-  const svg = card(root).querySelector('svg');
+  const svg = card(root).querySelector('.usage-chart svg');
   assert.equal(svg.querySelectorAll('polyline').length, 2, 'unknown observations break a line');
   const markup = svg.outerHTML;
   await flush();
   await flush();
-  assert.equal(card(root).querySelector('svg'), svg);
+  assert.equal(card(root).querySelector('.usage-chart svg'), svg);
   assert.equal(svg.outerHTML, markup);
   assert.equal(svg.querySelector('animate'), null);
   mounted.dispose();
@@ -218,14 +398,23 @@ test('T06: provider text and CLI notices are literal text, including chart toolt
   const mounted = await mountUsage(root, { usageView: async () => view([
     provider({ label: malicious, current: [report({ message: malicious, key_fingerprint: malicious }),
       report({ key_fingerprint: 'fp-two' })],
+    total: total({ unit: malicious, relative: true }),
+    accounts: [account({ id: 'acc_literal', name: malicious, source: malicious,
+      keys: [{ key_fingerprint: malicious, report: report({ unit: malicious }) }] })],
     totals: [{ scope: malicious, unit: malicious, key_count: 2, remaining: 1, limit: 2, message: malicious }],
     history: [point({ key_fingerprint: malicious }), point({ key_fingerprint: malicious, fetched_at: '2026-11-12T00:00:00Z' })] }),
     provider({ id: 'unsupported', balance_supported: false, balance_note: malicious }),
   ], { usage_error: malicious }) });
   assert.ok(root.textContent.includes(malicious));
   assert.equal(root.querySelectorAll('img, script').length, 0);
-  assert.ok(card(root).querySelector('svg title').textContent.includes('走势'));
+  card(root).querySelector('summary').click();
+  assert.ok(card(root).querySelector('.usage-chart svg title').textContent.includes('走势'));
   assert.ok(card(root).querySelector('circle title').textContent.includes(malicious));
+  assert.equal(card(root).querySelector('.account-name').textContent, malicious);
+  assert.equal(card(root).querySelector('.account-source').textContent, malicious);
+  assert.equal(card(root).querySelector('.key-fingerprint').textContent, malicious);
+  assert.equal(card(root).querySelector('.provider-name').textContent, malicious);
+  assert.ok(card(root).querySelector('.provider-meter .meter-value').textContent.includes(malicious));
   mounted.dispose();
   window.close();
 });
@@ -237,7 +426,7 @@ test('T06: old CLI has an update notice instead of a page error', async () => {
   }) });
   assert.match(root.querySelector('[data-notice]').textContent, /请更新 CLI/);
   assert.equal(root.querySelector('[data-error]').textContent, '');
-  assert.equal(root.querySelectorAll('.usage-card').length, 0);
+  assert.equal(root.querySelectorAll('.provider-row').length, 0);
   mounted.dispose();
   window.close();
 });
@@ -264,7 +453,8 @@ test('T06: one point per key never invents a trend between different keys', asyn
   const mounted = await mountUsage(root, { usageView: async () => view([provider({ history: [
     point(), point({ key_fingerprint: 'fp-two', fetched_at: '2026-11-12T00:00:00Z' }),
   ] })]) });
-  assert.equal(card(root).querySelector('svg'), null);
+  card(root).querySelector('summary').click();
+  assert.equal(card(root).querySelector('.usage-chart svg'), null);
   assert.match(card(root).querySelector('figure').textContent, /数据不足/);
   mounted.dispose();
   window.close();
@@ -323,7 +513,7 @@ test('T06: duplicate refreshes are refused and disposal ignores late replies', a
   controller.abort();
   release(view());
   const mounted = await pending;
-  assert.equal(root.querySelectorAll('.usage-card').length, 0);
+  assert.equal(root.querySelectorAll('.provider-row').length, 0);
   mounted.dispose();
   window.close();
 });
@@ -350,6 +540,7 @@ test('T06: 去设置 navigates through the app, updates title and focus, and rej
     return view();
   }, list);
   await app.select(list[0]);
+  card(root).querySelector('summary').click();
   root.querySelector('[data-action="settings"]').click();
   await flush();
   assert.equal(root.querySelector('h1').textContent, '服务商');
