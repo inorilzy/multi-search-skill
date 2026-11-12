@@ -80,6 +80,7 @@ const APP_COMMANDS: &[&str] = &[
     "scrape_backend_timeout_save",
     "provider_list",
     "balance_view",
+    "usage_view",
     "scrape_memory_view",
     "scrape_memory_pin",
     "scrape_memory_reset",

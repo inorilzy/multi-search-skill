@@ -7,6 +7,9 @@ use std::{
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+    if let Ok(path) = env::var("FIXTURE_LAUNCH_PATH") {
+        std::fs::write(path, "started").unwrap();
+    }
     // Test boundary: print the child's environment as JSON (names and values),
     // so tests can prove provider credentials never cross the process boundary.
     if args.first().map(String::as_str) == Some("env-dump") {
@@ -155,6 +158,28 @@ fn main() {
                 println!("{{\"event\":\"waiting\"}}");
                 println!("{{\"event\":\"complete\",\"credential\":\"firecrawl\"}}");
             }
+        }
+        return;
+    }
+    if args.first().map(String::as_str) == Some("usage") {
+        match env::var("FIXTURE_USAGE").as_deref() {
+            Ok("hang") => thread::sleep(Duration::from_secs(60)),
+            Ok("invalid") => println!("not-json"),
+            Ok("legacy") => {
+                eprintln!("usage error: argument command: invalid choice: 'usage' (choose from 'search', 'balance')");
+                std::process::exit(2);
+            }
+            Ok("failure") => {
+                eprintln!("usage error: cannot read configuration");
+                std::process::exit(1);
+            }
+            Ok("invalid-option") => {
+                eprintln!("usage error: unrecognized arguments: --refresh");
+                std::process::exit(2);
+            }
+            Ok("truncated") => println!("{}", "x".repeat(5 * 1024 * 1024)),
+            _ => println!("{}", env::var("FIXTURE_USAGE_JSON").unwrap_or_else(|_|
+                r#"{"schema_version":1,"retention_days":30,"providers":[]}"#.into())),
         }
         return;
     }

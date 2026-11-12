@@ -184,6 +184,13 @@ impl DesktopManager {
         self.discovery_view().execution_path()
     }
 
+    pub fn usage_view(&self, provider: Option<&str>, refresh: bool) -> Result<crate::usage::UsageView, String> {
+        // Discovery probes the CLI too, so reject untrusted ids before resolving it.
+        let provider = crate::usage::validate_provider(provider)?;
+        let cli = self.execution_cli()?;
+        crate::usage::view(&self.environment, &cli, provider.as_deref(), refresh)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn current_user_paths(&self) -> Vec<PathBuf> {
         self.discovery_view().current_user_paths()
