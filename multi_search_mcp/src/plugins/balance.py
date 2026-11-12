@@ -17,7 +17,7 @@ from ..support.models import (
     normalize_error_kind,
 )
 from ..support.secrets import _iter_secret_strings, scrub_secrets
-from . import oauth_store, registry
+from . import oauth_store, registry, usage_store
 from .base import BalanceContext, BalanceReport, ProviderPlugin
 from .cache import BalanceCache
 
@@ -278,6 +278,11 @@ def _collect_reports(
 
     def store(job: _Job, job_reports: list[BalanceReport]) -> None:
         reports[job.plugin.id][job.slot] = job_reports
+        # Passive adapters only read old observations; record_quota owns history.
+        if job.plugin.id not in {"brave", "stackexchange"}:
+            for report in job_reports:
+                if report.status == "ok":
+                    usage_store.append_balance(report)
         cache.put(
             job.plugin.id,
             job_reports,

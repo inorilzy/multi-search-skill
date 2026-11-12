@@ -21,6 +21,7 @@ from typing import Any
 
 from ..state.key_state import key_fingerprint
 from ..support.config import home_from_environment
+from . import usage_store
 from .base import BalanceReport
 from .cache import _atomic_write, cache_key
 
@@ -83,6 +84,10 @@ def record_quota(plugin_id: str, key: str, report_fields: dict[str, Any]) -> Non
         if not isinstance(fetched_at, str) or not fetched_at:
             fetched_at = _now_iso()
         fingerprint = _fingerprint_for(key)
+        usage_store.append_balance(BalanceReport(
+            provider=plugin_id, status="ok", key_fingerprint=fingerprint,
+            fetched_at=fetched_at, **fields,
+        ))
         path = default_quota_path()
         with _WRITE_LOCK:
             entries = _load_entries(path)
