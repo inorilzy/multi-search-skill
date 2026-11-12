@@ -50,17 +50,18 @@ CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys stat
 
 ## 桌面管理（Tauri 管理台）
 
-`desktop/` 是 Tauri 2 管理台，共 7 个页面，负责本机 CLI、Skill、凭据、搜索与抓取配置；它不提供搜索 UI，也不修改系统级设置。设置保存在与 CLI 共用的 `~/.multi-search/config.sqlite`，Key 保存在 `~/.multi-search/keys.json`。
+`desktop/` 是 Tauri 2 管理台，共 8 个页面，负责本机 CLI、Skill、凭据、搜索与抓取配置；它不提供搜索 UI，也不修改系统级设置。设置保存在与 CLI 共用的 `~/.multi-search/config.sqlite`，Key 保存在 `~/.multi-search/keys.json`。
 
 | 页面 | 能力 |
 |---|---|
 | 01 概览与测试 | 检测应用继承的 PATH、已登记的用户 PATH（Windows 为注册表，macOS 为本工具追加到登录 Shell 配置的受管区块）中的 CLI（Windows `multi-search.exe`／macOS、Linux `multi-search`），显示版本、实际路径和来源；Linux 没有用户 PATH 注册后端，用户 PATH 存储读取失败时回退到进程 PATH；运行或取消一次测试搜索，结果以结构化列表展示，来源错误单列，原始 JSON 折叠保留。新终端可发现不意味着已打开的终端或 Agent 已刷新环境。 |
 | 02 安装 CLI | 从应用资源内的受控 bundle 安装、更新或卸载 CLI：Windows 到 `%LOCALAPPDATA%\MultiSearch\cli`，macOS 到 `~/Library/Application Support/MultiSearch/cli`，Linux 到 `$XDG_DATA_HOME/MultiSearch/cli`（否则 `~/.local/share/MultiSearch/cli`）；先把 manifest 原始字节与编译进二进制的 SHA-256 锚点比对，再逐个核对文件大小和哈希。未知安装不覆盖，失败不动已有可用版本。加入用户 PATH 需单独确认：Windows 写当前用户 PATH，macOS 只在登录 Shell 配置末尾追加带标记的区块，新开终端才生效，已运行的宿主需重启；Linux 暂不支持自动注册 shell PATH，但已安装的受管 CLI 可被发现和运行。 |
 | 03 Agent Skill | 安装到通用 Agents 目录（`.agents/skills`，Codex、Gemini CLI、OpenCode 等读取）或 Claude Code（`.claude/skills`），以全局或项目范围安装、更新、移除受管的 `multi-search` Skill；写入前检查目标目录和 CLI 是否支持所需的子命令与参数，更新前备份本地修改并要求显式确认；不覆盖非本工具安装的 Skill。 |
-| 04 搜索源与凭据 | 列出 13 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），所有平台都可逐行新增、删除、显式显示，并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。每个服务商显示余额行（剩余 / 上限、单位、重置时间、更新时间，可刷新），`unsupported` / `needs_credential` 显示原因；Firecrawl 与 Parallel 提供「浏览器登录」按钮、进行中状态和取消，Exa 额外提供「管理 Key（查余额用）」输入行。默认只显示掩码，测试可能消耗额度。 |
-| 05 搜索设置 | 读写默认路由、全局超时（1–90 秒）、同一网站最多条数（1–15，默认 3）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另有「模型重排」开关（默认关闭）：开启后填写 System One 的 Base URL 与模型名（必填）、Jev 与 RRF 的排序权重滑块（默认各 50%）以及候选数 / 批量 / 超时高级项，写入配置块的 `ranking` 键；保存时只写入已知 `ranking` 键、丢弃未知字段（重新保存即可自愈），非法的已存 `ranking` 块回退默认值并提示。API 密钥单独保存到 `~/.multi-search/keys.json` 的 `systemone` 条目（Unix 上为 0600），不写进设置，也从不回显；环境变量 `SYSTEMONE_API_KEY` 优先。另可填写 Twitter Cookie 文件路径，并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
-| 06 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）和单个后端时限（`scrape_backend_timeout`，默认 10 秒，立即保存）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。 |
-| 07 Cookie 导入 | 用户显式确认后，把选定的 Twitter/X Cookie JSON 校验并复制到 `~/.multi-search/twitter-cookies.json`（0600），同时设置 `twitter_cookies_path`；删除只移除这份副本。原文件不修改也不删除，本页不显示 Cookie 内容。 |
+| 04 服务商 | 列出 13 个搜索源及启用状态，另含仅用于抓取的 Jina；Key 以明文保存在 `~/.multi-search/keys.json`（仅当前用户可读写），所有平台都可逐行新增、删除、显式显示，并向对应服务商发送一次测试请求；Jina 可维护静态 `exhausted` 标记。余额与本机用量在「05 用量」页查看；Firecrawl 与 Parallel 提供「浏览器登录」按钮、进行中状态和取消，Exa 额外提供「管理 Key（查余额用）」输入行。默认只显示掩码，测试可能消耗额度。 |
+| 05 用量 | 每个服务商显示剩余 / 上限、单位、重置时间、配速和近 30 天剩余走势；多个 Key 默认显示合计，可展开指纹与各自额度。不支持余额的服务商集中在「仅本机统计」区域。显示今天与近 7 天本机调用次数（不等于服务商计费次数），支持刷新全部、单卡刷新及跳到服务商设置；刷新遵守服务商缓存时长，旧 CLI 提示更新。 |
+| 06 搜索设置 | 读写默认路由、全局超时（1–90 秒）、同一网站最多条数（1–15，默认 3）和路由组：可新建、编辑、复制、删除分组（标识、名称、搜索源、可继承的独立超时），或恢复内置五组；分组以卡片列出，编辑器在该卡片下就地展开，搜索源支持全选、全不选与反选批量勾选；全局禁用的搜索源保留为组员但执行时跳过。另有「模型重排」开关（默认关闭）：开启后填写 System One 的 Base URL 与模型名（必填）、Jev 与 RRF 的排序权重滑块（默认各 50%）以及候选数 / 批量 / 超时高级项，写入配置块的 `ranking` 键；保存时只写入已知 `ranking` 键、丢弃未知字段（重新保存即可自愈），非法的已存 `ranking` 块回退默认值并提示。API 密钥单独保存到 `~/.multi-search/keys.json` 的 `systemone` 条目（Unix 上为 0600），不写进设置，也从不回显；环境变量 `SYSTEMONE_API_KEY` 优先。另可填写 Twitter Cookie 文件路径，并显示配置数据库路径与来源；配置无法读取时禁止保存。 |
+| 07 抓取设置 | 编辑通用网页抓取的 fallback 顺序（抓取链，`jina`/`exa`/`tavily`/`firecrawl` 的有序子集，可停用、恢复默认顺序）和单个后端时限（`scrape_backend_timeout`，默认 10 秒，立即保存）；查看站点抓取记忆（各后端成功/失败/拦截/超时、冷却与手动偏好），可为站点固定后端或按站点重置。Twitter/X 按域名固定使用专用抓取器，不受抓取链影响。 |
+| 08 Cookie 导入 | 用户显式确认后，把选定的 Twitter/X Cookie JSON 校验并复制到 `~/.multi-search/twitter-cookies.json`（0600），同时设置 `twitter_cookies_path`；删除只移除这份副本。原文件不修改也不删除，本页不显示 Cookie 内容。 |
 
 受管 CLI 与 Skill 都以“先校验、再写入”为前提：bundle 的信任锚是 `scripts/build_cli_bundle.py` 生成、由 `desktop/src-tauri/build.rs` 编译进二进制的 manifest SHA-256；Skill 以 `skills/multi-search/` 为唯一权威源，受管版本由打包内容哈希派生。桌面端只运行受管目录（验证通过时优先于 PATH 中的同名文件）或 PATH 中发现的 CLI，前端不能指定可执行路径；子进程只拿到非敏感的基础环境变量和本次所需的 key。取消/关闭只结束本次 Windows Job Object 归属的执行和子进程，独立终端 CLI 不受影响。
 

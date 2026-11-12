@@ -79,7 +79,14 @@ export function createNavigation(root, nav, invoke, pageList = pages) {
     container.dataset.page = page.id;
     root.replaceChildren(container);
     try {
-      const instance = await page.mount(container, managementApi(invoke), { number: page.number, signal: controller.signal });
+      const instance = await page.mount(container, managementApi(invoke), {
+        number: page.number, signal: controller.signal,
+        navigate: id => {
+          if (token !== generation) return;
+          const target = pageList.find(item => item.id === id);
+          if (target) void select(target);
+        },
+      });
       if (token !== generation) {
         safeDispose(instance);
         return;

@@ -3315,6 +3315,136 @@
       grid-row: 2;
     }
   }
+  .usage-head, .usage-card-head, .usage-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .usage-head > div {
+    min-width: 0;
+  }
+  .usage-head p:last-child, .usage-note {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .usage-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+    gap: 20px;
+    margin: 20px 0;
+  }
+  .usage-card {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .usage-card h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .usage-actions {
+    justify-content: flex-start;
+    gap: 8px;
+  }
+  .usage-actions button {
+    font-size: 12px;
+    padding: 7px 10px;
+  }
+  .usage-status, .usage-pace {
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  .usage-status[data-kind=ok], .usage-pace {
+    color: var(--teal);
+  }
+  .usage-status[data-kind=error] {
+    color: var(--red);
+  }
+  .usage-status[data-kind=needs_credential] {
+    color: var(--amber);
+  }
+  .usage-quota {
+    padding: 12px 0;
+    border-top: 1px solid var(--line);
+  }
+  .usage-scope {
+    color: var(--muted);
+    font-size: 12px;
+    margin: 0 0 8px;
+  }
+  .usage-amount {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.6;
+    margin: 0 0 8px;
+  }
+  .usage-quota progress {
+    display: block;
+    width: 100%;
+    height: 8px;
+    accent-color: var(--teal);
+  }
+  .usage-chart {
+    margin: 18px 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .usage-chart svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    color: var(--teal);
+  }
+  .usage-chart polyline {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linejoin: round;
+  }
+  .usage-chart circle {
+    fill: currentColor;
+  }
+  .usage-chart-range {
+    margin: 4px 0;
+  }
+  .usage-legend {
+    padding-left: 18px;
+  }
+  .usage-keys {
+    border-top: 1px solid var(--line);
+    padding: 12px 0;
+  }
+  .usage-keys summary {
+    cursor: pointer;
+    color: var(--teal);
+    line-height: 1.8;
+  }
+  .usage-keys summary:focus-visible {
+    outline: 2px solid var(--teal);
+    outline-offset: 3px;
+  }
+  .usage-keys .usage-quota {
+    margin-top: 12px;
+  }
+  .usage-calls {
+    border-top: 1px solid var(--line);
+    margin: 12px 0 0;
+    padding-top: 12px;
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .usage-calls dt {
+    color: var(--muted);
+  }
+  .usage-calls dd {
+    margin: 0 0 8px;
+  }
+  /* Usage charts are static, including when reduced motion is requested. */
   /* The one moving thing: a pulse along the wire into the stage that is working right now. */
   @media (prefers-reduced-motion: no-preference) {
     .flow-wire[data-flow=on] {
