@@ -124,6 +124,16 @@
 | **balance-only credential（管理凭据）** | 概念见 [CONTEXT.md](../CONTEXT.md)。只用于查余额、不用于搜索的凭据条目：Exa 的 `exa_admin`（Team Management service key，环境变量 `EXA_SERVICE_KEY`）与 Parallel 的 `parallel_account`（设备码登录得到的 Account API 令牌）。插件用 `balance_credential` 指向它；未配置时报告 `needs_credential`。 | `multi_search_mcp/src/plugins/builtin/exa.py` / `multi_search_mcp/src/plugins/builtin/parallel.py` / `multi_search_mcp/src/state/keys.py` → `KEY_ENV_PAIRS` |
 | **oauth file（OAuth 令牌文件）** | `~/.multi-search/oauth.json` 保存 Parallel 的 `parallel_account` 记录（`access_token`/`refresh_token`/`expires_at`）与缓存的 `parallel` client_id；Unix 上 0600，原子写、只改自己的条目。access token 过期时用 refresh token 刷新并保存轮换后的新令牌；`logout parallel --credential parallel_account` 先 revoke 再删除。损坏的文件不会被覆盖。 | `multi_search_mcp/src/plugins/oauth_store.py` → `read_oauth_file` / `write_oauth_file_atomic` / `multi_search_mcp/src/plugins/oauth.py` → `parallel_access_token` |
 
+## 8. 用量
+
+| 术语 | 定义 | 代码出处 |
+|------|------|---------|
+| **usage store（用量库）** | 本机用量数据库 `~/.multi-search/usage.sqlite`（Unix 上 0600），与 `state.sqlite` 分开存放，避免提升状态库版本后旧 CLI 拒绝打开。包含 `balance_history` 与 `call_daily` 两张表；保留期常量 `USAGE_RETENTION_DAYS = 30`，每次写入顺带删除过期行。写入失败只记 debug、不抛给调用方；文件损坏或不可读时读取返回 `usage_error="unreadable"`，不修改、修复或清理文件。 | `multi_search_mcp/src/plugins/usage_store.py` → `append_balance` / `record_call` / `read_usage` |
+| **balance_history（余额历史表）** | 字段 `provider`、`key_fingerprint`、`scope`、`unit`、`remaining`、`limit`、`used`、`resets_at`、`period`、`fetched_at`；每条是一次真实查询的 `ok` 报告，`remaining`/`limit`/`used` 未知为 `null`（不填 0）。同一 `(provider, key_fingerprint, scope, unit, fetched_at)` 去重，`resets_at`/`fetched_at` 以 UTC ISO8601 存储。 | `multi_search_mcp/src/plugins/usage_store.py` → `append_balance` |
+| **call_daily（本机调用统计表）** | 字段 `day`（本地日期 `YYYY-MM-DD`）、`provider`（插件 id）、`purpose`（`search` / `scrape`）、`calls`、`failures`；按 `(day, provider, purpose)` 累加（UPSERT）。只统计本机实际发出的调用，缺 Key 跳过与本地缓存命中不计。 | `multi_search_mcp/src/plugins/usage_store.py` → `record_call` |
+| **usage view（用量视图与配速）** | `collect_usage` 读取本机数据，按服务商输出 `current`、`totals`、`history`、`pace`、`calls` 与顶层 `schema_version`/`retention_days`。`_totals` 对同 `scope`/`unit` 的多个 Key 求和，`team`/`account` 级不跨 Key 相加，任一 Key 未知时合计为 `null` 并注明「部分 Key 未知」。`_pace` 由当前周期内的历史点计算 `rate_per_day`、`projected_empty_at`、`lasts_until_reset`，点不足或跨度不足时为 `reason="insufficient_data"`。`render_usage_text` 输出中文文本。 | `multi_search_mcp/src/plugins/usage_report.py` → `collect_usage` / `_pace` / `_totals` |
+| **usage 命令** | `multi-search usage [--provider ID]... [--days N] [--refresh] [--format json|text]`；`--days` 默认 30、范围 1–30。不加 `--refresh` 只读本机数据、不发网络请求；加 `--refresh` 按 `balance` 规则查询余额并写历史。用量库不可读时 `history`/`calls` 为空并在顶层给出 `usage_error`，命令仍退出 0；未知 provider 或 `--days` 越界退出 2。 | `multi_search_mcp/cli.py` → `_handle_usage` |
+
 ## 维护约定
 
 - 从仓库根目录执行 `uv run --locked python scripts/check_glossary_paths.py`，检查每个代码出处文件存在、README / 文档索引 / 本表的本地链接可解析；CI 的 Python 与 locked-regression 作业都会运行它。
