@@ -3315,6 +3315,276 @@
       grid-row: 2;
     }
   }
+  /* Shared one-column provider lists; class/structure contract lives in meter.js. */
+  .provider-list {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    margin: 16px 0;
+  }
+  .provider-row {
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    overflow-wrap: anywhere;
+  }
+  .provider-summary {
+    display: grid;
+    grid-template-columns: 36px minmax(120px, 1fr) minmax(150px, 1.5fr) auto auto 32px;
+    grid-template-areas: "icon identity meter status toggle expand";
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-height: 72px;
+    padding: 14px 18px;
+    border: 0;
+    border-radius: inherit;
+    color: var(--ink);
+    background: transparent;
+    text-align: left;
+    list-style: none;
+  }
+  summary.provider-summary {
+    cursor: pointer;
+  }
+  .provider-summary::-webkit-details-marker {
+    display: none;
+  }
+  .provider-summary::marker {
+    content: "";
+  }
+  .provider-row[open] > .provider-summary,
+  .provider-row[data-expanded=true] > .provider-summary {
+    box-shadow: inset 3px 0 0 var(--teal);
+  }
+  .provider-summary:focus-visible, .provider-expand:focus-visible {
+    outline: 2px solid var(--teal);
+    outline-offset: 3px;
+  }
+  .provider-icon {
+    grid-area: icon;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: var(--dark);
+    color: var(--panel);
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .provider-identity {
+    grid-area: identity;
+    min-width: 0;
+  }
+  .provider-name, .account-name {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.6;
+  }
+  .provider-counts, .account-source, .key-kind, .provider-note {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .provider-meter {
+    grid-area: meter;
+    min-width: 0;
+  }
+  .provider-status {
+    grid-area: status;
+    max-width: 180px;
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .provider-toggle {
+    grid-area: toggle;
+  }
+  .provider-expand {
+    grid-area: expand;
+    display: grid;
+    place-items: center;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 4px;
+    color: var(--teal);
+    border: 0;
+  }
+  .provider-expand svg {
+    width: 16px;
+    height: 16px;
+  }
+  .provider-row[open] > .provider-summary .provider-expand svg,
+  .provider-expand[aria-expanded=true] svg {
+    transform: rotate(180deg);
+  }
+  .provider-details {
+    display: grid;
+    gap: 16px;
+    padding: 16px 18px 18px;
+    border-top: 1px solid var(--line);
+  }
+  .provider-actions, .account-actions, .key-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .provider-actions button, .account-actions button, .key-actions button {
+    font-size: 12px;
+    padding: 7px 10px;
+  }
+  .account-list, .account-keys {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .account-row {
+    min-width: 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .account-row:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+  .account-summary, .key-row {
+    display: grid;
+    grid-template-columns: minmax(140px, 1fr) minmax(140px, 1.4fr) minmax(0, auto);
+    align-items: center;
+    gap: 12px;
+  }
+  .account-identity, .key-identity {
+    min-width: 0;
+  }
+  .account-keys {
+    margin: 12px 0 0 12px;
+    padding-left: 14px;
+    border-left: 2px solid var(--line);
+  }
+  .key-row {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .key-row:last-child {
+    border-bottom: 0;
+  }
+  .key-fingerprint {
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+  }
+  .account-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    align-items: end;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .meter {
+    --meter-color: var(--teal);
+    display: grid;
+    grid-template-columns: minmax(60px, 1fr) auto auto;
+    align-items: center;
+    gap: 4px 8px;
+    min-width: 0;
+    color: var(--ink);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .meter[data-level=low], .meter-alert[data-kind=low],
+  .meter-alert[data-kind=wont_last], .meter-alert[data-kind=needs_credential] {
+    --meter-color: var(--amber);
+  }
+  .meter[data-level=critical], .meter-alert[data-kind=critical] {
+    --meter-color: var(--red);
+  }
+  .meter-track {
+    height: 8px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: var(--line);
+  }
+  .meter-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--meter-color);
+  }
+  .meter--thin .meter-track {
+    height: 4px;
+  }
+  .meter-value {
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .meter-relative, .meter-empty {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .meter-relative {
+    padding: 0 4px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+  }
+  .meter-state {
+    grid-column: 1 / -1;
+    color: var(--meter-color);
+  }
+  .meter[data-level=unknown] {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .meter-alert {
+    display: inline-block;
+    max-width: 100%;
+    padding: 2px 7px;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    color: var(--meter-color);
+    background: var(--panel);
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width:1120px) {
+    .provider-summary {
+      grid-template-columns: 36px minmax(0, 1fr) auto 32px;
+      grid-template-areas: "icon identity toggle expand" "meter meter status status";
+      gap: 8px 12px;
+    }
+    .account-summary, .key-row {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+    .account-actions, .key-actions {
+      grid-column: 1 / -1;
+    }
+  }
+  @media (max-width:760px) {
+    .provider-summary {
+      padding: 12px;
+      grid-template-areas: "icon identity toggle expand" "meter meter meter meter" "status status status status";
+    }
+    .provider-status {
+      max-width: none;
+    }
+    .provider-details {
+      padding: 12px;
+    }
+    .account-summary, .key-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .account-keys {
+      margin-left: 4px;
+      padding-left: 10px;
+    }
+  }
   .usage-head, .usage-card-head, .usage-actions {
     display: flex;
     align-items: center;
