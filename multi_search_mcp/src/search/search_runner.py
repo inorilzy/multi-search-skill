@@ -10,6 +10,8 @@ from threading import Lock
 from typing import Any, Callable
 
 from .capabilities import PROVIDER_CAPABILITIES
+from ..plugins.registry import builtin_plugins
+from ..plugins.usage_store import record_call
 from ..state.key_state import _now
 from ..support.concurrency import (
     POOL_SATURATED_ERROR_TYPE,
@@ -24,6 +26,10 @@ from ..support.models import ANSWER_SOURCES, as_dicts, empty_result_row, is_empt
 from ..support.secrets import scrub_secrets
 from .candidate import canonicalize_url
 
+
+_SOURCE_PLUGIN_IDS = {
+    source: plugin.id for plugin in builtin_plugins() for source in plugin.search_sources
+}
 
 ALL_SOURCE_NAMES = {
     name
@@ -483,6 +489,7 @@ class SearchRunner:
             source_deadline = min(source_deadline, deadline)
         partial_results: dict[str, list[dict]] = {}
         partial_lock = Lock()
+        called_sources: set[str] = set()
 
         def call_provider(spec: ProviderSpec, api_key) -> list:
             remaining = source_deadline - time.monotonic()
@@ -510,6 +517,7 @@ class SearchRunner:
             )
             attempt_started = time.monotonic()
             try:
+                called_sources.add(spec.public_name)
                 rows = spec.call(query, self.config, ctx, api_key)
             except Exception as exc:
                 debug_log.event(
@@ -585,6 +593,8 @@ class SearchRunner:
                         "provider_done", query=query, source=name, elapsed_ms=elapsed,
                         **_row_stats(rows),
                     )
+                    if name in called_sources and getattr(self.key_manager, "store", None) is not None:
+                        record_call(_SOURCE_PLUGIN_IDS.get(normalize_source_name(name), ""), "search", failed=_row_stats(rows)["status"] == "error")
             return run_timed
 
         for name, call in jobs:
