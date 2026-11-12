@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
+from ..state.key_state import key_fingerprint
 from ..state.keys import (
     KeysError,
     default_keys_file,
@@ -21,7 +22,7 @@ from ..state.keys import (
     write_keys_file_atomic,
 )
 from ..support.secrets import scrub_secrets
-from . import oauth, oauth_store, registry
+from . import accounts, oauth, oauth_store, registry
 from .balance import collect_balances
 from .base import ProviderPlugin
 
@@ -205,6 +206,7 @@ def login(
     credential: str | None = None,
     *,
     method: str = "api",
+    account_id: str | None = None,
     stream: TextIO | None = None,
     output_format: str | None = None,
     no_browser: bool = False,
@@ -214,6 +216,8 @@ def login(
     """Save one credential for ``provider_id`` and report the resulting state."""
     plugin = _plugin(provider_id)
     if method == "oauth":
+        if account_id is not None:
+            raise LoginError("--account is only supported for api login")
         return _login_oauth(
             plugin,
             credential,
@@ -226,8 +230,20 @@ def login(
     if method != "api":
         raise LoginError(f"unsupported login method: {method}")
     entry = _resolve_api_credential(plugin, credential)
+    if account_id is not None:
+        try:
+            rows = accounts.list_accounts(plugin.id)[plugin.id]
+            if not any(row["id"] == account_id for row in rows):
+                raise accounts.AccountError("account not found")
+        except accounts.AccountError as exc:
+            raise LoginError(str(exc)) from exc
     key = read_api_key(stream)
     changed = _save_key(entry, key)
+    if account_id is not None:
+        try:
+            accounts.move_key(plugin.id, key_fingerprint(key), account_id, credential=entry)
+        except accounts.AccountError as exc:
+            raise LoginError(str(exc)) from exc
     payload = {
         "provider": plugin.id,
         "label": plugin.label,

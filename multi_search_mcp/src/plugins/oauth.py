@@ -23,11 +23,12 @@ import webbrowser
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, TextIO
 
+from ..state.key_state import key_fingerprint
 from ..support import http as support_http
 from ..support.http import read_limited
 from ..support.http_errors import read_json_error
 from ..support.secrets import scrub_secrets
-from . import oauth_store
+from . import accounts, oauth_store
 from .builtin.firecrawl import (
     FIRECRAWL_CLI_AUTH_URL,
     FIRECRAWL_CLI_POLL_SECONDS,
@@ -335,6 +336,23 @@ def credential_expired(record: dict[str, Any], *, now: datetime | None = None) -
     return (now or _utcnow()) >= moment
 
 
+def _login_identity(payload: dict[str, Any], secrets: list[str]) -> str | None:
+    """Use an explicit provider identity; never copy credential fields into accounts."""
+    for field in ("login_identity", "email", "user_email", "account_email", "user_id", "account_id", "sub"):
+        value = payload.get(field)
+        if isinstance(value, str) and value.strip():
+            identity = value.strip()
+            if scrub_secrets(identity, secrets, limit=len(identity)) == identity:
+                return identity
+    for field in ("user", "account"):
+        value = payload.get(field)
+        if isinstance(value, dict):
+            identity = _login_identity(value, secrets)
+            if identity:
+                return identity
+    return None
+
+
 def firecrawl_login(
     *,
     credential: str,
@@ -397,7 +415,11 @@ def firecrawl_login(
                 raise OAuthFlowError("Firecrawl 授权完成但未返回 API key。", kind="provider")
             secrets_guard.append(api_key)
             save_credential(api_key)
-            _emit(emit, {"event": "complete", "credential": credential})
+            accounts.upsert_oauth_account(
+                "firecrawl", _login_identity(payload, secrets_guard),
+                keys=[key_fingerprint(api_key)],
+            )
+            _emit(emit, {"event": "complete", "credential": credential, "needs_search_key": False})
             return api_key
         if status in {"pending", "waiting", "processing"} or status is None:
             continue
@@ -546,7 +568,11 @@ def parallel_login(
                 "scope": token.get("scope") or PARALLEL_SCOPE,
             }
             oauth_store.set_entry(credential, record)
-            _emit(emit, {"event": "complete", "credential": credential})
+            accounts.upsert_oauth_account(
+                "parallel", _login_identity(token, [*secrets_guard, access_token, refresh_token]),
+                balance_credentials={credential: key_fingerprint(access_token)},
+            )
+            _emit(emit, {"event": "complete", "credential": credential, "needs_search_key": True})
             return record
 
 
