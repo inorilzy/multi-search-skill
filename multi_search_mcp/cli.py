@@ -232,6 +232,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     usage_parser.set_defaults(handler=_handle_usage)
 
+    accounts_parser = subparsers.add_parser("accounts", help="manage local provider accounts")
+    accounts_subparsers = accounts_parser.add_subparsers(dest="accounts_command", required=True)
+    for command in ("list", "add", "rename", "remove", "move-key"):
+        account_parser = accounts_subparsers.add_parser(command)
+        if command == "list":
+            account_parser.add_argument("--provider")
+        else:
+            account_parser.add_argument("provider", help="provider (plugin) id")
+        if command in {"rename", "remove"}:
+            account_parser.add_argument("account_id")
+        if command in {"add", "rename"}:
+            account_parser.add_argument("--name", required=True)
+        if command == "remove":
+            account_parser.add_argument("--delete-keys", action="store_true")
+        if command == "move-key":
+            account_parser.add_argument("fingerprint")
+            account_parser.add_argument("--to", required=True, dest="account_id")
+        account_parser.add_argument("--format", choices=("json", "text"), default="json")
+        account_parser.set_defaults(handler=_handle_accounts)
+
     login_parser = subparsers.add_parser(
         "login",
         help="save a provider credential (API key from stdin or OAuth browser login)",
@@ -243,6 +263,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="api",
         help="login method: api (stdin key) or oauth (browser/device code)",
     )
+    login_parser.add_argument("--account", help="api only: assign the credential to this account id")
     login_parser.add_argument(
         "--credential",
         help="credential entry declared by the plugin (default: the plugin key provider)",
@@ -608,6 +629,30 @@ def _handle_usage(args: argparse.Namespace) -> dict[str, Any]:
         raise CLIUsageError(str(exc)) from exc
 
 
+def _handle_accounts(args: argparse.Namespace) -> dict[str, Any]:
+    from .src.plugins import accounts
+
+    try:
+        if args.accounts_command == "list":
+            return {"accounts": accounts.list_accounts(args.provider)}
+        if args.accounts_command == "add":
+            account = accounts.create_account(args.provider, args.name)
+        elif args.accounts_command == "rename":
+            account = accounts.rename_account(args.provider, args.account_id, args.name)
+        elif args.accounts_command == "remove":
+            account = accounts.delete_account(
+                args.provider, args.account_id, keep_keys=not args.delete_keys,
+            )
+        else:
+            account = accounts.move_key(args.provider, args.fingerprint, args.account_id)
+        payload = {"provider": args.provider, "account": account}
+        if args.accounts_command == "remove":
+            payload["removed"] = True
+        return payload
+    except accounts.AccountError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
 def _render_login_event(event: dict[str, Any]) -> str:
     kind = event.get("event")
     if kind == "open_url":
@@ -641,6 +686,7 @@ def _handle_login(args: argparse.Namespace, *, stdout: TextIO | None = None) -> 
             args.provider,
             args.credential,
             method=args.method,
+            account_id=args.account,
             stream=sys.stdin,
             output_format=args.format,
             no_browser=args.no_browser,

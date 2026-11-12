@@ -42,7 +42,7 @@ uv run --locked multi-search read src_... --keyword 'TaskGroup' --limit 2000
 - `multi_search_mcp/src/providers/`：第三方调用适配（XKit / Tavily），含托管 Twitter Cookie 的运行时装配；搜索器和抓取器通过这里取得客户端。
 - `multi-search-config.json`：仓库开发用的非敏感示例/默认配置。
 
-CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys status|reset`、`site stats|set-preference|reset`、`routes`、`balance`、`usage`（本机余额历史、配速与调用统计）、`login` 和 `logout`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留，但只作为 CLI/Core 之上的薄包装。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
+CLI 子命令是 `search`、`fetch`、`read`、`doctor`、`sources`、`keys status|reset`、`site stats|set-preference|reset`、`routes`、`balance`、`usage`（本机余额历史、配速与调用统计）、`accounts list|add|rename|remove|move-key`、`login` 和 `logout`。Core 中 `multi_search` / `scrape_url` 等兼容 Python 能力仍保留，但只作为 CLI/Core 之上的薄包装。历史包名 `multi-search-mcp` / `multi_search_mcp` 为兼容安装和导入而保留，不表示需要 MCP 组件。
 
 边界约定：凭据按 **环境变量（`env`）> `~/.multi-search/keys.json`（`keys_file`）** 解析，所有平台相同；非敏感行为配置按 `MULTI_SEARCH_CONFIG` → `config.sqlite` 的 settings 记录（桌面端写入，存在即权威）→ `~/.multi-search/multi-search-config.json` → 仓库开发态的 `multi-search-config.json` 读取；运行状态默认保存在 `~/.multi-search/state.sqlite`。桌面端首次写入 `config.sqlite` 设置记录时会先导入可解析的用户级 JSON 配置（见「配置和参数」）。CLI 不需要任何 MCP 客户端启动配置。
 

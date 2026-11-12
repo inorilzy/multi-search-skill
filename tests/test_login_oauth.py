@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest import mock
 
 from multi_search_mcp import cli
+from multi_search_mcp.src.state.key_state import key_fingerprint
 from multi_search_mcp.src.plugins import oauth as oauth_module
 from multi_search_mcp.src.plugins import oauth_store
 
@@ -227,10 +228,18 @@ class FirecrawlOAuthTests(OAuthTestCase):
         self.assertEqual([event["event"] for event in events], ["open_url", "waiting", "complete"])
         self.assertEqual(set(events[0]), {"event", "url"})
         self.assertEqual(events[1], {"event": "waiting"})
-        self.assertEqual(events[2], {"event": "complete", "credential": "firecrawl"})
+        self.assertEqual(events[2], {
+            "event": "complete", "credential": "firecrawl", "needs_search_key": False,
+        })
+        account_id = self.read_keys()["accounts"]["firecrawl"][0]["id"]
+        self.assertRegex(account_id, r"^acc_[A-Za-z0-9]+$")
         self.assertEqual(self.read_keys(), {
             "firecrawl": ["old-key", key],
             "brave": "keep-brave",
+            "accounts": {"firecrawl": [{
+                "id": account_id, "name": "Firecrawl 登录", "source": "oauth",
+                "keys": [key_fingerprint(key)], "balance_credentials": {},
+            }]},
         })
         self.assert_no_secret(key, stdout, stderr)
 
@@ -317,7 +326,9 @@ class FirecrawlOAuthTests(OAuthTestCase):
             )
 
         self.assertEqual(code, 0, stderr)
-        self.assertEqual(self.events(stdout)[-1], {"event": "complete", "credential": "firecrawl"})
+        self.assertEqual(self.events(stdout)[-1], {
+            "event": "complete", "credential": "firecrawl", "needs_search_key": False,
+        })
         self.assertEqual(len(http.requests_for(FIRECRAWL_STATUS_URL)), 1)
 
     def test_firecrawl_oauth_timeout_emits_a_timeout_error_event(self):
@@ -485,7 +496,9 @@ class ParallelOAuthTests(OAuthTestCase):
         self.assertEqual(set(events[0]), {"event", "url", "user_code"})
         self.assertEqual(events[0]["user_code"], "ABCD-1234")
         self.assertEqual(events[0]["url"], "https://platform.parallel.ai/device?user_code=ABCD-1234")
-        self.assertEqual(events[2], {"event": "complete", "credential": "parallel_account"})
+        self.assertEqual(events[2], {
+            "event": "complete", "credential": "parallel_account", "needs_search_key": True,
+        })
 
         stored = self.read_oauth()
         self.assertEqual(stored["parallel"], {"client_id": "client-1"})
