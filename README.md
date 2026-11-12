@@ -294,6 +294,16 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 | Twitter / X | `twitter` | 不支持 | 仅支持 Cookie 登录，搜索无余额查询接口。 |
 | Jina AI | `jina` | 支持 | `wallet.total_balance`，单位 tokens；来自 Jina dashboard 的非公开接口，可能随时变化。 |
 
+### 用量
+
+`multi-search usage [--provider <id>]... [--days <1-30>] [--refresh] [--format json|text]`
+
+- 默认输出 JSON（`schema_version` 为 1，`retention_days` 为 30）；`--format text` 按服务商逐段显示。`--provider` 可重复，只输出指定插件。
+- 每个服务商给出当前余额、近 `--days` 天（默认 30）的余额历史、配速与「能否撑到重置」，以及本机调用次数（今天 / 近 7 天 / 按天）。多个 Key 在相同作用域与单位下的额度合计，任一 Key 未知时合计显示「未知」。
+- 不加 `--refresh` 只读本机数据，不发任何网络请求；加 `--refresh` 先按 `balance` 的规则（含各插件缓存时长）查询一次余额并写入历史。**余额只在打开用量页、运行 `usage --refresh` 或点「刷新」时查询**，搜索流程不触发余额查询。
+- 本机调用次数是「本机统计」，只统计本机实际发出的调用，不等于服务商侧的计费次数（服务商内部重试、一次请求扣多个积分等都不计入）。`--no-state` 的搜索不写统计；写入失败不影响搜索结果和退出码。
+- 用量库位于 `~/.multi-search/usage.sqlite`（Unix 上 0600），只存本机数据；余额历史与本机调用统计都保留 30 天，过期行在每次写入时顺带删除。库不可读时历史与调用为空并给出 `usage_error`，命令仍退出 0。
+
 ### 登录与退出
 
 `multi-search login <provider> [--method api|oauth] [--credential <entry>] [--format json|human|markdown|jsonl|text] [--no-browser] [--timeout <秒>]`（`json`/`human`/`markdown` 用于 api，`jsonl`/`text` 用于 oauth）
