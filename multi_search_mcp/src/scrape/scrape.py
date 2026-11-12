@@ -16,7 +16,8 @@ from datetime import datetime
 from typing import Any
 
 from ..plugins.base import ScrapeBackendSpec
-from ..plugins.registry import builtin_scrape_backends
+from ..plugins.registry import builtin_scrape_backends, get_plugin
+from ..plugins.usage_store import record_call
 from ..state.key_state import KeyCandidate, _now, key_fingerprint, key_id_for
 from ..state.site_memory import ScrapeAttempt
 from ..support import debug_log
@@ -721,7 +722,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
             deadline=ctx.deadline,
         )
         result = normalize_scrape_result(result, url=safe_url, via=backend)
-        _log_attempt(safe_url, backend, started, result)
+        _log_attempt(safe_url, backend, started, result, key_manager=ctx.key_manager)
         if ctx.site_memory is not None:
             ctx.site_memory.record_attempt(ScrapeAttempt(
                 url=safe_url, scraper=backend, success="error" not in result,
@@ -797,7 +798,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
             last = normalize_scrape_result({
                 "error": f"{backend}: {policy['name'].title()} blocked content fetch",
             }, url=safe_url, via=backend_provider(backend))
-            _log_attempt(safe_url, backend, started, last, status="blocked")
+            _log_attempt(safe_url, backend, started, last, status="blocked", key_manager=ctx.key_manager)
             if ctx.site_memory is not None:
                 ctx.site_memory.record_attempt(ScrapeAttempt(
                     url=safe_url,
@@ -810,7 +811,7 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
                     elapsed_ms=elapsed_ms,
                 ))
             continue
-        _log_attempt(safe_url, backend, started, result)
+        _log_attempt(safe_url, backend, started, result, key_manager=ctx.key_manager)
         if "error" not in result:
             result["url"] = safe_url
             if ctx.site_memory is not None:
@@ -835,7 +836,10 @@ def _scrape_with_context(url: str, ctx: ScrapeContext) -> dict:
     return last or normalize_scrape_result({"error": "no scrape backend available"}, url=safe_url)
 
 
-def _log_attempt(url: str, backend: str, started: float, result: dict, status: str | None = None) -> None:
+def _log_attempt(
+    url: str, backend: str, started: float, result: dict, status: str | None = None,
+    *, key_manager=None,
+) -> None:
     body = result.get("markdown") or ""
     debug_log.event(
         "scrape_attempt", url=url, backend=backend,
@@ -846,3 +850,5 @@ def _log_attempt(url: str, backend: str, started: float, result: dict, status: s
         truncated=result.get("truncated"),
         body_preview=debug_log.clip(body, 300) if body else None,
     )
+    if getattr(key_manager, "store", None) is not None:
+        record_call(get_plugin(backend_provider(backend)).id, "scrape", failed=bool(result.get("error")))
