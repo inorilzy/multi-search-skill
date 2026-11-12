@@ -2,7 +2,6 @@ import { pageRoot, confirmInline, disposePage } from './dom.js';
 import { showError } from './api.js';
 import { SEARCH_SOURCES } from './catalog.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
-import { mountBalance, providerForSource } from './balance.js';
 import { mountOAuthLogin } from './oauth-login.js';
 
 // Search sources come from the catalog generated from Python core metadata (one source of truth for
@@ -84,22 +83,16 @@ export async function mountCredentials(root, api, options = {}) {
 }
 // Exa's Team Management service key is a balance-only credential, not a search source. It is
 // edited with the same credential editor so saving/removing uses the shared keys-file commands.
-async function mountExaAdminEditor(root, api, balanceBlock) {
+async function mountExaAdminEditor(root, api) {
   const doc = root.ownerDocument;
   const section = doc.createElement('section');
   section.className = 'exa-admin-key';
   section.innerHTML = `<h3>管理 Key（仅用于查余额）</h3><p class="credential-note">Exa 的 Team Management Service Key 只用于查询余额，不会用于搜索。没有该 Key 时余额会显示“需要凭据”。</p><div data-exa-admin-body></div>`;
   root.append(section);
-  let ready = false;
-  const mounted = await mountCredentialBody(section.querySelector('[data-exa-admin-body]'), api, {
-    source: 'exa_admin',
-    onStatus: () => { if (ready) void balanceBlock.reload(false); },
-  });
-  ready = true;
-  return mounted;
+  return mountCredentialBody(section.querySelector('[data-exa-admin-body]'), api, { source: 'exa_admin' });
 }
-/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void, balanceOnly?: boolean, oauthPollInterval?: number}} [options] */
-export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest, balanceOnly = false, oauthPollInterval = 150 } = {}) {
+/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void, onLogin?: () => void, balanceOnly?: boolean, oauthPollInterval?: number}} [options] */
+export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest, onLogin, balanceOnly = false, oauthPollInterval = 150 } = {}) {
   root = pageRoot(root);
   const { label, search, keyOptional, balanceOnly: entryBalanceOnly } = sourceEntry(source);
   balanceOnly = balanceOnly || Boolean(entryBalanceOnly);
@@ -496,20 +489,9 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   renderDrafts();
   await refresh();
   const extraDisposers = [];
-  let balanceBlock = null;
-  if (!balanceOnly && typeof api.balanceView === 'function') {
-    const balanceSlot = root.ownerDocument.createElement('div');
-    root.prepend(balanceSlot);
-    balanceBlock = await mountBalance(balanceSlot, api, {
-      provider: providerForSource(source), source, label,
-    });
-    extraDisposers.push(balanceBlock);
-    if (source === 'exa') {
-      extraDisposers.push(await mountExaAdminEditor(root, api, balanceBlock));
-    }
-  }
-  // OAuth providers keep the normal key editor too (Firecrawl's API key stays editable), but the
-  // browser flow lives above it and refreshes both the credential rows and the balance on success.
+  if (source === 'exa') extraDisposers.push(await mountExaAdminEditor(root, api));
+  // OAuth providers keep the normal key editor too (Firecrawl's API key stays editable).
+  // Successful browser login refreshes the credential rows and the overview's login status.
   const oauthSlot = root.ownerDocument.createElement('div');
   const oauthBlock = await mountOAuthLogin(oauthSlot, api, {
     source,
@@ -517,7 +499,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     pollInterval: oauthPollInterval,
     onComplete: async () => {
       await refresh();
-      if (balanceBlock) await balanceBlock.reload(true);
+      if (!disposed) onLogin?.();
     },
   });
   if (!oauthSlot.hidden) {

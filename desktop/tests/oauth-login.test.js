@@ -82,7 +82,7 @@ test('oauth providers expose the browser login button and Parallel says it is ba
   assert.equal(oauthMethodForSource('tavily'), null);
 });
 
-test('starting, waiting and complete phases render the device code and refresh credentials and balance', async () => {
+test('starting, waiting and complete phases render the device code and refresh credentials without querying balance', async () => {
   const polls = [
     login('starting', { id: 7 }),
     login('waiting', { id: 7, user_code: 'ABCD-EFGH', url: 'https://platform.parallel.ai/device' }),
@@ -119,7 +119,8 @@ test('starting, waiting and complete phases render the device code and refresh c
   assert.match(ctx.root.querySelector('[data-oauth-copy-status]').textContent, /已复制/);
 
   await until(() => /登录完成/.test(ctx.root.querySelector('[data-oauth-status]').textContent), 'complete phase not rendered');
-  await until(() => balanceCalls.some(([, refresh]) => refresh === true), 'balance was not refreshed after login');
+  await until(() => statusCalls >= 2, 'credentials were not refreshed after login');
+  assert.deepEqual(balanceCalls, [], 'provider login never queries balance');
   assert.deepEqual(pollIds, [7, 7, 7]);
   assert.ok(statusCalls >= 2, 'credential list was refreshed after login');
   assert.equal(ctx.root.querySelector('[data-oauth-code]').hidden, true);

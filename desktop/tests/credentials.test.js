@@ -39,7 +39,9 @@ test('all keyed sources query their own overview and read command', async () => 
   for (const entry of SOURCES.filter(s => s.keyed)) {
     const ctx = setup(), calls = [];
     await mountCredentials(ctx.root, api({ credentialStatus: async s => { calls.push(['status', s]); return status(); }, credentialRead: async s => { calls.push(['read', s]); return { value: '' }; } }), { source: entry.source });
-    assert.deepEqual(calls, [['status', entry.source], ['read', entry.source]]); assert.ok(ctx.root.textContent.includes(entry.label)); ctx.window.close();
+    const expected = [['status', entry.source], ['read', entry.source]];
+    if (entry.source === 'exa') expected.push(['status', 'exa_admin'], ['read', 'exa_admin']);
+    assert.deepEqual(calls, expected); assert.ok(ctx.root.textContent.includes(entry.label)); ctx.window.close();
   }
 });
 

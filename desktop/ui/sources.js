@@ -1,7 +1,7 @@
 import { SOURCES, mountCredentialBody } from './credentials.js';
 import { showError } from './api.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
-import { mountBalance, providerForSource } from './balance.js';
+import { oauthMethodForSource } from './oauth-login.js';
 
 const ENTRIES = [...SOURCES, ...SOURCE_CATALOG.sources
   .filter(entry => !entry.searchable && entry.keyed)
@@ -153,6 +153,16 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     refreshStats();
   }
   function updateRow(rec, view) {
+    if (disposed) return;
+    if (rec.entry.keyed) {
+      const fileCount = Number.isInteger(view.file_key_count) && view.file_key_count >= 0 ? view.file_key_count : view.store?.state === 'absent' ? 0 : null;
+      const envCount = view.effective_source === 'env' || Boolean(view.env_var) ? 1 : 0;
+      rec.keyCount.textContent = fileCount === null ? '已配置 Key 数未知' : `已配置 ${fileCount + envCount} 个 Key`;
+    }
+    if (rec.oauth?.credential === rec.entry.source) {
+      const configured = ['env', 'file'].includes(view.effective_source);
+      rec.login.textContent = configured ? '浏览器登录：凭据已配置' : view.effective_source === 'none' && view.store?.state === 'absent' ? '浏览器登录：未登录' : '浏览器登录：状态未知';
+    }
     const provenance = JSON.stringify([view.effective_source, view.store?.state, view.store?.saved_at]);
     if (rec.provenance && rec.provenance !== provenance) updateTest(rec, IDLE);
     rec.provenance = provenance;
@@ -181,19 +191,23 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     refreshStats();
   }
   function buildRow(entry) {
+    const oauth = oauthMethodForSource(entry.source);
     const row = doc.createElement('article');
     row.className = 'source-row';
     row.setAttribute('role', 'listitem');
     row.dataset.expanded = 'false';
     row.setAttribute('data-source-row', entry.source);
     row.innerHTML = `<div class="source-line"><span class="source-icon icon-${entry.source}" aria-hidden="true">${esc(MARKS[entry.source])}</span>
-      <button type="button" class="source-pick" data-pick="${esc(entry.source)}" aria-expanded="false" aria-controls="detail-${entry.source}"><span class="source-name">${esc(entry.label)}</span><small class="source-desc">${esc(DESCRIPTIONS[entry.source])}</small></button>
+      <button type="button" class="source-pick" data-pick="${esc(entry.source)}" aria-expanded="false" aria-controls="detail-${entry.source}"><span class="source-name">${esc(entry.label)}</span><small class="source-desc">${esc(DESCRIPTIONS[entry.source])}</small><small class="credential-note"><span data-key-count>${entry.keyed ? '已配置 Key 数读取中' : '已配置 0 个 Key'}</span>${oauth ? '<br><span data-login-status>浏览器登录：状态未知</span>' : ''}</small></button>
       ${entry.search === false ? '<span class="source-toggle">仅用于抓取</span>' : `<label class="source-toggle"><input type="checkbox" role="switch" data-toggle="${esc(entry.source)}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>`}
       <div class="source-key"><span data-key-summary aria-hidden="true">—</span><span class="visually-hidden" data-key-summary-text>未配置</span></div><span class="source-state" data-row-status data-kind="unknown">读取中</span>
       <div class="source-test-state" data-row-result data-kind="idle"><span class="test-state-symbol" aria-hidden="true"></span><div><strong>${entry.search === false ? '仅用于抓取' : '未测试'}</strong><small>${entry.search === false ? '不提供搜索连接测试' : entry.cookie ? '需要 Cookie 文件' : entry.keyOptional ? '无需 API Key，可选填 Key 提高额度' : entry.keyed ? '点击测试验证' : '无需 API Key'}</small></div></div>
       ${entry.search === false ? '<span class="source-test-button" aria-hidden="true"></span>' : `<button type="button" class="source-test-button" data-row-test aria-label="测试 ${esc(entry.label)}">${icon('play')}<span>测试</span></button>`}<button type="button" class="source-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
       <p class="row-error" data-row-error role="alert"></p><div id="detail-${esc(entry.source)}" class="source-detail" data-source-detail hidden></div>`;
     const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), summaryText: row.querySelector('[data-key-summary-text]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
+    // Account-only OAuth credentials are not exposed by credential_status. Their login
+    // state stays unknown until this page observes a completed browser login.
+    Object.assign(rec, { oauth, login: row.querySelector('[data-login-status]'), keyCount: row.querySelector('[data-key-count]') });
     rows.set(entry.source, rec);
     list.append(row);
     if (!entry.keyed && !entry.cookie) setRow(rec, 'keyless', '无需凭据');
@@ -251,6 +265,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
       source,
       onStatus: view => { if (!disposed && ticket === activeTicket) updateRow(rec, view); },
       onTest: result => { if (!disposed && ticket === activeTicket) updateTest(rec, result); },
+      onLogin: () => { if (!disposed && ticket === activeTicket && rec.login) rec.login.textContent = '浏览器登录：已登录'; },
     });
     if (disposed || ticket !== activeTicket) { mounted.dispose(); return; }
     // 凭据来源未变才恢复本页面内的上次结果，不持久化验证承诺。
@@ -267,8 +282,6 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     panel.className = 'keyless-detail';
     panel.innerHTML = `<div><p>${rec.entry.cookie ? '在搜索设置页配置 Cookie 文件路径；此处不读取或显示 Cookie 正文。' : '该服务无需 API Key，可直接测试连接。'}</p><p class="credential-note">测试会发送外部搜索请求，请只在需要时测试。</p><button type="button" data-action="test">测试连接</button></div><div class="test-result" data-kind="idle"><div><strong data-status="test" aria-live="polite"></strong><p data-info="test" role="status"></p></div></div>`;
     rec.detail.append(panel);
-    const balanceSlot = doc.createElement('div');
-    rec.detail.append(balanceSlot);
     let stale = false;
     const button = panel.querySelector('button');
     const show = result => {
@@ -288,10 +301,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
       } catch (error) { show({ kind: 'error', title: '测试失败', message: showError(panel.querySelector('[data-info="test"]'), error, '测试启动失败，请检查 CLI 后重试。').message }); }
       finally { if (!stale && !disposed) button.disabled = false; }
     });
-    const balance = await mountBalance(balanceSlot, api, {
-      provider: providerForSource(rec.entry.source), source: rec.entry.source, label: rec.entry.label,
-    });
-    return { dispose() { stale = true; balance.dispose(); } };
+    return { dispose() { stale = true; } };
   }
 
   for (const entry of ENTRIES) buildRow(entry);
@@ -301,7 +311,13 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     applyFilter();
   });
   search.addEventListener('input', applyFilter);
-  const loads = ENTRIES.filter(entry => entry.keyed || entry.cookie).map(entry => api.credentialStatus(entry.source).then(view => updateRow(rows.get(entry.source), view), error => { setRow(rows.get(entry.source), 'error', '状态读取失败'); showError(rows.get(entry.source).error, error, '状态读取失败，请重新进入本页重试。'); }));
+  const loads = ENTRIES.filter(entry => entry.keyed || entry.cookie).map(entry => api.credentialStatus(entry.source).then(view => updateRow(rows.get(entry.source), view), error => {
+    if (disposed) return;
+    const rec = rows.get(entry.source);
+    setRow(rec, 'error', '状态读取失败');
+    rec.keyCount.textContent = '已配置 Key 数未知';
+    showError(rec.error, error, '状态读取失败，请重新进入本页重试。');
+  }));
   const retrySettings = root.querySelector('[data-action="retry-settings"]');
   async function loadSettings() {
     try {
