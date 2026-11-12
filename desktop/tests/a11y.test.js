@@ -206,8 +206,9 @@ test('sources page expands nothing on entry and sends no extra status request', 
   });
   await flush();
   assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0);
-  assert.equal(statusCalls.length, 12, 'one status read per keyed or Cookie source, including Jina, no automatic detail read');
-  assert.equal(new Set(statusCalls).size, 12);
+  assert.equal(statusCalls.length, 11, 'one status read per keyed or Cookie provider, including Jina; GitHub channels share one row');
+  assert.equal(new Set(statusCalls).size, 11);
+  assert.equal(statusCalls.filter(source => source.startsWith('github_')).length, 1, 'GitHub credentials are read once');
   mounted.dispose();
   window.close();
 });
@@ -223,10 +224,11 @@ test('the credential summary has a real accessible text instead of an aria-label
   for (const node of root.querySelectorAll('div[aria-label], span[aria-label]')) {
     assert.ok(node.getAttribute('role'), `${node.className} has aria-label without a role`);
   }
-  const brave = root.querySelector('[data-source-row="brave"] .source-key');
-  assert.equal(brave.querySelector('[data-key-summary]').getAttribute('aria-hidden'), 'true');
-  assert.equal(brave.querySelector('.visually-hidden').textContent, 'API Key 已配置（不显示）');
-  assert.equal(root.querySelector('[data-source-row="hackernews"] .visually-hidden').textContent, '无需配置');
+  const brave = root.querySelector('[data-source-row="brave"] .provider-summary');
+  assert.equal(brave.querySelector('.provider-name').textContent, 'Brave 搜索');
+  assert.equal(brave.querySelector('[data-row-status]').textContent, 'Key 文件生效');
+  assert.equal(brave.querySelector('[data-row-status]').closest('[hidden], [aria-hidden="true"]'), null, 'credential state is readable in the collapsed summary');
+  assert.equal(root.querySelector('[data-source-row="hackernews"] .provider-summary [data-row-status]').textContent, '无需凭据');
   mounted.dispose();
   window.close();
 });

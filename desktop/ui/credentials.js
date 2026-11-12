@@ -1,4 +1,4 @@
-import { pageRoot, confirmInline, disposePage } from './dom.js';
+import { pageRoot, confirmInline, disposePage, el } from './dom.js';
 import { showError } from './api.js';
 import { SEARCH_SOURCES } from './catalog.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
@@ -91,8 +91,8 @@ async function mountExaAdminEditor(root, api) {
   root.append(section);
   return mountCredentialBody(section.querySelector('[data-exa-admin-body]'), api, { source: 'exa_admin' });
 }
-/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void, onLogin?: () => void, balanceOnly?: boolean, oauthPollInterval?: number}} [options] */
-export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest, onLogin, balanceOnly = false, oauthPollInterval = 150 } = {}) {
+/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void, onLogin?: () => void, balanceOnly?: boolean, oauthPollInterval?: number, accountEditor?: boolean}} [options] */
+export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest, onLogin, balanceOnly = false, oauthPollInterval = 150, accountEditor = false } = {}) {
   root = pageRoot(root);
   const { label, search, keyOptional, balanceOnly: entryBalanceOnly } = sourceEntry(source);
   balanceOnly = balanceOnly || Boolean(entryBalanceOnly);
@@ -224,13 +224,19 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     q('[data-test-key-label]').hidden = !searchTest || choices.length === 0;
     savedRows.forEach((value, index) => {
       const row = root.ownerDocument.createElement('div');
-      row.className = 'key-saved-row'; row.dataset.savedIndex = String(index);
+      row.className = accountEditor ? 'key-row' : 'key-saved-row'; row.dataset.savedIndex = String(index);
       row.innerHTML = `<span class="key-row-label" aria-hidden="true">Key ${index + 1}</span><input type="password" readonly data-saved-input aria-label="已保存 Key 第 ${index + 1} 行">
         <span class="key-row-actions"><button type="button" data-action="reveal" data-row-index="${index}">显示</button><button type="button" data-action="copy" data-row-index="${index}" disabled>复制</button><button type="button" class="key-remove" data-action="remove" data-remove-index="${index}" aria-label="删除第 ${index + 1} 行 Key">删除</button></span>
         <div data-confirm-slot></div>`;
       // Saved value is assigned via .value, never innerHTML, so raw key text
       // cannot break the markup.
       row.querySelector('input').value = value;
+      if (accountEditor) {
+        const fingerprint = root.ownerDocument.createElement('span');
+        fingerprint.className = 'key-fingerprint';
+        fingerprint.textContent = value;
+        row.querySelector('.key-row-label').replaceWith(fingerprint);
+      }
       list.append(row);
     });
   }
@@ -489,12 +495,12 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   renderDrafts();
   await refresh();
   const extraDisposers = [];
-  if (source === 'exa') extraDisposers.push(await mountExaAdminEditor(root, api));
+  if (source === 'exa' && !accountEditor) extraDisposers.push(await mountExaAdminEditor(root, api));
   // OAuth providers keep the normal key editor too (Firecrawl's API key stays editable).
   // Successful browser login refreshes the credential rows and the overview's login status.
   const oauthSlot = root.ownerDocument.createElement('div');
   const oauthBlock = await mountOAuthLogin(oauthSlot, api, {
-    source,
+    source: accountEditor ? undefined : source,
     label,
     pollInterval: oauthPollInterval,
     onComplete: async () => {
@@ -517,4 +523,214 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       root.replaceChildren();
     },
   };
+}
+
+
+export function providerIdForSource(source) {
+  return SOURCE_CATALOG.plugins.find(plugin => plugin.id === source
+    || plugin.search_sources.includes(source) || plugin.scrape_channels.includes(source))?.id || source;
+}
+
+// Match Core's short SHA-256 identifier; raw values never enter account metadata or markup.
+async function keyFingerprint(value) {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return `sha256:${[...new Uint8Array(digest)].slice(0, 4).map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** @param {any} holder @param {any} api @param {any} options */
+export async function mountProviderAccounts(holder, api, { source, onStatus, onTest, onLogin, onChange }) {
+  const root = pageRoot(holder), doc = root.ownerDocument;
+  const provider = providerIdForSource(source);
+  root.innerHTML = `<div class="provider-actions" data-account-tools></div><p class="provider-note" data-account-error role="alert"></p><div data-provider-login></div><div class="account-list" data-accounts></div>`;
+  const errorSlot = root.querySelector('[data-account-error]');
+  const list = root.querySelector('[data-accounts]');
+  const tools = root.querySelector('[data-account-tools]');
+  let disposed = false, busy = false, generation = 0;
+  let editors = [];
+  let oauth;
+  let editingDefault = false;
+  const addAdmin = el(doc, 'button', { type: 'button', 'data-account-action': 'add-admin', hidden: '' }, '添加 Exa 管理 Key');
+  tools.append(addAdmin);
+  addAdmin.addEventListener('click', () => { editingDefault = true; void renderAccounts().catch(error => showError(errorSlot, error, '账号读取失败，请重新展开服务商。')); });
+  function ready(result) {
+    if (result.status !== 'ready') throw new Error(result.message || '账号操作未完成，请更新 CLI 后重试。');
+    return result;
+  }
+  async function mutate(action) {
+    if (busy || disposed) return;
+    busy = true;
+    errorSlot.textContent = '';
+    for (const button of root.querySelectorAll('[data-account-action]')) button.setAttribute('disabled', '');
+    try {
+      ready(await action());
+      if (!disposed) { await renderAccounts(); await onChange?.(); }
+    } catch (error) { if (!disposed) showError(errorSlot, error, '账号操作失败，请重试。'); }
+    finally {
+      busy = false;
+      if (!disposed) for (const button of root.querySelectorAll('[data-account-action]')) button.removeAttribute('disabled');
+    }
+  }
+  async function refreshAfterKeyChange() {
+    if (disposed) return;
+    try { await renderAccounts(); await onChange?.(); }
+    catch (error) { if (!disposed) showError(errorSlot, error, '凭据已更新，但账号刷新失败，请重新展开服务商。'); }
+  }
+  const add = el(doc, 'button', { type: 'button', 'data-account-action': 'add' }, '新建账号');
+  tools.append(add);
+  add.addEventListener('click', () => nameForm(tools, null));
+  function nameForm(parent, account) {
+    if (busy || disposed || parent.querySelector('.account-form')) return;
+    const form = el(doc, 'form', { class: 'account-form' });
+    form.innerHTML = `<label>账号名称<input required maxlength="120" data-account-name></label><button type="submit" data-account-action="save-name">保存名称</button><button type="button" data-action="cancel-name">取消</button>`;
+    const input = form.querySelector('input');
+    input.value = account?.name || '';
+    parent.append(form); input.focus();
+    form.querySelector('[data-action="cancel-name"]').addEventListener('click', () => form.remove());
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const name = input.value.trim();
+      if (!name) { input.focus(); return; }
+      void mutate(() => account ? api.accountsRename(provider, account.id, name) : api.accountsAdd(provider, name));
+    });
+  }
+  function removeAccount(parent, account, trigger) {
+    if (busy || parent.querySelector('[data-account-confirm]')) return;
+    const panel = el(doc, 'div', { class: 'inline-confirm', 'data-account-confirm': '' });
+    panel.innerHTML = `<p>删除账号时如何处理搜索 Key？仅查余额的凭据会保留。</p><div class="account-actions"><button type="button" data-account-action="keep-keys">删除账号，Key 移到默认账号</button><button type="button" class="danger" data-account-action="delete-keys">删除账号及搜索 Key</button><button type="button" data-action="cancel-account-remove">取消</button></div>`;
+    parent.append(panel);
+    const close = () => { panel.remove(); release(); };
+    const release = confirmInline(panel, close, trigger);
+    panel.querySelector('[data-action="cancel-account-remove"]').addEventListener('click', close);
+    for (const [action, deleteKeys] of [['keep-keys', false], ['delete-keys', true]]) panel.querySelector(`[data-account-action="${action}"]`).addEventListener('click', () => {
+      void mutate(() => api.accountsRemove(provider, account.id, deleteKeys));
+    });
+  }
+  async function renderAccounts() {
+    const ticket = ++generation;
+    const view = ready(await api.accountsView(provider));
+    if (disposed || ticket !== generation) return;
+    for (const editor of editors) editor.dispose();
+    editors = [];
+    list.replaceChildren();
+    tools.querySelector('.account-form')?.remove();
+    const accounts = view.accounts[provider] || [];
+    const shown = accounts.filter(account => account.id !== 'default' || account.keys.length
+      || Object.keys(account.balance_credentials).length || accounts.length === 1 || editingDefault);
+    addAdmin.hidden = source !== 'exa' || shown.some(account => account.id === 'default')
+      || accounts.some(account => account.balance_credentials.exa_admin);
+    for (const account of shown) {
+      if (disposed || ticket !== generation) return;
+      const row = el(doc, 'section', { class: 'account-row', 'data-account-id': account.id });
+      const summary = el(doc, 'div', { class: 'account-summary' });
+      const identity = el(doc, 'div', { class: 'account-identity' });
+      identity.append(el(doc, 'h3', { class: 'account-name' }, account.name),
+        el(doc, 'p', { class: 'account-source' }, account.source === 'oauth' ? '浏览器登录' : '手动账号'));
+      if (account.login_identity) identity.append(el(doc, 'p', { class: 'account-source' }, account.login_identity));
+      const actions = el(doc, 'div', { class: 'account-actions' });
+      summary.append(identity, el(doc, 'span', { class: 'provider-note' }, `${account.keys.length} 个 Key`), actions);
+      row.append(summary); list.append(row);
+      if (account.id !== 'default') {
+        const rename = el(doc, 'button', { type: 'button', 'data-account-action': 'rename' }, '重命名账号');
+        const remove = el(doc, 'button', { type: 'button', 'data-account-action': 'remove' }, '删除账号');
+        actions.append(rename, remove);
+        rename.addEventListener('click', () => nameForm(row, account));
+        remove.addEventListener('click', () => removeAccount(row, account, remove));
+      }
+      if (account.source === 'oauth' && account.keys.length === 0) row.append(el(doc, 'p', { class: 'provider-note' }, '请为这个账号添加搜索 Key'));
+      const keys = el(doc, 'div', { class: 'account-keys' }); row.append(keys);
+      // The legacy row editor owns reveal/copy/drafts/confirmation and snapshot guards.
+      // Scope its rows to fingerprints, resolving global indices only for an explicit action.
+      let fingerprints = [...account.keys];
+      let snapshot;
+      const resolve = async (index, expected) => {
+        const fingerprint = fingerprints[index];
+        const fresh = ready(await api.accountsView(provider)).accounts[provider]?.find(item => item.id === account.id);
+        if (!fingerprint || !fresh?.keys.includes(fingerprint)) throw new Error('Key 归属已变化，请刷新后重试。');
+        const revealed = await api.credentialReveal(source);
+        if (expected !== revealed.snapshot) throw new Error('凭据已变化，请刷新后重试。');
+        const values = revealed.value.split('\n').filter(value => value.trim());
+        const ids = await Promise.all(values.map(keyFingerprint));
+        const globalIndex = ids.indexOf(fingerprint);
+        if (globalIndex < 0) throw new Error('凭据已变化，请刷新后重试。');
+        return { index: globalIndex, expected: revealed.snapshot, value: values[globalIndex] };
+      };
+      let environmentKey = false;
+      const scopedApi = {
+        ...api,
+        credentialStatus: async () => {
+          const view = await api.credentialStatus(source);
+          onStatus?.(view);
+          environmentKey = account.id === 'default' && view.effective_source === 'env';
+          return { ...view, file_key_count: fingerprints.length, effective_source: environmentKey ? 'env' : fingerprints.length ? 'file' : 'none', env_var: environmentKey ? view.env_var : undefined };
+        },
+        credentialRead: async () => {
+          const [saved, fresh] = await Promise.all([api.credentialRead(source), api.accountsView(provider)]);
+          const current = ready(fresh).accounts[provider]?.find(item => item.id === account.id);
+          if (!current) throw new Error('账号已变化，请重新展开服务商。');
+          fingerprints = [...current.keys]; snapshot = saved.snapshot;
+          return { value: fingerprints.join('\n'), snapshot };
+        },
+        credentialReveal: async () => {
+          const values = await Promise.all(fingerprints.map((_, index) => resolve(index, snapshot)));
+          return { value: values.map(item => item.value).join('\n'), snapshot };
+        },
+        credentialTest: async (_, selection) => {
+          if (!selection) {
+            if (!environmentKey) throw new Error('请为这个账号添加搜索 Key');
+            return api.credentialTest(source);
+          }
+          const selected = await resolve(selection.index, selection.expected);
+          return api.credentialTest(source, { index: selected.index, expected: selected.expected });
+        },
+        credentialRemove: async (_, index, expected) => {
+          const selected = await resolve(index, expected);
+          const result = await api.credentialRemove(source, selected.index, selected.expected);
+          onStatus?.(result);
+          await refreshAfterKeyChange();
+          return result;
+        },
+        credentialAppend: async (_, values) => {
+          const ids = await Promise.all(values.map(keyFingerprint));
+          const result = await api.credentialAppend(source, values);
+          onStatus?.(result);
+          // Append already succeeded: an assignment failure must not invite duplicate retries.
+          try {
+            if (account.id !== 'default') for (const fingerprint of ids) ready(await api.accountsMoveKey(provider, fingerprint, account.id));
+          } catch (error) {
+            if (!disposed) {
+              showError(errorSlot, error, '请刷新后整理账号。');
+              errorSlot.prepend(doc.createTextNode('Key 已保存，但部分 Key 的账号归属更新失败。'));
+            }
+          }
+          await refreshAfterKeyChange();
+          return result;
+        },
+      };
+      const editor = await mountCredentialBody(keys, scopedApi, { source, accountEditor: true, onTest });
+      if (disposed || ticket !== generation) { editor.dispose(); return; }
+      editors.push(editor);
+      for (const [entry, fingerprint] of Object.entries(account.balance_credentials)) {
+        const credential = el(doc, 'div', { class: 'key-row' });
+        const name = entry === 'parallel_account' ? 'Parallel 账户令牌' : entry === 'exa_admin' ? 'Exa 管理 Key' : entry;
+        const label = el(doc, 'div', { class: 'key-identity' });
+        label.append(el(doc, 'strong', { class: 'key-kind' }, `${name} · 仅查余额`), el(doc, 'p', { class: 'key-fingerprint' }, String(fingerprint)));
+        credential.append(label); keys.append(credential);
+      }
+      // A new Exa management key belongs to default until the account API assigns it.
+      if (source === 'exa' && (account.balance_credentials.exa_admin || (account.id === 'default'
+        && !accounts.some(item => item.balance_credentials.exa_admin)))) {
+        row.append(el(doc, 'p', { class: 'provider-note' }, 'Exa 管理 Key · 仅查余额。新增管理 Key 保存在默认账号。'));
+        const admin = await mountExaAdminEditor(row, api);
+        if (disposed || ticket !== generation) { admin.dispose(); return; }
+        editors.push(admin);
+      }
+    }
+  }
+  try { await renderAccounts(); }
+  catch (error) { if (!disposed) showError(errorSlot, error, '账号读取失败，请重新展开服务商。'); }
+  if (!disposed) oauth = await mountOAuthLogin(root.querySelector('[data-provider-login]'), api, {
+    source, label: sourceEntry(source).label,
+    onComplete: async () => { if (!disposed) { await renderAccounts(); await onChange?.(); onLogin?.(); } },
+  });
+  return { dispose() { disposed = true; generation += 1; oauth?.dispose(); for (const editor of editors) editor.dispose(); disposePage(root); root.replaceChildren(); } };
 }

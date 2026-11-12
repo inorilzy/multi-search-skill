@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { Window } from 'happy-dom';
 import { mountSources } from '../ui/sources.js';
 
-const ALL = ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github_repos', 'github_code', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter'];
-const KEYED = [...ALL.slice(0, 9), 'stackoverflow'];
+const ALL = ['baidu', 'brave', 'parallel', 'tavily', 'exa', 'firecrawl', 'serpapi', 'github_repos', 'hackernews', 'stackoverflow', 'sov2ex', 'twitter'];
+const KEYED = [...ALL.slice(0, 8), 'stackoverflow'];
 
 const absent = { source: '', store: { state: 'absent', saved_at: null, error: '' }, effective_source: 'none', key_application_available: false };
 const settings = (overrides = {}) => ({ route: 'default', timeout: 60, disabled_sources: [], twitter_cookies_path: null, route_ok: true, ...overrides });
@@ -31,7 +31,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
   const mounted = await mountSources(root, api);
 
   const rows = [...root.querySelectorAll('[data-source-row]')].map(node => node.getAttribute('data-source-row'));
-  assert.deepEqual(rows, [...ALL, 'jina'], 'search sources and scrape-only credentials appear once in a stable order');
+  assert.deepEqual(rows, [...ALL, 'jina'], 'providers appear once in a stable order; GitHub search channels share one credential row');
   assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0, 'no detail is expanded on entry');
   assert.equal(root.querySelectorAll('[data-source-detail] [data-field="key"]').length, 0);
   await pick(root, 'baidu');
@@ -48,7 +48,7 @@ test('sources page lists every allowlisted source once and mounts only the selec
   await pick(root, 'stackoverflow');
   assert.match(detailOf(root).textContent, /无需 API Key 也能使用/, 'an optional key says the source works without one');
 
-  for (const name of ALL.slice(9).filter(name => !KEYED.includes(name))) {
+  for (const name of ALL.slice(8).filter(name => !KEYED.includes(name))) {
     await pick(root, name);
     const detail = detailOf(root);
     assert.ok(detail.querySelector('[data-action="test"]'), `${name} detail exposes a test control`);
@@ -98,7 +98,7 @@ test('per-source test outcomes map to their own source and never leak into a reb
   window.close();
 });
 
-test('all thirteen sources expose independent explicit test controls', async () => {
+test('all twelve searchable providers expose independent explicit test controls', async () => {
   const { window, root } = setup();
   const called = [];
   const api = {
@@ -115,7 +115,7 @@ test('all thirteen sources expose independent explicit test controls', async () 
     assert.match(detail.querySelector('[data-status="test"]').textContent, /测试成功/);
     assert.equal(detail.querySelector('[data-info="test"]').textContent, name);
   }
-  assert.equal(new Set(called).size, 13);
+  assert.equal(new Set(called).size, 12);
   mounted.dispose();
   window.close();
 });
@@ -167,13 +167,13 @@ test('overview, search, filters and keyboard shortcut use real source state', as
     settingsView: async () => settings({ disabled_sources: ['exa', 'twitter'] }),
     credentialStatus: async source => source === 'baidu' ? { ...absent, effective_source: 'file', store: { state: 'present', saved_at: 1, error: '' } } : absent,
   });
-  assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '11');
+  assert.equal(root.querySelector('[data-stat="enabled"]').textContent, '10');
   assert.equal(root.querySelector('[data-stat="configured"]').textContent, '1');
-  assert.equal(root.querySelector('[data-stat="absent"]').textContent, '11');
+  assert.equal(root.querySelector('[data-stat="absent"]').textContent, '10');
   assert.equal(root.querySelectorAll('[data-source-row][data-expanded="true"]').length, 0, 'entering the page expands nothing');
   root.querySelector('[data-filter="unconfigured"]').click();
   const visible = () => [...root.querySelectorAll('[data-source-row]')].filter(row => !row.hidden);
-  assert.equal(visible().length, 11);
+  assert.equal(visible().length, 10);
   assert.ok(!visible().some(row => row.dataset.sourceRow === 'hackernews'));
   const search = root.querySelector('[data-search]');
   search.value = 'Cookie';
@@ -373,7 +373,7 @@ test('every row test and expand control exposes its source in the accessible nam
     settingsView: async () => settings(),
     credentialStatus: async () => absent,
   });
-  const labels = { baidu: 'Baidu AI 搜索', brave: 'Brave 搜索', parallel: 'Parallel', tavily: 'Tavily', exa: 'Exa', firecrawl: 'Firecrawl', serpapi: 'SerpAPI', github_repos: 'GitHub 仓库', github_code: 'GitHub 代码', hackernews: 'Hacker News', stackoverflow: 'Stack Overflow', sov2ex: 'V2EX', twitter: 'Twitter / X' };
+  const labels = { baidu: 'Baidu AI 搜索', brave: 'Brave 搜索', parallel: 'Parallel', tavily: 'Tavily', exa: 'Exa', firecrawl: 'Firecrawl', serpapi: 'SerpAPI', github_repos: 'GitHub', hackernews: 'Hacker News', stackoverflow: 'Stack Overflow', sov2ex: 'V2EX', twitter: 'Twitter / X' };
   for (const [source, label] of Object.entries(labels)) {
     const row = root.querySelector(`[data-source-row="${source}"]`);
     assert.equal(row.querySelector('[data-row-test]').getAttribute('aria-label'), `测试 ${label}`, source);

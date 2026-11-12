@@ -34,7 +34,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
  * method or when the injected API predates the oauth commands.
  * @param {HTMLElement} root
  * @param {any} api
- * @param {{ source?: string, label?: string, pollInterval?: number, onComplete?: () => Promise<void>|void }} [options]
+ * @param {{ source?: string, label?: string, pollInterval?: number, onComplete?: (status: any) => Promise<void>|void }} [options]
  */
 export async function mountOAuthLogin(root, api, { source, label, pollInterval = DEFAULT_POLL_INTERVAL, onComplete } = {}) {
   const plugin = pluginForSource(source);
@@ -96,7 +96,8 @@ export async function mountOAuthLogin(root, api, { source, label, pollInterval =
     const active = ACTIVE_PHASES.has(phase);
     section.dataset.phase = phase;
     section.setAttribute('aria-busy', String(active));
-    statusNode.textContent = PHASE_TEXT[phase] || '尚未登录。';
+    statusNode.textContent = phase === 'complete' && next.needs_search_key
+      ? '登录完成。请为这个账号添加搜索 Key' : PHASE_TEXT[phase] || '尚未登录。';
     startButton.hidden = active;
     startButton.disabled = starting || active;
     cancelButton.hidden = !active;
@@ -118,7 +119,7 @@ export async function mountOAuthLogin(root, api, { source, label, pollInterval =
         stopTimer();
         clearError();
         try {
-          await onComplete?.();
+          await onComplete?.(next);
         } catch (error) {
           if (!disposed) showError(errorSlot, error, '登录已完成，但刷新凭据与余额失败，请手动刷新。');
         }

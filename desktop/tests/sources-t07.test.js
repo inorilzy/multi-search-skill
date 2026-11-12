@@ -19,12 +19,14 @@ const baseApi = () => ({
 const rowFor = (root, source) => root.querySelector(`[data-source-row="${source}"]`);
 const open = async (root, source) => { rowFor(root, source).querySelector('[data-pick]').click(); await flush(); };
 
-test('T07: every detail omits balance and makes zero balance requests, while connection tests still work', async () => {
+test('T07: details keep connection tests while summaries read cached usage once', async () => {
   const { window, root } = setup();
   const tested = [];
   let balanceCalls = 0;
+  const usageCalls = [];
   const mounted = await mountSources(root, {
     ...baseApi(),
+    usageView: async (...args) => { usageCalls.push(args); return { providers: [] }; },
     balanceView: async () => { balanceCalls += 1; throw Error('balance is not part of provider setup'); },
     credentialTest: async source => { tested.push(source); return { result: 'success', message: 'synthetic connection' }; },
   });
@@ -38,9 +40,10 @@ test('T07: every detail omits balance and makes zero balance requests, while con
       assert.match(row.querySelector('[data-status="test"]').textContent, /测试成功/);
     }
   }
-  assert.equal(tested.length, 13);
+  assert.equal(tested.length, 12);
   assert.equal(balanceCalls, 0);
-  assert.equal(root.querySelectorAll('[data-key-count]').length, 14);
+  assert.deepEqual(usageCalls, [[]], 'mount reads cached usage without a refresh argument');
+  assert.equal(root.querySelectorAll('[data-key-count]').length, 13);
   assert.equal(rowFor(root, 'brave').querySelector('[data-toggle-label]').textContent, '未启用');
   assert.equal(rowFor(root, 'tavily').querySelector('[data-toggle-label]').textContent, '已启用');
   mounted.dispose(); window.close();
@@ -61,10 +64,10 @@ test('T07: visible row summaries count file and environment keys without reading
   });
   for (const [source, count] of [['tavily', 4], ['brave', 1], ['exa', 2], ['hackernews', 0], ['twitter', 0]]) {
     const summary = rowFor(root, source).querySelector('[data-key-count]');
-    assert.equal(summary.textContent, `已配置 ${count} 个 Key`);
+    assert.equal(summary.textContent, source === 'hackernews' || source === 'twitter' ? '0 个账号 · 0 个 Key' : `账号数未知 · ${count} 个 Key`);
     assert.equal(summary.closest('[aria-hidden="true"], .visually-hidden, .source-key'), null, 'count remains in the visible source column at narrow widths');
   }
-  assert.equal(rowFor(root, 'jina').querySelector('[data-key-count]').textContent, '已配置 Key 数未知');
+  assert.equal(rowFor(root, 'jina').querySelector('[data-key-count]').textContent, '账号数未知 · Key 数未知');
   assert.equal(root.querySelectorAll('[data-login-status]').length, 2, 'only OAuth providers have login status');
   mounted.dispose(); window.close();
 });
@@ -85,10 +88,10 @@ test('T07: saving and removing keys updates the count in the same row', async ()
   row.querySelector('[data-action="add"]').click();
   row.querySelector('[data-draft-input]').value = 'synthetic-t07';
   row.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true })); await flush();
-  assert.equal(row.querySelector('[data-key-count]').textContent, '已配置 1 个 Key');
+  assert.equal(row.querySelector('[data-key-count]').textContent, '账号数未知 · 1 个 Key');
   row.querySelector('[data-action="remove"]').click();
   row.querySelector('[data-action="confirm-remove"]').click(); await flush();
-  assert.equal(row.querySelector('[data-key-count]').textContent, '已配置 0 个 Key');
+  assert.equal(row.querySelector('[data-key-count]').textContent, '账号数未知 · 0 个 Key');
   mounted.dispose(); window.close();
 });
 

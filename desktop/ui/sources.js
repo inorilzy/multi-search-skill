@@ -1,11 +1,18 @@
-import { SOURCES, mountCredentialBody } from './credentials.js';
+import { SOURCES, mountCredentialBody, mountProviderAccounts, providerIdForSource } from './credentials.js';
+import { createMeter, createAlertBadge } from './meter.js';
 import { showError } from './api.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
 import { oauthMethodForSource } from './oauth-login.js';
 
 const ENTRIES = [...SOURCES, ...SOURCE_CATALOG.sources
   .filter(entry => !entry.searchable && entry.keyed)
-  .map(({ name, label, keyed, key_optional, cookie, description, mark }) => ({ source: name, label, keyed, keyOptional: key_optional, cookie, description, mark, search: false }))];
+  .map(({ name, label, keyed, key_optional, cookie, description, mark }) => ({ source: name, label, keyed, keyOptional: key_optional, cookie, description, mark, search: false }))]
+  .filter((entry, index, entries) => entries.findIndex(other => providerIdForSource(other.source) === providerIdForSource(entry.source)) === index)
+  .map(entry => {
+    const plugin = SOURCE_CATALOG.plugins.find(item => item.id === providerIdForSource(entry.source));
+    return { search: true, ...entry, label: plugin?.search_sources.length > 1 ? plugin.label : entry.label,
+      searchSources: plugin?.search_sources || [entry.source] };
+  });
 
 // Catalog values are local constants, but escape them anyway: the template below is HTML.
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
@@ -35,7 +42,7 @@ export function shortcutLabel(nav = globalThis.navigator) {
   return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘ K' : 'Ctrl K';
 }
 function statCard(key, label, symbol) {
-  return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${key === 'enabled' ? SOURCES.length : TOTAL}</small></strong></div></div>`;
+  return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${key === 'enabled' ? ENTRIES.filter(entry => entry.search !== false).length : TOTAL}</small></strong></div></div>`;
 }
 
 /** @param {any} root page container (untyped DOM queries, as in the other pages) @param {any} api @param {{ signal?: AbortSignal, number?: string }} [options] */
@@ -43,17 +50,59 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
   const doc = root.ownerDocument;
   const shortcut = shortcutLabel(doc.defaultView?.navigator);
   root.classList.add('sources-page');
-  root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">${number} / SOURCES</p><h1 tabindex="-1">搜索源与凭据</h1><p>管理各搜索源的 API Key 和启用状态，并可快速测试连接，确保服务可用。</p></div>
+  root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">${number} / PROVIDERS</p><h1 tabindex="-1">服务商</h1><p>按账号管理服务商的 Key、浏览器登录和启用状态。</p></div>
     <aside class="key-hint"><span>${icon('lock')}</span><div><strong>凭据保存在本地</strong><p>测试时仅向对应服务商发送认证请求，不回显已保存的 Key。</p></div></aside></section>
     <div class="sources-overview"><section class="stats" aria-label="搜索源概览">${statCard('enabled', '已启用', 'toggle')}${statCard('configured', '已配置', 'key')}${statCard('error', '异常', 'alert')}${statCard('absent', '未配置', 'box')}</section>
     <div class="toolbar"><label class="source-search">${icon('search')}<input type="search" data-search aria-label="搜索搜索源" placeholder="搜索搜索源名称、描述…" aria-keyshortcuts="${shortcut === '⌘ K' ? 'Meta+K' : 'Control+K'}"><kbd>${shortcut}</kbd></label><div class="filters" role="group" aria-label="筛选">${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === 'all'}">${label}</button>`).join('')}</div></div></div>
     <p class="source-test-warning">测试会向对应服务发送外部请求，可能消耗额度。已配置不代表连接已验证；无需凭据的服务不计入已配置数量。</p>
-    <p class="row-error" data-list-error role="alert"></p><button type="button" data-action="retry-settings" hidden>重试读取设置</button><div class="source-list" data-source-list role="list" aria-label="搜索源列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;
+    <p class="row-error" data-list-error role="alert"></p><p class="row-error" data-cache-error role="alert"></p><button type="button" data-action="retry-settings" hidden>重试读取设置</button><div class="provider-list" data-source-list role="list" aria-label="服务商列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;
 
   const list = root.querySelector('[data-source-list]');
   const search = root.querySelector('[data-search]');
   const rows = new Map();
   let settingsState = null;
+  let accountGroups = null;
+  let usageProviders = new Map();
+  let cacheGeneration = 0;
+  async function loadCache() {
+    const generation = ++cacheGeneration;
+    const results = await Promise.allSettled([
+      api.accountsView?.(),
+      api.usageView?.(),
+    ]);
+    if (disposed || generation !== cacheGeneration) return;
+    const [accounts, usage] = results;
+    root.querySelector('[data-cache-error]').textContent = '';
+    if (accounts.status === 'fulfilled' && accounts.value) {
+      accountGroups = accounts.value.accounts;
+      if (accounts.value.status !== 'ready') root.querySelector('[data-cache-error]').textContent = accounts.value.message;
+    } else if (accounts.status === 'rejected') showError(root.querySelector('[data-cache-error]'), accounts.reason, '账号读取失败，请重新进入本页重试。');
+    if (usage.status === 'fulfilled' && usage.value) {
+      usageProviders = new Map(usage.value.providers.map(provider => [provider.id, provider]));
+      if (usage.value.status && usage.value.status !== 'ready') root.querySelector('[data-cache-error]').textContent = usage.value.message;
+    } else if (usage.status === 'rejected') showError(root.querySelector('[data-cache-error]'), usage.reason, '缓存用量读取失败，请重新进入本页重试。');
+    for (const rec of rows.values()) renderCache(rec);
+  }
+  function renderCache(rec) {
+    const providerId = providerIdForSource(rec.entry.source);
+    const provider = usageProviders.get(providerId);
+    const accounts = accountGroups?.[providerId] || provider?.accounts;
+    if (accounts) {
+      const shown = accounts.filter(account => account.id !== 'default' || account.keys.length || Object.keys(account.balance_credentials || {}).length || accounts.length === 1);
+      rec.keyCount.textContent = `${shown.length} 个账号 · ${accounts.reduce((sum, account) => sum + account.keys.length, 0)} 个 Key`;
+    }
+    const meter = rec.row.querySelector('[data-provider-meter]');
+    if (provider?.balance_supported === false) {
+      const { search, scrape } = provider.calls?.today || {};
+      const today = typeof search === 'number' && typeof scrape === 'number' ? search + scrape : '未知';
+      meter.textContent = `无余额接口 · 今天调用 ${today} 次`;
+    } else meter.replaceChildren(createMeter(doc, provider?.total, { thin: true, label: `${rec.entry.label} 合计余额` }));
+    const badge = createAlertBadge(doc, provider?.alert);
+    if (badge) meter.querySelector('.meter-state')?.remove();
+    rec.state.hidden = Boolean(badge);
+    const status = rec.row.querySelector('[data-provider-alert]');
+    status.replaceChildren(...(badge ? [badge] : []));
+  }
   let settingsRevision = 0;
   let expanded = null;
   let detailMount = null;
@@ -115,7 +164,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     settingsState = view;
     const disabled = new Set(view.disabled_sources || []);
     for (const rec of rows.values()) {
-      if (rec.box) rec.box.checked = !disabled.has(rec.entry.source);
+      if (rec.box) rec.box.checked = rec.entry.searchSources.every(source => !disabled.has(source));
       if (rec.box) rec.box.disabled = false;
       renderToggle(rec);
       if (rec.entry.cookie) {
@@ -133,7 +182,9 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
       const view = await api.settingsView();
       if (disposed) return;
       const disabled = new Set(view.disabled_sources || []);
-      if (enabled) disabled.delete(rec.entry.source); else disabled.add(rec.entry.source);
+      for (const source of rec.entry.searchSources) {
+        if (enabled) disabled.delete(source); else disabled.add(source);
+      }
       // timeout: null keeps the stored timeout untouched; a toggle never rewrites it.
       const saved = await api.settingsSave({ route: view.route, timeout: null, disabled_sources: [...disabled], twitter_cookies_path: view.twitter_cookies_path ?? '' });
       if (!disposed) applySettings(saved);
@@ -157,7 +208,8 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     if (rec.entry.keyed) {
       const fileCount = Number.isInteger(view.file_key_count) && view.file_key_count >= 0 ? view.file_key_count : view.store?.state === 'absent' ? 0 : null;
       const envCount = view.effective_source === 'env' || Boolean(view.env_var) ? 1 : 0;
-      rec.keyCount.textContent = fileCount === null ? '已配置 Key 数未知' : `已配置 ${fileCount + envCount} 个 Key`;
+      rec.keyCount.textContent = fileCount === null ? '账号数未知 · Key 数未知' : `账号数未知 · ${fileCount + envCount} 个 Key`;
+      renderCache(rec);
     }
     if (rec.oauth?.credential === rec.entry.source) {
       const configured = ['env', 'file'].includes(view.effective_source);
@@ -193,17 +245,19 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
   function buildRow(entry) {
     const oauth = oauthMethodForSource(entry.source);
     const row = doc.createElement('article');
-    row.className = 'source-row';
+    row.className = 'provider-row';
     row.setAttribute('role', 'listitem');
     row.dataset.expanded = 'false';
     row.setAttribute('data-source-row', entry.source);
-    row.innerHTML = `<div class="source-line"><span class="source-icon icon-${entry.source}" aria-hidden="true">${esc(MARKS[entry.source])}</span>
-      <button type="button" class="source-pick" data-pick="${esc(entry.source)}" aria-expanded="false" aria-controls="detail-${entry.source}"><span class="source-name">${esc(entry.label)}</span><small class="source-desc">${esc(DESCRIPTIONS[entry.source])}</small><small class="credential-note"><span data-key-count>${entry.keyed ? '已配置 Key 数读取中' : '已配置 0 个 Key'}</span>${oauth ? '<br><span data-login-status>浏览器登录：状态未知</span>' : ''}</small></button>
-      ${entry.search === false ? '<span class="source-toggle">仅用于抓取</span>' : `<label class="source-toggle"><input type="checkbox" role="switch" data-toggle="${esc(entry.source)}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>`}
-      <div class="source-key"><span data-key-summary aria-hidden="true">—</span><span class="visually-hidden" data-key-summary-text>未配置</span></div><span class="source-state" data-row-status data-kind="unknown">读取中</span>
-      <div class="source-test-state" data-row-result data-kind="idle"><span class="test-state-symbol" aria-hidden="true"></span><div><strong>${entry.search === false ? '仅用于抓取' : '未测试'}</strong><small>${entry.search === false ? '不提供搜索连接测试' : entry.cookie ? '需要 Cookie 文件' : entry.keyOptional ? '无需 API Key，可选填 Key 提高额度' : entry.keyed ? '点击测试验证' : '无需 API Key'}</small></div></div>
-      ${entry.search === false ? '<span class="source-test-button" aria-hidden="true"></span>' : `<button type="button" class="source-test-button" data-row-test aria-label="测试 ${esc(entry.label)}">${icon('play')}<span>测试</span></button>`}<button type="button" class="source-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
-      <p class="row-error" data-row-error role="alert"></p><div id="detail-${esc(entry.source)}" class="source-detail" data-source-detail hidden></div>`;
+    row.innerHTML = `<div class="provider-summary"><span class="provider-icon" aria-hidden="true">${esc(MARKS[entry.source])}</span>
+      <div class="provider-identity"><button type="button" class="provider-name" data-pick="${esc(entry.source)}" aria-expanded="false" aria-controls="detail-${entry.source}">${esc(entry.label)}</button><p class="provider-counts" data-key-count>${entry.keyed ? '账号与 Key 数读取中' : '0 个账号 · 0 个 Key'}</p></div>
+      <div class="provider-meter" data-provider-meter></div><div class="provider-status"><span data-provider-alert></span><span data-row-status data-kind="unknown">读取中</span></div>
+      ${entry.search === false ? '<span class="provider-toggle provider-note">仅用于抓取</span>' : `<label class="provider-toggle source-toggle"><input type="checkbox" role="switch" data-toggle="${esc(entry.source)}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>`}
+      <button type="button" class="provider-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
+      <p class="row-error" data-row-error role="alert"></p><div id="detail-${esc(entry.source)}" class="provider-details" data-provider-details hidden>
+      <p class="provider-note">${esc(DESCRIPTIONS[entry.source])}</p><p class="provider-note"><span data-key-summary aria-hidden="true">—</span><span data-key-summary-text>未配置</span>${oauth ? '<br><span data-login-status>浏览器登录：状态未知</span>' : ''}</p>
+      <div class="provider-actions"><div data-row-result data-kind="idle"><strong>${entry.search === false ? '仅用于抓取' : '未测试'}</strong><small>${entry.search === false ? '不提供搜索连接测试' : '点击测试验证'}</small></div>${entry.search === false ? '' : `<button type="button" data-row-test aria-label="测试 ${esc(entry.label)}">测试连接</button>`}</div>
+      <div data-source-detail></div></div>`;
     const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), summaryText: row.querySelector('[data-key-summary-text]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
     // Account-only OAuth credentials are not exposed by credential_status. Their login
     // state stays unknown until this page observes a completed browser login.
@@ -237,6 +291,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     for (const button of [rec.pick, rec.row.querySelector('[data-expand]')]) button.setAttribute('aria-expanded', 'false');
     rec.row.querySelector('[data-expand]').setAttribute('aria-label', `展开 ${rec.entry.label}`);
     rec.detail.hidden = true;
+    rec.row.querySelector('[data-provider-details]').hidden = true;
     rec.detail.innerHTML = '';
     expanded = null;
   }
@@ -251,6 +306,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     for (const button of [rec.pick, rec.row.querySelector('[data-expand]')]) button.setAttribute('aria-expanded', 'true');
     rec.row.querySelector('[data-expand]').setAttribute('aria-label', `收起 ${rec.entry.label}`);
     rec.detail.hidden = false;
+    rec.row.querySelector('[data-provider-details]').hidden = false;
     if (!rec.entry.keyed) {
       const mounted = await mountKeylessDetail(rec);
       if (disposed || ticket !== activeTicket) { mounted.dispose(); return; }
@@ -261,15 +317,17 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     rec.detail.append(body);
     const previous = { ...rec.test };
     const previousProvenance = rec.provenance;
-    const mounted = await mountCredentialBody(body, api, {
+    const mount = /** @type {any} */ (typeof api.accountsView === 'function' ? mountProviderAccounts : mountCredentialBody);
+    const mounted = await mount(body, api, {
       source,
+      onChange: loadCache,
       onStatus: view => { if (!disposed && ticket === activeTicket) updateRow(rec, view); },
       onTest: result => { if (!disposed && ticket === activeTicket) updateTest(rec, result); },
       onLogin: () => { if (!disposed && ticket === activeTicket && rec.login) rec.login.textContent = '浏览器登录：已登录'; },
     });
     if (disposed || ticket !== activeTicket) { mounted.dispose(); return; }
     // 凭据来源未变才恢复本页面内的上次结果，不持久化验证承诺。
-    if (previousProvenance === rec.provenance && previous.kind !== 'running') {
+    if (mount === mountCredentialBody && previousProvenance === rec.provenance && previous.kind !== 'running') {
       updateTest(rec, previous);
       body.querySelector('[data-status="test"]').textContent = previous.title;
       body.querySelector('[data-info="test"]').textContent = previous.message;
@@ -315,7 +373,8 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     if (disposed) return;
     const rec = rows.get(entry.source);
     setRow(rec, 'error', '状态读取失败');
-    rec.keyCount.textContent = '已配置 Key 数未知';
+    rec.keyCount.textContent = '账号数未知 · Key 数未知';
+    renderCache(rec);
     showError(rec.error, error, '状态读取失败，请重新进入本页重试。');
   }));
   const retrySettings = root.querySelector('[data-action="retry-settings"]');
@@ -330,8 +389,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     }
   }
   retrySettings.addEventListener('click', () => { retrySettings.disabled = true; void loadSettings().finally(() => { retrySettings.disabled = false; }); });
-  await loadSettings();
-  await Promise.all(loads);
+  await Promise.all([loadSettings(), loadCache(), ...loads]);
   // No row is expanded on entry: opening a detail re-reads its status, and the overview above
   // already has every row's status, so an automatic expansion only cost an extra request.
   refreshStats();
