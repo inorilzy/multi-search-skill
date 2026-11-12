@@ -13,6 +13,7 @@ from .state.keys import (
     KEY_ENV_NAMES,
     KeysError,
     count_jina_keys,
+    credential_entries,
     default_keys_file,
     key_sources,
     keys_file_permission_warning,
@@ -74,7 +75,7 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
     except (ValueError, TypeError):
         doctor_config = {}
     try:
-        keys = runtime.load_runtime_keys(doctor_config)
+        keys = credential_entries(runtime.load_runtime_keys(doctor_config))
     except KeysError as exc:
         # doctor exists to diagnose key problems, so a corrupt keys file must be
         # reported, not raised — otherwise the one tool that could explain the
@@ -153,7 +154,6 @@ def doctor_data(include_keys: bool = True, include_network: bool = False) -> dic
             data["key_sources"] = key_sources()
         except Exception as exc:  # diagnostic boundary: provenance is advisory
             data["key_sources_error"] = scrub_secrets(exc, keys)
-        # Booleans only, never values.
         data["configured_keys"] = {name: bool(value) for name, value in keys.items()}
         data["key_status"] = key_status(store=store)
         data["jina_keys_active_total"] = count_jina_keys(keys.get("jina"))

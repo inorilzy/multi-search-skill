@@ -97,6 +97,15 @@ KEY_ENV_PAIRS = (
 KEY_ENV_NAMES = [env_name for env_name, _key_name in KEY_ENV_PAIRS]
 
 
+def credential_entries(keys: Mapping) -> dict:
+    """Return credential entries without the keys file's account metadata.
+
+    Exclude reserved metadata rather than allowlisting search providers: balance
+    credentials and custom provider keys must still be reported and redacted.
+    """
+    return {name: value for name, value in keys.items() if name != "accounts"}
+
+
 def pick_key(value) -> str:
     """Return a single key string. If `value` is a list, pick one at random.
 

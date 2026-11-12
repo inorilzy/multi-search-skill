@@ -15,6 +15,7 @@ from ..state.content_store import (
     DEFAULT_MAX_OBJECT_BYTES,
     max_acquisition_chars,
 )
+from ..state.keys import credential_entries
 from ..state.source_registry import SourceRegistry
 from ..state.state_store import StateStore
 from ..support import debug_log
@@ -165,7 +166,7 @@ def run_fetch_source(
         result = {"markdown": prefetched_body, "via": "provider:prefetch"}
     else:
         if runtime_keys:
-            debug_log.add_secrets(runtime_keys)
+            debug_log.add_secrets(credential_entries(runtime_keys))
         result, updates, _scrape_chars = run_scrape_raw(
             ScrapeRequest(
                 url=url,

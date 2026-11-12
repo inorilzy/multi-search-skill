@@ -8,6 +8,7 @@ from .scrape.stage import run_ranked_fetch_stage
 from .search.candidate import SEARCH_RESULT_LIMIT
 from .search.candidates import run_search_candidates, search_outcome
 from .state import runtime
+from .state.keys import credential_entries
 from .state.state_store import StateStore
 from .support import debug_log
 from .support.config import resolve_int, resolve_nonnegative
@@ -56,7 +57,7 @@ def run_search_web(
         runtime_keys, runtime_key_errors = loaded.keys, loaded.errors
     else:
         runtime_keys, runtime_key_errors = dict(keys), {}
-    debug_log.add_secrets(runtime_keys)
+    debug_log.add_secrets(credential_entries(runtime_keys))
     store = (state_store or StateStore()) if request.use_state else None
     prefetched = {}
     response = run_search_candidates(
@@ -106,7 +107,7 @@ def run_search_web(
                 runtime_timeout=remaining,
             )
         except Exception as exc:
-            error = scrub_secrets(exc, runtime_keys)
+            error = scrub_secrets(exc, credential_entries(runtime_keys))
             debug_log.event(
                 "fetch_failed", source_id=hit["source_id"], url=hit["url"],
                 elapsed_ms=debug_log.elapsed_ms(started), error=error,
