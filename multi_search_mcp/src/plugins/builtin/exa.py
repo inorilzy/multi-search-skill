@@ -126,7 +126,7 @@ PLUGIN = ProviderPlugin(
     auth_methods=(
         AuthMethod("api", "API Key", "exa"),
         AuthMethod("api", "管理 Key（查余额用）", "exa_admin", "balance_only"),
-        AuthMethod("web", "登录控制台（查余额）", "exa_admin", "balance_only"),
+        AuthMethod("web", "Chrome 登录（查余额）", "exa_admin", "balance_only"),
     ),
     balance=balance_exa,
     balance_credential="exa_admin",

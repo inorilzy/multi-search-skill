@@ -228,6 +228,17 @@ def login(
             stream=stream,
             emit=emit,
         )
+    if method == "chrome":
+        if account_id is not None:
+            raise LoginError("--account is only supported for api login")
+        entries = [item.credential for item in plugin.auth_methods if item.type == "web"]
+        entry = credential.strip() if credential else entries[0] if len(entries) == 1 else ""
+        if plugin.id not in {"brave", "exa"} or entry not in entries:
+            raise LoginError(f"provider {plugin.id} 尚未支持 Chrome 会话登录")
+        if output_format not in {None, "text", "jsonl"}:
+            raise LoginError("chrome 登录只支持 --format jsonl 或 text")
+        from .chrome_login import login as chrome_login
+        return chrome_login(plugin.id, entry, timeout=timeout, stdin=stream, emit=emit)
     if method != "api":
         raise LoginError(f"unsupported login method: {method}")
     entry = _resolve_api_credential(plugin, credential)

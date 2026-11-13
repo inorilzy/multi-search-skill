@@ -78,7 +78,7 @@ export const SOURCE_CATALOG = {
         },
         {
           "credential": "brave_dashboard",
-          "label": "登录控制台（查用量）",
+          "label": "Chrome 登录（查用量）",
           "purpose": "balance_only",
           "type": "web"
         }
@@ -174,7 +174,7 @@ export const SOURCE_CATALOG = {
         },
         {
           "credential": "exa_admin",
-          "label": "登录控制台（查余额）",
+          "label": "Chrome 登录（查余额）",
           "purpose": "balance_only",
           "type": "web"
         }

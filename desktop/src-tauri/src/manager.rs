@@ -249,6 +249,12 @@ impl DesktopManager {
         self.oauth_logins.start(&self.environment, &cli, provider)
     }
 
+    pub fn chrome_login_start(&self, provider: &str) -> Result<u64, String> {
+        let provider = crate::oauth_login::validate_chrome_provider(provider)?;
+        let cli = self.execution_cli()?;
+        self.oauth_logins.start_chrome(&self.environment, &cli, &provider)
+    }
+
     pub fn oauth_login_poll(&self, id: u64) -> Result<OAuthLoginStatus, String> {
         self.oauth_logins.poll(id)
     }

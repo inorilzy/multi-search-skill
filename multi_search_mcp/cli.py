@@ -259,9 +259,9 @@ def build_parser() -> argparse.ArgumentParser:
     login_parser.add_argument("provider", help="provider (plugin) id")
     login_parser.add_argument(
         "--method",
-        choices=("api", "oauth"),
+        choices=("api", "oauth", "chrome"),
         default="api",
-        help="login method: api (stdin key) or oauth (browser/device code)",
+        help="login method: api (stdin key), oauth (provider authorization), chrome (existing Chrome session)",
     )
     login_parser.add_argument("--account", help="api only: assign the credential to this account id")
     login_parser.add_argument(
@@ -272,7 +272,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--format",
         choices=("json", "human", "markdown", "jsonl", "text"),
         default=None,
-        help="output format: json/human/markdown for api, jsonl/text for oauth (default: json or text)",
+        help="output format: json/human/markdown for api, jsonl/text for oauth/chrome (default: json or text)",
     )
     login_parser.add_argument(
         "--no-browser",
@@ -406,7 +406,7 @@ def main(
     try:
         args = parser.parse_args(raw_argv)
         if getattr(args, "format", None) is None:
-            args.format = "text" if args.command == "login" and args.method == "oauth" else "json"
+            args.format = "text" if args.command == "login" and args.method in {"oauth", "chrome"} else "json"
         if args.command in {"search", "fetch"}:
             debug_log.configure(getattr(args, "debug_log", None), setting=_debug_log_setting())
             if getattr(args, "progress_events", False):
@@ -424,7 +424,7 @@ def main(
             payload = args.handler(args, stdout=stdout)
         else:
             payload = args.handler(args)
-        if args.command == "login" and args.method == "oauth":
+        if args.command == "login" and args.method in {"oauth", "chrome"}:
             # The OAuth handler already streamed its jsonl/text events.
             return int(payload.get("exit_code", 0)) if isinstance(payload, dict) else 0
         _write_payload(payload, args.format, stdout)

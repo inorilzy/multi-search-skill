@@ -1,5 +1,5 @@
-// Native dashboard login keeps HttpOnly cookies out of the frontend. Search keys
-// stay editable through the existing credential editor; these logins only query usage.
+// Core owns the authorized Chrome login and keeps credentials out of the frontend.
+// Search keys stay editable through the existing credential editor; these logins only query usage.
 import { showError } from './api.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
 
@@ -18,8 +18,8 @@ export async function mountDashboardLogin(root, api, { source, onComplete } = {}
   }
   root.hidden = false;
   root.innerHTML = `<section class="oauth-login" data-dashboard-login>
-    <div class="oauth-login-head"><div><h3>控制台登录</h3><p class="oauth-login-sub">登录后查询账户真实用量与余额。</p></div>
-    <div class="oauth-login-actions"><button type="button" class="primary" data-dashboard-start>登录控制台</button><button type="button" data-dashboard-cancel hidden>取消登录</button></div></div>
+    <div class="oauth-login-head"><div><h3>Chrome 登录</h3><p class="oauth-login-sub">复用 Chrome 现有登录，仅查询此服务商额度。</p></div>
+    <div class="oauth-login-actions"><button type="button" class="primary" data-dashboard-start>用 Chrome 登录</button><button type="button" data-dashboard-cancel hidden>取消登录</button></div></div>
     <p class="oauth-login-status" data-dashboard-status role="status" aria-live="polite"></p>
     <p class="error-message" data-dashboard-error role="alert"></p></section>`;
   const start = /** @type {HTMLButtonElement} */ (root.querySelector('[data-dashboard-start]'));
@@ -39,14 +39,14 @@ export async function mountDashboardLogin(root, api, { source, onComplete } = {}
     if (!active || cancelling || disposed) return;
     cancelling = true; render();
     try { await api.dashboardLoginCancel(plugin.id); }
-    catch (error) { if (!disposed) showError(errorSlot, error, '取消登录失败，请关闭登录窗口。'); }
+    catch (error) { if (!disposed) showError(errorSlot, error, '取消登录失败，请重试。'); }
     finally { cancelling = false; if (!disposed) render(); }
   }
   start.addEventListener('click', async () => {
     if (active || disposed) return;
     active = true; render();
     errorSlot.textContent = ''; errorSlot.removeAttribute('title');
-    status.textContent = '请在新窗口完成登录…';
+    status.textContent = '等待 Chrome 连接授权或页面登录…';
     try {
       const completed = await api.dashboardLogin(plugin.id);
       if (disposed) return;
@@ -55,9 +55,14 @@ export async function mountDashboardLogin(root, api, { source, onComplete } = {}
       // Force one fresh observation after a new login, even if a local estimate
       // is still within its TTL. Normal refreshes keep provider rate limits.
       try {
-        await api.balanceView?.(plugin.id, true);
+        const balance = await api.balanceView?.(plugin.id, true);
         await onComplete?.();
-        if (!disposed) status.textContent = '登录完成，用量已刷新。';
+        const issue = balance?.providers.flatMap(provider => provider.reports).find(report => report.status !== 'ok');
+        if (!disposed) {
+          status.textContent = issue ? '登录已保存。' : '登录完成，用量已刷新。';
+          if (issue) errorSlot.textContent = issue.error_kind === 'rate_limit'
+            ? '额度接口暂时限流，请稍后刷新。' : issue.message || '用量暂时不可用，请稍后刷新。';
+        }
       } catch (error) {
         if (!disposed) {
           status.textContent = '登录已保存。';
@@ -65,7 +70,7 @@ export async function mountDashboardLogin(root, api, { source, onComplete } = {}
         }
       }
     } catch (error) {
-      if (!disposed) { status.textContent = ''; showError(errorSlot, error, '控制台登录失败，请重试。'); }
+      if (!disposed) { status.textContent = ''; showError(errorSlot, error, 'Chrome 登录失败，请重试。'); }
     } finally { active = false; if (!disposed) render(); }
   });
   cancel.addEventListener('click', () => void cancelLogin());

@@ -41,7 +41,7 @@ test('successful login reads a fresh balance before refreshing the page once', a
   mounted.dispose(); ctx.window.close();
 });
 
-test('closing or cancelling a login does not query balance or show success', async () => {
+test('cancelling a Chrome login does not query balance or show success', async () => {
   let resolveLogin;
   const calls = [];
   const ctx = setup('exa', {
@@ -51,8 +51,11 @@ test('closing or cancelling a login does not query balance or show success', asy
   }, () => assert.fail('no page refresh for cancelled login'));
   const mounted = await ctx.mounted;
   const start = ctx.root.querySelector('[data-dashboard-start]');
+  assert.equal(start.textContent, '用 Chrome 登录');
+  assert.equal(ctx.root.querySelector('.oauth-login-sub').textContent, '复用 Chrome 现有登录，仅查询此服务商额度。');
   start.click(); start.click();
   assert.equal(start.hidden, true);
+  assert.equal(ctx.root.querySelector('[data-dashboard-status]').textContent, '等待 Chrome 连接授权或页面登录…');
   ctx.root.querySelector('[data-dashboard-cancel]').click();
   await flush();
   assert.deepEqual(calls, [['cancel', 'exa']]);
@@ -61,7 +64,7 @@ test('closing or cancelling a login does not query balance or show success', asy
   mounted.dispose(); ctx.window.close();
 });
 
-test('disposing cancels the native window and ignores a late success', async () => {
+test('disposing cancels the owned Chrome login session and ignores a late success', async () => {
   let resolveLogin, cancelled = 0;
   const ctx = setup('brave', {
     dashboardLogin: () => new Promise(resolve => { resolveLogin = resolve; }),
@@ -87,6 +90,20 @@ test('a saved login with a failed balance read stays saved and offers a refresh'
   ctx.root.querySelector('[data-dashboard-start]').click(); await flush();
   assert.equal(ctx.root.querySelector('[data-dashboard-status]').textContent, '登录已保存。');
   assert.match(ctx.root.querySelector('[data-dashboard-error]').textContent, /用量读取失败/);
+  mounted.dispose(); ctx.window.close();
+});
+
+test('quota rate limiting does not turn a saved Chrome login into a login failure', async () => {
+  const ctx = setup('exa', {
+    dashboardLogin: async () => true,
+    dashboardLoginCancel: async () => {},
+    balanceView: async () => ({ providers: [{ reports: [{ status: 'error', error_kind: 'rate_limit', message: 'limited' }] }] }),
+  });
+  const mounted = await ctx.mounted;
+  ctx.root.querySelector('[data-dashboard-start]').click(); await flush();
+  assert.equal(ctx.root.querySelector('[data-dashboard-status]').textContent, '登录已保存。');
+  assert.equal(ctx.root.querySelector('[data-dashboard-error]').textContent, '额度接口暂时限流，请稍后刷新。');
+  assert.equal(ctx.root.querySelector('[data-dashboard-start]').hidden, false);
   mounted.dispose(); ctx.window.close();
 });
 

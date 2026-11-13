@@ -125,7 +125,7 @@ PLUGIN = ProviderPlugin(
     search_specs=search_specs,
     auth_methods=(
         AuthMethod("api", "API Key", "brave"),
-        AuthMethod("web", "登录控制台（查用量）", "brave_dashboard", "balance_only"),
+        AuthMethod("web", "Chrome 登录（查用量）", "brave_dashboard", "balance_only"),
     ),
     balance=balance_brave,
     balance_credential="brave_dashboard",

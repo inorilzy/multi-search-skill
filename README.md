@@ -308,7 +308,7 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 | Twitter / X | `twitter` | 不支持 | 仅支持 Cookie 登录，搜索无余额查询接口。 |
 | Jina AI | `jina` | 支持 | `wallet.total_balance`，单位 tokens；来自 Jina dashboard 的非公开接口，可能随时变化。 |
 
-桌面端在 Brave / Exa 的服务商详情里提供「登录控制台」：在独立登录窗口完成登录后，仅原生后台读取该站点的 Cookie，保存到仅当前用户可读写的 `~/.multi-search/oauth.json`，与搜索 Key 分开。之后 CLI 也能直接查询，无需保持登录窗口打开；服务端拒绝登录凭据时需重新登录。会话 Cookie 没有过期时间，不代表服务端在关窗时必然撤销会话。两个 dashboard 来源都是非公开接口，改版时可能暂时不可用。也可分别用进程环境变量 `BRAVE_DASHBOARD_COOKIE` / `EXA_DASHBOARD_COOKIE` 覆盖登录凭据；不要将 Cookie 放进命令参数、日志或版本控制。
+桌面端在 Brave / Exa 的服务商详情里提供「用 Chrome 登录」，复用平时的 Chrome 与已有登录。在 Chrome 144+ 的 `chrome://inspect/#remote-debugging` 开启会话共享，并允许应用连接后，应用在同一个 Chrome 中打开服务商页面，仅读取该服务商 URL 的 Cookie。通过额度接口验证后，凭据保存到仅当前用户可读写的 `~/.multi-search/oauth.json`，与搜索 Key 分开；之后查询不需要保持 Chrome 连接。Chrome 的调试授权覆盖整个 profile，URL 范围限制由本应用执行；登录完成即断开连接，保留 Chrome 和标签页。默认连接 `127.0.0.1:9222`；Chrome 页面显示其他端口时，可用 `MULTI_SEARCH_CHROME_DEBUG_PORT` 指定。不会读取 Chrome 的 Cookies 数据库、钥匙串或受保护的 profile 文件，也不依赖浏览器扩展。服务端拒绝凭据时可再次从 Chrome 同步；这不是供应商签发的 OAuth refresh token。两个 dashboard 来源都是非公开接口，改版时可能暂时不可用。也可分别用进程环境变量 `BRAVE_DASHBOARD_COOKIE` / `EXA_DASHBOARD_COOKIE` 覆盖登录凭据；不要将 Cookie 放进命令参数、日志或版本控制。
 
 ### 用量
 
@@ -324,11 +324,12 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 
 ### 登录与退出
 
-`multi-search login <provider> [--method api|oauth] [--credential <entry>] [--account <id>] [--format json|human|markdown|jsonl|text] [--no-browser] [--timeout <秒>]`（`json`/`human`/`markdown` 用于 api，`jsonl`/`text` 用于 oauth）
+`multi-search login <provider> [--method api|oauth|chrome] [--credential <entry>] [--account <id>] [--format json|human|markdown|jsonl|text] [--no-browser] [--timeout <秒>]`（`json`/`human`/`markdown` 用于 api，`jsonl`/`text` 用于 oauth / chrome）
 
 - `--method api`（默认）：从 stdin 读取一行 Key，终端下不回显；写入 `~/.multi-search/keys.json` 的对应条目，保留其他条目，已有相同 Key 不重复追加。插件支持余额时会立即查一次并输出（只用于确认，失败不回滚已保存的 Key）。Exa 的余额管理 Key 用 `--credential exa_admin` 保存，环境变量 `EXA_SERVICE_KEY` 优先。`--account <id>`（仅 api）在写入后把该 Key 挂到指定账号，缺省进默认账号。
 - `--method oauth`：逐行输出事件，默认 text；`--format jsonl` 输出 `open_url` / `waiting` / `complete` / `error` 对象。`--no-browser` 只输出 URL，不打开浏览器。Firecrawl 用 PKCE 浏览器授权，换到的 API Key 写入 `keys.json` 的 `firecrawl` 条目；Parallel 用 RFC 8628 设备码，得到只用于查余额的 Account API 令牌，写入 `~/.multi-search/oauth.json` 的 `parallel_account` 条目。默认超时 300 秒。
-- `multi-search logout <provider> [--credential <entry>]`：删除对应凭据条目。Parallel 的 `parallel_account` 会先调用 revoke 再删除；条目不存在时输出 `removed: false`，不视为错误。
+- `--method chrome`：仅用于 Brave / Exa 的控制台会话。连接已授权的 Chrome，在其中打开固定服务商页面并取得该站点会话；验证额度接口成功后保存，逐行输出 `waiting` / `complete` / `error`。默认超时 300 秒，可取消；不申请或创建搜索 Key。`--no-browser` 不再调用系统打开链接的命令，登录标签页仍由已授权的 Chrome 连接创建。
+- `multi-search logout <provider> [--credential <entry>]`：删除对应 API / OAuth 凭据条目。Parallel 的 `parallel_account` 会先调用 revoke 再删除；条目不存在时输出 `removed: false`，不视为错误。
 
 ```powershell
 uv run --locked multi-search balance --format text

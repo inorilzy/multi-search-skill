@@ -145,27 +145,27 @@ async fn oauth_login_cancel(
     offload(move || manager.oauth_login_cancel(id), "oauth_login_cancel_failed").await
 }
 
-/// Fixed external dashboards have no management capability and return no credential to JS.
+/// Core reuses the authorized Chrome profile; the frontend receives no credential.
 #[tauri::command]
 async fn dashboard_login(
-    app: tauri::AppHandle,
     manager: tauri::State<'_, Arc<DesktopManager>>,
     logins: tauri::State<'_, Arc<crate::dashboard_login::DashboardLogins>>,
     provider: String,
 ) -> Result<bool, String> {
     let manager = manager.inner().clone();
     let logins = logins.inner().clone();
-    offload(move || logins.login(app, manager, &provider), "dashboard_login_failed").await
+    offload(move || logins.login(&manager, &provider), "dashboard_login_failed").await
 }
 
 #[tauri::command]
 async fn dashboard_login_cancel(
-    app: tauri::AppHandle,
+    manager: tauri::State<'_, Arc<DesktopManager>>,
     logins: tauri::State<'_, Arc<crate::dashboard_login::DashboardLogins>>,
     provider: String,
 ) -> Result<(), String> {
+    let manager = manager.inner().clone();
     let logins = logins.inner().clone();
-    offload(move || logins.cancel(&app, &provider), "dashboard_login_cancel_failed").await
+    offload(move || logins.cancel(&manager, &provider), "dashboard_login_cancel_failed").await
 }
 
 #[tauri::command]
@@ -840,7 +840,7 @@ mod tests {
     use super::manager_shutdown_event;
 
     #[test]
-    fn dashboard_window_close_does_not_shutdown_manager() {
+    fn dashboard_login_keeps_shutdown_restricted_to_main_events() {
         let destroyed = tauri::WindowEvent::Destroyed;
         assert!(manager_shutdown_event("main", &destroyed));
         assert!(!manager_shutdown_event("dashboard-login-brave", &destroyed));

@@ -1,7 +1,6 @@
-//! Desktop OAuth login sessions. The managed CLI owns the provider flow
-//! (`login <provider> --method oauth --format jsonl --no-browser`); this module only starts,
-//! follows and cancels that child. URL events are opened with the same system-browser boundary as
-//! the credential page, and only for the two hosts the plugin catalog declares.
+//! Managed CLI login sessions for OAuth and an existing Chrome profile. This module starts,
+//! follows and cancels the owned child using fixed JSONL argv. Only OAuth may emit browser URLs;
+//! the Chrome method owns its CDP connection and page inside Core.
 //!
 //! Lifecycle mirrors `execution.rs`: one owned child process per session, a monitor thread that
 //! polls it, and an id-based status/cancel protocol. `OwnedProcess` owns the platform cleanup
@@ -48,8 +47,15 @@ pub struct OAuthLoginStatus {
     pub message: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoginMethod {
+    OAuth,
+    Chrome,
+}
+
 struct OAuthLogin {
     state: OAuthLoginStatus,
+    method: LoginMethod,
     process: Option<OwnedProcess>,
     started: Instant,
     /// Byte offset of the last complete stdout line already parsed.
@@ -91,10 +97,30 @@ impl OAuthLogins {
         cli: &Path,
         provider: &str,
     ) -> Result<u64, String> {
+        let provider = validate_provider(provider)?;
+        self.start_method(environment, cli, &provider, LoginMethod::OAuth)
+    }
+
+    pub(crate) fn start_chrome(
+        &self,
+        environment: &RuntimeEnvironment,
+        cli: &Path,
+        provider: &str,
+    ) -> Result<u64, String> {
+        let provider = validate_chrome_provider(provider)?;
+        self.start_method(environment, cli, &provider, LoginMethod::Chrome)
+    }
+
+    fn start_method(
+        &self,
+        environment: &RuntimeEnvironment,
+        cli: &Path,
+        provider: &str,
+        method: LoginMethod,
+    ) -> Result<u64, String> {
         if self.closed.load(Ordering::Acquire) {
             return Err("桌面管理器已关闭".into());
         }
-        let provider = validate_provider(provider)?;
         let mut slot = self
             .slot
             .lock()
@@ -115,18 +141,23 @@ impl OAuthLogins {
         }) {
             return Err("已有浏览器登录正在进行".into());
         }
-        let process = OwnedProcess::spawn(cli, &login_args(&provider), environment, &[])
+        let args = match method {
+            LoginMethod::OAuth => login_args(provider),
+            LoginMethod::Chrome => method_args(provider, LoginMethod::Chrome),
+        };
+        let process = OwnedProcess::spawn(cli, &args, environment, &[])
             .map_err(|_| "无法启动 CLI")?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let login = Arc::new(Mutex::new(OAuthLogin {
             state: OAuthLoginStatus {
                 id,
-                provider: provider.clone(),
+                provider: provider.to_string(),
                 phase: "starting".into(),
                 url: None,
                 user_code: None,
                 message: None,
             },
+            method,
             process: Some(process),
             started: Instant::now(),
             cursor: 0,
@@ -214,13 +245,29 @@ pub(crate) fn validate_provider(provider: &str) -> Result<String, String> {
     Ok(plugin.id.clone())
 }
 
+/// Existing-profile sharing is restricted to the two balance dashboard providers and also
+/// requires their catalog declaration; a future web method does not silently gain Chrome access.
+pub(crate) fn validate_chrome_provider(provider: &str) -> Result<String, String> {
+    let plugin = crate::source_catalog::catalog().plugin(provider);
+    if !matches!(provider, "brave" | "exa") || !plugin.is_some_and(|plugin| {
+        plugin.auth_methods.iter().any(|method| method.method_type == "web")
+    }) {
+        return Err("不支持此服务商的 Chrome 登录".into());
+    }
+    Ok(provider.into())
+}
+
 /// The exact argv for one login session. Fixed here; the frontend supplies only the provider id.
 pub(crate) fn login_args(provider: &str) -> Vec<String> {
+    method_args(provider, LoginMethod::OAuth)
+}
+
+fn method_args(provider: &str, method: LoginMethod) -> Vec<String> {
     vec![
         "login".into(),
         provider.into(),
         "--method".into(),
-        "oauth".into(),
+        match method { LoginMethod::OAuth => "oauth", LoginMethod::Chrome => "chrome" }.into(),
         "--format".into(),
         "jsonl".into(),
         "--no-browser".into(),
@@ -302,6 +349,11 @@ fn is_active_phase(phase: &str) -> bool {
 fn apply_event(run: &mut OAuthLogin, event: LoginEvent, opener: &BrowserOpener) -> bool {
     match event {
         LoginEvent::OpenUrl { url, user_code } => {
+            if run.method == LoginMethod::Chrome {
+                run.state.phase = "error".into();
+                run.state.message = Some("Chrome 登录返回了不支持的浏览器跳转事件。".into());
+                return true;
+            }
             run.state.url = Some(url.clone());
             if user_code.is_some() {
                 run.state.user_code = user_code;
@@ -493,6 +545,59 @@ mod tests {
                 "--no-browser"
             ]
         );
+    }
+
+    #[test]
+    fn chrome_requires_an_allowlisted_provider_and_web_declaration() {
+        assert_eq!(validate_chrome_provider("brave").unwrap(), "brave");
+        assert_eq!(validate_chrome_provider("exa").unwrap(), "exa");
+        for provider in ["", " brave ", "Brave", "exa_admin", "brave_dashboard", "parallel", "firecrawl", "../exa"] {
+            assert!(validate_chrome_provider(provider).is_err());
+        }
+        assert_eq!(method_args("exa", LoginMethod::Chrome), vec![
+            "login", "exa", "--method", "chrome", "--format", "jsonl", "--no-browser"
+        ]);
+    }
+
+    fn chrome_run() -> OAuthLogin {
+        OAuthLogin {
+            state: OAuthLoginStatus { id: 1, provider: "brave".into(), phase: "starting".into(),
+                url: None, user_code: None, message: None },
+            method: LoginMethod::Chrome, process: None, started: Instant::now(), cursor: 0, secrets: vec![],
+        }
+    }
+
+    #[test]
+    fn chrome_events_never_open_a_native_browser() {
+        let opener: BrowserOpener = Arc::new(|_| panic!("Chrome login must not open an OS browser"));
+        let mut run = chrome_run();
+        assert!(!apply_event(&mut run, LoginEvent::Notice { message: "请允许 Chrome 连接。".into() }, &opener));
+        assert!(!apply_event(&mut run, LoginEvent::Waiting, &opener));
+        assert_eq!(run.state.phase, "waiting");
+        assert!(apply_event(&mut run, LoginEvent::Complete, &opener));
+        assert_eq!(run.state.phase, "complete");
+        let mut unexpected = chrome_run();
+        assert!(apply_event(&mut unexpected, LoginEvent::OpenUrl {
+            url: "https://www.firecrawl.dev/cli-auth".into(), user_code: None,
+        }, &opener));
+        assert_eq!(unexpected.state.phase, "error");
+        assert!(unexpected.state.url.is_none());
+    }
+
+    #[test]
+    fn chrome_cancellation_is_terminal_and_shutdown_rejects_new_children() {
+        let logins = OAuthLogins::with_opener(Arc::new(|_| panic!("unexpected browser open")));
+        *logins.slot.lock().unwrap() = Some(Arc::new(Mutex::new(chrome_run())));
+        assert_eq!(logins.cancel(1).unwrap().phase, "cancelled");
+        assert_eq!(logins.poll(1).unwrap().phase, "cancelled");
+        assert!(!logins.closed.load(Ordering::Acquire));
+        logins.shutdown();
+        let environment = RuntimeEnvironment {
+            app_path: vec![], user_path: vec![], variables: Default::default(),
+            cwd: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        };
+        assert_eq!(logins.start_chrome(&environment, Path::new("not-a-cli"), "brave").unwrap_err(), "桌面管理器已关闭");
+        assert_eq!(logins.poll(1).unwrap().phase, "cancelled");
     }
 
     #[test]
