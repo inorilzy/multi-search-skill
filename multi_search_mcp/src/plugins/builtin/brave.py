@@ -1,11 +1,12 @@
 """Brave Search provider declaration."""
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from .. import usage_store
+from .. import oauth_store, usage_store
 from ..base import AuthMethod, BalanceContext, BalanceReport, ProviderPlugin
 from ..quota_record import quota_entry, quota_report
 from . import brave_dashboard
@@ -57,7 +58,17 @@ def credit_fields(per_second: int | None, resets_at: str | None, *, extra_calls:
 def balance_brave(credential: str, ctx: BalanceContext) -> BalanceReport:
     """Prefer real Search-plan usage; without a usable login read the local quota."""
     reference = credential if credential.startswith("oauth-login:brave_dashboard:") else None
-    cookie = brave_dashboard.cookie_header(reference)
+    expected_reference = reference
+    if os.environ.get(brave_dashboard.COOKIE_ENV):
+        expected_reference = None
+    elif expected_reference is None:
+        try:
+            record = oauth_store.get_entry("brave_dashboard")
+            if record:
+                expected_reference = oauth_store.balance_credential_ref("brave_dashboard", record)
+        except oauth_store.OAuthStoreError:
+            pass
+    cookie = brave_dashboard.cookie_header(expected_reference or reference)
     reason = "dashboard 登录已失效" if reference and not cookie else ""
     if cookie:
         try:
@@ -65,6 +76,13 @@ def balance_brave(credential: str, ctx: BalanceContext) -> BalanceReport:
             plan = next((row for row in data["plans"] if row["name"] == "Search"), None)
             if plan is None or any(plan[field] is None for field in ("credit", "cost", "requests")):
                 raise brave_dashboard.DashboardUnavailable("no Search usage")
+            profile_note = ""
+            if expected_reference:
+                try:
+                    brave_dashboard.sync_account(data.get("profile"), expected_reference)
+                except (ValueError, OSError):
+                    # Local account storage cannot invalidate a successfully read quota.
+                    profile_note = " · 账号资料暂未保存"
             now = datetime.now(timezone.utc)
             reset = (now.replace(day=28) + timedelta(days=4)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             return BalanceReport(
@@ -72,7 +90,7 @@ def balance_brave(credential: str, ctx: BalanceContext) -> BalanceReport:
                 limit=plan["credit"], used=plan["cost"],
                 remaining=round(max(0, plan["credit"] - plan["cost"]), 6),
                 resets_at=reset.isoformat(),
-                message=f"dashboard · Search 本月 {plan['requests']:g} 次 · 剩余免费额度",
+                message=f"dashboard · Search 本月 {plan['requests']:g} 次 · 剩余免费额度{profile_note}",
             )
         except brave_dashboard.DashboardUnavailable as exc:
             reason = "dashboard 登录已失效" if str(exc) == "logged out" else "dashboard 暂不可用"

@@ -47,8 +47,8 @@ function statCard(key, label) {
   return `<span class="stat stat-${key}">${label} <b data-stat="${key}">—</b><small>/${key === 'enabled' ? ENTRIES.filter(entry => entry.search !== false).length : TOTAL}</small></span>`;
 }
 
-/** @param {any} root page container (untyped DOM queries, as in the other pages) @param {any} api @param {{ signal?: AbortSignal, number?: string }} [options] */
-export async function mountSources(root, api, { signal, number = '04' } = {}) {
+/** @param {any} root page container (untyped DOM queries, as in the other pages) @param {any} api @param {{ signal?: AbortSignal, number?: string, usageRefresh?: ReturnType<typeof import('./usage-auto-refresh.js').createUsageAutoRefresh> }} [options] */
+export async function mountSources(root, api, { signal, number = '04', usageRefresh = null } = {}) {
   const doc = root.ownerDocument;
   const shortcut = shortcutLabel(doc.defaultView?.navigator);
   root.classList.add('sources-page');
@@ -109,6 +109,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
   let activeTicket = 0;
   let filter = 'all';
   let disposed = false;
+  let unsubscribeRefresh = () => {};
   let settingsQueue = Promise.resolve();
   const onKey = event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); search.focus(); }
@@ -119,12 +120,17 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     if (disposed) return;
     disposed = true;
     activeTicket += 1;
+    unsubscribeRefresh();
     detailMount?.dispose();
     doc.removeEventListener('keydown', onKey);
     root.classList.remove('sources-page');
   }
   // Navigation aborts the signal even if this mount throws before it can return its disposer.
   signal?.addEventListener('abort', teardown, { once: true });
+  unsubscribeRefresh = usageRefresh?.subscribe(() => {
+    // Re-read only local snapshots; keep open credential editors and their drafts intact.
+    if (!disposed) return loadCache();
+  }) || (() => {});
 
   function applyFilter() {
     const query = search.value.trim().toLowerCase();

@@ -281,7 +281,7 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 - `accounts remove <provider> <账号 id> [--delete-keys]`：删除账号；默认把搜索 Key 移到默认账号，`--delete-keys` 连同搜索 Key 一起删除（仅查余额的凭据始终保留）。
 - `accounts move-key <provider> <指纹> --to <账号 id>`：把某个 Key 移到另一个账号，`--to default` 移回默认账号。
 
-登录时用 `login <provider> --method api --account <账号 id>` 可把新 Key 直接挂到指定账号，缺省进默认账号。
+登录时用 `login <provider> --method api --account <账号 id>` 可把新 Key 直接挂到指定账号，缺省进默认账号。Brave 的 Chrome 登录会保存控制台返回的姓名、邮箱并建立具名账号，将余额凭据挂到该账号；相同邮箱再次登录会复用账号，保留用户修改过的名称。旧版本已保存会话但未建立账号时，下次成功查询真实余额会补齐，无需重新登录。
 
 ### 余额
 
@@ -318,7 +318,7 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 - 每个服务商给出当前余额、近 `--days` 天（默认 30）的余额历史、配速与「能否撑到重置」，以及本机调用次数（今天 / 近 7 天 / 按天）。多个 Key 在相同作用域与单位下的额度合计，任一 Key 未知时合计显示「未知」。
 - JSON 每个服务商新增按账号分组的 `accounts: [{id, name, source, keys: [{key_fingerprint, report}], total}]`、服务商级 `total`（`remaining`/`limit`/`percent`/`unit`/`relative`）与 `alert`（`low`/`critical`/`wont_last`/`needs_credential`/null）；原有 `current`/`totals` 等字段保留，向后兼容。合计里 Key 级相加，team / account 级不相加，任一为 null 时合计为 null；没有上限时以本周期历史最高剩余为满格并把 `relative` 置 `true`。提醒阈值：剩余 < 20% 为 `low`、< 5% 为 `critical`，配速判断撑不到重置为 `wont_last`，优先级 `critical` > `wont_last` > `low` > `needs_credential`。
 - 桌面端「05 用量」一列一行一家服务商：收起只显示合计进度条与百分比、「N 个账号 · M 个 Key」和一句提醒；展开后按「账号 → Key」两级列出进度条，再加走势、配速与本机调用。
-- 不加 `--refresh` 只读本机数据，不发任何网络请求；加 `--refresh` 先按 `balance` 的规则（含各插件缓存时长）查询一次余额并写入历史。**余额只在打开用量页、运行 `usage --refresh` 或点「刷新」时查询**，搜索流程不触发余额查询。
+- CLI 不加 `--refresh` 只读本机数据，不发任何网络请求；加 `--refresh` 先按 `balance` 的规则（含各插件缓存时长）查询一次余额并写入历史。桌面应用运行时会在启动后自动更新已配置服务商的余额，此后每 10 分钟更新一次；无需停留在用量页。休眠恢复后若已过期会补刷一次，请求串行执行、失败后等下一周期，不密集重试。用量页显示自动刷新间隔和最近更新时间，保留手动刷新。退出应用后停止定时刷新；额度刷新只使用已保存的凭据，不打开 Chrome、不触发调试授权，搜索流程也不触发余额查询。
 - 本机调用次数是「本机统计」，只统计本机实际发出的调用，不等于服务商侧的计费次数（服务商内部重试、一次请求扣多个积分等都不计入）。`--no-state` 的搜索不写统计；写入失败不影响搜索结果和退出码。
 - 用量库位于 `~/.multi-search/usage.sqlite`（Unix 上 0600），只存本机数据；余额历史与本机调用统计都保留 30 天，过期行在每次写入时顺带删除。库不可读时历史与调用为空并给出 `usage_error`，命令仍退出 0。
 

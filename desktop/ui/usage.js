@@ -205,16 +205,17 @@ function cardBody(doc, provider) {
 /**
  * @param {HTMLElement} root
  * @param {any} api
- * @param {{number?: string, signal?: AbortSignal, navigate?: (id: string) => void}} [options]
+ * @param {{number?: string, signal?: AbortSignal, navigate?: (id: string) => void,
+ *   usageRefresh?: ReturnType<typeof import('./usage-auto-refresh.js').createUsageAutoRefresh>}} [options]
  */
-export async function mountUsage(root, api, { number = '05', signal, navigate } = {}) {
+export async function mountUsage(root, api, { number = '05', signal, navigate, usageRefresh } = {}) {
   root = pageRoot(root);
   root.classList.add('usage-page');
   const doc = root.ownerDocument;
   root.innerHTML = `<p class="eyebrow visually-hidden"></p><h1 class="visually-hidden" tabindex="-1">用量</h1>
     <section class="usage-head" aria-label="用量刷新">
       <button type="button" class="primary" data-action="refresh-all">刷新全部</button>
-      <p class="provider-note" data-updated role="status">更新时间：未知</p></section>
+      <p class="provider-note" data-updated role="status">最近更新：未知</p></section>
     <p class="error-message" data-error role="alert"></p>
     <p class="provider-note" data-notice role="status"></p>
     <div class="provider-list" data-providers></div>
@@ -226,6 +227,12 @@ export async function mountUsage(root, api, { number = '05', signal, navigate } 
   const cards = new Map();
   let busy = false;
   let disposed = Boolean(signal?.aborted);
+  let updatedAt = null;
+  const updated = root.querySelector('[data-updated]');
+  const updateTimestamp = () => {
+    updated.textContent = `${usageRefresh ? '每10分钟自动刷新 · ' : ''}最近更新：${timestamp(updatedAt)}`;
+  };
+  updateTimestamp();
 
   function renderCard(provider) {
     let card = cards.get(provider.id);
@@ -286,7 +293,30 @@ export async function mountUsage(root, api, { number = '05', signal, navigate } 
     if (card.parentNode !== target) target.append(card);
   }
 
-  async function load(provider = null) {
+  function applyView(view, provider = null) {
+    if (disposed) return;
+    errorSlot.textContent = '';
+    errorSlot.removeAttribute('title');
+    const updateRequired = view.status === 'cli_update_required';
+    notice.textContent = updateRequired ? (view.message || '请更新 CLI 后查看用量。')
+      : view.usage_error || (!view.providers.length ? '暂无服务商用量信息。' : '');
+    if (!provider || updateRequired) {
+      updatedAt = null;
+      const ids = new Set(updateRequired ? [] : view.providers.map(item => item.id));
+      for (const [id, card] of cards) if (!ids.has(id)) card.remove();
+    }
+    if (!updateRequired) for (const item of view.providers) {
+      renderCard(item);
+      for (const report of item.current) {
+        if (Number.isFinite(Date.parse(report.fetched_at))
+          && (!updatedAt || Date.parse(report.fetched_at) > Date.parse(updatedAt))) updatedAt = report.fetched_at;
+      }
+    }
+    updateTimestamp();
+  }
+  const unsubscribe = usageRefresh?.subscribe((view, provider) => applyView(view, provider));
+
+  async function load(provider = null, refresh = true) {
     if (busy || disposed) return;
     if (typeof api?.usageView !== 'function') {
       notice.textContent = '请更新 CLI 和桌面应用后查看用量。';
@@ -300,18 +330,10 @@ export async function mountUsage(root, api, { number = '05', signal, navigate } 
     errorSlot.textContent = '';
     errorSlot.removeAttribute('title');
     try {
-      // Opening the page and explicit refreshes query balances through the CLI's TTL cache.
-      const view = /** @type {import('./types.js').UsageView} */ (await api.usageView(provider, true));
-      if (disposed) return;
-      const updateRequired = view.status === 'cli_update_required';
-      notice.textContent = updateRequired ? (view.message || '请更新 CLI 后查看用量。')
-        : view.usage_error || (!view.providers.length ? '暂无服务商用量信息。' : '');
-      if (!provider || updateRequired) {
-        const ids = new Set(updateRequired ? [] : view.providers.map(item => item.id));
-        for (const [id, card] of cards) if (!ids.has(id)) card.remove();
-      }
-      if (!updateRequired) for (const item of view.providers) renderCard(item);
-      root.querySelector('[data-updated]').textContent = `更新时间：${updateRequired ? '未知' : timestamp(new Date().toISOString())}`;
+      // The application owns automatic refreshes. Route entry reads the latest local cache;
+      // explicit buttons retain the existing refresh=true behavior and Core's TTL.
+      const view = /** @type {import('./types.js').UsageView} */ (await api.usageView(provider, refresh));
+      applyView(view, provider);
     } catch (error) {
       if (!disposed) showError(errorSlot, error, '用量读取失败，请重试。');
     } finally {
@@ -328,10 +350,11 @@ export async function mountUsage(root, api, { number = '05', signal, navigate } 
   function dispose() {
     disposed = true;
     signal?.removeEventListener('abort', dispose);
+    unsubscribe?.();
     disposePage(root);
   }
   signal?.addEventListener('abort', dispose, { once: true });
   refreshAll.addEventListener('click', () => { void load(); });
-  await load();
+  await load(null, !usageRefresh);
   return { dispose };
 }

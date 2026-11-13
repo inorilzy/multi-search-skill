@@ -19,13 +19,13 @@ def _port() -> int:
         raise oauth.OAuthFlowError("Chrome 会话共享端口无效，须为 1024–65535。", kind="invalid") from None
 
 
-def _verify(provider: str, cookie: str, deadline: float) -> None:
+def _verify(provider: str, cookie: str, deadline: float) -> dict:
     context = BalanceContext(timeout=10, deadline=deadline)
     if provider == "brave":
         from .builtin.brave_dashboard import fetch_dashboard
     else:
         from .builtin.exa_dashboard import fetch_dashboard
-    fetch_dashboard(cookie, context)
+    return fetch_dashboard(cookie, context)
 
 
 class _Cancellation:
@@ -59,8 +59,9 @@ def login(provider: str, entry: str, *, timeout: float = 300, stdin: TextIO | No
         waiting("已取得此服务商的登录会话，正在验证额度查询。")
         from .builtin.exa_dashboard import DashboardUnavailable as ExaDashboardUnavailable
         limited = False
+        data = None
         try:
-            _verify(provider, record["cookie_header"], deadline)
+            data = _verify(provider, record["cookie_header"], deadline)
         except ExaDashboardUnavailable as exc:
             if exc.kind != "rate_limit":
                 raise
@@ -72,7 +73,22 @@ def login(provider: str, entry: str, *, timeout: float = 300, stdin: TextIO | No
         previous_record = oauth_store.read_oauth_file().get(entry, {})
         if not isinstance(previous_record, dict):
             raise oauth_store.OAuthStoreError("后台登录记录格式无效，未覆盖。")
-        oauth_store.set_entry(entry, {**previous_record, **record})
+        saved_record = {**previous_record, **record}
+        profile = None
+        if provider == "brave":
+            from .builtin import brave_dashboard
+            # Only the login owns this captured session; quota refreshes never rewrite it.
+            saved_record.pop("profile", None)
+            if isinstance(data, dict):
+                profile = brave_dashboard._profile(data.get("profile"), brave_dashboard._cookie_secrets(record["cookie_header"]))
+            if profile:
+                saved_record["profile"] = profile
+        oauth_store.set_entry(entry, saved_record)
+        if provider == "brave" and profile:
+            try:
+                brave_dashboard.sync_account(profile, oauth_store.balance_credential_ref(entry, saved_record))
+            except (ValueError, OSError):
+                raise oauth.OAuthFlowError("Chrome 会话已保存，但账号资料保存失败；请检查本地凭据存储后重试。", kind="storage") from None
         message = ("已从 Chrome 保存登录会话；额度接口暂时限流，请稍后刷新。" if limited
                    else "已从 Chrome 保存此服务商的登录会话，额度查询已验证。")
         emit({"event": "complete", "provider": provider, "credential": entry, "message": message})

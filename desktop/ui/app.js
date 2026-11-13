@@ -1,5 +1,6 @@
 import { pages } from './pages.js';
 import { managementApi, normalizeError } from './api.js';
+import { createUsageAutoRefresh } from './usage-auto-refresh.js';
 
 const RUNTIME_MISSING = '此页面需要在 Multi Search 桌面应用中打开。';
 const MOUNT_FAILED = '页面加载失败';
@@ -17,8 +18,11 @@ export function announcePage(root, page, { moveFocus = true } = {}) {
   if (moveFocus) heading.focus();
 }
 
-export function createNavigation(root, nav, invoke, pageList = pages) {
+/** @param {ReturnType<typeof createUsageAutoRefresh>} [usageRefresh] */
+export function createNavigation(root, nav, invoke, pageList = pages, usageRefresh = null) {
   const doc = root.ownerDocument;
+  const api = usageRefresh?.api || (invoke ? managementApi(invoke) : null);
+  if (usageRefresh) void usageRefresh.start();
   let generation = 0;
   let mounted = null;
   let controller = null;
@@ -79,8 +83,8 @@ export function createNavigation(root, nav, invoke, pageList = pages) {
     container.dataset.page = page.id;
     root.replaceChildren(container);
     try {
-      const instance = await page.mount(container, managementApi(invoke), {
-        number: page.number, signal: controller.signal,
+      const instance = await page.mount(container, api, {
+        number: page.number, signal: controller.signal, usageRefresh,
         navigate: id => {
           if (token !== generation) return;
           const target = pageList.find(item => item.id === id);
@@ -115,6 +119,7 @@ export function createNavigation(root, nav, invoke, pageList = pages) {
     select,
     dispose() {
       generation += 1;
+      usageRefresh?.dispose();
       controller?.abort();
       safeDispose(mounted);
       mounted = null;
@@ -144,7 +149,12 @@ export async function start(root = document.querySelector('#page'), nav = docume
   // injects is used, and the capability file limits it to this app's own typed commands.
   const bridge = /** @type {any} */ (window).__TAURI_INTERNALS__;
   const invoke = typeof bridge?.invoke === 'function' ? (cmd, args) => bridge.invoke(cmd, args) : null;
-  const navigation = createNavigation(root, nav, invoke);
+  const usageRefresh = invoke ? createUsageAutoRefresh(managementApi(invoke), {
+    document: root.ownerDocument, window: root.ownerDocument.defaultView,
+    schedule: (callback, delay) => root.ownerDocument.defaultView.setTimeout(callback, delay),
+    cancel: timer => root.ownerDocument.defaultView.clearTimeout(timer),
+  }) : null;
+  const navigation = createNavigation(root, nav, invoke, pages, usageRefresh);
   if (invoke) void showVersion(document.querySelector('[data-app-version]'), managementApi(invoke));
   await navigation.select(pages[0], { moveFocus: false });
   return navigation;
