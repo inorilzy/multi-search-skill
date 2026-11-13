@@ -45,6 +45,10 @@ class AccountsCliTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="accounts-cli-")
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name)
+        # Never open the developer's real browser on a fixture URL.
+        browser = mock.patch.object(oauth.webbrowser, "open", return_value=True)
+        browser.start()
+        self.addCleanup(browser.stop)
         for patcher in (
             mock.patch.dict(os.environ, {"HOME": str(self.home), "USERPROFILE": str(self.home)}),
             mock.patch("pathlib.Path.home", return_value=self.home),
@@ -93,6 +97,12 @@ class AccountsCliTests(unittest.TestCase):
         self.assertEqual(code, 0, stdout + stderr)
         self.assertEqual(stderr, "")
         return [json.loads(line) for line in stdout.splitlines()]
+
+    def parallel_login_ref(self):
+        """Fingerprint of the stable reference of the Parallel login saved in oauth.json."""
+        record = json.loads((self.home / ".multi-search" / "oauth.json").read_text(encoding="utf-8"))["parallel_account"]
+        self.assertRegex(record["login_id"], r"^[0-9a-f]{16}$")
+        return key_fingerprint(oauth.oauth_store.balance_credential_ref("parallel_account", record))
 
     def parallel_routes(self, access, *, identity=IDENTITY, provision=False):
         # These tests are about the balance token; key provisioning is refused unless asked for.
@@ -312,7 +322,7 @@ class AccountsCliTests(unittest.TestCase):
         self.assertEqual(self.payload("accounts", "list", "--provider", "parallel"), {
             "accounts": {"parallel": [DEFAULT, account_record(
                 account_id, IDENTITY, source="oauth", identity=IDENTITY,
-                balance={"parallel_account": key_fingerprint(access)},
+                balance={"parallel_account": self.parallel_login_ref()},
             )]},
         })
 
@@ -325,17 +335,27 @@ class AccountsCliTests(unittest.TestCase):
             "accounts": {"parallel": [DEFAULT, account_record(
                 account_id, IDENTITY, source="oauth", identity=IDENTITY,
                 keys=[key_fingerprint(PARALLEL_CREATED_KEY)],
-                balance={"parallel_account": key_fingerprint(access)},
+                balance={"parallel_account": self.parallel_login_ref()},
             )]},
         })
 
-    def test_parallel_repeat_identity_reuses_account_with_the_rotated_token_fingerprint(self):
+    def test_parallel_repeat_login_reuses_its_key_instead_of_creating_another(self):
+        self.oauth_login("parallel", self.parallel_routes("fixture-old-access", provision=True))
+        routes = self.parallel_routes("fixture-new-access", provision=True)
+        events = self.oauth_login("parallel", routes)
+        self.assertEqual(events[-1]["needs_search_key"], False)
+        keys = self.read_keys()
+        self.assertEqual(keys["parallel"], PARALLEL_CREATED_KEY, "still exactly one Parallel key")
+        self.assertEqual(len(keys["accounts"]["parallel"]), 1)
+        self.assertEqual(keys["accounts"]["parallel"][0]["keys"], [key_fingerprint(PARALLEL_CREATED_KEY)])
+
+    def test_parallel_repeat_identity_reuses_account_with_the_new_login_reference(self):
         self.oauth_login("parallel", self.parallel_routes("fixture-old-access"))
         account_id = self.read_keys()["accounts"]["parallel"][0]["id"]
         self.oauth_login("parallel", self.parallel_routes("fixture-new-access"))
         self.assertEqual(self.read_keys()["accounts"], {"parallel": [account_record(
             account_id, IDENTITY, source="oauth", identity=IDENTITY,
-            balance={"parallel_account": key_fingerprint("fixture-new-access")},
+            balance={"parallel_account": self.parallel_login_ref()},
         )]})
 
     def test_account_records_only_expose_public_fields_and_never_raw_credentials_or_logs(self):

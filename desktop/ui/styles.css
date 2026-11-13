@@ -4040,6 +4040,49 @@
     font-family: Consolas, monospace;
     font-size: 13px;
   }
+  /* Inside the provider dialog the key editor is one column of key rows plus a single
+     line of actions; its explanations, store status and side result panel stay hidden
+     (the dialog's 连接 field already reports the test result). */
+  .provider-dialog .credential-editor {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .provider-dialog .credential-fields {
+    padding-right: 0;
+    border-right: 0;
+  }
+  .provider-dialog .credential-intro, .provider-dialog .credential-footer,
+  .provider-dialog .config-details, .provider-dialog .credential-feedback,
+  .provider-dialog [data-info="application"], .provider-dialog [data-test-key-label] {
+    display: none;
+  }
+  .provider-dialog .credential-actions {
+    margin-top: 8px;
+    padding-top: 0;
+    border-top: 0;
+  }
+  .provider-dialog .credential-actions > button, .provider-dialog .draft-controls > button {
+    min-height: 28px;
+    padding: 3px 10px;
+    font-size: 12px;
+  }
+  .provider-dialog .account-summary .provider-note {
+    color: var(--muted);
+  }
+  .provider-dialog .account-add {
+    margin-top: 10px;
+  }
+  .provider-dialog .account-add .section-title, .provider-dialog .account-add .eyebrow {
+    display: none;
+  }
+  .provider-dialog .account-add > section, .provider-dialog .account-add .panel {
+    margin: 0;
+    padding: 10px 14px;
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    box-shadow: none;
+    animation: none;
+  }
   .provider-dialog-foot {
     display: flex;
     align-items: center;

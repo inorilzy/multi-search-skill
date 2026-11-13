@@ -123,11 +123,24 @@ def set_client_id(provider: str, client_id: str, path: str | Path | None = None)
     set_entry(provider, {"client_id": client_id}, path)
 
 
+def balance_credential_ref(entry: str, record: dict[str, Any]) -> str:
+    """A stable, non-secret stand-in for one browser login's balance credential.
+
+    The access token is replaced on every refresh, so anything keyed by its
+    fingerprint (balance cache, balance history, account ownership) would lose
+    track after ten minutes. ``login_id`` is created once per login and kept by
+    refreshes; records saved before it existed share one per-entry reference.
+    """
+    login_id = record.get("login_id")
+    return f"oauth-login:{entry}:{login_id if isinstance(login_id, str) and login_id else 'legacy'}"
+
+
 def balance_credentials(path: str | Path | None = None) -> dict[str, str]:
-    """Access tokens usable as balance credentials, keyed by credential entry.
+    """Stable references for logged-in balance credentials, keyed by credential entry.
 
     Only entries that look like account token records are returned; cached
-    client registrations have no ``access_token`` and are ignored.
+    client registrations have no ``access_token`` and are ignored. Callers never
+    receive the token itself: the balance adapter reads the record directly.
     """
     credentials: dict[str, str] = {}
     for entry, value in read_oauth_file(path).items():
@@ -135,7 +148,7 @@ def balance_credentials(path: str | Path | None = None) -> dict[str, str]:
             continue
         token = value.get("access_token")
         if isinstance(token, str) and token:
-            credentials[entry] = token
+            credentials[entry] = balance_credential_ref(entry, value)
     return credentials
 
 

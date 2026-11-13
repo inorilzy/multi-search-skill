@@ -189,6 +189,18 @@ test('a provider error the CLI reports in English is shown, not replaced by a ge
   ctx.window.close();
 });
 
+test('a completed login keeps the CLI notice visible', async () => {
+  const ctx = await mountDetail('firecrawl', {
+    oauthLoginStart: async () => 7,
+    oauthLoginPoll: async () => login('complete', { id: 7, message: '已登录，但自动创建搜索 Key 失败：missing scope' }),
+    oauthLoginCancel: async () => { throw new Error('terminal state must not cancel'); },
+  }, { oauthPollInterval: 1 });
+  ctx.root.querySelector('[data-action="oauth-start"]').click();
+  await until(() => /自动创建搜索 Key 失败/.test(ctx.root.querySelector('[data-info="oauth-error"]').textContent), 'notice not shown');
+  ctx.mounted.dispose();
+  ctx.window.close();
+});
+
 test('error phase shows the CLI message and allows a retry', async () => {
   const ctx = await mountDetail('firecrawl', {
     oauthLoginStart: async () => 5,

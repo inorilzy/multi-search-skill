@@ -165,6 +165,11 @@ class OAuthTestCase(unittest.TestCase):
         })
         env_patcher.start()
         self.addCleanup(env_patcher.stop)
+        # A test must never open the developer's real browser on a fixture URL; tests
+        # about opening it patch webbrowser.open themselves and assert on that mock.
+        browser = mock.patch.object(oauth_module.webbrowser, "open", return_value=True)
+        browser.start()
+        self.addCleanup(browser.stop)
         home_patcher = mock.patch("pathlib.Path.home", return_value=self.home)
         home_patcher.start()
         self.addCleanup(home_patcher.stop)

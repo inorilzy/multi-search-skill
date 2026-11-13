@@ -9,10 +9,15 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from multi_search_mcp.src.plugins import accounts, registry
+from multi_search_mcp.src.plugins import accounts, oauth_store, registry
 from multi_search_mcp.src.state.key_state import key_fingerprint
 from multi_search_mcp.src.state.keys import KeysError, load_keys
 
+
+
+def parallel_login_ref():
+    """The balance-credential fingerprint of a Parallel login saved before login_id existed."""
+    return key_fingerprint(oauth_store.balance_credential_ref("parallel_account", {}))
 
 class AccountsStoreTests(unittest.TestCase):
     def setUp(self):
@@ -76,7 +81,7 @@ class AccountsStoreTests(unittest.TestCase):
         token = "synthetic-custom-account-token"
         oauth_path.write_text(json.dumps({"parallel_account": {"access_token": token}}), encoding="utf-8")
         row = accounts.upsert_oauth_account(
-            "parallel", "user@example.test", balance_credentials={"parallel_account": key_fingerprint(token)},
+            "parallel", "user@example.test", balance_credentials={"parallel_account": parallel_login_ref()},
             keys_file=path,
         )
         listed = accounts.list_accounts("parallel", keys_file=path)["parallel"]
@@ -255,7 +260,7 @@ class AccountsStoreTests(unittest.TestCase):
         oauth_before = self.oauth_path.read_bytes()
         exa = accounts.create_account("exa", "Company", balance_credentials={"exa_admin": key_fingerprint(admin)})
         parallel = accounts.upsert_oauth_account("parallel", "user@example.test",
-                                                 balance_credentials={"parallel_account": key_fingerprint(token)})
+                                                 balance_credentials={"parallel_account": parallel_login_ref()})
         self.assertEqual(parallel["keys"], [])
         self.assertEqual(self.rows("exa")[0]["balance_credentials"], {})
         self.assertEqual(self.rows("parallel")[1], parallel)
@@ -266,22 +271,23 @@ class AccountsStoreTests(unittest.TestCase):
         accounts.delete_account("parallel", parallel["id"], keep_keys=False)
         self.assertEqual(self.read_keys()["exa_admin"], admin)
         self.assertEqual(self.oauth_path.read_bytes(), oauth_before)
-        self.assertEqual(self.rows("parallel")[0]["balance_credentials"], {"parallel_account": key_fingerprint(token)})
+        self.assertEqual(self.rows("parallel")[0]["balance_credentials"], {"parallel_account": parallel_login_ref()})
         self.assertNotIn(token, self.path.read_text(encoding="utf-8"))
 
-    def test_rotating_oauth_balance_reference_reuses_identity_and_drops_stale_refs(self):
+    def test_rotating_oauth_balance_reference_survives_a_token_refresh(self):
+        # A refresh replaces the access token; the login reference, and so the account's
+        # balance credential, the balance cache key and history, stay the same.
         self.write_keys({})
         self.oauth_path.write_text(json.dumps({"parallel_account": {"access_token": "synthetic-old-token"}}), encoding="utf-8")
         first = accounts.upsert_oauth_account("parallel", "user@example.test",
-                                              balance_credentials={"parallel_account": key_fingerprint("synthetic-old-token")})
+                                              balance_credentials={"parallel_account": parallel_login_ref()})
         self.oauth_path.write_text(json.dumps({"parallel_account": {"access_token": "synthetic-new-token"}}), encoding="utf-8")
-        # A refresh replaces the token; the account keeps owning its single OAuth entry.
-        self.assertEqual(self.rows("parallel")[1]["balance_credentials"],
-                         {"parallel_account": key_fingerprint("synthetic-new-token")})
+        self.assertEqual(self.rows("parallel")[1]["balance_credentials"], {"parallel_account": parallel_login_ref()})
         second = accounts.upsert_oauth_account("parallel", "user@example.test",
-                                               balance_credentials={"parallel_account": key_fingerprint("synthetic-new-token")})
+                                               balance_credentials={"parallel_account": parallel_login_ref()})
         self.assertEqual(second["id"], first["id"])
-        self.assertEqual(second["balance_credentials"], {"parallel_account": key_fingerprint("synthetic-new-token")})
+        self.assertEqual(second["balance_credentials"], {"parallel_account": parallel_login_ref()})
+        self.assertNotIn(key_fingerprint("synthetic-new-token"), json.dumps(self.rows("parallel")))
 
     def test_corrupt_keys_and_accounts_are_never_overwritten_or_echoed(self):
         self.write_keys({})

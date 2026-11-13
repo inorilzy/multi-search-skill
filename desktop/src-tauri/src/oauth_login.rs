@@ -255,6 +255,8 @@ enum LoginEvent {
     Waiting,
     Complete,
     Error { message: String },
+    /// Something the user should read that does not end the login (e.g. a key could not be created).
+    Notice { message: String },
 }
 
 fn parse_event(line: &str) -> Result<Option<LoginEvent>, String> {
@@ -283,6 +285,7 @@ fn parse_event(line: &str) -> Result<Option<LoginEvent>, String> {
         }
         "waiting" => Ok(Some(LoginEvent::Waiting)),
         "complete" => Ok(Some(LoginEvent::Complete)),
+        "notice" => Ok(text("message").map(|message| LoginEvent::Notice { message })),
         "error" => Ok(Some(LoginEvent::Error {
             message: text("message").unwrap_or_else(|| "登录失败。".into()),
         })),
@@ -330,6 +333,10 @@ fn apply_event(run: &mut OAuthLogin, event: LoginEvent, opener: &BrowserOpener) 
             run.state.phase = "error".into();
             run.state.message = Some(message);
             true
+        }
+        LoginEvent::Notice { message } => {
+            run.state.message = Some(message);
+            false
         }
     }
 }
@@ -518,6 +525,11 @@ mod tests {
             })
         );
         assert_eq!(parse_event(r#"{"event":"waiting"}"#).unwrap(), Some(LoginEvent::Waiting));
+        assert_eq!(
+            parse_event(r#"{"event":"notice","message":"已登录，但自动创建搜索 Key 失败"}"#).unwrap(),
+            Some(LoginEvent::Notice { message: "已登录，但自动创建搜索 Key 失败".into() })
+        );
+        assert_eq!(parse_event(r#"{"event":"notice"}"#).unwrap(), None, "an empty notice is ignored");
         assert_eq!(parse_event(r#"{"event":"complete","credential":"firecrawl"}"#).unwrap(), Some(LoginEvent::Complete));
         assert_eq!(
             parse_event(r#"{"event":"error","error_kind":"provider","message":"授权被拒绝。"}"#)

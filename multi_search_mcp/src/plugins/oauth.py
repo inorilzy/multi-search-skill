@@ -495,6 +495,25 @@ def _parallel_create_search_key(
     return key, email if isinstance(email, str) and email.strip() else None
 
 
+def _parallel_login_with_key(identity: str | None) -> str | None:
+    """The identity of a browser-login Parallel account that already holds a search key.
+
+    The token response normally carries no identity, so without one any keyed login
+    account counts: this machine logs one Parallel user in, and a repeat login must
+    reuse that key instead of creating another.
+    """
+    try:
+        rows = accounts.list_accounts("parallel").get("parallel", [])
+    except Exception:  # noqa: BLE001 - an unreadable keys file is reported by the save step
+        return None
+    for row in rows:
+        if row.get("source") == "oauth" and row.get("keys") and (
+            identity is None or row.get("login_identity") == identity
+        ):
+            return row.get("login_identity") or row.get("name") or ""
+    return None
+
+
 def parallel_login(
     *,
     credential: str = PARALLEL_ACCOUNT_ENTRY,
@@ -608,12 +627,18 @@ def parallel_login(
                 "expires_at": _expires_at(token.get("expires_in")),
                 "token_type": token.get("token_type") or "Bearer",
                 "scope": token.get("scope") or PARALLEL_SCOPE,
+                # Stays the same across token refreshes; see oauth_store.balance_credential_ref.
+                "login_id": secrets.token_hex(8),
             }
             oauth_store.set_entry(credential, record)
             guard = [*secrets_guard, access_token, refresh_token]
             identity = _login_identity(token, guard)
             search_key = None
-            if save_credential is not None:
+            owned = _parallel_login_with_key(identity)
+            if owned is not None:
+                # Logging in again must not pile up keys: the account already has one.
+                identity = identity or owned
+            elif save_credential is not None:
                 try:
                     search_key, email = _parallel_create_search_key(access_token, http=http, secrets=guard)
                     identity = identity or email
@@ -625,9 +650,10 @@ def parallel_login(
             accounts.upsert_oauth_account(
                 "parallel", identity,
                 keys=[key_fingerprint(search_key)] if search_key else [],
-                balance_credentials={credential: key_fingerprint(access_token)},
+                balance_credentials={credential: key_fingerprint(oauth_store.balance_credential_ref(credential, record))},
             )
-            _emit(emit, {"event": "complete", "credential": credential, "needs_search_key": search_key is None})
+            needs_key = search_key is None and owned is None
+            _emit(emit, {"event": "complete", "credential": credential, "needs_search_key": needs_key})
             return record
 
 

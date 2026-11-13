@@ -99,23 +99,28 @@ test('T07 accounts: account metadata and balance credentials render as text; emp
   ctx.close();
 });
 
-test('T07 accounts: create and rename send provider, account id and literal name; default has neither destructive control', async () => {
-  const ctx = await setup({ keys: ['synthetic-default'] });
+// Accounts come from a browser login or pasted keys, so there is no "create an empty
+// account" control any more; renaming still sends the literal name.
+test('T07 accounts: rename sends provider, account id and literal name; default has neither destructive control', async () => {
+  const ctx = await setup({ keys: ['synthetic-default'], groups: [account('default', '默认账号', ['synthetic-default']), account('acc_New', '登录账号', [], { source: 'oauth' })] });
   await ctx.open();
+  assert.equal(ctx.row.querySelector('[data-account-action="add"]'), null, 'no empty-account creation');
   assert.equal(groupFor(ctx, 'default').querySelector('[data-account-action="rename"]'), null);
   assert.equal(groupFor(ctx, 'default').querySelector('[data-account-action="remove"]'), null);
-  ctx.row.querySelector('[data-account-action="add"]').click();
-  let form = ctx.row.querySelector('.account-form');
+  let group = groupFor(ctx, 'acc_New');
+  group.querySelector('[data-account-action="rename"]').click();
+  let form = group.querySelector('.account-form');
   assert.equal(ctx.window.document.activeElement, form.querySelector('input'));
   form.querySelector('input').value = '公司 <b>账号</b>';
   form.dispatchEvent(new ctx.window.Event('submit', { cancelable: true })); await flush();
-  assert.deepEqual(ctx.calls.find(call => call[0] === 'add'), ['add', 'tavily', '公司 <b>账号</b>']);
-  const group = groupFor(ctx, 'acc_New');
+  assert.deepEqual(ctx.calls.find(call => call[0] === 'rename'), ['rename', 'tavily', 'acc_New', '公司 <b>账号</b>']);
+  group = groupFor(ctx, 'acc_New');
   assert.equal(group.querySelector('b'), null);
+  assert.equal(group.querySelector('.account-name').textContent, '公司 <b>账号</b>');
   group.querySelector('[data-account-action="rename"]').click();
   form = group.querySelector('.account-form'); form.querySelector('input').value = '个人';
   form.dispatchEvent(new ctx.window.Event('submit', { cancelable: true })); await flush();
-  assert.deepEqual(ctx.calls.find(call => call[0] === 'rename'), ['rename', 'tavily', 'acc_New', '个人']);
+  assert.deepEqual(ctx.calls.filter(call => call[0] === 'rename').at(-1), ['rename', 'tavily', 'acc_New', '个人']);
   assert.equal(groupFor(ctx, 'acc_New').querySelector('.account-name').textContent, '个人');
   ctx.close();
 });
@@ -262,10 +267,11 @@ test('T07 accounts: failed assignment reports saved keys, clears drafts and neve
 
 test('T07 accounts: an account write error keeps the name draft and permits a single retry', async () => {
   let tries = 0;
-  const ctx = await setup({ overrides: { accountsAdd: async () => { tries += 1; throw new Error('账号新建失败'); } } });
+  const ctx = await setup({ groups: [account('default', '默认账号'), account('acc_C', '公司')],
+    overrides: { accountsRename: async () => { tries += 1; throw new Error('账号新建失败'); } } });
   await ctx.open();
-  ctx.row.querySelector('[data-account-action="add"]').click();
-  const form = ctx.row.querySelector('.account-form');
+  groupFor(ctx, 'acc_C').querySelector('[data-account-action="rename"]').click();
+  const form = groupFor(ctx, 'acc_C').querySelector('.account-form');
   form.querySelector('input').value = '保留草稿';
   form.dispatchEvent(new ctx.window.Event('submit', { cancelable: true })); await flush();
   assert.equal(form.querySelector('input').value, '保留草稿');

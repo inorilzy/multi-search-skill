@@ -117,7 +117,8 @@ export async function mountOAuthLogin(root, api, { source, label, pollInterval =
       if (next.phase === 'complete') {
         id = null;
         stopTimer();
-        clearError();
+        // A completed login can still carry a CLI notice, such as why no key was created.
+        if (next.message) errorSlot.textContent = next.message; else clearError();
         try {
           await onComplete?.(next);
         } catch (error) {

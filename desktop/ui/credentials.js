@@ -541,7 +541,9 @@ async function keyFingerprint(value) {
 export async function mountProviderAccounts(holder, api, { source, onStatus, onTest, onLogin, onChange }) {
   const root = pageRoot(holder), doc = root.ownerDocument;
   const provider = providerIdForSource(source);
-  root.innerHTML = `<div class="provider-actions" data-account-tools></div><p class="provider-note" data-account-error role="alert"></p><div data-provider-login></div><div class="account-list" data-accounts></div>`;
+  // Accounts come from a browser login or from pasted keys (the unassigned "default" group);
+  // there is no empty account to create first. Login sits below the list as the way to add one.
+  root.innerHTML = `<div class="provider-actions" data-account-tools></div><p class="provider-note" data-account-error role="alert"></p><div class="account-list" data-accounts></div><div class="account-add" data-provider-login></div>`;
   const errorSlot = root.querySelector('[data-account-error]');
   const list = root.querySelector('[data-accounts]');
   const tools = root.querySelector('[data-account-tools]');
@@ -575,9 +577,6 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
     try { await renderAccounts(); await onChange?.(); }
     catch (error) { if (!disposed) showError(errorSlot, error, '凭据已更新，但账号刷新失败，请重新展开服务商。'); }
   }
-  const add = el(doc, 'button', { type: 'button', 'data-account-action': 'add' }, '新建账号');
-  tools.append(add);
-  add.addEventListener('click', () => nameForm(tools, null));
   function nameForm(parent, account) {
     if (busy || disposed || parent.querySelector('.account-form')) return;
     const form = el(doc, 'form', { class: 'account-form' });
@@ -618,14 +617,19 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
       || Object.keys(account.balance_credentials).length || accounts.length === 1 || editingDefault);
     addAdmin.hidden = source !== 'exa' || shown.some(account => account.id === 'default')
       || accounts.some(account => account.balance_credentials.exa_admin);
+    // Browser-login accounts first; the pasted keys of the default group last.
+    shown.sort((a, b) => Number(a.id === 'default') - Number(b.id === 'default'));
     for (const account of shown) {
       if (disposed || ticket !== generation) return;
       const row = el(doc, 'section', { class: 'account-row', 'data-account-id': account.id });
       const summary = el(doc, 'div', { class: 'account-summary' });
       const identity = el(doc, 'div', { class: 'account-identity' });
-      identity.append(el(doc, 'h3', { class: 'account-name' }, account.name),
-        el(doc, 'p', { class: 'account-source' }, account.source === 'oauth' ? '浏览器登录' : '手动账号'));
-      if (account.login_identity) identity.append(el(doc, 'p', { class: 'account-source' }, account.login_identity));
+      const isDefault = account.id === 'default';
+      identity.append(el(doc, 'h3', { class: 'account-name' }, isDefault ? '手动添加的 Key' : account.name),
+        el(doc, 'p', { class: 'account-source' }, account.source === 'oauth' ? '浏览器登录' : isDefault ? '粘贴的 Key，可保存多条轮换使用' : '手动账号'));
+      if (account.login_identity && account.login_identity !== account.name) {
+        identity.append(el(doc, 'p', { class: 'account-source' }, account.login_identity));
+      }
       const actions = el(doc, 'div', { class: 'account-actions' });
       summary.append(identity, el(doc, 'span', { class: 'provider-note' }, `${account.keys.length} 个 Key`), actions);
       row.append(summary); list.append(row);
