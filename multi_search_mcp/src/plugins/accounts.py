@@ -110,12 +110,10 @@ def _credentials(data: dict, plugin: ProviderPlugin, oauth_file: Path) -> dict[s
     entries = {plugin.key_provider: data.get(plugin.key_provider)} if plugin.key_provider else {}
     balance_methods = [method for method in plugin.auth_methods if method.purpose == "balance_only"]
     oauth = oauth_store.balance_credentials(oauth_file) if any(
-        method.type == "oauth" for method in balance_methods
+        method.type in {"oauth", "web"} for method in balance_methods
     ) else {}
     for method in balance_methods:
-        entries[method.credential] = (
-            oauth.get(method.credential) if method.type == "oauth" else data.get(method.credential)
-        )
+        entries[method.credential] = data.get(method.credential) or oauth.get(method.credential)
     return {entry: list(dict.fromkeys(key_fingerprint(key) for key in _credential_values(value)))
             for entry, value in entries.items()}
 

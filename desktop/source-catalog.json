@@ -74,9 +74,15 @@
           "label": "API Key",
           "purpose": "search_key",
           "type": "api"
+        },
+        {
+          "credential": "brave_dashboard",
+          "label": "登录控制台（查用量）",
+          "purpose": "balance_only",
+          "type": "web"
         }
       ],
-      "balance_note": "搜索一次后显示本月配额；免费额度按本机调用次数估算。",
+      "balance_note": "登录控制台后读取真实用量；登录不可用时显示搜索记录与本机估算。",
       "balance_supported": true,
       "id": "brave",
       "key_provider": "brave",
@@ -164,9 +170,15 @@
           "label": "管理 Key（查余额用）",
           "purpose": "balance_only",
           "type": "api"
+        },
+        {
+          "credential": "exa_admin",
+          "label": "登录控制台（查余额）",
+          "purpose": "balance_only",
+          "type": "web"
         }
       ],
-      "balance_note": "需要联系 Exa 开通 Team Management API 后创建 service key（EXA_SERVICE_KEY）。",
+      "balance_note": "登录控制台查询余额；也可联系 Exa 开通 Team Management API 后配置 service key（EXA_SERVICE_KEY）。",
       "balance_supported": true,
       "id": "exa",
       "key_provider": "exa",

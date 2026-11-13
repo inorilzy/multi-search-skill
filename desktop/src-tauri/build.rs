@@ -50,6 +50,8 @@ const APP_COMMANDS: &[&str] = &[
     "oauth_login_start",
     "oauth_login_poll",
     "oauth_login_cancel",
+    "dashboard_login",
+    "dashboard_login_cancel",
     "skill_plan",
     "skill_install",
     "install_plan",

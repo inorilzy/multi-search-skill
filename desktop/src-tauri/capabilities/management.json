@@ -17,6 +17,8 @@
     "allow-oauth-login-start",
     "allow-oauth-login-poll",
     "allow-oauth-login-cancel",
+    "allow-dashboard-login",
+    "allow-dashboard-login-cancel",
     "allow-skill-plan",
     "allow-skill-install",
     "allow-install-plan",

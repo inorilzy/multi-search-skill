@@ -27,6 +27,15 @@ const quotaText = row => `剩余 ${amount(row?.remaining)} / 上限 ${amount(row
 const visibleAccounts = provider => provider.accounts.filter(account =>
   account.id !== 'default' || account.keys.length || provider.accounts.length === 1);
 
+/** @param {import('./types.js').UsageProvider} provider @param {import('./types.js').BalanceReport} report */
+function sharedTavilyAccount(provider, report) {
+  if (provider.id !== 'tavily' || report?.scope !== 'key' || report.unit !== 'credits'
+    || report.status !== 'ok' || !report.key_fingerprint) return null;
+  return provider.current.find(row => row.scope === 'account' && row.unit === report.unit
+    && row.status === 'ok' && row.key_fingerprint === report.key_fingerprint
+    && (Number.isFinite(row.remaining) || Number.isFinite(row.limit))) || null;
+}
+
 /** @param {Document} doc @param {import('./types.js').UsageProvider} provider */
 function accountList(doc, provider) {
   const list = el(doc, 'ul', { class: 'account-list', 'aria-label': '账号用量' });
@@ -49,10 +58,23 @@ function accountList(doc, provider) {
       keyIdentity.append(el(doc, 'span', { class: 'key-fingerprint' }, key.key_fingerprint));
       keyRow.append(keyIdentity);
       if (provider.balance_supported) {
-        keyIdentity.append(el(doc, 'p', { class: 'provider-note' }, quotaText(key.report)),
-          el(doc, 'p', { class: 'key-kind' }, key.report
-            ? `${scopeLabel(key.report.scope)}额度 · ${STATUSES[key.report.status] || '未知状态'}` : '余额未知（无缓存）'));
-        keyRow.append(createMeter(doc, key.report, { label: `${key.key_fingerprint}剩余额度` }));
+        const shared = sharedTavilyAccount(provider, key.report);
+        if (shared) {
+          keyIdentity.append(el(doc, 'p', { class: 'key-kind' }, '共享账户余额 · 正常'));
+          const details = [];
+          if (Number.isFinite(key.report.limit) && key.report.limit !== shared.limit) {
+            details.push(`Key 上限 ${amount(key.report.limit)} credits`);
+          }
+          if (Number.isFinite(key.report.used) && (key.report.used !== shared.used || details.length)) {
+            details.push(`Key 已用 ${amount(key.report.used)} credits`);
+          }
+          if (details.length) keyIdentity.append(el(doc, 'p', { class: 'provider-note' }, details.join('；')));
+        } else {
+          keyIdentity.append(el(doc, 'p', { class: 'provider-note' }, quotaText(key.report)),
+            el(doc, 'p', { class: 'key-kind' }, key.report
+              ? `${scopeLabel(key.report.scope)}额度 · ${STATUSES[key.report.status] || '未知状态'}` : '余额未知（无缓存）'));
+          keyRow.append(createMeter(doc, key.report, { label: `${key.key_fingerprint}剩余额度` }));
+        }
       }
       keys.append(keyRow);
     }
@@ -133,11 +155,18 @@ function cardBody(doc, provider) {
   const body = el(doc, 'div', { 'data-body': '' });
   body.append(accountList(doc, provider));
   if (provider.balance_supported) {
+    // Tavily key credits constrain the account pool; they are not another balance.
+    const sharedKeys = new Set(provider.current.filter(row => sharedTavilyAccount(provider, row))
+      .map(row => row.key_fingerprint));
+    const separateBalance = row => !(row.scope === 'key' && row.unit === 'credits' && sharedKeys.has(row.key_fingerprint));
+    const totals = provider.totals.filter(row => !(sharedKeys.size && row.scope === 'key' && row.unit === 'credits'));
+    const history = provider.history.filter(separateBalance);
+    const paces = provider.pace.filter(separateBalance);
     if (!provider.current.length) body.append(el(doc, 'p', {}, '暂无余额信息，数据不足。'));
     for (const status of new Set(provider.current.map(row => row.status))) {
       body.append(el(doc, 'p', { class: 'usage-status', 'data-kind': status }, STATUSES[status] || '未知状态'));
     }
-    for (const total of provider.totals) {
+    for (const total of totals) {
       body.append(el(doc, 'p', { class: 'provider-note', 'data-total': '' },
         `${scopeLabel(total.scope)}额度：${quotaText(total)}`));
       if (total.message) body.append(el(doc, 'p', { class: 'provider-note' }, total.message));
@@ -148,15 +177,15 @@ function cardBody(doc, provider) {
         `${identity}重置时间：${timestamp(report.resets_at)}；更新时间：${timestamp(report.fetched_at)}`));
       if (report.message) body.append(el(doc, 'p', { class: 'usage-note' }, report.message));
     }
-    if (!provider.pace.length) body.append(el(doc, 'p', { class: 'usage-pace' }, '数据不足'));
-    for (const pace of provider.pace) {
-      const identity = provider.pace.length > 1
+    if (!paces.length) body.append(el(doc, 'p', { class: 'usage-pace' }, '数据不足'));
+    for (const pace of paces) {
+      const identity = paces.length > 1
         ? `${pace.key_fingerprint || '指纹未知'}（${scopeLabel(pace.scope)} / ${unitLabel(pace.unit)}）：` : '';
       body.append(el(doc, 'p', { class: 'usage-pace' }, `${identity}${paceText(pace)}`));
     }
     const groups = new Map();
-    for (const row of [...provider.totals, ...provider.history]) groups.set(JSON.stringify([row.scope, row.unit]), row);
-    for (const { scope, unit } of groups.values()) body.append(chart(doc, provider.history, scope, unit));
+    for (const row of [...totals, ...history]) groups.set(JSON.stringify([row.scope, row.unit]), row);
+    for (const { scope, unit } of groups.values()) body.append(chart(doc, history, scope, unit));
   } else {
     body.append(el(doc, 'p', { class: 'usage-status' }, '无余额接口'));
     body.append(el(doc, 'p', { class: 'usage-note' }, provider.balance_note

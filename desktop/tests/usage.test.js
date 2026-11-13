@@ -331,6 +331,105 @@ test('T06: shared team totals are displayed once and different units have separa
   window.close();
 });
 
+test('Tavily account credits own the balance while identical key credits do not create another pool', async () => {
+  const { window, root } = setup();
+  const shared = report({ scope: 'account' });
+  const data = provider({ current: [report(), shared], accounts: [account()], totals: [
+    { scope: 'key', unit: 'credits', key_count: 1, remaining: 600, limit: 1000, message: '' },
+    { scope: 'account', unit: 'credits', key_count: 1, remaining: 600, limit: 1000, message: '' },
+  ], history: [point(), point({ remaining: 600, fetched_at: '2026-11-12T00:00:00Z' }),
+    point({ scope: 'account' }), point({ scope: 'account', remaining: 600, fetched_at: '2026-11-12T00:00:00Z' })],
+  pace: [pace(), pace({ scope: 'account' })] });
+  const before = JSON.stringify(data);
+  const mounted = await mountUsage(root, { usageView: async () => view([data]) });
+  const row = card(root);
+  assert.equal(row.querySelector('.provider-meter .meter-value').textContent, '60%');
+  assert.equal(row.querySelector('.account-summary .meter-value').textContent, '60%');
+  const key = row.querySelector('.key-row');
+  assert.equal(key.querySelector('.key-kind').textContent, '共享账户余额 · 正常');
+  assert.equal(key.querySelector('.meter, .provider-note'), null);
+  assert.doesNotMatch(key.textContent, /剩余|上限|已用/);
+  assert.deepEqual([...row.querySelectorAll('[data-total]')].map(node => node.textContent),
+    ['账户额度：剩余 600 / 上限 1,000 credits']);
+  assert.equal(row.querySelectorAll('.usage-pace').length, 1);
+  assert.deepEqual([...row.querySelectorAll('figcaption')].map(node => node.textContent),
+    ['近 30 天剩余走势 · 账户 · credits']);
+  assert.equal(row.querySelectorAll('.usage-chart circle').length, 2);
+  assert.equal(JSON.stringify(data), before, 'presentation must preserve every public report and total');
+  mounted.dispose();
+  window.close();
+});
+
+test('Tavily keeps distinct key limits and usage as details of the shared account balance, including zero', async () => {
+  const { window, root } = setup();
+  const reports = [report({ remaining: 250, limit: 300, used: 50 }), report({ scope: 'account' }),
+    report({ key_fingerprint: 'fp-two', remaining: 0, limit: 0, used: 0 }),
+    report({ key_fingerprint: 'fp-two', scope: 'account' }),
+    report({ key_fingerprint: 'fp-three', remaining: 100, limit: 500 }),
+    report({ key_fingerprint: 'fp-three', scope: 'account' })];
+  const mounted = await mountUsage(root, { usageView: async () => view([provider({ current: reports,
+    accounts: [account({ keys: [0, 2, 4].map(index => ({ key_fingerprint: reports[index].key_fingerprint,
+      report: reports[index] })) })] })]) });
+  const keys = [...card(root).querySelectorAll('.key-row')];
+  assert.deepEqual(keys.map(node => node.querySelector('.provider-note').textContent),
+    ['Key 上限 300 credits；Key 已用 50 credits', 'Key 上限 0 credits；Key 已用 0 credits',
+      'Key 上限 500 credits；Key 已用 400 credits']);
+  assert.ok(keys.every(node => node.querySelector('.meter') === null));
+  assert.ok(keys.every(node => node.querySelector('.key-kind').textContent === '共享账户余额 · 正常'));
+  mounted.dispose();
+  window.close();
+});
+
+test('Tavily only merges successful credit reports for the same key with a known account quota', async () => {
+  const cases = [
+    [report({ scope: 'account', key_fingerprint: 'fp-other' })],
+    [report({ scope: 'account', remaining: null, limit: null, used: null })],
+    [report({ scope: 'account', status: 'error' })],
+    [report({ scope: 'account', unit: 'usd' })],
+    [report({ scope: 'account' }), 'exa'],
+  ];
+  for (const [shared, id = 'tavily'] of cases) {
+    const { window, root } = setup();
+    const mounted = await mountUsage(root, { usageView: async () => view([provider({ id,
+      current: [report(), shared] })]) });
+    assert.equal(card(root, id).querySelector('.key-row .meter-value').textContent, '60%');
+    assert.equal(card(root, id).querySelector('.key-kind').textContent, 'Key额度 · 正常');
+    assert.match(card(root, id).querySelector('[data-total]').textContent, /Key额度/);
+    mounted.dispose();
+    window.close();
+  }
+});
+
+test('Tavily preserves unpaired key balances, trends and failed reports beside shared credits', async () => {
+  const { window, root } = setup();
+  const keyOnly = report({ key_fingerprint: 'fp-key-only', remaining: 100, limit: 500 });
+  const failed = report({ key_fingerprint: 'fp-failed', status: 'error', remaining: null, limit: null,
+    message: 'Key 查询失败。' });
+  const mounted = await mountUsage(root, { usageView: async () => view([provider({
+    current: [report(), report({ scope: 'account' }), keyOnly, failed,
+      report({ key_fingerprint: 'fp-failed', scope: 'account' })],
+    accounts: [account({ keys: [report(), keyOnly, failed].map(row => ({
+      key_fingerprint: row.key_fingerprint, report: row,
+    })) })],
+    history: [point(), point({ scope: 'account' }),
+      point({ key_fingerprint: 'fp-key-only' }),
+      point({ key_fingerprint: 'fp-key-only', remaining: 100, fetched_at: '2026-11-12T00:00:00Z' })],
+    pace: [pace(), pace({ scope: 'account' }), pace({ key_fingerprint: 'fp-key-only' })],
+  })]) });
+  const row = card(root);
+  const keys = [...row.querySelectorAll('.key-row')];
+  assert.equal(keys[0].querySelector('.meter'), null);
+  assert.equal(keys[1].querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '20');
+  assert.equal(keys[2].querySelector('.key-kind').textContent, 'Key额度 · 查询失败');
+  assert.match(row.textContent, /Key 查询失败。/);
+  assert.equal(row.querySelectorAll('.usage-pace').length, 2);
+  const keyChart = [...row.querySelectorAll('.usage-chart')].find(node => /· Key · credits/.test(node.textContent));
+  assert.equal(keyChart.querySelectorAll('circle').length, 2);
+  assert.ok([...keyChart.querySelectorAll('circle title')].every(node => node.textContent.startsWith('fp-key-only：')));
+  mounted.dispose();
+  window.close();
+});
+
 test('T06: initial read, refresh all and single-card refresh use the API and preserve unrelated cards', async () => {
   const { window, root } = setup();
   const calls = [];

@@ -145,6 +145,29 @@ async fn oauth_login_cancel(
     offload(move || manager.oauth_login_cancel(id), "oauth_login_cancel_failed").await
 }
 
+/// Fixed external dashboards have no management capability and return no credential to JS.
+#[tauri::command]
+async fn dashboard_login(
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, Arc<DesktopManager>>,
+    logins: tauri::State<'_, Arc<crate::dashboard_login::DashboardLogins>>,
+    provider: String,
+) -> Result<bool, String> {
+    let manager = manager.inner().clone();
+    let logins = logins.inner().clone();
+    offload(move || logins.login(app, manager, &provider), "dashboard_login_failed").await
+}
+
+#[tauri::command]
+async fn dashboard_login_cancel(
+    app: tauri::AppHandle,
+    logins: tauri::State<'_, Arc<crate::dashboard_login::DashboardLogins>>,
+    provider: String,
+) -> Result<(), String> {
+    let logins = logins.inner().clone();
+    offload(move || logins.cancel(&app, &provider), "dashboard_login_cancel_failed").await
+}
+
 #[tauri::command]
 async fn skill_plan(
     manager: tauri::State<'_, Arc<DesktopManager>>,
@@ -671,6 +694,13 @@ async fn skill_remove(
     .await
 }
 
+fn manager_shutdown_event(label: &str, event: &tauri::WindowEvent) -> bool {
+    label == "main" && matches!(
+        event,
+        tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+    )
+}
+
 /// Successor tickets add their own modules and typed commands here; no generic execution bridge.
 pub fn run() {
     let mut environment = RuntimeEnvironment::system();
@@ -731,6 +761,7 @@ pub fn run() {
     let manager = DesktopManager::with_user_path_store(environment, path_store);
     tauri::Builder::default()
         .manage(Arc::new(manager))
+        .manage(Arc::new(crate::dashboard_login::DashboardLogins::default()))
         .setup(|app| {
             let bundled = app
                 .path()
@@ -752,6 +783,8 @@ pub fn run() {
             oauth_login_start,
             oauth_login_poll,
             oauth_login_cancel,
+            dashboard_login,
+            dashboard_login_cancel,
             skill_plan,
             skill_install,
             install_plan,
@@ -793,13 +826,25 @@ pub fn run() {
             scrape_memory_reset
         ])
         .on_window_event(|window, event| {
-            if matches!(
-                event,
-                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-            ) {
+            if manager_shutdown_event(window.label(), event) {
+                window.state::<Arc<crate::dashboard_login::DashboardLogins>>().shutdown();
                 window.state::<Arc<DesktopManager>>().shutdown();
             }
         })
         .run(tauri::generate_context!())
         .expect("desktop runtime failed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::manager_shutdown_event;
+
+    #[test]
+    fn dashboard_window_close_does_not_shutdown_manager() {
+        let destroyed = tauri::WindowEvent::Destroyed;
+        assert!(manager_shutdown_event("main", &destroyed));
+        assert!(!manager_shutdown_event("dashboard-login-brave", &destroyed));
+        assert!(!manager_shutdown_event("dashboard-login-exa", &destroyed));
+        assert!(!manager_shutdown_event("main", &tauri::WindowEvent::Focused(false)));
+    }
 }

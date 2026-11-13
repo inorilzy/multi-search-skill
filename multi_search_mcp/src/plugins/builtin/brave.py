@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .. import usage_store
 from ..base import AuthMethod, BalanceContext, BalanceReport, ProviderPlugin
 from ..quota_record import quota_entry, quota_report
+from . import brave_dashboard
 
 # Prepaid Search plan (api-dashboard.search.brave.com/documentation/pricing, 2026-11):
 # $5 per 1,000 requests, with $5 of free credit every month. Its responses carry a
@@ -54,10 +55,40 @@ def credit_fields(per_second: int | None, resets_at: str | None, *, extra_calls:
 
 
 def balance_brave(credential: str, ctx: BalanceContext) -> BalanceReport:
-    """Read the quota recorded by the last successful search; never sends a request.
+    """Prefer real Search-plan usage; without a usable login read the local quota."""
+    reference = credential if credential.startswith("oauth-login:brave_dashboard:") else None
+    cookie = brave_dashboard.cookie_header(reference)
+    reason = "dashboard 登录已失效" if reference and not cookie else ""
+    if cookie:
+        try:
+            data = brave_dashboard.fetch_dashboard(cookie, ctx)
+            plan = next((row for row in data["plans"] if row["name"] == "Search"), None)
+            if plan is None or any(plan[field] is None for field in ("credit", "cost", "requests")):
+                raise brave_dashboard.DashboardUnavailable("no Search usage")
+            now = datetime.now(timezone.utc)
+            reset = (now.replace(day=28) + timedelta(days=4)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            return BalanceReport(
+                provider="brave", status="ok", scope="account", unit="usd", period="month",
+                limit=plan["credit"], used=plan["cost"],
+                remaining=round(max(0, plan["credit"] - plan["cost"]), 6),
+                resets_at=reset.isoformat(),
+                message=f"dashboard · Search 本月 {plan['requests']:g} 次 · 剩余免费额度",
+            )
+        except brave_dashboard.DashboardUnavailable as exc:
+            reason = "dashboard 登录已失效" if str(exc) == "logged out" else "dashboard 暂不可用"
+    if reference:
+        keys = ctx.credentials.get("brave", [])
+        keys = [keys] if isinstance(keys, str) else keys if isinstance(keys, list) else []
+        observations = [_local_balance(key) for key in keys if isinstance(key, str) and key]
+        report = max(observations, key=lambda row: (row.status == "ok", row.fetched_at),
+                     default=_local_balance(""))
+    else:
+        report = _local_balance(credential)
+    return replace(report, message=f"{reason} · {report.message}") if reason else report
 
-    A free-credit plan is recomputed now, so calls since that search count too.
-    """
+
+def _local_balance(credential: str) -> BalanceReport:
+    """Recompute a free-credit estimate without making a billable search call."""
     report = quota_report("brave", credential, unit="requests", period="month")
     entry = quota_entry("brave", credential)
     fields = entry["report"] if entry else {}
@@ -94,7 +125,10 @@ PLUGIN = ProviderPlugin(
     search_specs=search_specs,
     auth_methods=(
         AuthMethod("api", "API Key", "brave"),
+        AuthMethod("web", "登录控制台（查用量）", "brave_dashboard", "balance_only"),
     ),
     balance=balance_brave,
-    balance_note='搜索一次后显示本月配额；免费额度按本机调用次数估算。',
+    balance_credential="brave_dashboard",
+    balance_fallback_credential="brave",
+    balance_note='登录控制台后读取真实用量；登录不可用时显示搜索记录与本机估算。',
 )

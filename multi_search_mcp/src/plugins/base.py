@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class AuthMethod:
-    type: Literal["api", "oauth"]
+    type: Literal["api", "oauth", "web"]
     label: str
     credential: str
     purpose: Literal["search_key", "balance_only"] = "search_key"
@@ -55,6 +55,7 @@ class BalanceContext:
     timeout: float = 10.0
     deadline: float | None = None
     http: Callable[..., Any] = field(default_factory=lambda: support_http.urlopen_retry)
+    credentials: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def remaining_timeout(self) -> float:
         if self.deadline is None:
@@ -100,6 +101,8 @@ class ProviderPlugin:
     balance_note: str = ""
     balance_ttl_seconds: int = 300
     balance_credential: str | None = None
+    # Prefer a dashboard login; without one, a passive search-key observation may still exist.
+    balance_fallback_credential: str | None = None
     search_specs: Callable[[], tuple[ProviderSpec, ...]] | None = None
     scrape_backends: tuple[ScrapeBackendSpec, ...] = ()
 

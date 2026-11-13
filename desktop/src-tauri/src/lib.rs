@@ -5,6 +5,8 @@ pub(crate) mod config_db;
 pub mod cookie;
 pub mod credential;
 pub mod credential_commands;
+#[cfg(any(feature = "native-window", test))]
+mod dashboard_login;
 pub mod diagnostics;
 mod environment;
 mod errors;

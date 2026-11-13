@@ -288,17 +288,17 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 `multi-search balance [--provider <id>]... [--format json|text] [--refresh]`
 
 - 默认输出 JSON（`schema_version` 为 1）；`--format text` 按服务商逐行显示。`--provider` 可重复，只查询指定插件。
-- 每个已配置的 Key 各出一条报告；没有配置凭据时报告状态为 `needs_credential`；插件没有余额能力时状态为 `unsupported`，并给出原因。
+- 按插件的余额凭据查询；控制台登录的账户额度只查询一次，搜索 Key 的额度分别查询。没有配置凭据时报告状态为 `needs_credential`；插件没有余额能力时状态为 `unsupported`，并给出原因。
 - 成功结果按插件声明的 TTL 缓存（默认 300 秒，Tavily 为 600 秒，避免触及接口 10 次/10 分钟的限额）；`--refresh` 跳过缓存。一家服务商出错不影响其他家。
 - 命令退出码为 0，除非参数非法或配置无法读取。输出、缓存和日志不出现明文 Key、令牌或邮箱。
 
 | 服务商 | 插件 id | 余额支持 | 来源与说明 |
 |---|---|---|---|
-| Brave Search | `brave` | 支持（被动） | 读取上次成功搜索响应中的本月配额；没有记录时提示「搜索一次后显示」，不主动发请求。 |
+| Brave Search | `brave` | 支持 | 登录控制台后读取 Search 套餐的本月真实费用和请求数；登录不可用时退回搜索响应记录，免费额度明确标注「本机估算」。 |
 | Parallel | `parallel` | 支持 | Account API 的账户美元余额；需先用 `login parallel --method oauth` 设备码登录（`parallel_account`），`will_invoice=true` 时注明后付费。 |
 | 百度千帆 | `baidu` | 不支持 | 搜索 Key 无余额接口，免费额度无查询接口，现金余额需 AK/SK。 |
-| Tavily | `tavily` | 支持 | Key 级与账户级 credits；接口限 10 次/10 分钟，缓存 600 秒。 |
-| Exa | `exa` | 支持 | Team Management 团队美元余额；需要 `exa_admin` 管理 Key（`EXA_SERVICE_KEY`），并联系 Exa 开通 Team Management API。 |
+| Tavily | `tavily` | 支持 | Key 级与账户级 credits；桌面端以共享账户余额展示，Key 上仅保留独立限制与用量；接口限 10 次/10 分钟，缓存 600 秒。 |
+| Exa | `exa` | 支持 | 网页登录后读取 dashboard 团队美元余额；也支持开通 Team Management API 后配置的 `exa_admin` 管理 Key（`EXA_SERVICE_KEY`），管理 Key 优先。 |
 | SerpAPI | `serpapi` | 支持 | 每月搜索次数、剩余次数与套餐重置日期。 |
 | Firecrawl | `firecrawl` | 支持 | 团队 credits（剩余与套餐上限）及账单周期结束时间。 |
 | V2EX / SOV2EX | `sov2ex` | 不支持 | 匿名 V2EX / SOV2EX 搜索无配额查询接口。 |
@@ -307,6 +307,8 @@ python -m multi_search_mcp.src.state.mark_exhausted <jina-key>
 | Stack Exchange | `stackexchange` | 支持（被动） | 读取上次成功搜索记录的每日配额；没有记录时提示「搜索一次后显示」。 |
 | Twitter / X | `twitter` | 不支持 | 仅支持 Cookie 登录，搜索无余额查询接口。 |
 | Jina AI | `jina` | 支持 | `wallet.total_balance`，单位 tokens；来自 Jina dashboard 的非公开接口，可能随时变化。 |
+
+桌面端在 Brave / Exa 的服务商详情里提供「登录控制台」：在独立登录窗口完成登录后，仅原生后台读取该站点的 Cookie，保存到仅当前用户可读写的 `~/.multi-search/oauth.json`，与搜索 Key 分开。之后 CLI 也能直接查询，无需保持登录窗口打开；服务端拒绝登录凭据时需重新登录。会话 Cookie 没有过期时间，不代表服务端在关窗时必然撤销会话。两个 dashboard 来源都是非公开接口，改版时可能暂时不可用。也可分别用进程环境变量 `BRAVE_DASHBOARD_COOKIE` / `EXA_DASHBOARD_COOKIE` 覆盖登录凭据；不要将 Cookie 放进命令参数、日志或版本控制。
 
 ### 用量
 

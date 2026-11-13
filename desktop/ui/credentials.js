@@ -3,6 +3,7 @@ import { showError } from './api.js';
 import { SEARCH_SOURCES } from './catalog.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
 import { mountOAuthLogin } from './oauth-login.js';
+import { mountDashboardLogin } from './dashboard-login.js';
 
 // Search sources come from the catalog generated from Python core metadata (one source of truth for
 // the CLI and this UI). Scraper-only providers also live there: they have credentials but no search
@@ -85,9 +86,9 @@ export async function mountCredentials(root, api, options = {}) {
 // edited with the same credential editor so saving/removing uses the shared keys-file commands.
 async function mountExaAdminEditor(root, api) {
   const doc = root.ownerDocument;
-  const section = doc.createElement('section');
+  const section = doc.createElement('details');
   section.className = 'exa-admin-key';
-  section.innerHTML = `<h3>管理 Key（仅用于查余额）</h3><p class="credential-note">Exa 的 Team Management Service Key 只用于查询余额，不会用于搜索。没有该 Key 时余额会显示“需要凭据”。</p><div data-exa-admin-body></div>`;
+  section.innerHTML = `<summary>管理 Key（仅用于查余额）</summary><p class="credential-note">也可登录控制台查询余额。已有 Team Management Service Key 时可在此填写，优先使用管理 Key。</p><div data-exa-admin-body></div>`;
   root.append(section);
   return mountCredentialBody(section.querySelector('[data-exa-admin-body]'), api, { source: 'exa_admin' });
 }
@@ -512,6 +513,11 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     root.prepend(oauthSlot);
     extraDisposers.push(oauthBlock);
   }
+  if (!accountEditor) {
+    const dashboardSlot = root.ownerDocument.createElement('div');
+    const dashboard = await mountDashboardLogin(dashboardSlot, api, { source, onComplete: onLogin });
+    if (!dashboardSlot.hidden) { root.prepend(dashboardSlot); extraDisposers.push(dashboard); }
+  }
   return {
     dispose() {
       for (const extra of extraDisposers) extra.dispose();
@@ -549,7 +555,7 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
   const tools = root.querySelector('[data-account-tools]');
   let disposed = false, busy = false, generation = 0;
   let editors = [];
-  let oauth;
+  let oauth, dashboard;
   let editingDefault = false;
   const addAdmin = el(doc, 'button', { type: 'button', 'data-account-action': 'add-admin', hidden: '' }, '添加 Exa 管理 Key');
   tools.append(addAdmin);
@@ -715,7 +721,7 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
       editors.push(editor);
       for (const [entry, fingerprint] of Object.entries(account.balance_credentials)) {
         const credential = el(doc, 'div', { class: 'key-row' });
-        const name = entry === 'parallel_account' ? 'Parallel 账户令牌' : entry === 'exa_admin' ? 'Exa 管理 Key' : entry;
+        const name = entry === 'parallel_account' ? 'Parallel 账户令牌' : entry === 'exa_admin' ? 'Exa 余额凭据' : entry === 'brave_dashboard' ? 'Brave 控制台登录' : entry;
         const label = el(doc, 'div', { class: 'key-identity' });
         label.append(el(doc, 'strong', { class: 'key-kind' }, `${name} · 仅查余额`), el(doc, 'p', { class: 'key-fingerprint' }, String(fingerprint)));
         credential.append(label); keys.append(credential);
@@ -732,9 +738,13 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
   }
   try { await renderAccounts(); }
   catch (error) { if (!disposed) showError(errorSlot, error, '账号读取失败，请重新展开服务商。'); }
-  if (!disposed) oauth = await mountOAuthLogin(root.querySelector('[data-provider-login]'), api, {
-    source, label: sourceEntry(source).label,
-    onComplete: async () => { if (!disposed) { await renderAccounts(); await onChange?.(); onLogin?.(); } },
-  });
-  return { dispose() { disposed = true; generation += 1; oauth?.dispose(); for (const editor of editors) editor.dispose(); disposePage(root); root.replaceChildren(); } };
+  if (!disposed) {
+    const loginRoot = root.querySelector('[data-provider-login]');
+    const oauthSlot = el(doc, 'div'), dashboardSlot = el(doc, 'div');
+    loginRoot.append(oauthSlot, dashboardSlot);
+    const onComplete = async () => { if (!disposed) { await renderAccounts(); await onChange?.(); onLogin?.(); } };
+    oauth = await mountOAuthLogin(oauthSlot, api, { source, label: sourceEntry(source).label, onComplete });
+    dashboard = await mountDashboardLogin(dashboardSlot, api, { source, onComplete });
+  }
+  return { dispose() { disposed = true; generation += 1; oauth?.dispose(); dashboard?.dispose(); for (const editor of editors) editor.dispose(); disposePage(root); root.replaceChildren(); } };
 }

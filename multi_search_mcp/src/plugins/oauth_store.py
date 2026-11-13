@@ -7,6 +7,7 @@ callers must repair or remove it explicitly.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -138,17 +139,25 @@ def balance_credential_ref(entry: str, record: dict[str, Any]) -> str:
 def balance_credentials(path: str | Path | None = None) -> dict[str, str]:
     """Stable references for logged-in balance credentials, keyed by credential entry.
 
-    Only entries that look like account token records are returned; cached
-    client registrations have no ``access_token`` and are ignored. Callers never
-    receive the token itself: the balance adapter reads the record directly.
+    Account tokens and browser-session records contribute references; cached
+    client registrations are ignored. Callers never receive the secret itself:
+    the balance adapter reads the record directly.
     """
     credentials: dict[str, str] = {}
     for entry, value in read_oauth_file(path).items():
         if not isinstance(value, dict):
             continue
-        token = value.get("access_token")
-        if isinstance(token, str) and token:
+        tokens = (value.get("access_token"), value.get("cookie_header"))
+        if any(isinstance(token, str) and token for token in tokens):
             credentials[entry] = balance_credential_ref(entry, value)
+    # An explicit file argument is a file-only read (account operations rely on
+    # this). The process override never becomes a search key or a stored token.
+    if path is None:
+        for env, entry in (("EXA_DASHBOARD_COOKIE", "exa_admin"), ("BRAVE_DASHBOARD_COOKIE", "brave_dashboard")):
+            cookie = os.environ.get(env)
+            if cookie:
+                login_id = hashlib.sha256(cookie.encode()).hexdigest()[:16]
+                credentials[entry] = balance_credential_ref(entry, {"login_id": login_id})
     return credentials
 
 
@@ -156,7 +165,7 @@ def secret_values(path: str | Path | None = None) -> list[str]:
     """Every token-like string stored in the file, for redaction of messages."""
     secret_keys = {
         "access_token", "refresh_token", "client_id", "token", "token_secret",
-        "client_secret", "device_code",
+        "client_secret", "device_code", "cookie_header",
     }
     values: list[str] = []
 
@@ -165,6 +174,9 @@ def secret_values(path: str | Path | None = None) -> list[str]:
             for key, item in value.items():
                 if key in secret_keys and isinstance(item, str) and len(item) >= 4:
                     values.append(item)
+                    if key == "cookie_header":
+                        values.extend(part.partition("=")[2].strip() for part in item.split(";")
+                                      if len(part.partition("=")[2].strip()) >= 4)
                 elif isinstance(item, (dict, list, tuple)):
                     visit(item)
         elif isinstance(value, (list, tuple)):
@@ -172,4 +184,7 @@ def secret_values(path: str | Path | None = None) -> list[str]:
                 visit(item)
 
     visit(read_oauth_file(path))
-    return values
+    if path is None:
+        for name in ("BRAVE_DASHBOARD_COOKIE", "EXA_DASHBOARD_COOKIE"):
+            visit({"cookie_header": os.environ.get(name)})
+    return list(dict.fromkeys(values))

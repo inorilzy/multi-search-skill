@@ -34,6 +34,8 @@ export interface CommandContracts {
   oauth_login_start: { args: { provider: string }; result: number };
   oauth_login_poll: { args: { id: number }; result: T.OAuthLoginStatus };
   oauth_login_cancel: { args: { id: number }; result: T.OAuthLoginStatus };
+  dashboard_login: { args: { provider: string }; result: boolean };
+  dashboard_login_cancel: { args: { provider: string }; result: null };
 }
 
 export interface ContractMap {

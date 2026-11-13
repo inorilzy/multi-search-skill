@@ -52,6 +52,7 @@ fn collect_values(environment: &RuntimeEnvironment) -> Vec<String> {
     let files = crate::keys_file::path(&environment.variables)
         .into_iter()
         .chain(home.as_ref().map(|home| home.join(crate::keys_file::LEGACY_FILE_NAME)))
+        .chain(home.as_ref().map(|home| home.join(".multi-search").join("oauth.json")))
         .chain(crate::cookie::managed_path(environment));
     for file in files {
         if let Ok(text) = std::fs::read_to_string(file) {

@@ -24,6 +24,8 @@ const ERROR_MESSAGES = {
   oauth_login_start_failed: '启动浏览器登录失败，请检查 CLI 后重试。',
   oauth_login_poll_failed: '登录状态读取失败，请重试。',
   oauth_login_cancel_failed: '取消登录失败，请重试。',
+  dashboard_login_failed: '控制台登录失败，请重试。',
+  dashboard_login_cancel_failed: '取消控制台登录失败，请关闭登录窗口。',
   skill_plan_failed: 'Skill 预览失败，请重试。',
   skill_install_failed: 'Skill 安装工作器失败，请重新预览。',
   install_plan_failed: '安装计划检查失败，请重新检查。',
@@ -204,6 +206,15 @@ export function managementApi(invoke) {
     },
     oauthLoginPoll: id => call('oauth_login_poll', { id }, 'OAuthLoginStatus'),
     oauthLoginCancel: id => call('oauth_login_cancel', { id }, 'OAuthLoginStatus'),
+    dashboardLogin: async provider => {
+      if (typeof provider !== 'string' || !provider.trim()) {
+        throw new ApiError(new TypeError('dashboard login requires a provider id'), 'INVALID_ARGUMENT');
+      }
+      const result = await call('dashboard_login', { provider: provider.trim() });
+      if (typeof result !== 'boolean') throw new ApiError(new TypeError('dashboard login expected a boolean'), 'INVALID_PAYLOAD');
+      return result;
+    },
+    dashboardLoginCancel: provider => call('dashboard_login_cancel', { provider }),
     skillPlan: (host, scope, project) => call('skill_plan', { host, scope, project }, 'SkillPlan'),
     skillInstall: (host, scope, project) => call('skill_install', { host, scope, project }, 'SkillInstall'),
     skillStatus: (host, scope, project) => call('skill_status', { host, scope, project }, 'SkillStatus'),

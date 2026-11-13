@@ -145,6 +145,13 @@ class BalanceCache:
             reports.append(report)
         return reports or None
 
+    def invalidate(self, plugin_id: str, fingerprint: str | None) -> None:
+        """Forget a rejected login observation rather than replaying it offline."""
+        key = cache_key(plugin_id, fingerprint)
+        if key in self._load():
+            del self._load()[key]
+            self._dirty = True
+
     def put(
         self,
         plugin_id: str,

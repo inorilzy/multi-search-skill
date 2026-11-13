@@ -161,7 +161,7 @@ def _total(current: list[dict], history: list[dict], now: datetime, *, missing: 
             start = _cycle_start(report, now)
             points = [row["remaining"] for row in history
                       if row["scope"] == report["scope"] and row["unit"] == report["unit"]
-                      and (shared or row["key_fingerprint"] == report["key_fingerprint"])
+                      and row["key_fingerprint"] == report["key_fingerprint"]
                       and start <= _moment(row["fetched_at"]) <= now and row["remaining"] is not None]
             if not points:
                 break
@@ -244,9 +244,7 @@ def _cached_providers(plugins, key_map: dict, now: datetime, secrets: list[str])
             reports = [balance._unsupported_report(plugin, now, secrets)]
         else:
             entry = plugin.balance_credential
-            credentials = balance._credential_values(key_map.get(entry or plugin.key_provider))
-            if not credentials and not entry:
-                credentials = [""]
+            credentials = balance._balance_credentials(plugin, key_map)
             if not credentials:
                 reports = [balance._needs_credential_report(plugin, entry, now)]
             for credential in credentials:

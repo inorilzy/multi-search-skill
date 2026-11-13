@@ -100,6 +100,14 @@ def _credential_values(value: Any) -> list[str]:
     return values
 
 
+def _balance_credentials(plugin: ProviderPlugin, key_map: dict) -> list[str]:
+    entry = plugin.balance_credential
+    values = _credential_values(key_map.get(entry or plugin.key_provider))
+    if not values and plugin.balance_fallback_credential:
+        values = _credential_values(key_map.get(plugin.balance_fallback_credential))
+    return values or ([""] if not entry else [])
+
+
 def _default_builtin_plugins() -> tuple[ProviderPlugin, ...]:
     """Read the registry at call time so registry or module patches both apply."""
     return registry.builtin_plugins()
@@ -210,10 +218,10 @@ def _timeout_report(plugin: ProviderPlugin, credential: str, timeout: float) -> 
     )
 
 
-def _run_job(job: _Job, deadline: float, known_secrets: Iterable[str]) -> list[BalanceReport]:
+def _run_job(job: _Job, deadline: float, known_secrets: Iterable[str], credentials: dict | None = None) -> list[BalanceReport]:
     if job.plugin.balance is None:  # pragma: no cover - jobs are only built for callbacks
         return [_unsupported_report(job.plugin, None)]
-    context = BalanceContext(timeout=BALANCE_TIMEOUT_SECONDS, deadline=deadline)
+    context = BalanceContext(timeout=BALANCE_TIMEOUT_SECONDS, deadline=deadline, credentials=credentials or {})
     try:
         reports = job.plugin.balance(job.credential, context)
         return _normalize_reports(job.plugin, reports, job.credential, known_secrets)
@@ -237,17 +245,8 @@ def _collect_reports(
         if plugin.balance is None:
             reports[plugin.id] = [[_unsupported_report(plugin, now, known_secrets)]]
             continue
-        entry = plugin.balance_credential
-        if entry:
-            credentials = _credential_values(key_map.get(entry))
-            missing_entry = entry
-        else:
-            # An empty balance_credential marks an optional credential: use the
-            # plugin's search key when configured, otherwise query anonymously.
-            credentials = _credential_values(key_map.get(plugin.key_provider)) if plugin.key_provider else []
-            missing_entry = None
-            if not credentials:
-                credentials = [""]
+        missing_entry = plugin.balance_credential or None
+        credentials = _balance_credentials(plugin, key_map)
         if not credentials:
             reports[plugin.id] = [[_needs_credential_report(plugin, missing_entry, now)]]
             continue
@@ -278,11 +277,14 @@ def _collect_reports(
 
     def store(job: _Job, job_reports: list[BalanceReport]) -> None:
         reports[job.plugin.id][job.slot] = job_reports
-        # Passive adapters only read old observations; record_quota owns history.
-        if job.plugin.id not in {"brave", "stackexchange"}:
-            for report in job_reports:
-                if report.status == "ok":
-                    usage_store.append_balance(report)
+        # Search headers own passive history; a Brave dashboard report is a new
+        # account observation and must survive an offline usage view too.
+        for report in job_reports:
+            passive = job.plugin.id == "stackexchange" or (job.plugin.id == "brave" and report.scope != "account")
+            if report.status == "ok" and not passive:
+                usage_store.append_balance(report)
+        if job.credential.startswith("oauth-login:"):
+            cache.invalidate(job.plugin.id, key_fingerprint(job.credential))
         cache.put(
             job.plugin.id,
             job_reports,
@@ -297,7 +299,7 @@ def _collect_reports(
         while next_index < len(jobs) and len(active) < BALANCE_CONCURRENCY:
             job = jobs[next_index]
             future = _POOL.submit_before(
-                deadline, _run_job, job, deadline, known_secrets,
+                deadline, _run_job, job, deadline, known_secrets, key_map,
             )
             if future is None:
                 break

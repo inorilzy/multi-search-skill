@@ -423,7 +423,8 @@ fn ipc_commands_arguments_and_capability_match() {
         let parameters = tail.split(") ->").next().unwrap();
         let fields: BTreeSet<String> = parameters.lines().filter_map(|line| {
             let (name, ty) = line.trim().split_once(':')?;
-            if ty.contains("tauri::State") { return None; }
+            // Tauri injects both managed state and the app handle; neither is an IPC argument.
+            if ty.contains("tauri::State") || ty.trim().trim_end_matches(',') == "tauri::AppHandle" { return None; }
             let mut chunks = name.split('_');
             let mut camel = chunks.next().unwrap().to_string();
             for chunk in chunks { let mut chars = chunk.chars(); if let Some(c) = chars.next() { camel.extend(c.to_uppercase()); camel.extend(chars); } }
