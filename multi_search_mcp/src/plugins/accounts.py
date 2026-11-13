@@ -125,6 +125,8 @@ def _view(data: dict, plugin: ProviderPlugin, credentials: dict[str, list[str]])
     if not isinstance(saved, list):
         raise KeysError("invalid provider accounts list")
     available = credentials.get(plugin.key_provider, [])
+    rotating = {method.credential for method in plugin.auth_methods
+                if method.type == "oauth" and method.purpose == "balance_only"}
     used_keys: set[str] = set()
     used_balance: set[tuple[str, str]] = set()
     ids: set[str] = set()
@@ -147,8 +149,13 @@ def _view(data: dict, plugin: ProviderPlugin, credentials: dict[str, list[str]])
                 used_keys.add(fingerprint)
         row["balance_credentials"] = {}
         for entry, fingerprint in raw.get("balance_credentials", {}).items():
+            current = credentials.get(entry, [])
+            # An OAuth access token is replaced on every refresh, so its fingerprint goes
+            # stale; the account owns the entry itself (there is one token per entry).
+            if entry in rotating and isinstance(fingerprint, str) and len(current) == 1:
+                fingerprint = current[0]
             if (entry != plugin.key_provider and isinstance(fingerprint, str)
-                    and fingerprint in credentials.get(entry, [])
+                    and fingerprint in current
                     and (entry, fingerprint) not in used_balance):
                 row["balance_credentials"][entry] = fingerprint
                 used_balance.add((entry, fingerprint))

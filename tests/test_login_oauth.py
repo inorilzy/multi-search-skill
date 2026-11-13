@@ -31,6 +31,22 @@ PARALLEL_DEVICE_URL = "https://platform.parallel.ai/getServiceKeys/device/code"
 PARALLEL_TOKEN_URL = "https://platform.parallel.ai/getServiceKeys/token"
 PARALLEL_REVOKE_URL = "https://platform.parallel.ai/getServiceKeys/token/revoke"
 PARALLEL_BALANCE_URL = "https://api.parallel.ai/account/service/v1/balance"
+PARALLEL_APPS_URL = "https://api.parallel.ai/account/service/v1/apps"
+PARALLEL_KEYS_URL = "https://api.parallel.ai/account/service/v1/apps/app-1/keys"
+PARALLEL_SCOPE = "balance:read apps:read apps:create keys:create"
+PARALLEL_CREATED_KEY = "parallel-created-search-key"
+
+
+def parallel_service_routes(*, refused=False):
+    """Account API fakes: no ``multi-search`` app yet, so one is created, then a key."""
+    if refused:
+        denied = lambda request: http_error(403, {"detail": "missing scope"}, url=request.full_url)
+        return {PARALLEL_APPS_URL: denied}
+    return {
+        PARALLEL_APPS_URL: lambda request: {"apps": []} if request.get_method() == "GET" else {"app_id": "app-1"},
+        PARALLEL_KEYS_URL: {"raw_api_key": PARALLEL_CREATED_KEY, "created_by_user_email": "owner@example.test",
+                            "api_key_id": "key-1", "app_id": "app-1"},
+    }
 
 
 class FakeResponse:
@@ -445,6 +461,7 @@ class FirecrawlOAuthTests(OAuthTestCase):
                 "refresh_token": "refresh-text-secret",
                 "expires_in": 600,
             },
+            **parallel_service_routes(),
         }
         http = FakeHTTP(routes)
 
@@ -459,6 +476,7 @@ class FirecrawlOAuthTests(OAuthTestCase):
         self.assertIn("登录完成", stdout)
         self.assert_no_secret("access-text-secret", stdout, stderr)
         self.assert_no_secret("refresh-text-secret", stdout, stderr)
+        self.assert_no_secret(PARALLEL_CREATED_KEY, stdout, stderr)
 
 
 class ParallelOAuthTests(OAuthTestCase):
@@ -474,6 +492,7 @@ class ParallelOAuthTests(OAuthTestCase):
                 "interval": 1,
             },
             PARALLEL_TOKEN_URL: list(token_responses),
+            **parallel_service_routes(),
         }
 
     def test_parallel_device_login_polls_pending_and_slow_down_then_saves_tokens(self):
@@ -496,8 +515,9 @@ class ParallelOAuthTests(OAuthTestCase):
         self.assertEqual(set(events[0]), {"event", "url", "user_code"})
         self.assertEqual(events[0]["user_code"], "ABCD-1234")
         self.assertEqual(events[0]["url"], "https://platform.parallel.ai/device?user_code=ABCD-1234")
+        # The login also created a search key, so nothing is left for the user to add.
         self.assertEqual(events[2], {
-            "event": "complete", "credential": "parallel_account", "needs_search_key": True,
+            "event": "complete", "credential": "parallel_account", "needs_search_key": False,
         })
 
         stored = self.read_oauth()
@@ -505,7 +525,7 @@ class ParallelOAuthTests(OAuthTestCase):
         record = stored["parallel_account"]
         self.assertEqual(record["access_token"], access)
         self.assertEqual(record["refresh_token"], refresh)
-        self.assertEqual(record["scope"], "balance:read")
+        self.assertEqual(record["scope"], PARALLEL_SCOPE)
         self.assertGreater(datetime.fromisoformat(record["expires_at"]), datetime.now(timezone.utc))
 
         register = http.requests_for(PARALLEL_REGISTER_URL)
@@ -519,7 +539,14 @@ class ParallelOAuthTests(OAuthTestCase):
         )
         self.assertTrue(all(isinstance(value, str) for value in body["platform"].values()))
         device = form_body(http.requests_for(PARALLEL_DEVICE_URL)[0])
-        self.assertEqual(device, {"client_id": "client-1", "scope": "balance:read"})
+        self.assertEqual(device, {"client_id": "client-1", "scope": PARALLEL_SCOPE})
+        created = http.requests_for(PARALLEL_KEYS_URL)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].get_header("Authorization"), f"Bearer {access}")
+        self.assertTrue(json_body(created[0])["api_key_name"].startswith("multi-search "))
+        self.assertEqual(json_body(http.requests_for(PARALLEL_APPS_URL)[1]), {"app_name": "multi-search"})
+        self.assertEqual(json.loads(self.keys_file.read_text(encoding="utf-8"))["parallel"], PARALLEL_CREATED_KEY)
+        self.assertNotIn(PARALLEL_CREATED_KEY, stdout)
         token_requests = http.requests_for(PARALLEL_TOKEN_URL)
         self.assertEqual(len(token_requests), 3)
         self.assertEqual(form_body(token_requests[0]), {
@@ -531,6 +558,21 @@ class ParallelOAuthTests(OAuthTestCase):
         self.assertEqual(self.clock.sleeps[2], 6.0, "slow_down extends the polling interval by five seconds")
         self.assert_no_secret(access, stdout, stderr)
         self.assert_no_secret(refresh, stdout, stderr)
+
+    def test_parallel_login_without_key_scope_still_logs_in_and_asks_for_a_key(self):
+        routes = self._parallel_routes([{"access_token": "parallel-access-secret", "expires_in": 600}])
+        routes.update(parallel_service_routes(refused=True))
+        with mock.patch("multi_search_mcp.src.support.http.urlopen_retry", FakeHTTP(routes)):
+            code, stdout, stderr = self.run_cli(
+                ["login", "parallel", "--method", "oauth", "--format", "jsonl", "--no-browser", "--timeout", "60"]
+            )
+        self.assertEqual(code, 0, stderr)
+        events = self.events(stdout)
+        self.assertEqual(events[-1], {"event": "complete", "credential": "parallel_account", "needs_search_key": True})
+        notice = next(event for event in events if event["event"] == "notice")
+        self.assertIn("自动创建搜索 Key 失败", notice["message"])
+        self.assertIn("parallel_account", self.read_oauth())
+        self.assertFalse(self.keys_file.exists() and "parallel" in json.loads(self.keys_file.read_text(encoding="utf-8")))
 
     def test_parallel_login_reuses_a_cached_client_id(self):
         self.write_oauth({"parallel": {"client_id": "cached-client"}})

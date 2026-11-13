@@ -167,6 +167,7 @@ def _login_oauth(
         elif plugin.id == "parallel":
             oauth.parallel_login(
                 credential=entry,
+                save_credential=lambda key: _save_key(plugin.key_provider or "parallel", key),
                 emit=emitter,
                 no_browser=no_browser,
                 timeout=timeout,

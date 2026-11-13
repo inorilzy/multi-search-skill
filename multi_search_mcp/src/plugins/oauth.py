@@ -56,7 +56,11 @@ def _parallel_registration() -> dict[str, Any]:
     }
 PARALLEL_TOKEN_URL = "https://platform.parallel.ai/getServiceKeys/token"
 PARALLEL_REVOKE_URL = "https://platform.parallel.ai/getServiceKeys/token/revoke"
-PARALLEL_SCOPE = "balance:read"
+# balance:read for the balance; apps:* and keys:create so one login also creates the
+# search key (docs.parallel.ai/integrations/account-api.md, service-api/keys/create-key).
+PARALLEL_SCOPE = "balance:read apps:read apps:create keys:create"
+PARALLEL_SERVICE_URL = "https://api.parallel.ai/account/service/v1"
+PARALLEL_APP_NAME = "multi-search"
 PARALLEL_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 PARALLEL_DEFAULT_INTERVAL_SECONDS = 5.0
 PARALLEL_DEFAULT_EXPIRES_SECONDS = 600.0
@@ -454,9 +458,47 @@ def _number(value: Any, default: float) -> float:
         return default
 
 
+def _parallel_service(
+    method: str, path: str, token: str, payload: dict[str, Any] | None,
+    *, http: Callable[..., Any] | None, secrets: list[str],
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"{PARALLEL_SERVICE_URL}{path}",
+        data=None if payload is None else json.dumps(payload).encode("utf-8"),
+        headers={"Accept": "application/json", "Content-Type": "application/json",
+                 "Authorization": f"Bearer {token}"},
+        method=method,
+    )
+    return _request(http, request, deadline=None, prefix="Parallel: ", secrets=secrets)
+
+
+def _parallel_create_search_key(
+    token: str, *, http: Callable[..., Any] | None, secrets: list[str],
+) -> tuple[str, str | None]:
+    """Create a search key in the user's ``multi-search`` app; return (key, creator email)."""
+    apps = _parallel_service("GET", "/apps", token, None, http=http, secrets=secrets).get("apps")
+    app_id = next((app.get("app_id") for app in apps or [] if isinstance(app, dict)
+                   and app.get("app_name") == PARALLEL_APP_NAME and isinstance(app.get("app_id"), str)), None)
+    if not app_id:
+        created = _parallel_service("POST", "/apps", token, {"app_name": PARALLEL_APP_NAME},
+                                    http=http, secrets=secrets)
+        app_id = created.get("app_id")
+    if not isinstance(app_id, str) or not app_id:
+        raise OAuthFlowError("Parallel 没有返回 app_id，无法创建 Key。", kind="provider")
+    name = f"{PARALLEL_APP_NAME} {datetime.now(timezone.utc):%Y-%m-%d %H:%M}"
+    made = _parallel_service("POST", f"/apps/{urllib.parse.quote(app_id, safe='')}/keys", token,
+                             {"api_key_name": name}, http=http, secrets=secrets)
+    key = made.get("raw_api_key")
+    if not isinstance(key, str) or not key:
+        raise OAuthFlowError("Parallel 创建 Key 后没有返回 Key。", kind="provider")
+    email = made.get("created_by_user_email")
+    return key, email if isinstance(email, str) and email.strip() else None
+
+
 def parallel_login(
     *,
     credential: str = PARALLEL_ACCOUNT_ENTRY,
+    save_credential: Callable[[str], Any] | None = None,
     emit: Emit | None = None,
     no_browser: bool = False,
     timeout: float = 300.0,
@@ -568,11 +610,24 @@ def parallel_login(
                 "scope": token.get("scope") or PARALLEL_SCOPE,
             }
             oauth_store.set_entry(credential, record)
+            guard = [*secrets_guard, access_token, refresh_token]
+            identity = _login_identity(token, guard)
+            search_key = None
+            if save_credential is not None:
+                try:
+                    search_key, email = _parallel_create_search_key(access_token, http=http, secrets=guard)
+                    identity = identity or email
+                    save_credential(search_key)
+                except OAuthFlowError as exc:
+                    # The login itself succeeded: keep it, and let the user add a key by hand.
+                    search_key = None
+                    _emit(emit, {"event": "notice", "message": f"已登录，但自动创建搜索 Key 失败：{exc.message}"})
             accounts.upsert_oauth_account(
-                "parallel", _login_identity(token, [*secrets_guard, access_token, refresh_token]),
+                "parallel", identity,
+                keys=[key_fingerprint(search_key)] if search_key else [],
                 balance_credentials={credential: key_fingerprint(access_token)},
             )
-            _emit(emit, {"event": "complete", "credential": credential, "needs_search_key": True})
+            _emit(emit, {"event": "complete", "credential": credential, "needs_search_key": search_key is None})
             return record
 
 

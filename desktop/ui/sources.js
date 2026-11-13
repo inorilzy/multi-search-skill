@@ -31,7 +31,8 @@ const icon = name => {
     alert: '<path d="M12 3 2 21h20L12 3ZM12 9v5M12 17v1"/>',
     box: '<path d="m12 2 9 5v10l-9 5-9-5V7l9-5ZM3 7l9 5 9-5M12 12v10"/>',
     play: '<path d="m7 4 13 8-13 8V4Z"/>',
-    chevron: '<path d="m7 9 5 5 5-5"/>',
+    chevron: '<path d="m9 6 6 6-6 6"/>',
+    close: '<path d="M6 6l12 12M18 6 6 18"/>',
   };
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 };
@@ -41,8 +42,9 @@ export function shortcutLabel(nav = globalThis.navigator) {
   const platform = `${nav?.userAgentData?.platform || nav?.platform || nav?.userAgent || ''}`;
   return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘ K' : 'Ctrl K';
 }
-function statCard(key, label, symbol) {
-  return `<div class="stat stat-${key}"><span class="stat-symbol">${icon(symbol)}</span><div><span>${label}</span><strong><b data-stat="${key}">—</b><small> / ${key === 'enabled' ? ENTRIES.filter(entry => entry.search !== false).length : TOTAL}</small></strong></div></div>`;
+// One compact line of counts (magpie keeps the providers page to the list itself).
+function statCard(key, label) {
+  return `<span class="stat stat-${key}">${label} <b data-stat="${key}">—</b><small>/${key === 'enabled' ? ENTRIES.filter(entry => entry.search !== false).length : TOTAL}</small></span>`;
 }
 
 /** @param {any} root page container (untyped DOM queries, as in the other pages) @param {any} api @param {{ signal?: AbortSignal, number?: string }} [options] */
@@ -50,11 +52,9 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
   const doc = root.ownerDocument;
   const shortcut = shortcutLabel(doc.defaultView?.navigator);
   root.classList.add('sources-page');
-  root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">${number} / PROVIDERS</p><h1 tabindex="-1">服务商</h1><p>按账号管理服务商的 Key、浏览器登录和启用状态。</p></div>
-    <aside class="key-hint"><span>${icon('lock')}</span><div><strong>凭据保存在本地</strong><p>测试时仅向对应服务商发送认证请求，不回显已保存的 Key。</p></div></aside></section>
-    <div class="sources-overview"><section class="stats" aria-label="搜索源概览">${statCard('enabled', '已启用', 'toggle')}${statCard('configured', '已配置', 'key')}${statCard('error', '异常', 'alert')}${statCard('absent', '未配置', 'box')}</section>
-    <div class="toolbar"><label class="source-search">${icon('search')}<input type="search" data-search aria-label="搜索搜索源" placeholder="搜索搜索源名称、描述…" aria-keyshortcuts="${shortcut === '⌘ K' ? 'Meta+K' : 'Control+K'}"><kbd>${shortcut}</kbd></label><div class="filters" role="group" aria-label="筛选">${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === 'all'}">${label}</button>`).join('')}</div></div></div>
-    <p class="source-test-warning">测试会向对应服务发送外部请求，可能消耗额度。已配置不代表连接已验证；无需凭据的服务不计入已配置数量。</p>
+  root.innerHTML = `<section class="heading sources-head"><div><p class="eyebrow">${number} / PROVIDERS</p><h1 tabindex="-1">服务商</h1></div></section>
+    <div class="sources-overview"><section class="stats" aria-label="服务商概览">${statCard('enabled', '已启用')}${statCard('configured', '已配置')}${statCard('error', '异常')}${statCard('absent', '未配置')}</section>
+    <div class="toolbar"><div class="filters" role="group" aria-label="筛选">${FILTERS.map(([key, label]) => `<button type="button" data-filter="${key}" aria-pressed="${key === 'all'}">${label}</button>`).join('')}</div><label class="source-search">${icon('search')}<input type="search" data-search aria-label="查找服务商" placeholder="查找服务商" aria-keyshortcuts="${shortcut === '⌘ K' ? 'Meta+K' : 'Control+K'}"><kbd>${shortcut}</kbd></label></div></div>
     <p class="row-error" data-list-error role="alert"></p><p class="row-error" data-cache-error role="alert"></p><button type="button" data-action="retry-settings" hidden>重试读取设置</button><div class="provider-list" data-source-list role="list" aria-label="服务商列表"></div><p class="sources-empty" data-empty hidden>没有匹配的搜索源，请调整关键词或筛选条件。</p>`;
 
   const list = root.querySelector('[data-source-list]');
@@ -112,6 +112,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
   let settingsQueue = Promise.resolve();
   const onKey = event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); search.focus(); }
+    if (event.key === 'Escape' && expanded) { event.preventDefault(); const pick = rows.get(expanded)?.pick; collapse(); pick?.focus(); }
   };
   doc.addEventListener('keydown', onKey);
   function teardown() {
@@ -153,6 +154,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
   function renderToggle(rec) {
     if (!rec.box) return;
     rec.row.querySelector('[data-toggle-label]').textContent = settingsState ? rec.box?.checked ? '已启用' : '未启用' : '状态未知';
+    rec.row.classList.toggle('is-off', Boolean(settingsState) && !rec.box.checked);
   }
   function applySettings(view) {
     const stamp = value => JSON.stringify([value?.route, value?.timeout, value?.disabled_sources, value?.twitter_cookies_path]);
@@ -249,15 +251,24 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     row.setAttribute('role', 'listitem');
     row.dataset.expanded = 'false';
     row.setAttribute('data-source-row', entry.source);
-    row.innerHTML = `<div class="provider-summary"><span class="provider-icon" aria-hidden="true">${esc(MARKS[entry.source])}</span>
-      <div class="provider-identity"><button type="button" class="provider-name" data-pick="${esc(entry.source)}" aria-expanded="false" aria-controls="detail-${entry.source}">${esc(entry.label)}</button><p class="provider-counts" data-key-count>${entry.keyed ? '账号与 Key 数读取中' : '0 个账号 · 0 个 Key'}</p></div>
-      <div class="provider-meter" data-provider-meter></div><div class="provider-status"><span data-provider-alert></span><span data-row-status data-kind="unknown">读取中</span></div>
-      ${entry.search === false ? '<span class="provider-toggle provider-note">仅用于抓取</span>' : `<label class="provider-toggle source-toggle"><input type="checkbox" role="switch" data-toggle="${esc(entry.source)}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span data-toggle-label>状态未知</span></label>`}
-      <button type="button" class="provider-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${entry.source}">${icon('chevron')}</button></div>
-      <p class="row-error" data-row-error role="alert"></p><div id="detail-${esc(entry.source)}" class="provider-details" data-provider-details hidden>
-      <p class="provider-note">${esc(DESCRIPTIONS[entry.source])}</p><p class="provider-note"><span data-key-summary aria-hidden="true">—</span><span data-key-summary-text>未配置</span>${oauth ? '<br><span data-login-status>浏览器登录：状态未知</span>' : ''}</p>
-      <div class="provider-actions"><div data-row-result data-kind="idle"><strong>${entry.search === false ? '仅用于抓取' : '未测试'}</strong><small>${entry.search === false ? '不提供搜索连接测试' : '点击测试验证'}</small></div>${entry.search === false ? '' : `<button type="button" data-row-test aria-label="测试 ${esc(entry.label)}">测试连接</button>`}</div>
-      <div data-source-detail></div></div>`;
+    const id = esc(entry.source);
+    row.innerHTML = `<div class="provider-summary" data-row-click><span class="provider-icon" aria-hidden="true">${esc(MARKS[entry.source])}</span>
+      <div class="provider-identity"><button type="button" class="provider-name" data-pick="${id}" aria-expanded="false" aria-controls="detail-${id}">${esc(entry.label)}</button>
+      <p class="provider-sub"><span class="provider-counts" data-key-count>${entry.keyed ? '读取中' : '0 个账号 · 0 个 Key'}</span><span class="provider-sep" aria-hidden="true">·</span><span data-row-status data-kind="unknown">读取中</span></p></div>
+      <div class="provider-meter" data-provider-meter></div><div class="provider-status"><span data-provider-alert></span></div>
+      ${entry.search === false ? '<span class="provider-toggle provider-note">仅抓取</span>' : `<label class="provider-toggle source-toggle"><input type="checkbox" role="switch" data-toggle="${id}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span class="visually-hidden" data-toggle-label>状态未知</span></label>`}
+      <button type="button" class="provider-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${id}">${icon('chevron')}</button></div>
+      <p class="row-error" data-row-error role="alert"></p>
+      <div id="detail-${id}" class="provider-details provider-dialog" data-provider-details hidden>
+      <div class="provider-dialog-backdrop" data-dialog-close></div>
+      <section class="provider-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="dialog-title-${id}">
+      <header class="provider-dialog-head"><span class="provider-icon" aria-hidden="true">${esc(MARKS[entry.source])}</span><h2 id="dialog-title-${id}">${esc(entry.label)}</h2><button type="button" class="dialog-close" data-dialog-close aria-label="关闭">${icon('close')}</button></header>
+      <div class="provider-dialog-body">
+      <div class="dialog-field"><span class="dialog-label">说明</span><div><p class="provider-note">${esc(DESCRIPTIONS[entry.source])}</p><p class="provider-note"><span data-key-summary aria-hidden="true">—</span> <span data-key-summary-text>未配置</span>${oauth ? ' · <span data-login-status>浏览器登录：状态未知</span>' : ''}</p></div></div>
+      <div class="dialog-field"><span class="dialog-label">连接</span><div class="provider-actions"><div data-row-result data-kind="idle"><strong>${entry.search === false ? '仅用于抓取' : '未测试'}</strong><small>${entry.search === false ? '不提供搜索连接测试' : '点击测试验证'}</small></div>${entry.search === false ? '' : `<button type="button" data-row-test aria-label="测试 ${esc(entry.label)}">测试连接</button>`}</div></div>
+      <div class="dialog-field"><span class="dialog-label">${entry.keyed ? '账号' : '凭据'}</span><div data-source-detail></div></div></div>
+      <footer class="provider-dialog-foot"><p class="provider-note">凭据只保存在本机；测试会向服务商发请求，可能消耗额度。</p><button type="button" class="primary" data-dialog-close>完成</button></footer>
+      </section></div>`;
     const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), summaryText: row.querySelector('[data-key-summary-text]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
     // Account-only OAuth credentials are not exposed by credential_status. Their login
     // state stays unknown until this page observes a completed browser login.
@@ -267,6 +278,15 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     if (!entry.keyed && !entry.cookie) setRow(rec, 'keyless', '无需凭据');
     rec.pick.addEventListener('click', () => { void toggleRow(entry.source); });
     row.querySelector('[data-expand]').addEventListener('click', () => { void toggleRow(entry.source); });
+    // Like magpie, the whole row opens the provider; its own controls keep their meaning.
+    row.querySelector('[data-row-click]').addEventListener('click', event => {
+      if (event.target.closest('button, input, label, a')) return;
+      void toggleRow(entry.source);
+    });
+    for (const close of row.querySelectorAll('[data-dialog-close]')) close.addEventListener('click', () => {
+      if (expanded !== entry.source) return;
+      collapse(); rec.pick.focus();
+    });
     rec.box?.addEventListener('change', event => {
       const enabled = event.target.checked;
       for (const item of rows.values()) if (item.box) item.box.disabled = true;
@@ -307,6 +327,7 @@ export async function mountSources(root, api, { signal, number = '04' } = {}) {
     rec.row.querySelector('[data-expand]').setAttribute('aria-label', `收起 ${rec.entry.label}`);
     rec.detail.hidden = false;
     rec.row.querySelector('[data-provider-details]').hidden = false;
+    rec.row.querySelector('.dialog-close')?.focus();
     if (!rec.entry.keyed) {
       const mounted = await mountKeylessDetail(rec);
       if (disposed || ticket !== activeTicket) { mounted.dispose(); return; }

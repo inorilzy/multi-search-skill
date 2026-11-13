@@ -50,6 +50,16 @@ def _second_csv_number(value) -> int | None:
         return None
 
 
+def _first_csv_number(value) -> int | None:
+    """Read the per-second value from a ``<per-second>, <monthly>`` header."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return int(float(value.split(",")[0].strip()))
+    except (TypeError, ValueError):
+        return None
+
+
 def _record_brave_quota(api_key: str, headers) -> None:
     """Persist the monthly quota advertised by a successful response."""
     try:
@@ -58,12 +68,21 @@ def _record_brave_quota(api_key: str, headers) -> None:
         reset = _second_csv_number(_header_value(headers, "X-RateLimit-Reset"))
         if remaining is None or limit is None:
             return
-        fields = {"remaining": remaining, "limit": limit, "unit": "requests", "period": "month"}
+        resets_at = None
         if reset is not None:
             # The reset value is seconds until the monthly window resets.
-            fields["resets_at"] = (
-                datetime.now(timezone.utc) + timedelta(seconds=max(0, reset))
-            ).isoformat()
+            resets_at = (datetime.now(timezone.utc) + timedelta(seconds=max(0, reset))).isoformat()
+        if limit == 0:
+            # The prepaid credit plan has no monthly request cap; see plugins/builtin/brave.py.
+            # This search is counted only after it returns, so add it here.
+            from ...plugins.builtin.brave import credit_fields
+
+            per_second = _first_csv_number(_header_value(headers, "X-RateLimit-Limit"))
+            fields = credit_fields(per_second, resets_at, extra_calls=1)
+        else:
+            fields = {"remaining": remaining, "limit": limit, "unit": "requests", "period": "month"}
+            if resets_at:
+                fields["resets_at"] = resets_at
         record_quota("brave", api_key, fields)
     except Exception:  # noqa: BLE001 - quota observation must never affect search
         logger.debug("failed to read Brave quota headers", exc_info=True)

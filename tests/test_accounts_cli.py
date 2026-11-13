@@ -17,9 +17,11 @@ from tests.test_login_oauth import (
     FakeClock,
     FakeHTTP,
     FIRECRAWL_STATUS_URL,
+    PARALLEL_CREATED_KEY,
     PARALLEL_DEVICE_URL,
     PARALLEL_REGISTER_URL,
     PARALLEL_TOKEN_URL,
+    parallel_service_routes,
 )
 
 
@@ -92,8 +94,10 @@ class AccountsCliTests(unittest.TestCase):
         self.assertEqual(stderr, "")
         return [json.loads(line) for line in stdout.splitlines()]
 
-    def parallel_routes(self, access, *, identity=IDENTITY):
+    def parallel_routes(self, access, *, identity=IDENTITY, provision=False):
+        # These tests are about the balance token; key provisioning is refused unless asked for.
         return {
+            **parallel_service_routes(refused=not provision),
             PARALLEL_REGISTER_URL: {"client_id": "fixture-client"},
             PARALLEL_DEVICE_URL: {"device_code": "fixture-device", "user_code": "LOGIN-1234",
                                   "verification_uri": "https://platform.parallel.ai/device", "interval": 1},
@@ -308,6 +312,19 @@ class AccountsCliTests(unittest.TestCase):
         self.assertEqual(self.payload("accounts", "list", "--provider", "parallel"), {
             "accounts": {"parallel": [DEFAULT, account_record(
                 account_id, IDENTITY, source="oauth", identity=IDENTITY,
+                balance={"parallel_account": key_fingerprint(access)},
+            )]},
+        })
+
+    def test_parallel_login_creates_a_search_key_under_the_login_account(self):
+        access = "fixture-parallel-access"
+        events = self.oauth_login("parallel", self.parallel_routes(access, provision=True))
+        self.assertEqual(events[-1], {"event": "complete", "credential": "parallel_account", "needs_search_key": False})
+        account_id = self.read_keys()["accounts"]["parallel"][0]["id"]
+        self.assertEqual(self.payload("accounts", "list", "--provider", "parallel"), {
+            "accounts": {"parallel": [DEFAULT, account_record(
+                account_id, IDENTITY, source="oauth", identity=IDENTITY,
+                keys=[key_fingerprint(PARALLEL_CREATED_KEY)],
                 balance={"parallel_account": key_fingerprint(access)},
             )]},
         })

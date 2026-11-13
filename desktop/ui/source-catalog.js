@@ -77,7 +77,7 @@ export const SOURCE_CATALOG = {
           "type": "api"
         }
       ],
-      "balance_note": "搜索一次后显示本月配额。",
+      "balance_note": "搜索一次后显示本月配额；免费额度按本机调用次数估算。",
       "balance_supported": true,
       "id": "brave",
       "key_provider": "brave",

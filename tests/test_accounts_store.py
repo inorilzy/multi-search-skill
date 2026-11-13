@@ -275,7 +275,9 @@ class AccountsStoreTests(unittest.TestCase):
         first = accounts.upsert_oauth_account("parallel", "user@example.test",
                                               balance_credentials={"parallel_account": key_fingerprint("synthetic-old-token")})
         self.oauth_path.write_text(json.dumps({"parallel_account": {"access_token": "synthetic-new-token"}}), encoding="utf-8")
-        self.assertEqual(self.rows("parallel")[1]["balance_credentials"], {})
+        # A refresh replaces the token; the account keeps owning its single OAuth entry.
+        self.assertEqual(self.rows("parallel")[1]["balance_credentials"],
+                         {"parallel_account": key_fingerprint("synthetic-new-token")})
         second = accounts.upsert_oauth_account("parallel", "user@example.test",
                                                balance_credentials={"parallel_account": key_fingerprint("synthetic-new-token")})
         self.assertEqual(second["id"], first["id"])
