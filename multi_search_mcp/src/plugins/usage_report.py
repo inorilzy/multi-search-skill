@@ -3,8 +3,9 @@
 Account keys contain search-key fingerprints and their reports (None on a cache
 miss); balance-only credentials contribute reports to totals, never key counts.
 The additive ``total`` keeps remaining/limit/percent/unit/relative on every row.
-For one unit, shared account/team quotas take precedence over key quotas and
-retain the latest observation instead of adding duplicates. Key quotas add;
+For one unit, shared account/team quotas take precedence over key quotas; each
+shared pool (told apart by its reset time) keeps its latest observation instead of
+adding duplicates, and distinct pools add up. Key quotas add;
 unknown values propagate. Mixed units return an unknown total, not a sum.
 Without a limit, percent uses the cycle's historical maximum (relative=True);
 without history there is no percent. Existing ``current``/``totals`` stay intact.
@@ -105,14 +106,30 @@ def _pace(history: list[dict], current: list[dict], now: datetime) -> list[dict]
     return results
 
 
+def _shared_pools(rows: list[dict]) -> list[dict]:
+    """One report per shared quota: the newest of the rows that describe the same pool.
+
+    Account/team reports cover every key of that account or team, so keys of one
+    pool must count once. Keys can belong to different teams (Firecrawl), each with
+    its own credits; a pool is told apart by its reset time, which every key of one
+    team reports alike, and distinct pools are added up.
+    """
+    newest: dict[tuple, dict] = {}
+    for row in rows:
+        pool = (row["scope"], row["unit"], row.get("resets_at"))
+        if pool not in newest or _moment(row["fetched_at"]) > _moment(newest[pool]["fetched_at"]):
+            newest[pool] = row
+    return list(newest.values())
+
+
 def _totals(current: list[dict]) -> list[dict]:
     groups: dict[tuple, list[dict]] = {}
     for row in current:
         groups.setdefault((row["scope"], row["unit"]), []).append(row)
     totals = []
     for (scope, unit), rows in groups.items():
-        # Account/team reports already cover every key; retain one observation.
-        selected = rows if scope == "key" else [max(rows, key=lambda row: _moment(row["fetched_at"]))]
+        # Account/team reports already cover every key; keep one per pool.
+        selected = rows if scope == "key" else _shared_pools(rows)
         total = {"scope": scope, "unit": unit, "key_count": len(rows), "message": ""}
         for field in ("remaining", "limit"):
             values = [row.get(field) for row in selected]
@@ -128,7 +145,7 @@ def _total(current: list[dict], history: list[dict], now: datetime, *, missing: 
     if not current or len({row["unit"] for row in current}) != 1:
         return total
     shared = [row for row in current if row["scope"] in {"team", "account"}]
-    selected = [max(shared, key=lambda row: _moment(row["fetched_at"]))] if shared else current
+    selected = _shared_pools(shared) if shared else current
     values = _totals(selected)[0]
     if values["remaining"] is None and values["limit"] is None:
         return total
