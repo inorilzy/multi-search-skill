@@ -79,6 +79,7 @@ class ExaDashboardTests(unittest.TestCase):
         for request, options in zip(self.requests, self.options):
             self.assertEqual(request.get_method(), "GET")
             self.assertEqual(request.get_header("Cookie"), COOKIE)
+            self.assertEqual(request.get_header("User-agent"), exa_dashboard.BROWSER_USER_AGENT)
             self.assertIsNone(request.get_header("X-api-key"))
             self.assertEqual(options["timeout"], 7)
             self.assertEqual(options["retries"], 0)

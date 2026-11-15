@@ -833,3 +833,81 @@ test('a new editor for another source starts with no in-flight lock or fallback 
   release();
   ctx.window.close();
 });
+
+test('compact account editor treats fingerprints as opaque identifiers and never as masked key text', async () => {
+  const ctx = setup(); let reveals = 0;
+  const mounted = await mountCredentialBody(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => ({ value: 'sha256:12345678\nsha256:90abcdef', snapshot: 'account-s' }),
+    credentialReveal: async () => { reveals += 1; return { value: `${KEY}\nsecond-secret`, snapshot: 'account-s' }; },
+  }), { compact: true, accountEditor: true });
+  assert.deepEqual([...ctx.root.querySelectorAll('.key-label')].map(node => node.textContent), ['Key 1', 'Key 2']);
+  assert.deepEqual(savedInputs(ctx.root), ['••••••••', '••••••••']);
+  assert.doesNotMatch(ctx.root.textContent, /sha256:|12345678|90abcdef/);
+  assert.equal(reveals, 0);
+  assert.equal(ctx.root.querySelector('.credential-intro, .config-details, .cred-status'), null);
+  assert.equal(ctx.root.querySelector('[data-action="refresh"]').hidden, true);
+  const tools = ctx.root.querySelector('.credential-tools-extra');
+  assert.equal(tools.open, false);
+  assert.equal(tools.querySelector('summary').textContent, '测试与设置');
+  assert.equal(ctx.root.querySelector('[data-action="test"]').closest('details'), tools);
+  assert.equal(ctx.root.querySelector('[data-test-result]').closest('details'), null);
+  assert.equal(ctx.root.querySelector('[data-info="error"]').closest('details'), null);
+  ctx.root.querySelectorAll('[data-action="reveal"]')[1].click(); await flush2();
+  assert.deepEqual(savedInputs(ctx.root), ['••••••••', 'second-secret']);
+  assert.equal(reveals, 1);
+  assert.ok(!ctx.root.innerHTML.includes('second-secret'));
+  ctx.root.querySelectorAll('[data-action="reveal"]')[1].click();
+  assert.deepEqual(savedInputs(ctx.root), ['••••••••', '••••••••']);
+  assert.equal(ctx.root.querySelectorAll('[data-action="copy"]')[1].disabled, true);
+  mounted.dispose(); ctx.window.close();
+});
+
+test('compact editor keeps read errors and recovery visible while successful test feedback remains accessible', async () => {
+  const ctx = setup(); let fail = true;
+  await mountCredentialBody(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => { if (fail) throw '读取失败，请重试'; return { value: 'masked', snapshot: 'r1' }; },
+    credentialTest: async () => ({ result: 'quota', message: '服务商额度已用完' }),
+  }), { compact: true });
+  const error = ctx.root.querySelector('[data-info="error"]');
+  assert.equal(error.textContent, '读取失败，请重试');
+  assert.equal(error.hidden, false);
+  assert.equal(error.getAttribute('role'), 'alert');
+  assert.equal(error.closest('details'), null, 'read failures stay outside the collapsed tools');
+  assert.equal(ctx.root.querySelector('.credential-tools-extra').open, false);
+  assert.equal(ctx.root.querySelector('[data-action="refresh"]').hidden, false);
+  assert.equal(ctx.root.querySelector('[data-action="add"]').disabled, true);
+  fail = false;
+  ctx.root.querySelector('[data-action="refresh"]').click(); await flush2();
+  assert.equal(ctx.root.querySelector('[data-action="refresh"]').hidden, true);
+  ctx.root.querySelector('[data-action="test"]').click(); await flush2();
+  assert.equal(ctx.root.querySelector('[data-test-result]').hidden, false);
+  assert.equal(ctx.root.querySelector('[data-test-result]').closest('details'), null);
+  assert.equal(ctx.root.querySelector('.credential-tools-extra').open, false, 'programmatic tests still run without expanding settings');
+  assert.equal(ctx.root.querySelector('[data-info="test"]').textContent, '服务商额度已用完');
+  assert.equal(ctx.root.querySelector('[data-info="test"]').getAttribute('role'), 'status');
+  assert.match(ctx.root.querySelector('[data-action="test"]').getAttribute('aria-label'), /额度/);
+  ctx.window.close();
+});
+
+test('a reveal superseded by a refresh cannot enable copy for a rebuilt saved row', async () => {
+  const ctx = setup(); let releaseReveal, reads = 0;
+  const gate = new Promise(resolve => { releaseReveal = resolve; });
+  await mountCredentialBody(ctx.root, api({
+    credentialStatus: async () => status(true),
+    credentialRead: async () => { reads += 1; return { value: 'masked', snapshot: 'same-snapshot' }; },
+    credentialReveal: () => gate,
+  }), { compact: true });
+  ctx.root.querySelector('[data-action="reveal"]').click();
+  // A synthetic refresh also exercises the underlying generation guard while busy.
+  ctx.root.querySelector('[data-action="refresh"]').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  await flush2();
+  assert.equal(reads, 2, 'the later refresh rebuilt the saved rows');
+  releaseReveal({ value: KEY, snapshot: 'same-snapshot' }); await flush2();
+  assert.deepEqual(savedInputs(ctx.root), ['masked']);
+  assert.equal(ctx.root.querySelector('[data-action="copy"]').disabled, true);
+  assert.equal(ctx.root.querySelector('[data-action="reveal"]').textContent, '显示');
+  assert.ok(!ctx.root.innerHTML.includes(KEY));
+  ctx.window.close();
+});

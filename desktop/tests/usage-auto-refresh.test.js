@@ -145,6 +145,27 @@ test('automatic and manual usage/balance requests share one queue, even across s
   refresh.dispose();
 });
 
+test('cache and account reads never wait behind an in-flight provider refresh', async () => {
+  const time = clock();
+  const started = deferred();
+  const release = deferred();
+  const refresh = createUsageAutoRefresh({
+    usageView: async (id, force) => {
+      if (force) { started.resolve(); await release.promise; }
+      return view([provider()]);
+    },
+    accountsView: async () => accounts({}),
+  }, time);
+  const running = refresh.start();
+  await started.promise;
+  const [cached, groups] = await Promise.all([refresh.api.usageView('tavily', false), refresh.api.accountsView('tavily')]);
+  assert.equal(cached.status, 'ready');
+  assert.equal(groups.status, 'ready');
+  release.resolve();
+  await running;
+  refresh.dispose();
+});
+
 test('background timers still run and visible/focus/pageshow events catch up only when overdue', async () => {
   const window = new Window();
   const time = clock();
@@ -246,13 +267,15 @@ test('one application scheduler survives route changes and updates the current u
   assert.ok(calls.filter(([command, args]) => command === 'usage_view' && args.refresh)
     .every(([, args]) => args.provider === 'tavily'), 'route changes never cause all-provider network refreshes');
   value = 200;
+  // Cache reads no longer queue behind refreshes, so let the click handlers settle instead.
+  const settle = () => new Promise(resolve => setTimeout(resolve, 0));
   root.querySelector('[data-action="refresh-provider"]').click();
-  await refresh.api.usageView(null, false);
+  await settle();
   assert.deepEqual(calls.filter(([command, args]) => command === 'usage_view' && args.refresh).at(-1),
     ['usage_view', { provider: 'tavily', refresh: true }]);
   assert.equal(root.querySelector('.provider-meter .meter-value').textContent, '20%');
   root.querySelector('[data-action="refresh-all"]').click();
-  await refresh.api.usageView(null, false);
+  await settle();
   assert.deepEqual(calls.filter(([command, args]) => command === 'usage_view' && args.refresh).at(-1),
     ['usage_view', { provider: null, refresh: true }], 'manual refresh-all keeps its existing meaning');
   app.dispose();

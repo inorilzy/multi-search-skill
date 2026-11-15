@@ -122,6 +122,14 @@ class HttpDeadlineTests(unittest.TestCase):
         self.assertEqual(http._ssl_ctx.verify_mode, ssl.CERT_REQUIRED)
         self.assertTrue(http._ssl_ctx.check_hostname)
 
+    def test_tls_client_hello_advertises_http11_alpn(self):
+        # Vercel challenges clients without ALPN (dashboard.exa.ai returned 429).
+        incoming, outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
+        tls = http._ssl_ctx.wrap_bio(incoming, outgoing, server_hostname="example.com")
+        with self.assertRaises(ssl.SSLWantReadError):
+            tls.do_handshake()
+        self.assertIn(b"\x08http/1.1", outgoing.read())
+
     def _socket(self, *, status="200 OK", chunked=False, slow=True):
         framing = "Transfer-Encoding: chunked" if chunked else "Content-Length: 6"
         chunks = [(0.1, f"HTTP/1.1 {status}\r\n{framing}\r\n\r\n".encode())]

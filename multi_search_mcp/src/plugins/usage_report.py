@@ -211,7 +211,7 @@ def _alert(total: dict, pace: list[dict], current: list[dict], account_views: li
     if percent is not None and percent < 20:
         return "low"
     if any(row["status"] == "needs_credential" for row in current) or any(
-        plugin.key_provider and row["source"] == "oauth" and not row["keys"] for row in account_views
+        plugin.key_provider and row["id"] != accounts.DEFAULT_ACCOUNT_ID and not row["keys"] for row in account_views
     ):
         return "needs_credential"
     return None

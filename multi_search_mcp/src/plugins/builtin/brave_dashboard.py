@@ -20,16 +20,26 @@ import os
 import re
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
 from ...state.key_state import key_fingerprint
+from ...state.keys import _read_keys_file, default_keys_file
 from ...support.secrets import scrub_secrets
 from .. import oauth_store
 from ..base import BalanceContext
 
-DATA_URL = "https://api-dashboard.search.brave.com/app/dashboard/__data.json"
-DASHBOARD_URL = "https://api-dashboard.search.brave.com/app/dashboard"
+DASHBOARD_ORIGIN = "https://api-dashboard.search.brave.com"
+DATA_URL = f"{DASHBOARD_ORIGIN}/app/dashboard/__data.json"
+DASHBOARD_URL = f"{DASHBOARD_ORIGIN}/app/dashboard"
+# The API keys page lists every key (in full) under its plan subscription; ?/addApiKey adds one.
+KEYS_DATA_URL = f"{DASHBOARD_ORIGIN}/app/keys/__data.json"
+ADD_KEY_URL = f"{DASHBOARD_ORIGIN}/app/keys?/addApiKey"
+NEW_KEY_NAME = "multi-search"
+NO_SEARCH_PLAN = "no search plan"
+# Plans whose keys cannot call web search; every other plan (Search, Free, Base, Pro, ...) can.
+_NON_SEARCH_PLANS = ("answer", "suggest", "spell")
 COOKIE_ENV = "BRAVE_DASHBOARD_COOKIE"
 _MAX_BYTES = 2 * 1024 * 1024
 
@@ -205,11 +215,17 @@ def parse_dashboard(text: str) -> dict:
     return {"days_left": days_left if isinstance(days_left, int) else None, "plans": plans, "profile": profile}
 
 
-def fetch_dashboard(cookie: str, ctx: BalanceContext) -> dict:
-    """Read and parse the dashboard data with the given cookie header value."""
+def _read(url: str, cookie: str, ctx: BalanceContext, form: dict | None = None) -> str:
     if not cookie or any(ord(ch) < 32 or ord(ch) == 127 for ch in cookie):
         raise DashboardUnavailable("invalid cookie")
-    request = urllib.request.Request(DATA_URL, headers={"Cookie": cookie, "Accept": "*/*"})
+    headers = {"Cookie": cookie, "Accept": "*/*"}
+    data = None
+    if form is not None:
+        # A SvelteKit form action answers JSON when asked, and checks the Origin for CSRF.
+        headers.update({"Accept": "application/json", "Origin": DASHBOARD_ORIGIN, "x-sveltekit-action": "true",
+                        "Content-Type": "application/x-www-form-urlencoded"})
+        data = urllib.parse.urlencode(form).encode("utf-8")
+    request = urllib.request.Request(url, data=data, headers=headers, method="GET" if form is None else "POST")
     try:
         with ctx.open(request, retries=0) as response:
             if hasattr(response, "geturl") and "/login" in response.geturl():
@@ -223,6 +239,111 @@ def fetch_dashboard(cookie: str, ctx: BalanceContext) -> dict:
         raise DashboardUnavailable("request failed") from None
     if len(raw) > _MAX_BYTES:
         raise DashboardUnavailable("response too large")
-    data = parse_dashboard(raw.decode("utf-8", errors="replace"))
+    return raw.decode("utf-8", errors="replace")
+
+
+def fetch_dashboard(cookie: str, ctx: BalanceContext) -> dict:
+    """Read and parse the dashboard data with the given cookie header value."""
+    data = parse_dashboard(_read(DATA_URL, cookie, ctx))
     data["profile"] = _profile(data["profile"], _cookie_secrets(cookie))
     return data
+
+
+def _searchable(plan: Any) -> bool:
+    name = plan.get("name") if isinstance(plan, dict) else None
+    return isinstance(name, str) and not any(word in name.lower() for word in _NON_SEARCH_PLANS)
+
+
+def _search_key(value: Any) -> str | None:
+    if not isinstance(value, str) or not 0 < len(value.strip()) <= 256 or any(ord(ch) < 33 or ord(ch) == 127 for ch in value.strip()):
+        return None
+    return value.strip()
+
+
+def parse_keys_page(text: str) -> dict:
+    """Return the page csrf, active search-plan keys and active search-plan subscription ids."""
+    page: dict = {}
+    chunks: dict[int, Any] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except ValueError:
+            raise DashboardUnavailable("unparsable line") from None
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "redirect":
+            raise DashboardUnavailable("logged out")
+        if item.get("type") == "data" and isinstance(item.get("nodes"), list):
+            for node in item["nodes"]:
+                if isinstance(node, dict) and isinstance(node.get("data"), list) and node["data"]:
+                    hydrated = _hydrate(node["data"], 0)
+                    if isinstance(hydrated, dict):
+                        page.update(hydrated)
+        elif item.get("type") == "chunk" and isinstance(item.get("id"), int) and isinstance(item.get("data"), list):
+            chunks[item["id"]] = _hydrate(item["data"], 0)
+    resolve = lambda value: chunks.get(value["$ref"]) if isinstance(value, dict) and "$ref" in value else value
+    tokens, subscriptions = resolve(page.get("tokens")), resolve(page.get("subscriptions"))
+    if not isinstance(tokens, list) or not isinstance(subscriptions, list):
+        raise DashboardUnavailable("no keys page data")
+    live = lambda row: isinstance(row, dict) and row.get("status") == "active" and row.get("deleted_at") is None
+    keys = [key for row in tokens if live(row) and _searchable(row.get("plan")) and (key := _search_key(row.get("token")))]
+    plans = [row["id"] for row in subscriptions
+             if live(row) and _searchable(row.get("plan")) and isinstance(row.get("id"), str) and row["id"]]
+    csrf = page.get("csrf")
+    return {"csrf": csrf if isinstance(csrf, str) and csrf else None, "keys": list(dict.fromkeys(keys)), "subscriptions": plans}
+
+
+def search_keys(cookie: str, ctx: BalanceContext, saved: list[str]) -> tuple[list[str], str]:
+    """Return this login's search keys and how they were found: matched, listed or created.
+
+    The API keys page lists every key in full. Saved keys that appear there are
+    linked as they are; otherwise the first search-plan key is used. Only a
+    search subscription without any key gets a new one; a subscription itself
+    is never created, because that is a billing decision.
+    """
+    page = parse_keys_page(_read(KEYS_DATA_URL, cookie, ctx))
+    matched = [key for key in page["keys"] if key in saved]
+    if matched:
+        return matched, "matched"
+    if page["keys"]:
+        return page["keys"][:1], "listed"
+    if not page["subscriptions"] or not page["csrf"]:
+        raise DashboardUnavailable(NO_SEARCH_PLAN)
+    result = _read(ADD_KEY_URL, cookie, ctx, {
+        "csrf": page["csrf"], "subscription_id": page["subscriptions"][0], "name": NEW_KEY_NAME,
+    })
+    try:
+        reply = json.loads(result)
+        added = _hydrate(json.loads(reply["data"]), 0) if reply.get("type") == "success" else None
+    except (ValueError, TypeError, KeyError, AttributeError):
+        added = None
+    key = _search_key(added.get("token")) if isinstance(added, dict) else None
+    if key is None:
+        raise DashboardUnavailable("add key failed")
+    return [key], "created"
+
+
+def link_account_keys(cookie: str, ctx: BalanceContext, account_id: str | None) -> str | None:
+    """Save this login's search keys and move unassigned ones into its account; return a notice."""
+    from .. import accounts
+    from ..balance import _credential_values
+    from ..login import _save_key
+
+    saved = list(_credential_values(_read_keys_file(default_keys_file()).get("brave")))
+    try:
+        keys, how = search_keys(cookie, ctx, saved)
+    except DashboardUnavailable as exc:
+        if str(exc) == NO_SEARCH_PLAN:
+            return "已登录，但 Brave 账号还没有可用于搜索的套餐；请先在控制台订阅（订阅后会自动生成 Key）。"
+        return "已登录，但自动获取搜索 Key 失败，请稍后重试或手动添加。"
+    for key in keys:
+        _save_key("brave", key)
+    if account_id:
+        owners = {fp: row["id"] for row in accounts.list_accounts("brave")["brave"] for fp in row["keys"]}
+        for key in keys:
+            # Keys a user already grouped elsewhere keep that grouping.
+            if owners.get(key_fingerprint(key)) == accounts.DEFAULT_ACCOUNT_ID:
+                accounts.move_key("brave", key_fingerprint(key), account_id)
+    return f"账号下没有 Key，已自动创建 {NEW_KEY_NAME} Key 并关联到此账号。" if how == "created" else None

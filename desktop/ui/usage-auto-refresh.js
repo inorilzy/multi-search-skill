@@ -18,16 +18,18 @@ export function createUsageAutoRefresh(api, {
   let queue = Promise.resolve();
   const listeners = new Set();
 
-  // Pages use this same queue, so an explicit refresh cannot overlap an automatic query.
+  // Provider queries (refresh=true) share one queue, so an explicit refresh cannot overlap an
+  // automatic one. Local cache and account reads skip it: opening a page never waits on the network.
   function serialized(method) {
     return (...args) => {
+      if (args[1] !== true) return api[method](...args);
       const result = queue.then(() => api[method](...args));
       queue = result.catch(() => {});
       return result;
     };
   }
   const sharedApi = { ...api };
-  for (const method of ['usageView', 'balanceView', 'accountsView']) {
+  for (const method of ['usageView', 'balanceView']) {
     if (typeof api[method] === 'function') sharedApi[method] = serialized(method);
   }
 
@@ -85,6 +87,15 @@ export function createUsageAutoRefresh(api, {
         win?.addEventListener('pageshow', resume);
       }
       return refreshIfDue();
+    },
+    refreshProvider(providerId) {
+      if (disposed || !providerId || typeof sharedApi.usageView !== 'function') return Promise.resolve();
+      return sharedApi.usageView(providerId, true).then(view => {
+        if (!disposed && view?.status === 'ready') {
+          for (const listener of listeners) listener(view, providerId);
+        }
+        return view;
+      }).catch(() => {});
     },
     subscribe(listener) {
       listeners.add(listener);

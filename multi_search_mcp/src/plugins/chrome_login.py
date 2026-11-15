@@ -84,13 +84,27 @@ def login(provider: str, entry: str, *, timeout: float = 300, stdin: TextIO | No
             if profile:
                 saved_record["profile"] = profile
         oauth_store.set_entry(entry, saved_record)
-        if provider == "brave" and profile:
+        notice = None
+        if provider == "brave" and isinstance(data, dict):
+            waiting("额度查询已验证，正在读取此账号的搜索 Key。")
             try:
-                brave_dashboard.sync_account(profile, oauth_store.balance_credential_ref(entry, saved_record))
+                account = brave_dashboard.sync_account(profile, oauth_store.balance_credential_ref(entry, saved_record)) if profile else None
+                notice = brave_dashboard.link_account_keys(record["cookie_header"], BalanceContext(timeout=10, deadline=deadline),
+                                                           account["id"] if account else None)
+            except (ValueError, OSError):
+                raise oauth.OAuthFlowError("Chrome 会话已保存，但账号资料保存失败；请检查本地凭据存储后重试。", kind="storage") from None
+        if provider == "exa" and isinstance(data, dict):
+            from .builtin import exa_dashboard
+            waiting("额度查询已验证，正在读取此账号的资料与搜索 Key。")
+            try:
+                _, notice = exa_dashboard.sync_account(BalanceContext(timeout=10, deadline=deadline),
+                                                       oauth_store.balance_credential_ref(entry, saved_record))
             except (ValueError, OSError):
                 raise oauth.OAuthFlowError("Chrome 会话已保存，但账号资料保存失败；请检查本地凭据存储后重试。", kind="storage") from None
         message = ("已从 Chrome 保存登录会话；额度接口暂时限流，请稍后刷新。" if limited
                    else "已从 Chrome 保存此服务商的登录会话，额度查询已验证。")
+        if notice:
+            message = f"{message}{notice}"
         emit({"event": "complete", "provider": provider, "credential": entry, "message": message})
         return {"ok": True, "exit_code": 0, "provider": provider, "credential": entry}
     except (ChromeSessionCancelled, oauth.OAuthCancelled, KeyboardInterrupt):

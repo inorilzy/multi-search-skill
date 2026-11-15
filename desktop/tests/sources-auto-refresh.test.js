@@ -46,7 +46,7 @@ test('automatic quota updates refresh provider meters and account counts without
   f.setUpdated();
   await f.emit();
   assert.match(meter(), /35/);
-  assert.match(row.textContent, /2 个账号 · 1 个 Key/);
+  assert.match(row.textContent, /1 个账号 · 1 个 Key/);
   assert.equal(row.querySelector('[data-source-detail] input'), draft);
   assert.equal(draft.value, 'unfinished key entry');
   assert.equal(f.reads, 2);
@@ -54,6 +54,27 @@ test('automatic quota updates refresh provider meters and account counts without
   assert.equal(f.unsubscribed, 1);
   await f.emit();
   assert.equal(f.reads, 2, 'late automatic notifications do not query an unmounted page');
+  f.window.close();
+});
+
+test('opening a provider shows cached quota without asking the provider again', async () => {
+  const f = fixture();
+  let refreshed = 0;
+  f.usageRefresh.refreshProvider = async () => { refreshed++; };
+  const read = f.api.usageView;
+  f.api.usageView = async (...args) => {
+    const view = await read(...args);
+    view.providers[0].total.remaining = null;
+    view.providers[0].accounts = [{ id: 'default', keys: [{ key_fingerprint: 'sha256:12345678', report: null }] }];
+    return view;
+  };
+  const mounted = await mountSources(f.root, f.api, { usageRefresh: f.usageRefresh });
+  const row = f.root.querySelector('[data-source-row="brave"]');
+  row.querySelector('[data-expand]').click();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(row.querySelector('[data-source-detail]').hidden, false);
+  assert.equal(refreshed, 0);
+  mounted.dispose();
   f.window.close();
 });
 
@@ -65,5 +86,25 @@ test('aborting the provider page releases its global refresh subscription once',
   assert.equal(f.unsubscribed, 1);
   await f.emit();
   assert.equal(f.reads, 1);
+  f.window.close();
+});
+
+test('known account quota with a missing part does not label the entire provider unauthenticated', async () => {
+  const f = fixture(), read = f.api.usageView;
+  let unknown = false;
+  f.api.usageView = async (...args) => {
+    const view = await read(...args);
+    view.providers[0].alert = 'needs_credential';
+    if (unknown) view.providers[0].total = { remaining: null, limit: null, percent: null, unit: null, relative: false };
+    return view;
+  };
+  const mounted = await mountSources(f.root, f.api, { usageRefresh: f.usageRefresh });
+  const row = f.root.querySelector('[data-source-row="brave"]');
+  assert.equal(row.querySelector('[data-provider-alert]').textContent, '部分额度未提供');
+  assert.doesNotMatch(row.querySelector('[data-provider-meter]').textContent, /未知|暂无上限/);
+  unknown = true;
+  await f.emit();
+  assert.equal(row.querySelector('[data-provider-alert]').textContent, '需要凭据');
+  mounted.dispose();
   f.window.close();
 });

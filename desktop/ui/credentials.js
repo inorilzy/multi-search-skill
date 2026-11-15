@@ -1,5 +1,6 @@
 import { pageRoot, confirmInline, disposePage, el } from './dom.js';
 import { showError } from './api.js';
+import { createMeter } from './meter.js';
 import { SEARCH_SOURCES } from './catalog.js';
 import { SOURCE_CATALOG } from './source-catalog.js';
 import { mountOAuthLogin } from './oauth-login.js';
@@ -72,6 +73,11 @@ const sourceEntry = source => SOURCES.find(item => item.source === source)
   || SOURCES.find(item => item.source === DEFAULT_SOURCE)
   || { source, label: source, keyed: true, search: true };
 const provenance = value => JSON.stringify([value.effective_source, value.store?.state, value.store?.saved_at]);
+// These identifiers are useful only to the command layer, including in error details.
+const accountDisplayText = value => String(value ?? '')
+  .replace(/sha256\s*:\s*[a-z\d_-]+/gi, 'Key')
+  .replace(/oauth-login:[^\s，。；<>]+/gi, '浏览器登录')
+  .replace(/brave-user:[^\s，。；<>]+/gi, '登录账号');
 /** @param {HTMLElement} root @param {any} api @param {{ number?: string, source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void }} [options] */
 export async function mountCredentials(root, api, options = {}) {
   root = pageRoot(root);
@@ -84,23 +90,24 @@ export async function mountCredentials(root, api, options = {}) {
 }
 // Exa's Team Management service key is a balance-only credential, not a search source. It is
 // edited with the same credential editor so saving/removing uses the shared keys-file commands.
-async function mountExaAdminEditor(root, api) {
+async function mountExaAdminEditor(root, api, compact = false) {
   const doc = root.ownerDocument;
   const section = doc.createElement('details');
   section.className = 'exa-admin-key';
-  section.innerHTML = `<summary>管理 Key（仅用于查余额）</summary><p class="credential-note">也可登录控制台查询余额。已有 Team Management Service Key 时可在此填写，优先使用管理 Key。</p><div data-exa-admin-body></div>`;
+  section.innerHTML = compact
+    ? `<summary>管理额度凭据</summary><div data-exa-admin-body></div>`
+    : `<summary>管理 Key（仅用于查余额）</summary><p class="credential-note">也可登录控制台查询余额。已有 Team Management Service Key 时可在此填写，优先使用管理 Key。</p><div data-exa-admin-body></div>`;
   root.append(section);
-  return mountCredentialBody(section.querySelector('[data-exa-admin-body]'), api, { source: 'exa_admin' });
+  return mountCredentialBody(section.querySelector('[data-exa-admin-body]'), api, { source: 'exa_admin', compact });
 }
-/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void, onLogin?: () => void, balanceOnly?: boolean, oauthPollInterval?: number, accountEditor?: boolean}} [options] */
-export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest, onLogin, balanceOnly = false, oauthPollInterval = 150, accountEditor = false } = {}) {
+/** @param {any} root @param {any} api @param {{source?: string, onStatus?: (view: any) => void, onTest?: (result: any) => void, onLogin?: () => void, balanceOnly?: boolean, oauthPollInterval?: number, accountEditor?: boolean, compact?: boolean, keyOwners?: {current: string, accounts: {id: string, name: string}[]}, onRows?: () => void}} [options] */
+export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, onStatus, onTest, onLogin, balanceOnly = false, oauthPollInterval = 150, accountEditor = false, compact = false, keyOwners, onRows } = {}) {
   root = pageRoot(root);
   const { label, search, keyOptional, balanceOnly: entryBalanceOnly } = sourceEntry(source);
   balanceOnly = balanceOnly || Boolean(entryBalanceOnly);
   const searchTest = search !== false && !balanceOnly;
-  root.innerHTML = `<div class="credential-editor"><div class="credential-fields">
-    <p class="credential-note credential-intro">API Key：每行一条，可保存多条轮换使用。</p>
-    <p class="credential-note" data-key-optional hidden>无需 API Key 也能使用；填写 Key 只用于提高每日额度。</p>
+  root.innerHTML = `<div class="credential-editor${compact ? ' credential-editor--compact' : ''}"><div class="credential-fields">
+    ${compact ? '' : '<p class="credential-note credential-intro">API Key：每行一条，可保存多条轮换使用。</p><p class="credential-note" data-key-optional hidden>无需 API Key 也能使用；填写 Key 只用于提高每日额度。</p>'}
     <div data-saved-list class="key-saved-list"></div>
     <p data-saved-empty class="credential-note key-saved-empty" hidden>当前没有已保存的 Key。</p>
     <form data-save-form class="key-draft-form">
@@ -111,24 +118,40 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     <div class="run-controls credential-actions"><label data-test-key-label hidden>待测 Key<select data-test-key aria-label="选择待测的单把 Key"></select></label><button type="button" data-action="test">测试连接</button><button type="button" data-action="application" disabled>获取 API Key</button>
       <span class="credential-note" data-info="application">正在确认申请链接与打开能力…</span></div>
     <div class="application-fallback" data-application-fallback hidden><label>固定申请链接（可选择并手动复制）<input type="text" readonly data-application-url spellcheck="false" aria-label="固定申请链接"></label></div>
-    <p data-info="error" class="error-message"></p>
+    <p data-info="error" class="error-message" role="alert"></p>
     <div class="credential-footer">
-      <dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>
-      <div class="credential-tools"><button type="button" data-action="refresh">刷新已保存值</button></div>
+      ${compact ? '<p class="credential-note" data-environment-key hidden>环境变量 Key（只读，优先生效）</p>' : '<dl class="cred-status"><dt>已保存</dt><dd class="status-text" data-status="store"></dd><dt>生效来源</dt><dd class="status-text" data-status="source"></dd></dl>'}
+      <div class="credential-tools"><button type="button" data-action="refresh">${compact ? '刷新' : '刷新已保存值'}</button></div>
     </div>
-    <details class="config-details"><summary>说明</summary><p data-keys-file-note class="credential-note" role="note"></p><p class="credential-note">保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details></div>
-    <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"><span class="result-symbol" aria-hidden="true"></span><div><strong class="status-text" data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
-    <details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? `测试会向对应服务发送外部搜索请求，可能消耗额度。每次只测试所选的一把 Key，默认选中最后一行；环境变量单独列出。新增后请先保存。测试不写入正式状态库。` : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details></div></div>`;
-  if (keyOptional) root.querySelector('[data-key-optional]').hidden = false;
-  root.querySelector('.credential-note').prepend(root.ownerDocument.createTextNode(`${label} `));
+    ${compact ? '' : '<details class="config-details"><summary>说明</summary><p data-keys-file-note class="credential-note" role="note"></p><p class="credential-note">保存不会发起搜索。生效来源按 Core 的优先级判定：环境变量 > Key 文件。未修改的 Key 保留 exhausted 等已有元数据。</p></details>'}</div>
+    <div class="credential-feedback"><div class="test-result" data-test-result data-kind="idle"${compact ? ' hidden' : ''}><span class="result-symbol" aria-hidden="true"></span><div><strong class="status-text" data-status="test" aria-live="polite">尚未测试</strong><p data-info="test" role="status"></p></div></div>
+    ${compact ? '' : `<details class="config-details"><summary>说明</summary><p class="credential-note">${searchTest ? '测试会向对应服务发送外部搜索请求，可能消耗额度。每次只测试所选的一把 Key，默认选中最后一行；环境变量单独列出。新增后请先保存。测试不写入正式状态库。' : '仅用于网页抓取，不提供搜索连接测试。保存 Key 不会发起外部请求。新增 Key 视为新条目，删除一行即移除该条目。'}</p></details>`}</div></div>`;
+  if (!compact) {
+    if (keyOptional) root.querySelector('[data-key-optional]').hidden = false;
+    root.querySelector('.credential-intro').prepend(root.ownerDocument.createTextNode(`${label} `));
+  } else {
+    root.querySelector('[data-action="test"]').setAttribute('aria-label', '测试所选 Key 的连接（可能消耗额度）');
+    const extra = el(root.ownerDocument, 'details', { class: 'credential-tools-extra' });
+    const actions = root.querySelector('.credential-actions');
+    actions.before(extra);
+    extra.append(el(root.ownerDocument, 'summary', {}, '测试与设置'), actions);
+    extra.hidden = balanceOnly;
+  }
   if (balanceOnly) {
-    root.querySelector('.credential-intro').textContent = '管理 Key：每行一条，仅用于查询余额，不会用于搜索。';
+    if (!compact) root.querySelector('.credential-intro').textContent = '管理 Key：每行一条，仅用于查询余额，不会用于搜索。';
     for (const node of root.querySelectorAll('[data-test-key-label], [data-action="test"], [data-action="application"], [data-info="application"], [data-application-fallback], .credential-feedback')) {
       node.hidden = true;
     }
   }
   const q = selector => /** @type {any} */ (root.querySelector(selector));
-  const text = (selector, value) => { q(selector).textContent = value; };
+  const text = (selector, value) => { const node = q(selector); if (node) node.textContent = compact ? accountDisplayText(value) : value; };
+  const reportError = (node, error, fallback) => {
+    const result = showError(node, error, fallback);
+    if (!compact) return result;
+    node.textContent = accountDisplayText(node.textContent);
+    node.title = accountDisplayText(node.title);
+    return { ...result, message: node.textContent };
+  };
   let current = { store: { state: 'absent', error: '' }, effective_source: 'none' };
   // Application entry state machine. 'pending' = the metadata query is in flight (the
   // button stays disabled, so an unconfirmed entry never flashes as usable); 'failed' =
@@ -166,19 +189,24 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   };
   function renderApplication() {
     text('[data-info="application"]', appNote(application));
-    q('[data-action="application"]').disabled = busy || opening || !appOpens(application);
+    // Compact account rows keep the actionable link only in the standalone group.
+    const showApplication = !balanceOnly && (!accountEditor || keyOwners?.current === 'default');
+    q('[data-action="application"]').hidden = balanceOnly || compact && (!showApplication || application.phase === 'ok' && application.key_application_available !== true);
+    q('[data-info="application"]').hidden = balanceOnly || compact && (!showApplication || application.phase === 'ok' && application.key_application_open_supported !== false && !openFailed);
+    q('[data-action="application"]').disabled = busy || opening || !showApplication || !appOpens(application);
     const fallback = q('[data-application-fallback]');
     const showFallback = openFailed && application.phase === 'ok' && Boolean(application.key_application_url);
     fallback.hidden = !showFallback;
     q('[data-application-url]').value = showFallback ? application.key_application_url : '';
   }
   let generation = 0, disposed = false, busy = false;
-  q('[data-keys-file-note]').textContent = KEYS_FILE_NOTE;
+  text('[data-keys-file-note]', KEYS_FILE_NOTE);
   // Monotonic refresh guard: only the latest refresh may publish status or
   // rows. A slower older response must never overwrite a newer outcome.
   let refreshGeneration = 0;
   /** @type {string[]} rows last confirmed by credentialRead */
   let savedRows = [];
+  let savedRevision = 0;
   const revealed = new Map();
   /** @type {string|null} snapshot used as remove guard */
   let readSnapshot = null;
@@ -187,8 +215,11 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
   let drafts = [];
   function reportTest(kind, title, message = '') {
     if (disposed) return;
+    if (compact) { title = accountDisplayText(title); message = accountDisplayText(message); }
     text('[data-status="test"]', title); text('[data-info="test"]', message);
-    q('[data-test-result]').dataset.kind = kind; onTest?.({ kind, title, message });
+    q('[data-test-result]').dataset.kind = kind;
+    if (compact) q('[data-test-result]').hidden = kind === 'idle' && !message;
+    onTest?.({ kind, title, message });
   }
   function invalidateTest() { generation += 1; reportTest('idle', '尚未测试'); }
   // Every mutation requires a successful row read so the remove guard has a live snapshot.
@@ -203,16 +234,20 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     for (const button of root.querySelectorAll('[data-action="reveal"]')) button.disabled = value || !readHealthy;
     renderApplication();
     q('[data-test-key]').disabled = value;
-    q('[data-action="test"]').disabled = value || !searchTest;
+    q('[data-action="test"]').disabled = value || !searchTest || compact && !savedRows.length && current.effective_source !== 'env';
     q('[data-action="test"]').hidden = !searchTest;
     // Saved-row delete and draft add/submit are mutations; keep them disabled
     // until a successful read anchors the remove guard.
-    for (const button of root.querySelectorAll('[data-action="remove"], [data-action="remove-draft"], [data-action="add"], [data-action="save"]')) button.disabled = value || !writesReady();
+    for (const button of root.querySelectorAll('[data-action="remove"], [data-action="remove-draft"], [data-action="add"], [data-action="save"], [data-action="move-key"], [data-action="edit-owner"]')) button.disabled = value || !writesReady();
+    for (const select of root.querySelectorAll('[data-key-owner]')) select.disabled = value || !writesReady();
+    q('[data-action="refresh"]').hidden = compact && readHealthy && !q('[data-info="error"]').textContent;
   }
   function renderSaved() {
+    savedRevision += 1;
+    revealed.clear();
     const list = q('[data-saved-list]');
     list.innerHTML = '';
-    q('[data-saved-empty]').hidden = savedRows.length > 0;
+    q('[data-saved-empty]').hidden = savedRows.length > 0 || compact && readHealthy;
     const select = q('[data-test-key]');
     select.replaceChildren();
     const choices = savedRows.map((_, index) => [String(index), `已保存 Key 第 ${index + 1} 行`]);
@@ -226,20 +261,42 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     savedRows.forEach((value, index) => {
       const row = root.ownerDocument.createElement('div');
       row.className = accountEditor ? 'key-row' : 'key-saved-row'; row.dataset.savedIndex = String(index);
-      row.innerHTML = `<span class="key-row-label" aria-hidden="true">Key ${index + 1}</span><input type="password" readonly data-saved-input aria-label="已保存 Key 第 ${index + 1} 行">
-        <span class="key-row-actions"><button type="button" data-action="reveal" data-row-index="${index}">显示</button><button type="button" data-action="copy" data-row-index="${index}" disabled>复制</button><button type="button" class="key-remove" data-action="remove" data-remove-index="${index}" aria-label="删除第 ${index + 1} 行 Key">删除</button></span>
-        <div data-confirm-slot></div>`;
-      // Saved value is assigned via .value, never innerHTML, so raw key text
-      // cannot break the markup.
-      row.querySelector('input').value = value;
-      if (accountEditor) {
-        const fingerprint = root.ownerDocument.createElement('span');
-        fingerprint.className = 'key-fingerprint';
-        fingerprint.textContent = value;
-        row.querySelector('.key-row-label').replaceWith(fingerprint);
+      const quotaMarkup = accountEditor
+        ? '<div class="key-quota-box" data-key-quota-box><div class="key-meter" data-key-meter hidden></div><span class="quota-value key-quota" data-key-quota hidden></span></div>'
+        : '';
+      row.innerHTML = `<span class="key-row-label key-label" aria-hidden="true">Key ${index + 1}</span><input type="password" readonly data-saved-input aria-label="已保存 Key 第 ${index + 1} 行">${quotaMarkup}
+        <span class="key-row-actions"><button type="button" data-action="reveal" data-row-index="${index}">显示</button><button type="button" data-action="copy" data-row-index="${index}" disabled>复制</button><button type="button" class="key-remove" data-action="remove" data-remove-index="${index}" aria-label="删除第 ${index + 1} 行 Key">删除</button></span><div data-confirm-slot></div>`;
+      // Account reads contain opaque fingerprints, not masked secrets. Keep those
+      // identifiers internal and use a neutral mask until an explicit reveal.
+      row.querySelector('input').value = accountEditor ? '••••••••' : value;
+      if (accountEditor) row.dataset.keyFingerprint = value;
+      if (keyOwners && keyOwners.accounts.length > 1) {
+        const ownerName = keyOwners.accounts.find(account => account.id === keyOwners.current)?.name || '';
+        const trigger = el(root.ownerDocument, 'button', { type: 'button', 'data-action': 'edit-owner', 'aria-label': `移动${ownerName}的 Key ${index + 1}`, 'aria-expanded': 'false' }, '移动');
+        const owner = el(root.ownerDocument, 'span', { class: 'key-owner-control', hidden: '', 'aria-label': `移动${ownerName}的 Key ${index + 1}` });
+        const select = /** @type {HTMLSelectElement} */ (el(root.ownerDocument, 'select', { 'data-key-owner': '', 'aria-label': `Key ${index + 1} 的归属` }));
+        for (const account of keyOwners.accounts) {
+          const option = el(root.ownerDocument, 'option', { value: account.id }, account.name);
+          select.append(option);
+        }
+        select.value = keyOwners.current;
+        const cancel = el(root.ownerDocument, 'button', { type: 'button', 'data-action': 'cancel-owner' }, '取消');
+        owner.append(select, el(root.ownerDocument, 'button', { type: 'button', 'data-action': 'move-key', 'aria-label': `移动 Key ${index + 1} 到所选分组` }, '确认移动'), cancel);
+        row.querySelector('.key-row-actions').append(trigger);
+        row.append(owner);
+        let release = () => {};
+        const close = () => { owner.hidden = true; select.value = keyOwners.current; trigger.setAttribute('aria-expanded', 'false'); release(); };
+        trigger.addEventListener('click', () => {
+          if (busy || !writesReady() || disposed) return;
+          if (!owner.hidden) { close(); return; }
+          owner.hidden = false; trigger.setAttribute('aria-expanded', 'true');
+          release = confirmInline(owner, close, trigger);
+        });
+        cancel.addEventListener('click', close);
       }
       list.append(row);
     });
+    onRows?.();
   }
   function renderDrafts() {
     const list = q('[data-draft-list]');
@@ -268,6 +325,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     setBusy(busy);
     text('[data-status="store"]', storeLabels[view.store.state] || view.store.state);
     text('[data-status="source"]', sourceText(view));
+    if (compact) q('[data-environment-key]').hidden = view.effective_source !== 'env';
     // A confirmed answer, which may legitimately be "no mapping" or "platform cannot open".
     application = {
       phase: 'ok',
@@ -314,7 +372,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
           // Rows could not be read: the error slot gets the read reason and
           // writes stay off until a refresh read succeeds again.
           renderSaved();
-          showError(q('[data-info="error"]'), readError, '无法读取已保存凭据，请重试。');
+          reportError(q('[data-info="error"]'), readError, '无法读取已保存凭据，请重试。');
         }
       }
     } catch (error) {
@@ -328,7 +386,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
         // Keep the last saved rows visible so the user can still see state; all
         // writes stay disabled until a refresh succeeds again.
         renderSaved();
-        showError(q('[data-info="error"]'), error, '无法读取凭据状态，请重试。');
+        reportError(q('[data-info="error"]'), error, '无法读取凭据状态，请重试。');
       }
     }
     finally { if (!disposed && requestId === refreshGeneration) setBusy(false); }
@@ -356,21 +414,34 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     const input = row.querySelector('input');
     if (button.dataset.action === 'copy') {
       try { if (revealed.has(index)) await root.ownerDocument.defaultView.navigator.clipboard.writeText(revealed.get(index)); }
-      catch (error) { showError(q('[data-info="error"]'), error, '复制失败，请手动复制。'); }
+      catch (error) { reportError(q('[data-info="error"]'), error, '复制失败，请手动复制。'); }
       return;
     }
     if (revealed.has(index)) {
-      revealed.delete(index); input.value = savedRows[index]; input.type = 'password'; button.textContent = '显示'; setBusy(false); return;
+      revealed.delete(index); input.value = accountEditor ? '••••••••' : savedRows[index]; input.type = 'password'; button.textContent = '显示'; setBusy(false); return;
     }
+    const revision = savedRevision, requestId = refreshGeneration;
     setBusy(true);
     try {
       const value = await api.credentialReveal(source);
-      if (disposed) return;
+      if (disposed || revision !== savedRevision || requestId !== refreshGeneration) return;
       if (value.snapshot !== readSnapshot) { await readBack(); throw new Error('凭据已变化，请重新显示。'); }
       const key = value.value.split('\n').filter(line => line.trim() !== '')[index];
       if (key === undefined) throw new Error('凭据已变化，请刷新。');
       revealed.set(index, key); input.value = key; input.type = 'text'; button.textContent = '隐藏';
-    } catch (error) { if (!disposed) showError(q('[data-info="error"]'), error, '无法显示这一行 Key，请重试。'); }
+    } catch (error) { if (!disposed && requestId === refreshGeneration) reportError(q('[data-info="error"]'), error, '无法显示这一行 Key，请重试。'); }
+    finally { if (!disposed && requestId === refreshGeneration) setBusy(false); }
+  });
+  q('[data-saved-list]').addEventListener('click', async event => {
+    const button = event.target.closest('[data-action="move-key"]');
+    if (!button || busy || !writesReady() || disposed || !keyOwners) return;
+    const row = button.closest('[data-saved-index]');
+    const accountId = row.querySelector('[data-key-owner]').value;
+    if (accountId === keyOwners.current || !keyOwners.accounts.some(account => account.id === accountId)) return;
+    invalidateTest(); setBusy(true);
+    try {
+      await api.credentialMove(source, Number(row.dataset.savedIndex), readSnapshot, accountId);
+    } catch (error) { if (!disposed) reportError(q('[data-info="error"]'), error, '移动失败，请刷新后重试。'); }
     finally { if (!disposed) setBusy(false); }
   });
   q('[data-save-form]').addEventListener('submit', async event => {
@@ -399,7 +470,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
           text('[data-info="error"]', '已保存，但刷新读取失败；请刷新后再继续编辑。');
         }
       }
-    } catch (error) { if (!disposed) showError(q('[data-info="error"]'), error, '保存失败，编辑值已保留。'); }
+    } catch (error) { if (!disposed) reportError(q('[data-info="error"]'), error, '保存失败，编辑值已保留。'); }
     finally { if (!disposed) setBusy(false); }
   });
   q('[data-action="add"]').addEventListener('click', () => {
@@ -418,7 +489,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     if (slot.firstElementChild) return;
     const panel = root.ownerDocument.createElement('div');
     panel.className = 'inline-confirm'; panel.dataset.confirm = 'remove';
-    panel.innerHTML = `<p class="note">确定删除第 ${index + 1} 行已保存的 Key 吗？该行会从 ~/.multi-search/keys.json 中移除，环境变量不受影响。</p><div class="run-controls"><button type="button" class="danger" data-action="confirm-remove">确认删除</button><button type="button" data-action="cancel-remove">取消</button></div>`;
+    panel.innerHTML = `<p class="note">确定删除第 ${index + 1} 行已保存的 Key 吗？${compact ? '环境变量不受影响。' : '该行会从 ~/.multi-search/keys.json 中移除，环境变量不受影响。'}</p><div class="run-controls"><button type="button" class="danger" data-action="confirm-remove">确认删除</button><button type="button" data-action="cancel-remove">取消</button></div>`;
     slot.append(panel);
     // Shared contract: cancel has focus, Escape cancels, focus returns to this row's delete button.
     const release = confirmInline(panel, () => { panel.remove(); release(); }, button);
@@ -444,7 +515,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
           }
         }
       } catch (error) {
-        if (!disposed) { panel.remove(); showError(q('[data-info="error"]'), error, '删除失败，已保存值未变。'); }
+        if (!disposed) { panel.remove(); reportError(q('[data-info="error"]'), error, '删除失败，已保存值未变。'); }
       } finally { if (!disposed) setBusy(false); }
     });
   });
@@ -452,7 +523,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     // Guard the action itself too: a synthesized click on a disabled entry must not
     // open anything before the metadata query has confirmed the link and capability.
     // `opening` keeps repeated clicks from starting parallel browser launches.
-    if (busy || disposed || opening || !appOpens(application)) return;
+    if (busy || disposed || opening || balanceOnly || compact && accountEditor && keyOwners?.current !== 'default' || !appOpens(application)) return;
     opening = true; renderApplication();
     try {
       await api.credentialApplicationOpen(source);
@@ -467,7 +538,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     } catch (error) {
       if (!disposed) {
         openFailed = true;
-        openFailureText = showError(q('[data-info="error"]'), error, '无法打开系统浏览器，请重试或手动复制固定申请链接。').message;
+        openFailureText = reportError(q('[data-info="error"]'), error, '无法打开系统浏览器，请重试或手动复制固定申请链接。').message;
       }
     } finally {
       opening = false;
@@ -475,7 +546,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
     }
   });
   q('[data-action="test"]').addEventListener('click', async () => {
-    if (!searchTest) return;
+    if (!searchTest || busy || disposed || compact && !savedRows.length && current.effective_source !== 'env') return;
     setBusy(true); const testedGeneration = ++generation; const testedSource = q('[data-test-key]').selectedOptions[0]?.textContent || sourceText(current); reportTest('running', '正在测试');
     try {
       const selected = q('[data-test-key]').value;
@@ -486,7 +557,7 @@ export async function mountCredentialBody(root, api, { source = DEFAULT_SOURCE, 
       // Launch failures go to the error slot; the test area only says the test did not run.
       if (testedGeneration === generation && !disposed) {
         reportTest('error', '测试失败', '');
-        showError(q('[data-info="error"]'), error, '测试启动失败，请检查 CLI 后重试。');
+        reportError(q('[data-info="error"]'), error, '测试启动失败，请检查 CLI 后重试。');
       }
     }
     finally { if (!disposed) setBusy(false); }
@@ -544,22 +615,117 @@ async function keyFingerprint(value) {
 }
 
 /** @param {any} holder @param {any} api @param {any} options */
-export async function mountProviderAccounts(holder, api, { source, onStatus, onTest, onLogin, onChange, initialAccounts = null }) {
+export async function mountProviderAccounts(holder, api, { source, onStatus, onTest, onLogin, onChange, usageProvider = null, initialAccounts = null }) {
   const root = pageRoot(holder), doc = root.ownerDocument;
   const provider = providerIdForSource(source);
-  // Accounts come from a browser login or from pasted keys (the unassigned "default" group);
-  // there is no empty account to create first. Login sits below the list as the way to add one.
-  root.innerHTML = `<div class="provider-actions" data-account-tools></div><p class="provider-note" data-account-error role="alert"></p><div class="account-list" data-accounts></div><div class="account-add" data-provider-login></div>`;
+  root.classList.add('provider-account-manager');
+  root.innerHTML = `<div class="account-toolbar" data-account-tools><div class="account-logins" data-provider-login></div><button type="button" data-account-action="add">新建分组</button></div><p class="error-message" data-account-error role="alert"></p><div class="account-list" data-accounts></div>`;
   const errorSlot = root.querySelector('[data-account-error]');
+  let balanceReferences = [];
+  function showAccountError(error, fallback) {
+    showError(errorSlot, error, fallback);
+    const display = value => {
+      let text = accountDisplayText(value);
+      for (const reference of balanceReferences) if (reference) text = text.split(reference).join('额度凭据');
+      return text;
+    };
+    errorSlot.textContent = display(errorSlot.textContent);
+    errorSlot.setAttribute('title', display(errorSlot.getAttribute('title')));
+  }
   const list = root.querySelector('[data-accounts]');
   const tools = root.querySelector('[data-account-tools]');
   let disposed = false, busy = false, generation = 0;
   let editors = [];
   let oauth, dashboard;
   let editingDefault = false;
+  tools.querySelector('[data-account-action="add"]').addEventListener('click', () => nameForm(tools));
+  // Account names may have been inferred by older logins; opaque identities are never labels.
+  const safeName = (account, index) => {
+    const name = String(account.name || '').trim();
+    return !name || /sha256:|oauth-login:|brave-user:|^[a-f\d]{24,}$/i.test(name) ? `账号 ${index + 1}` : name;
+  };
+  const emailIdentity = value => typeof value === 'string'
+    && /^[^\s@<>:]+@[^\s@<>:]+\.[^\s@<>:]+$/.test(value);
+  const finite = value => typeof value === 'number' && Number.isFinite(value);
+  const amount = value => value.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
+  const unit = value => ({ credits: 'credits', tokens: 'tokens', searches: '次搜索', usd: '美元', requests: '次请求' })[value] || '';
+  function quotaText(row, fields) {
+    const parts = fields.filter(([key]) => finite(row?.[key])).map(([key, label]) => `${label} ${amount(row[key])}`);
+    return parts.length ? `${parts.join(' / ')}${unit(row.unit) ? ` ${unit(row.unit)}` : ''}` : '';
+  }
+  function renderQuotaMeter(slot, sourceData, label, fallbackTotal = null) {
+    slot.replaceChildren();
+    if (!sourceData) {
+      slot.hidden = true;
+      return;
+    }
+    const derivedRemaining = finite(sourceData.limit) && finite(sourceData.used)
+      ? Math.max(0, sourceData.limit - sourceData.used) : null;
+    const remaining = finite(sourceData.remaining)
+      && (!finite(sourceData.limit) || sourceData.remaining <= sourceData.limit || derivedRemaining == null)
+      ? sourceData.remaining : derivedRemaining;
+    const limit = finite(sourceData.limit) && sourceData.limit > 0 ? sourceData.limit : null;
+    const inheritRelative = limit == null && remaining != null && Boolean(fallbackTotal?.relative)
+      && fallbackTotal.unit === sourceData.unit && fallbackTotal.remaining === remaining && finite(fallbackTotal.percent);
+    const percent = finite(sourceData.percent) ? sourceData.percent
+      : remaining != null && limit != null ? remaining / limit * 100
+      : inheritRelative ? fallbackTotal.percent : null;
+    if (percent == null) {
+      slot.hidden = true;
+      return;
+    }
+    slot.append(createMeter(doc, {
+      remaining,
+      limit,
+      percent,
+      relative: Boolean(sourceData.relative || inheritRelative),
+      unit: sourceData.unit || null,
+    }, { label, thin: true }));
+    slot.hidden = false;
+  }
+  function updateUsage(next) {
+    usageProvider = next;
+    if (disposed) return;
+    for (const row of /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('[data-account-id]'))) {
+      const standalone = row.dataset.accountId === 'default';
+      const accountName = row.querySelector('.account-name')?.textContent || '账号';
+      const cached = next?.accounts?.find(account => account.id === row.dataset.accountId);
+      const quotaBox = /** @type {HTMLElement} */ (row.querySelector('[data-account-quota-box]'));
+      const accountMeter = /** @type {HTMLElement} */ (row.querySelector('[data-account-meter]'));
+      const header = /** @type {HTMLElement} */ (row.querySelector('[data-account-quota]'));
+      const total = next?.balance_supported === false ? null : cached?.total;
+      header.textContent = standalone ? '' : quotaText(total, [['remaining', '剩余'], ['limit', '上限']]);
+      header.hidden = !header.textContent;
+      renderQuotaMeter(accountMeter, standalone ? null : total, `${accountName} 剩余额度`);
+      quotaBox.hidden = header.hidden && accountMeter.hidden;
+      let missing = false;
+      for (const keyRow of /** @type {NodeListOf<HTMLElement>} */ (row.querySelectorAll('[data-key-fingerprint]'))) {
+        const fp = keyRow.dataset.keyFingerprint;
+        const keyLabel = keyRow.querySelector('.key-label')?.textContent || 'Key';
+        const report = next?.balance_supported === false ? null : cached?.keys?.find(key => key.key_fingerprint === fp)?.report;
+        const usable = report?.status === 'ok' ? report : null;
+        const quota = /** @type {HTMLElement} */ (keyRow.querySelector('[data-key-quota]'));
+        const keyMeter = /** @type {HTMLElement} */ (keyRow.querySelector('[data-key-meter]'));
+        const shared = provider === 'tavily' && usable?.scope === 'key'
+          ? next?.current?.find(item => item.status === 'ok' && item.scope === 'account' && item.key_fingerprint === fp && item.unit === usable.unit) : null;
+        const accountQuota = !standalone && total && (finite(total.remaining) || finite(total.limit));
+        const fields = accountQuota
+          ? [['used', '已用'], ...((usable?.scope === 'key' && usable.limit !== (shared?.limit ?? total.limit)) ? [['limit', 'Key 上限']] : [])]
+          : [['remaining', '剩余'], ['limit', '上限'], ['used', '已用']];
+        const value = quotaText(standalone && shared ? shared : usable, fields);
+        const meterSource = standalone
+          ? (shared || usable)
+          : (usable && (finite(usable.limit) || finite(usable.percent)) ? usable : shared);
+        renderQuotaMeter(keyMeter, meterSource, `${keyLabel} 剩余额度`, total);
+        quota.textContent = value || (accountQuota ? '使用账号额度' : missing ? '' : '未提供额度');
+        quota.hidden = !quota.textContent;
+        if (!value && !accountQuota) missing = true;
+      }
+    }
+  }
   const addAdmin = el(doc, 'button', { type: 'button', 'data-account-action': 'add-admin', hidden: '' }, '添加 Exa 管理 Key');
   tools.append(addAdmin);
-  addAdmin.addEventListener('click', () => { editingDefault = true; void renderAccounts().catch(error => showError(errorSlot, error, '账号读取失败，请重新展开服务商。')); });
+  addAdmin.addEventListener('click', () => { editingDefault = true; void renderAccounts().catch(error => showAccountError(error, '账号读取失败，请重新展开服务商。')); });
   function ready(result) {
     if (result.status !== 'ready') throw new Error(result.message || '账号操作未完成，请更新 CLI 后重试。');
     return result;
@@ -572,7 +738,7 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
     try {
       ready(await action());
       if (!disposed) { await renderAccounts(); await onChange?.(); }
-    } catch (error) { if (!disposed) showError(errorSlot, error, '账号操作失败，请重试。'); }
+    } catch (error) { if (!disposed) showAccountError(error, '账号操作失败，请重试。'); }
     finally {
       busy = false;
       if (!disposed) for (const button of root.querySelectorAll('[data-account-action]')) button.removeAttribute('disabled');
@@ -581,14 +747,14 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
   async function refreshAfterKeyChange() {
     if (disposed) return;
     try { await renderAccounts(); await onChange?.(); }
-    catch (error) { if (!disposed) showError(errorSlot, error, '凭据已更新，但账号刷新失败，请重新展开服务商。'); }
+    catch (error) { if (!disposed) showAccountError(error, '凭据已更新，但账号刷新失败，请重新展开服务商。'); }
   }
-  function nameForm(parent, account) {
+  function nameForm(parent, account = null) {
     if (busy || disposed || parent.querySelector('.account-form')) return;
     const form = el(doc, 'form', { class: 'account-form' });
-    form.innerHTML = `<label>账号名称<input required maxlength="120" data-account-name></label><button type="submit" data-account-action="save-name">保存名称</button><button type="button" data-action="cancel-name">取消</button>`;
+    form.innerHTML = `<label>账号名称<input required maxlength="120" data-account-name aria-label="账号名称"></label><button type="submit" data-account-action="save-name">保存名称</button><button type="button" data-action="cancel-name">取消</button>`;
     const input = form.querySelector('input');
-    input.value = account?.name || '';
+    input.value = account ? safeName(account, 0) : '';
     parent.append(form); input.focus();
     form.querySelector('[data-action="cancel-name"]').addEventListener('click', () => form.remove());
     form.addEventListener('submit', event => {
@@ -601,7 +767,7 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
   function removeAccount(parent, account, trigger) {
     if (busy || parent.querySelector('[data-account-confirm]')) return;
     const panel = el(doc, 'div', { class: 'inline-confirm', 'data-account-confirm': '' });
-    panel.innerHTML = `<p>删除账号时如何处理搜索 Key？仅查余额的凭据会保留。</p><div class="account-actions"><button type="button" data-account-action="keep-keys">删除账号，Key 移到默认账号</button><button type="button" class="danger" data-account-action="delete-keys">删除账号及搜索 Key</button><button type="button" data-action="cancel-account-remove">取消</button></div>`;
+    panel.innerHTML = `<p>删除账号时如何处理搜索 Key？仅查余额的凭据会保留。</p><div class="account-actions"><button type="button" data-account-action="keep-keys">删除账号，Key 移到独立 Key</button><button type="button" class="danger" data-account-action="delete-keys">删除账号及搜索 Key</button><button type="button" data-action="cancel-account-remove">取消</button></div>`;
     parent.append(panel);
     const close = () => { panel.remove(); release(); };
     const release = confirmInline(panel, close, trigger);
@@ -612,59 +778,73 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
   }
   async function renderAccounts() {
     const ticket = ++generation;
-    // The first render reuses the account groups the providers page already read; later renders re-read.
-    const view = ticket === 1 && initialAccounts
-      ? { status: 'ready', accounts: { [provider]: initialAccounts } }
-      : ready(await api.accountsView(provider));
+    const view = initialAccounts && ticket === 1 ? { status: 'ready', accounts: { [provider]: initialAccounts } } : ready(await api.accountsView(provider));
     if (disposed || ticket !== generation) return;
     for (const editor of editors) editor.dispose();
     editors = [];
     list.replaceChildren();
     tools.querySelector('.account-form')?.remove();
     const accounts = view.accounts[provider] || [];
-    const shown = accounts.filter(account => account.id !== 'default' || account.keys.length
-      || Object.keys(account.balance_credentials).length || accounts.length === 1 || editingDefault);
-    addAdmin.hidden = source !== 'exa' || shown.some(account => account.id === 'default')
-      || accounts.some(account => account.balance_credentials.exa_admin);
-    // Browser-login accounts first; the pasted keys of the default group last.
-    shown.sort((a, b) => Number(a.id === 'default') - Number(b.id === 'default'));
-    for (const account of shown) {
+    balanceReferences = accounts.flatMap(account => Object.values(account.balance_credentials));
+    const shown = [...accounts].sort((a, b) => Number(a.id === 'default') - Number(b.id === 'default'));
+    addAdmin.hidden = source !== 'exa' || accounts.some(account => account.balance_credentials.exa_admin);
+    const owners = shown.map((account, index) => ({ id: account.id, name: account.id === 'default' ? '独立 Key' : safeName(account, index) }));
+    for (const [accountIndex, account] of shown.entries()) {
       if (disposed || ticket !== generation) return;
-      const row = el(doc, 'section', { class: 'account-row', 'data-account-id': account.id });
+      const isDefault = account.id === 'default';
+      const name = isDefault ? '独立 Key' : safeName(account, accountIndex);
+      const row = el(doc, 'section', { class: `account-row ${isDefault ? 'standalone-keys' : 'named-account'}`, 'data-account-id': account.id, 'aria-label': name });
       const summary = el(doc, 'div', { class: 'account-summary' });
       const identity = el(doc, 'div', { class: 'account-identity' });
-      const isDefault = account.id === 'default';
-      identity.append(el(doc, 'h3', { class: 'account-name' }, isDefault ? '手动添加的 Key' : account.name),
-        el(doc, 'p', { class: 'account-source' }, account.source === 'oauth' ? '浏览器登录' : isDefault ? '粘贴的 Key，可保存多条轮换使用' : '手动账号'));
-      if (account.login_identity && account.login_identity !== account.name) {
-        identity.append(el(doc, 'p', { class: 'account-source' }, account.login_identity));
+      const titleLine = el(doc, 'div', { class: 'account-title-line' });
+      titleLine.append(el(doc, 'h3', { class: 'account-name' }, name));
+      if (!isDefault && emailIdentity(account.login_identity) && account.login_identity !== name) {
+        titleLine.append(el(doc, 'span', { class: 'account-email' }, account.login_identity));
       }
+      if (Object.keys(account.balance_credentials).length) {
+        titleLine.append(el(doc, 'span', { class: 'account-balance-status' }, '额度已连接'));
+      }
+      const quotaBox = el(doc, 'div', { class: 'account-quota-box', 'data-account-quota-box': '', hidden: '' });
+      quotaBox.append(
+        el(doc, 'div', { class: 'account-meter', 'data-account-meter': '', hidden: '' }),
+        el(doc, 'p', { class: 'quota-value account-quota', 'data-account-quota': '', hidden: '' }),
+      );
+      identity.append(titleLine, quotaBox);
       const actions = el(doc, 'div', { class: 'account-actions' });
-      summary.append(identity, el(doc, 'span', { class: 'provider-note' }, `${account.keys.length} 个 Key`), actions);
+      summary.append(identity, el(doc, 'span', { class: 'provider-note account-key-count' }, `${account.keys.length} 个 Key`), actions);
       row.append(summary); list.append(row);
       if (account.id !== 'default') {
-        const rename = el(doc, 'button', { type: 'button', 'data-account-action': 'rename' }, '重命名账号');
-        const remove = el(doc, 'button', { type: 'button', 'data-account-action': 'remove' }, '删除账号');
+        const rename = el(doc, 'button', { type: 'button', 'data-account-action': 'rename', 'aria-label': `重命名账号 ${name}` }, '重命名');
+        const remove = el(doc, 'button', { type: 'button', 'data-account-action': 'remove', 'aria-label': `删除账号 ${name}` }, '删除');
         actions.append(rename, remove);
         rename.addEventListener('click', () => nameForm(row, account));
         remove.addEventListener('click', () => removeAccount(row, account, remove));
       }
-      if (account.source === 'oauth' && account.keys.length === 0) row.append(el(doc, 'p', { class: 'provider-note' }, '请为这个账号添加搜索 Key'));
-      const keys = el(doc, 'div', { class: 'account-keys' }); row.append(keys);
+      const keys = el(doc, 'div', { class: 'account-keys', role: 'group', 'aria-label': `${name}的 Key` }); row.append(keys);
       // The legacy row editor owns reveal/copy/drafts/confirmation and snapshot guards.
       // Scope its rows to fingerprints, resolving global indices only for an explicit action.
       let fingerprints = [...account.keys];
       let snapshot;
+      // The editor's first read reuses the account view this render just fetched; later reads re-check it.
+      let mountView = view;
+      const assertOwned = () => { if (disposed || ticket !== generation) throw new Error('账号界面已变化，请重新展开服务商。'); };
       const resolve = async (index, expected) => {
+        assertOwned();
         const fingerprint = fingerprints[index];
         const fresh = ready(await api.accountsView(provider)).accounts[provider]?.find(item => item.id === account.id);
+        assertOwned();
         if (!fingerprint || !fresh?.keys.includes(fingerprint)) throw new Error('Key 归属已变化，请刷新后重试。');
         const revealed = await api.credentialReveal(source);
+        assertOwned();
         if (expected !== revealed.snapshot) throw new Error('凭据已变化，请刷新后重试。');
         const values = revealed.value.split('\n').filter(value => value.trim());
         const ids = await Promise.all(values.map(keyFingerprint));
+        assertOwned();
         const globalIndex = ids.indexOf(fingerprint);
         if (globalIndex < 0) throw new Error('凭据已变化，请刷新后重试。');
+        const owner = ready(await api.accountsView(provider)).accounts[provider]?.find(item => item.id === account.id);
+        assertOwned();
+        if (!owner?.keys.includes(fingerprint)) throw new Error('Key 归属已变化，请刷新后重试。');
         return { index: globalIndex, expected: revealed.snapshot, value: values[globalIndex] };
       };
       let environmentKey = false;
@@ -672,38 +852,60 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
         ...api,
         credentialStatus: async () => {
           const view = await api.credentialStatus(source);
+          assertOwned();
           onStatus?.(view);
           environmentKey = account.id === 'default' && view.effective_source === 'env';
           return { ...view, file_key_count: fingerprints.length, effective_source: environmentKey ? 'env' : fingerprints.length ? 'file' : 'none', env_var: environmentKey ? view.env_var : undefined };
         },
         credentialRead: async () => {
-          const [saved, fresh] = await Promise.all([api.credentialRead(source), api.accountsView(provider)]);
+          const accountsRead = mountView ? Promise.resolve(mountView) : api.accountsView(provider);
+          mountView = null;
+          const [saved, fresh] = await Promise.all([api.credentialRead(source), accountsRead]);
+          assertOwned();
           const current = ready(fresh).accounts[provider]?.find(item => item.id === account.id);
           if (!current) throw new Error('账号已变化，请重新展开服务商。');
           fingerprints = [...current.keys]; snapshot = saved.snapshot;
           return { value: fingerprints.join('\n'), snapshot };
         },
         credentialReveal: async () => {
-          const values = await Promise.all(fingerprints.map((_, index) => resolve(index, snapshot)));
-          return { value: values.map(item => item.value).join('\n'), snapshot };
+          const expected = snapshot;
+          const values = await Promise.all(fingerprints.map((_, index) => resolve(index, expected)));
+          return { value: values.map(item => item.value).join('\n'), snapshot: expected };
         },
         credentialTest: async (_, selection) => {
           if (!selection) {
+            assertOwned();
             if (!environmentKey) throw new Error('请为这个账号添加搜索 Key');
             return api.credentialTest(source);
           }
           const selected = await resolve(selection.index, selection.expected);
+          assertOwned();
           return api.credentialTest(source, { index: selected.index, expected: selected.expected });
+        },
+        credentialMove: async (_, index, expected, target) => {
+          assertOwned();
+          const fingerprint = fingerprints[index];
+          const [saved, fresh] = await Promise.all([api.credentialRead(source), api.accountsView(provider)]);
+          assertOwned();
+          const groups = ready(fresh).accounts[provider] || [];
+          if (expected !== saved.snapshot) throw new Error('凭据已变化，请刷新后重试。');
+          if (!fingerprint || !groups.find(item => item.id === account.id)?.keys.includes(fingerprint)) throw new Error('Key 归属已变化，请刷新后重试。');
+          if (!groups.some(item => item.id === target)) throw new Error('目标分组已变化，请刷新后重试。');
+          ready(await api.accountsMoveKey(provider, fingerprint, target));
+          await refreshAfterKeyChange();
         },
         credentialRemove: async (_, index, expected) => {
           const selected = await resolve(index, expected);
+          assertOwned();
           const result = await api.credentialRemove(source, selected.index, selected.expected);
           onStatus?.(result);
           await refreshAfterKeyChange();
           return result;
         },
         credentialAppend: async (_, values) => {
+          assertOwned();
           const ids = await Promise.all(values.map(keyFingerprint));
+          assertOwned();
           const result = await api.credentialAppend(source, values);
           onStatus?.(result);
           // Append already succeeded: an assignment failure must not invite duplicate retries.
@@ -711,7 +913,7 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
             if (account.id !== 'default') for (const fingerprint of ids) ready(await api.accountsMoveKey(provider, fingerprint, account.id));
           } catch (error) {
             if (!disposed) {
-              showError(errorSlot, error, '请刷新后整理账号。');
+              showAccountError(error, '请刷新后整理账号。');
               errorSlot.prepend(doc.createTextNode('Key 已保存，但部分 Key 的账号归属更新失败。'));
             }
           }
@@ -719,35 +921,34 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
           return result;
         },
       };
-      const editor = await mountCredentialBody(keys, scopedApi, { source, accountEditor: true, onTest });
+      const editor = await mountCredentialBody(keys, scopedApi, { source, accountEditor: true, compact: true, keyOwners: { current: account.id, accounts: owners }, onRows: () => updateUsage(usageProvider), onTest });
       if (disposed || ticket !== generation) { editor.dispose(); return; }
       editors.push(editor);
-      for (const [entry, fingerprint] of Object.entries(account.balance_credentials)) {
-        const credential = el(doc, 'div', { class: 'key-row' });
-        const name = entry === 'parallel_account' ? 'Parallel 账户令牌' : entry === 'exa_admin' ? 'Exa 余额凭据' : entry === 'brave_dashboard' ? 'Brave 控制台登录' : entry;
-        const label = el(doc, 'div', { class: 'key-identity' });
-        label.append(el(doc, 'strong', { class: 'key-kind' }, `${name} · 仅查余额`), el(doc, 'p', { class: 'key-fingerprint' }, String(fingerprint)));
-        credential.append(label); keys.append(credential);
-      }
       // A new Exa management key belongs to default until the account API assigns it.
       if (source === 'exa' && (account.balance_credentials.exa_admin || (account.id === 'default'
         && !accounts.some(item => item.balance_credentials.exa_admin)))) {
-        row.append(el(doc, 'p', { class: 'provider-note' }, 'Exa 管理 Key · 仅查余额。新增管理 Key 保存在默认账号。'));
-        const admin = await mountExaAdminEditor(row, api);
+        const admin = await mountExaAdminEditor(row, api, true);
         if (disposed || ticket !== generation) { admin.dispose(); return; }
+        if (editingDefault && isDefault) /** @type {HTMLDetailsElement} */ (row.querySelector('.exa-admin-key')).open = true;
         editors.push(admin);
       }
     }
+    updateUsage(usageProvider);
   }
   try { await renderAccounts(); }
-  catch (error) { if (!disposed) showError(errorSlot, error, '账号读取失败，请重新展开服务商。'); }
+  catch (error) { if (!disposed) showAccountError(error, '账号读取失败，请重新展开服务商。'); }
   if (!disposed) {
-    const loginRoot = root.querySelector('[data-provider-login]');
+    const loginRoot = /** @type {HTMLElement} */ (root.querySelector('[data-provider-login]'));
     const oauthSlot = el(doc, 'div'), dashboardSlot = el(doc, 'div');
     loginRoot.append(oauthSlot, dashboardSlot);
     const onComplete = async () => { if (!disposed) { await renderAccounts(); await onChange?.(); onLogin?.(); } };
     oauth = await mountOAuthLogin(oauthSlot, api, { source, label: sourceEntry(source).label, onComplete });
     dashboard = await mountDashboardLogin(dashboardSlot, api, { source, onComplete });
+    loginRoot.hidden = oauthSlot.hidden && dashboardSlot.hidden;
+    // Keep the existing login lifecycle and its status/error/cancel nodes; the
+    // manager already supplies the provider/account context around these actions.
+    for (const heading of loginRoot.querySelectorAll('h3, .oauth-login-sub')) heading.remove();
+    if (oauthSlot.querySelector('[data-oauth-status]')?.textContent === '尚未登录。') oauthSlot.querySelector('[data-oauth-status]').textContent = '';
   }
-  return { dispose() { disposed = true; generation += 1; oauth?.dispose(); dashboard?.dispose(); for (const editor of editors) editor.dispose(); disposePage(root); root.replaceChildren(); } };
+  return { updateUsage, dispose() { disposed = true; generation += 1; oauth?.dispose(); dashboard?.dispose(); for (const editor of editors) editor.dispose(); disposePage(root); root.replaceChildren(); } };
 }

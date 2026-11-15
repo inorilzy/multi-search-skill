@@ -82,22 +82,34 @@ export async function mountSources(root, api, { signal, number = '04', usageRefr
       if (usage.value.status && usage.value.status !== 'ready') root.querySelector('[data-cache-error]').textContent = usage.value.message;
     } else if (usage.status === 'rejected') showError(root.querySelector('[data-cache-error]'), usage.reason, '缓存用量读取失败，请重新进入本页重试。');
     for (const rec of rows.values()) renderCache(rec);
+    if (expanded) detailMount?.updateUsage?.(usageProviders.get(providerIdForSource(expanded)));
   }
   function renderCache(rec) {
     const providerId = providerIdForSource(rec.entry.source);
     const provider = usageProviders.get(providerId);
     const accounts = accountGroups?.[providerId] || provider?.accounts;
-    if (accounts) {
-      const shown = accounts.filter(account => account.id !== 'default' || account.keys.length || Object.keys(account.balance_credentials || {}).length || accounts.length === 1);
-      rec.keyCount.textContent = `${shown.length} 个账号 · ${accounts.reduce((sum, account) => sum + account.keys.length, 0)} 个 Key`;
+    const named = rec.entry.keyed && accounts ? accounts.filter(account => account.id !== 'default') : [];
+    if (rec.entry.keyed && accounts) {
+      const keyTotal = accounts.reduce((sum, account) => sum + account.keys.length, 0);
+      rec.keyCount.textContent = named.length > 0
+        ? `${named.length} 个账号 · ${keyTotal} 个 Key`
+        : `${keyTotal} 个 Key`;
+    } else if (!rec.entry.keyed) {
+      rec.keyCount.textContent = '';
+    }
+    if (rec.refreshUsageButton) {
+      rec.refreshUsageButton.hidden = !(typeof api.usageView === 'function' && provider?.balance_supported === true);
     }
     const meter = rec.row.querySelector('[data-provider-meter]');
-    if (provider?.balance_supported === false) {
-      const { search, scrape } = provider.calls?.today || {};
-      const today = typeof search === 'number' && typeof scrape === 'number' ? search + scrape : '未知';
-      meter.textContent = `无余额接口 · 今天调用 ${today} 次`;
-    } else meter.replaceChildren(createMeter(doc, provider?.total, { thin: true, label: `${rec.entry.label} 合计余额` }));
-    const badge = createAlertBadge(doc, provider?.alert);
+    if (provider?.balance_supported === false) meter.textContent = '未提供额度';
+    else if (![provider?.total?.remaining, provider?.total?.percent].some(Number.isFinite)) meter.textContent = '暂无额度';
+    else meter.replaceChildren(createMeter(doc, provider?.total, { thin: true, label: `${rec.entry.label} 合计余额` }));
+    const emptyAccount = named.some(account => account.keys.length === 0);
+    const partial = provider?.alert === 'needs_credential' && Number.isFinite(provider?.total?.remaining);
+    const alertText = provider?.alert === 'needs_credential'
+      ? (emptyAccount ? '账号待绑定 Key' : partial ? '部分额度未提供' : undefined)
+      : undefined;
+    const badge = createAlertBadge(doc, provider?.alert, alertText);
     if (badge) meter.querySelector('.meter-state')?.remove();
     rec.state.hidden = Boolean(badge);
     const status = rec.row.querySelector('[data-provider-alert]');
@@ -216,8 +228,10 @@ export async function mountSources(root, api, { signal, number = '04', usageRefr
     if (rec.entry.keyed) {
       const fileCount = Number.isInteger(view.file_key_count) && view.file_key_count >= 0 ? view.file_key_count : view.store?.state === 'absent' ? 0 : null;
       const envCount = view.effective_source === 'env' || Boolean(view.env_var) ? 1 : 0;
-      rec.keyCount.textContent = fileCount === null ? '账号数未知 · Key 数未知' : `账号数未知 · ${fileCount + envCount} 个 Key`;
+      rec.keyCount.textContent = fileCount === null ? 'Key 数未知' : `${fileCount + envCount} 个 Key`;
       renderCache(rec);
+    } else {
+      rec.keyCount.textContent = '';
     }
     if (rec.oauth?.credential === rec.entry.source) {
       const configured = ['env', 'file'].includes(view.effective_source);
@@ -260,7 +274,7 @@ export async function mountSources(root, api, { signal, number = '04', usageRefr
     const id = esc(entry.source);
     row.innerHTML = `<div class="provider-summary" data-row-click><span class="provider-icon" aria-hidden="true">${esc(MARKS[entry.source])}</span>
       <div class="provider-identity"><button type="button" class="provider-name" data-pick="${id}" aria-expanded="false" aria-controls="detail-${id}">${esc(entry.label)}</button>
-      <p class="provider-sub"><span class="provider-counts" data-key-count>${entry.keyed ? '读取中' : '0 个账号 · 0 个 Key'}</span><span class="provider-sep" aria-hidden="true">·</span><span data-row-status data-kind="unknown">读取中</span></p></div>
+      <p class="provider-sub"><span class="provider-counts" data-key-count>${entry.keyed ? '读取中' : ''}</span><span class="provider-sep" aria-hidden="true">·</span><span data-row-status data-kind="unknown">读取中</span></p></div>
       <div class="provider-meter" data-provider-meter></div><div class="provider-status"><span data-provider-alert></span></div>
       ${entry.search === false ? '<span class="provider-toggle provider-note">仅抓取</span>' : `<label class="provider-toggle source-toggle"><input type="checkbox" role="switch" data-toggle="${id}" aria-label="启用 ${esc(entry.label)}" disabled><span class="toggle-track" aria-hidden="true"></span><span class="visually-hidden" data-toggle-label>状态未知</span></label>`}
       <button type="button" class="provider-expand" data-expand aria-label="展开 ${esc(entry.label)}" aria-expanded="false" aria-controls="detail-${id}">${icon('chevron')}</button></div>
@@ -268,14 +282,15 @@ export async function mountSources(root, api, { signal, number = '04', usageRefr
       <div id="detail-${id}" class="provider-details provider-dialog" data-provider-details hidden>
       <div class="provider-dialog-backdrop" data-dialog-close></div>
       <section class="provider-dialog-panel" role="dialog" aria-modal="true" aria-labelledby="dialog-title-${id}">
-      <header class="provider-dialog-head"><span class="provider-icon" aria-hidden="true">${esc(MARKS[entry.source])}</span><h2 id="dialog-title-${id}">${esc(entry.label)}</h2><button type="button" class="dialog-close" data-dialog-close aria-label="关闭">${icon('close')}</button></header>
+      <header class="provider-dialog-head"><span class="provider-icon" aria-hidden="true">${esc(MARKS[entry.source])}</span><h2 id="dialog-title-${id}">${esc(entry.label)}</h2>
+      <div class="provider-actions"><div data-row-result data-kind="idle" role="status"><strong>${entry.search === false ? '仅用于抓取' : '未测试'}</strong><small>${entry.search === false ? '不提供搜索连接测试' : '点击测试验证'}</small></div><button type="button" data-row-refresh-usage aria-label="刷新 ${esc(entry.label)} 额度" hidden>刷新额度</button>${entry.search === false ? '' : `<button type="button" data-row-test aria-label="测试 ${esc(entry.label)}">测试连接</button>`}</div>
+      <button type="button" class="dialog-close" data-dialog-close aria-label="关闭">${icon('close')}</button></header>
       <div class="provider-dialog-body">
-      <div class="dialog-field"><span class="dialog-label">说明</span><div><p class="provider-note">${esc(DESCRIPTIONS[entry.source])}</p><p class="provider-note"><span data-key-summary aria-hidden="true">—</span> <span data-key-summary-text>未配置</span>${oauth ? ' · <span data-login-status>浏览器登录：状态未知</span>' : ''}</p></div></div>
-      <div class="dialog-field"><span class="dialog-label">连接</span><div class="provider-actions"><div data-row-result data-kind="idle"><strong>${entry.search === false ? '仅用于抓取' : '未测试'}</strong><small>${entry.search === false ? '不提供搜索连接测试' : '点击测试验证'}</small></div>${entry.search === false ? '' : `<button type="button" data-row-test aria-label="测试 ${esc(entry.label)}">测试连接</button>`}</div></div>
-      <div class="dialog-field"><span class="dialog-label">${entry.keyed ? '账号' : '凭据'}</span><div data-source-detail></div></div></div>
+      <div class="dialog-field${entry.keyed ? ' dialog-accounts' : ''}"><span class="dialog-label${entry.keyed ? ' visually-hidden' : ''}">${entry.keyed ? '账号与 Key' : '凭据'}</span><div data-source-detail></div></div>
+      <details class="provider-about"><summary>服务商信息</summary><p class="provider-note">${esc(DESCRIPTIONS[entry.source])}</p><p class="provider-note"><span data-key-summary aria-hidden="true">—</span> <span data-key-summary-text>未配置</span>${oauth ? ' · <span data-login-status>浏览器登录：状态未知</span>' : ''}</p></details></div>
       <footer class="provider-dialog-foot"><p class="provider-note">凭据只保存在本机；测试会向服务商发请求，可能消耗额度。</p><button type="button" class="primary" data-dialog-close>完成</button></footer>
       </section></div>`;
-    const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), summaryText: row.querySelector('[data-key-summary-text]'), result: row.querySelector('[data-row-result]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
+    const rec = { entry, row, pick: row.querySelector('[data-pick]'), box: row.querySelector('[data-toggle]'), state: row.querySelector('[data-row-status]'), summary: row.querySelector('[data-key-summary]'), summaryText: row.querySelector('[data-key-summary-text]'), result: row.querySelector('[data-row-result]'), refreshUsageButton: row.querySelector('[data-row-refresh-usage]'), testButton: row.querySelector('[data-row-test]'), error: row.querySelector('[data-row-error]'), detail: row.querySelector('[data-source-detail]'), kind: entry.keyed || entry.cookie ? 'unknown' : 'keyless', test: { ...IDLE } };
     // Account-only OAuth credentials are not exposed by credential_status. Their login
     // state stays unknown until this page observes a completed browser login.
     Object.assign(rec, { oauth, login: row.querySelector('[data-login-status]'), keyCount: row.querySelector('[data-key-count]') });
@@ -298,11 +313,36 @@ export async function mountSources(root, api, { signal, number = '04', usageRefr
       for (const item of rows.values()) if (item.box) item.box.disabled = true;
       settingsQueue = settingsQueue.then(() => toggleEnabled(rec, enabled));
     });
+    rec.refreshUsageButton?.addEventListener('click', async () => {
+      if (!rec.refreshUsageButton || typeof api.usageView !== 'function') return;
+      const providerId = providerIdForSource(entry.source);
+      rec.refreshUsageButton.disabled = true;
+      rec.refreshUsageButton.textContent = '刷新中…';
+      try {
+        if (usageRefresh?.refreshProvider) {
+          await usageRefresh.refreshProvider(providerId);
+        } else {
+          const view = await api.usageView(providerId, true);
+          if (!disposed && view?.providers) {
+            for (const item of view.providers) usageProviders.set(item.id, item);
+            renderCache(rec);
+            if (expanded === entry.source) detailMount?.updateUsage?.(usageProviders.get(providerId));
+          }
+        }
+      } catch (error) {
+        if (!disposed) showError(rec.error, error, '额度刷新失败，请稍后重试。');
+      } finally {
+        if (!disposed && rec.refreshUsageButton) {
+          rec.refreshUsageButton.disabled = false;
+          rec.refreshUsageButton.textContent = '刷新额度';
+        }
+      }
+    });
     rec.testButton?.addEventListener('click', async () => {
       rec.testButton.disabled = true;
       try {
         if (expanded !== entry.source) await toggleRow(entry.source);
-        if (!disposed && expanded === entry.source) rec.detail.querySelector('[data-action="test"]')?.click();
+        if (!disposed && expanded === entry.source) rec.detail.querySelector('[data-action="test"]:not(:disabled)')?.click();
       } finally { if (!disposed) rec.testButton.disabled = rec.test.kind === 'running'; }
     });
   }
@@ -344,11 +384,16 @@ export async function mountSources(root, api, { signal, number = '04', usageRefr
     rec.detail.append(body);
     const previous = { ...rec.test };
     const previousProvenance = rec.provenance;
+    const providerId = providerIdForSource(source);
     const mount = /** @type {any} */ (typeof api.accountsView === 'function' ? mountProviderAccounts : mountCredentialBody);
     const mounted = await mount(body, api, {
       source,
-      initialAccounts: accountGroups?.[providerIdForSource(source)],
-      onChange: loadCache,
+      initialAccounts: accountGroups?.[providerId],
+      usageProvider: usageProviders.get(providerId),
+      onChange: async options => {
+        await loadCache();
+        if (options?.refreshQuota && !disposed) void usageRefresh?.refreshProvider?.(providerId);
+      },
       onStatus: view => { if (!disposed && ticket === activeTicket) updateRow(rec, view); },
       onTest: result => { if (!disposed && ticket === activeTicket) updateTest(rec, result); },
       onLogin: () => { if (!disposed && ticket === activeTicket && rec.login) rec.login.textContent = '浏览器登录：已登录'; },
@@ -362,6 +407,8 @@ export async function mountSources(root, api, { signal, number = '04', usageRefr
       body.querySelector('[data-test-result]').dataset.kind = previous.kind;
     }
     detailMount = mounted;
+    // Opening only shows the cached quota; the application timer and the explicit refresh button query providers.
+    detailMount.updateUsage?.(usageProviders.get(providerId));
   }
   async function mountKeylessDetail(rec) {
     const panel = doc.createElement('section');
@@ -401,7 +448,7 @@ export async function mountSources(root, api, { signal, number = '04', usageRefr
     if (disposed) return;
     const rec = rows.get(entry.source);
     setRow(rec, 'error', '状态读取失败');
-    rec.keyCount.textContent = '账号数未知 · Key 数未知';
+    rec.keyCount.textContent = rec.entry.keyed ? 'Key 数未知' : '';
     renderCache(rec);
     showError(rec.error, error, '状态读取失败，请重新进入本页重试。');
   }));

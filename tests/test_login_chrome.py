@@ -20,6 +20,35 @@ from tests.test_brave_dashboard import FakeResponse, PROFILE, dashboard_with_use
 SESSION = {"cookie_header": "search_api_users_auth=synthetic-private-session", "login_id": "new-session-id"}
 
 
+def devalue(value):
+    """Flatten a value the way SvelteKit's devalue does: each container refers to entries by index."""
+    data = []
+
+    def put(item):
+        index = len(data)
+        data.append(None)
+        if isinstance(item, dict):
+            data[index] = {key: put(child) for key, child in item.items()}
+        elif isinstance(item, list):
+            data[index] = [put(child) for child in item]
+        else:
+            data[index] = item
+        return index
+
+    put(value)
+    return data
+
+
+def brave_keys_page(tokens=(), subscriptions=()):
+    nodes = [{"type": "data", "data": devalue({"csrf": "synthetic-csrf", "user": PROFILE})},
+             {"type": "data", "data": devalue({"tokens": list(tokens), "subscriptions": list(subscriptions)})}]
+    return json.dumps({"type": "data", "nodes": nodes})
+
+
+def brave_token(token, plan="Search", **extra):
+    return {"token": token, "status": "active", "deleted_at": None, "name": token[:8], "plan": {"name": plan}, **extra}
+
+
 class ChromeLoginTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="chrome-login-")
@@ -97,7 +126,8 @@ class ChromeLoginTests(unittest.TestCase):
     def test_saved_profile_cannot_copy_the_captured_cookie_value_even_if_verification_is_mocked(self):
         profile = {"id": "synthetic-private-session", "email": "user@example.test", "name": "synthetic-private-session"}
         with mock.patch("multi_search_mcp.src.plugins.chrome_session.capture_session", return_value=SESSION), \
-             mock.patch("multi_search_mcp.src.plugins.chrome_login._verify", return_value={"profile": profile}):
+             mock.patch("multi_search_mcp.src.plugins.chrome_login._verify", return_value={"profile": profile}), \
+             mock.patch("multi_search_mcp.src.plugins.builtin.brave_dashboard.link_account_keys", return_value=None):
             code, _, output = self.run_cli("brave")
         self.assertEqual(code, 0, output)
         self.assertEqual(oauth_store.get_entry("brave_dashboard")["profile"], {"email": "user@example.test"})
@@ -148,6 +178,85 @@ class ChromeLoginTests(unittest.TestCase):
         self.assertEqual(row["name"], profile["name"])
         self.assertNotIn("@", json.dumps(row))
 
+    def brave_key_login(self, keys_page, saved_keys=None, add_reply=None, groups=None):
+        """Log in to Brave against a fake dashboard whose API keys page is ``keys_page``."""
+        from multi_search_mcp.src.plugins.builtin import brave_dashboard
+        if saved_keys is not None:
+            write_keys_file_atomic(self.home / ".multi-search" / "keys.json", {"brave": saved_keys})
+        if groups:
+            groups()
+        posts = []
+
+        def http(request, timeout, retries, deadline=None):
+            self.assertEqual(retries, 0)
+            if request.full_url == brave_dashboard.ADD_KEY_URL:
+                posts.append(request)
+                return FakeResponse(json.dumps(add_reply))
+            if request.full_url == brave_dashboard.KEYS_DATA_URL:
+                return FakeResponse(keys_page)
+            return FakeResponse(dashboard_with_user(PROFILE))
+
+        with mock.patch("multi_search_mcp.src.plugins.chrome_session.capture_session", return_value=SESSION), \
+             mock.patch("multi_search_mcp.src.support.http.urlopen_retry", side_effect=http):
+            code, events, output = self.run_cli("brave")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(events[-1]["event"], "complete")
+        rows = accounts.list_accounts("brave")["brave"]
+        return rows, events[-1]["message"], posts, output
+
+    def test_brave_login_links_a_saved_key_listed_on_the_keys_page(self):
+        page = brave_keys_page([brave_token("synthetic-search-key")])
+        rows, message, posts, output = self.brave_key_login(page, ["other-synthetic-key", "synthetic-search-key"])
+        self.assertEqual(rows[1]["keys"], [key_fingerprint("synthetic-search-key")])
+        self.assertEqual(rows[0]["keys"], [key_fingerprint("other-synthetic-key")])
+        self.assertEqual(posts, [])
+        self.assertNotIn("自动", message)
+        self.assertNotIn("synthetic-search-key", output)
+
+    def test_brave_login_saves_the_first_live_search_key_and_skips_other_plans(self):
+        page = brave_keys_page([
+            brave_token("synthetic-answers-key", plan="Answers"),
+            brave_token("synthetic-deleted-key", deleted_at="2026-11-01T00:00:00Z"),
+            brave_token("synthetic-first-search-key"), brave_token("synthetic-second-search-key"),
+        ])
+        rows, _, posts, output = self.brave_key_login(page)
+        self.assertEqual(rows[1]["keys"], [key_fingerprint("synthetic-first-search-key")])
+        saved = json.loads((self.home / ".multi-search" / "keys.json").read_text())["brave"]
+        self.assertEqual(saved, "synthetic-first-search-key")
+        self.assertEqual(posts, [])
+        self.assertNotIn("synthetic-first-search-key", output)
+
+    def test_brave_login_adds_a_key_to_a_search_subscription_without_one(self):
+        page = brave_keys_page([brave_token("synthetic-answers-key", plan="Answers")], [
+            {"id": "sub-answers", "status": "active", "deleted_at": None, "plan": {"name": "Answers"}},
+            {"id": "sub-search", "status": "active", "deleted_at": None, "plan": {"name": "Search"}},
+        ])
+        reply = {"type": "success", "status": 200, "data": json.dumps(devalue({"token": "synthetic-created-key"}))}
+        rows, message, posts, output = self.brave_key_login(page, add_reply=reply)
+        self.assertEqual(rows[1]["keys"], [key_fingerprint("synthetic-created-key")])
+        self.assertEqual(len(posts), 1)
+        form = dict(item.split("=", 1) for item in posts[0].data.decode().split("&"))
+        self.assertEqual(form, {"csrf": "synthetic-csrf", "subscription_id": "sub-search", "name": "multi-search"})
+        self.assertEqual(posts[0].get_header("Origin"), "https://api-dashboard.search.brave.com")
+        self.assertIn("已自动创建", message)
+        self.assertNotIn("synthetic-created-key", output)
+
+    def test_brave_login_never_subscribes_when_no_search_plan_exists(self):
+        page = brave_keys_page([], [{"id": "sub-answers", "status": "active", "deleted_at": None, "plan": {"name": "Answers"}}])
+        rows, message, posts, _ = self.brave_key_login(page)
+        self.assertEqual(posts, [])
+        self.assertEqual(rows[1]["keys"], [])
+        self.assertIn("订阅", message)
+
+    def test_brave_login_keeps_a_key_the_user_grouped_elsewhere(self):
+        def group():
+            accounts.create_account("brave", "Manual", keys=[key_fingerprint("synthetic-search-key")])
+        page = brave_keys_page([brave_token("synthetic-search-key")])
+        rows, _, _, _ = self.brave_key_login(page, ["synthetic-search-key"], groups=group)
+        manual = next(row for row in rows if row["name"] == "Manual")
+        login = next(row for row in rows if row["source"] == "oauth")
+        self.assertEqual((manual["keys"], login["keys"]), ([key_fingerprint("synthetic-search-key")], []))
+
     def test_account_storage_failure_reports_saved_session_without_exposing_private_data(self):
         path = self.home / ".multi-search" / "keys.json"
         path.parent.mkdir()
@@ -176,6 +285,108 @@ class ChromeLoginTests(unittest.TestCase):
         self.assertEqual(events[-1]["credential"], "exa_admin")
         self.assertEqual(oauth_store.get_entry("exa_admin"), session)
         self.assertEqual(json.loads(path.read_text()), {"exa_admin": "synthetic-service-key"})
+        self.assertNotIn("synthetic-private-session", output)
+
+    EXA_SESSION = {"cookie_header": "__Secure-next-auth.session-token=synthetic-private-session", "login_id": "exa-id"}
+    EXA_USER = {"id": "cmuser123", "email": "exa-user@example.test", "name": "Exa User"}
+
+    def exa_login(self, routes, saved_keys=None):
+        """Run an Exa Chrome login against fake dashboard routes: url -> body or callable(request)."""
+        from multi_search_mcp.src.plugins.builtin import exa_dashboard
+        if saved_keys is not None:
+            write_keys_file_atomic(self.home / ".multi-search" / "keys.json", {"exa": saved_keys})
+        requests = []
+
+        def http(request, timeout, retries, deadline=None):
+            requests.append((request, retries))
+            body = routes[request.full_url]
+            if isinstance(body, BaseException):
+                raise body
+            return FakeResponse(json.dumps(body(request) if callable(body) else body))
+
+        routes = {exa_dashboard.SESSION_URL: {"user": self.EXA_USER}, **routes}
+        with mock.patch("multi_search_mcp.src.plugins.chrome_session.capture_session", return_value=self.EXA_SESSION), \
+             mock.patch("multi_search_mcp.src.plugins.chrome_login._verify", return_value={"remaining": 10.0, "billing_exempt": False}), \
+             mock.patch("multi_search_mcp.src.support.http.urlopen_retry", side_effect=http):
+            code, events, output = self.run_cli("exa")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(events[-1]["event"], "complete")
+        named = [row for row in accounts.list_accounts("exa")["exa"] if row["id"] != accounts.DEFAULT_ACCOUNT_ID]
+        self.assertEqual(len(named), 1)
+        self.assertNotIn("synthetic-private-session", output)
+        return named[0], events[-1]["message"], [request for request, _ in requests], output
+
+    def assert_exa_account(self, account, keys):
+        self.assertEqual((account["source"], account["login_identity"], account["name"]),
+                         ("oauth", self.EXA_USER["email"], self.EXA_USER["name"]))
+        self.assertEqual(account["keys"], [key_fingerprint(key) for key in keys])
+        self.assertEqual(account["balance_credentials"],
+                         {"exa_admin": key_fingerprint(oauth_store.balance_credential_ref("exa_admin", self.EXA_SESSION))})
+
+    def test_exa_login_links_saved_keys_by_bearer_prefix_without_revealing(self):
+        from multi_search_mcp.src.plugins.builtin import exa_dashboard
+        listed = {"apiKeys": [{"publicId": "key_one", "bearerPrefix": "e648e0", "hasLegacyBearer": True}]}
+        account, message, requests, output = self.exa_login(
+            {exa_dashboard.KEYS_URL: listed}, ["other-synthetic-key", "e648e0-synthetic-search-key"])
+        self.assert_exa_account(account, ["e648e0-synthetic-search-key"])
+        self.assertEqual([r.full_url for r in requests], [exa_dashboard.SESSION_URL, exa_dashboard.KEYS_URL])
+        default = accounts.list_accounts("exa")["exa"][0]
+        self.assertEqual(default["keys"], [key_fingerprint("other-synthetic-key")])
+        self.assertNotIn("自动", message)
+        self.assertNotIn("e648e0-synthetic-search-key", output)
+
+    def test_exa_login_reveals_the_first_usable_key_and_saves_it(self):
+        from multi_search_mcp.src.plugins.builtin import exa_dashboard
+        listed = {"apiKeys": [
+            {"publicId": "key_vercel", "bearerPrefix": "aaaaaa", "managedBy": "vercel", "hasLegacyBearer": True},
+            {"publicId": "key_new_format", "bearerPrefix": "exa_bb", "hasLegacyBearer": False},
+            {"publicId": "key_first", "bearerPrefix": "cccccc", "hasLegacyBearer": True},
+        ]}
+        reveal = mock.Mock(return_value={"legacyBearerSecret": "cccccc-revealed-synthetic-key"})
+        account, _, requests, output = self.exa_login(
+            {exa_dashboard.KEYS_URL: listed, exa_dashboard.REVEAL_URL: reveal}, ["unrelated-synthetic-key"])
+        self.assert_exa_account(account, ["cccccc-revealed-synthetic-key"])
+        posted = reveal.call_args.args[0]
+        self.assertEqual((posted.get_method(), json.loads(posted.data)), ("POST", {"publicId": "key_first"}))
+        self.assertTrue(posted.get_header("Idempotency-key"))
+        saved = json.loads((self.home / ".multi-search" / "keys.json").read_text())["exa"]
+        self.assertEqual(saved, ["unrelated-synthetic-key", "cccccc-revealed-synthetic-key"])
+        self.assertNotIn("cccccc-revealed-synthetic-key", output)
+
+    def test_exa_login_creates_one_key_for_a_team_without_keys_and_reuses_it_next_time(self):
+        from multi_search_mcp.src.plugins.builtin import exa_dashboard
+        create = mock.Mock(return_value={"apiKey": {"bearer": "dddddd-created-synthetic-key"}})
+        account, message, _, output = self.exa_login(
+            {exa_dashboard.KEYS_URL: {"apiKeys": []}, exa_dashboard.CREATE_URL: create})
+        self.assert_exa_account(account, ["dddddd-created-synthetic-key"])
+        posted = create.call_args.args[0]
+        self.assertEqual(json.loads(posted.data), {"apiKeyName": exa_dashboard.NEW_KEY_NAME})
+        self.assertTrue(posted.get_header("Idempotency-key"))
+        self.assertIn("已自动创建", message)
+        self.assertNotIn("dddddd-created-synthetic-key", output)
+        listed = {"apiKeys": [{"publicId": "key_made", "bearerPrefix": "dddddd", "hasLegacyBearer": True}]}
+        again, _, requests, _ = self.exa_login({exa_dashboard.KEYS_URL: listed, exa_dashboard.CREATE_URL: create})
+        self.assertEqual(again["id"], account["id"])
+        self.assertEqual(create.call_count, 1)
+        self.assertNotIn(exa_dashboard.REVEAL_URL, [r.full_url for r in requests])
+
+    def test_exa_login_never_creates_a_key_when_existing_keys_cannot_be_revealed(self):
+        from multi_search_mcp.src.plugins.builtin import exa_dashboard
+        create = mock.Mock()
+        listed = {"apiKeys": [{"publicId": "key_new_format", "bearerPrefix": "exa_bb", "hasLegacyBearer": False}]}
+        account, message, _, _ = self.exa_login({exa_dashboard.KEYS_URL: listed, exa_dashboard.CREATE_URL: create})
+        self.assert_exa_account(account, [])
+        create.assert_not_called()
+        self.assertIn("手动添加", message)
+
+    def test_exa_key_lookup_failure_keeps_login_and_account_with_a_fixed_notice(self):
+        import urllib.error
+        from multi_search_mcp.src.plugins.builtin import exa_dashboard
+        failure = urllib.error.HTTPError(exa_dashboard.KEYS_URL, 500, "synthetic-private-session", {}, None)
+        account, message, _, output = self.exa_login(
+            {exa_dashboard.SESSION_URL: urllib.error.URLError("down"), exa_dashboard.KEYS_URL: failure}, [])
+        self.assertEqual((account["name"], account["keys"]), ("Exa 控制台登录", []))
+        self.assertIn("自动获取搜索 Key 失败", message)
         self.assertNotIn("synthetic-private-session", output)
 
     def test_failed_verification_neither_overwrites_a_session_nor_echoes_an_exception(self):

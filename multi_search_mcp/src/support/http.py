@@ -34,6 +34,9 @@ from .url_security import (
 # Default verification and strict EOF handling: a TLS stream that ends without
 # close_notify is a truncation and must fail, not read as a complete body.
 _ssl_ctx = ssl.create_default_context()
+# Advertise HTTP/1.1 like http.client does for its own contexts; some edges
+# (Vercel's dashboard.exa.ai) challenge TLS clients that send no ALPN.
+_ssl_ctx.set_alpn_protocols(["http/1.1"])
 
 # Only these methods are safe to retry after SSL/EOF. POST-like requests may
 # charge money or mutate remote state on the first, apparently failed attempt.

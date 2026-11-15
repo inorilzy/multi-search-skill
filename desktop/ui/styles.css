@@ -3440,46 +3440,64 @@
   .account-list, .account-keys {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
+    gap: 0;
     margin: 0;
     padding: 0;
     list-style: none;
   }
   .account-row {
     min-width: 0;
-    padding-top: 12px;
+    padding: 14px 0;
     border-top: 1px solid var(--line);
   }
   .account-row:first-child {
-    padding-top: 0;
     border-top: 0;
   }
   .account-summary, .key-row {
     display: grid;
-    grid-template-columns: minmax(140px, 1fr) minmax(140px, 1.4fr) minmax(0, auto);
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
     align-items: center;
-    gap: 12px;
+    gap: 8px 16px;
   }
   .account-identity, .key-identity {
     min-width: 0;
+    overflow-wrap: anywhere;
   }
   .account-keys {
-    margin: 12px 0 0 12px;
-    padding-left: 14px;
-    border-left: 2px solid var(--line);
+    margin: 8px 0 0 10px;
+    padding-left: 16px;
+    border-left: 1px solid var(--line);
   }
   .key-row {
-    padding: 8px 0;
+    min-height: 38px;
+    padding: 6px 0;
     border-bottom: 1px solid var(--line);
   }
   .key-row:last-child {
     border-bottom: 0;
   }
-  .key-fingerprint {
-    font-family: Consolas, monospace;
+  .key-label {
     font-size: 12px;
-    line-height: 1.8;
-    overflow-wrap: anywhere;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .quota-value {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.6;
+  }
+  .account-row[data-standalone=true] .account-name, .standalone-keys .account-name {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .account-row[data-standalone=true] .account-keys, .standalone-keys .account-keys {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
   }
   .account-form {
     display: grid;
@@ -3611,10 +3629,60 @@
     margin: 0;
     overflow-wrap: anywhere;
   }
-  .usage-card h3 {
-    font-size: 17px;
+  .usage-page .account-name {
+    font-size: 13px;
     font-weight: 600;
     margin: 0;
+  }
+  .usage-page .account-summary, .usage-page .key-row {
+    grid-template-columns: minmax(0, 1fr) minmax(80px, 160px);
+  }
+  .usage-page .account-summary .account-identity, .usage-page .key-identity {
+    display: grid;
+    grid-template-columns: minmax(80px, 1fr) minmax(0, auto);
+    align-items: baseline;
+    gap: 2px 16px;
+  }
+  .usage-page .key-identity {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .usage-page .key-identity .key-kind, .usage-page .key-identity .key-quota {
+    grid-column: 2;
+  }
+  .usage-page .account-summary > .meter, .usage-page .key-row > .meter {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .usage-page .account-summary .meter-track, .usage-page .key-row .meter-track {
+    height: 4px;
+  }
+  .usage-extra {
+    margin-top: 6px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+  }
+  .usage-extra > summary {
+    width: fit-content;
+    padding: 10px 0;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .usage-extra > summary:hover {
+    color: var(--teal);
+  }
+  .usage-extra > summary:focus-visible {
+    outline: 2px solid var(--teal);
+    outline-offset: 2px;
+  }
+  .usage-extra-body {
+    padding: 2px 0 8px;
+  }
+  .usage-extra .usage-pace, .usage-extra .usage-status {
+    margin: 4px 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .usage-extra .usage-status[data-kind=error] {
+    color: var(--red);
   }
   .usage-actions {
     justify-content: flex-start;
@@ -3763,7 +3831,7 @@
     border-top: 0;
   }
   .provider-summary, .provider-summary:hover {
-    grid-template-columns: 22px minmax(0, 1fr) minmax(90px, 160px) auto auto 18px;
+    grid-template-columns: 22px minmax(0, 1fr) minmax(120px, 230px) auto auto 18px;
     grid-template-areas: "icon identity meter status toggle expand";
     gap: 12px;
     min-height: 52px;
@@ -3821,12 +3889,21 @@
   .provider-sub [data-row-status][data-kind=error] {
     color: var(--red);
   }
+  .provider-sep:has(+ [data-row-status][hidden]) {
+    display: none;
+  }
   .provider-meter {
     font-size: 12px;
     color: var(--muted);
   }
   .provider-meter .meter {
     grid-template-columns: minmax(48px, 1fr) auto;
+  }
+  .provider-meter .meter:has(.meter-relative) {
+    grid-template-columns: minmax(48px, 1fr) auto auto;
+  }
+  .provider-meter .meter-value {
+    white-space: nowrap;
   }
   .provider-meter .meter-state, .provider-meter .meter-empty {
     display: none;
@@ -3968,9 +4045,14 @@
   }
   .provider-dialog-body {
     display: grid;
-    gap: 18px;
-    padding: 18px 20px;
+    gap: 14px;
+    padding: 16px 20px;
     overflow: auto;
+  }
+  .provider-dialog-head .provider-actions button {
+    min-height: 30px;
+    padding: 4px 12px;
+    font-size: 12px;
   }
   .dialog-field {
     display: grid;
@@ -3983,78 +4065,445 @@
     color: var(--muted);
     font-size: 12px;
   }
+  .provider-dialog .provider-actions [data-row-result][data-kind=idle] {
+    display: none;
+  }
   .provider-dialog .provider-actions [data-row-result] {
     display: grid;
     margin-right: auto;
     font-size: 12px;
   }
   .provider-dialog .provider-actions [data-row-result] small {
+    max-width: 240px;
     color: var(--muted);
   }
-  .provider-dialog .account-list {
-    gap: 0;
+  .provider-about, .credential-tools-extra {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .provider-about {
+    padding: 4px 12px;
     border: 1px solid var(--line);
-    border-radius: 10px;
-    overflow: hidden;
+    border-radius: 8px;
+    background: var(--paper);
+  }
+  .provider-about[open] {
+    padding-bottom: 10px;
+  }
+  .provider-about > summary, .credential-tools-extra > summary {
+    width: fit-content;
+    padding: 5px 0;
+    cursor: pointer;
+  }
+  .provider-about > summary:hover, .credential-tools-extra > summary:hover {
+    color: var(--teal);
+  }
+  .provider-about > summary:focus-visible, .credential-tools-extra > summary:focus-visible {
+    outline: 2px solid var(--teal);
+    outline-offset: 2px;
+  }
+  .provider-about .provider-note {
+    margin-top: 6px;
+  }
+  .dialog-accounts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .provider-account-manager {
+    min-width: 0;
+  }
+  .provider-account-manager, .usage-page {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  }
+  .provider-dialog .account-list {
+    display: grid;
+    gap: 12px;
+    border: 0;
   }
   .provider-dialog .account-row, .provider-dialog .account-row:first-child {
-    padding: 12px 14px;
-    border-top: 1px solid var(--line);
-  }
-  .provider-dialog .account-row:first-child {
-    border-top: 0;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+    overflow: hidden;
   }
   .provider-dialog .account-summary {
     grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px 12px;
+    padding: 10px 14px;
+    background: var(--paper);
+    border-bottom: 1px solid var(--line);
   }
-  .provider-dialog .account-name {
+  .provider-dialog .account-summary:has(.account-actions:empty) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .provider-dialog .account-actions {
+    grid-column: 3;
+    justify-content: flex-end;
+  }
+  .provider-dialog .account-actions:empty {
+    display: none;
+  }
+  .provider-dialog .account-actions button {
+    min-height: 26px;
+    padding: 2px 9px;
+    font-size: 12px;
+  }
+  .provider-dialog .account-identity {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+  }
+  .provider-dialog .account-title-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    min-width: 0;
+  }
+  .provider-dialog .account-name, .provider-dialog .standalone-keys .account-name {
+    margin: 0;
+    color: var(--ink);
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
   }
-  .provider-dialog .account-keys {
-    margin: 10px 0 0;
-    padding: 0;
+  .provider-dialog .account-email {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .provider-dialog .account-balance-status {
+    margin: 0;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--scrape-tint);
+    color: var(--teal-strong);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .provider-dialog .account-quota-box {
+    display: grid;
+    gap: 2px;
+    min-width: 170px;
+    margin-left: auto;
+  }
+  .provider-dialog .account-quota {
+    margin: 0;
+    text-align: right;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .provider-dialog .account-identity:has([data-account-quota]:not([hidden])) .account-balance-status {
+    display: none;
+  }
+  .provider-dialog .account-summary .account-key-count {
+    padding: 2px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .provider-dialog .account-keys, .provider-dialog .standalone-keys .account-keys {
+    margin: 0;
+    padding: 0 14px;
     border-left: 0;
+  }
+  .provider-dialog .account-row > .account-form,
+  .provider-dialog .account-row > .inline-confirm {
+    margin: 0;
+    padding: 10px 14px;
+    border-top: 1px solid var(--line);
+    background: var(--paper);
+  }
+  .account-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .account-toolbar > [data-account-action="add"] {
+    margin-left: auto;
+  }
+  .account-toolbar button {
+    min-height: 30px;
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+  .account-logins {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .account-logins > div:empty {
+    display: none;
+  }
+  .account-logins .oauth-login-head {
+    justify-content: flex-start;
+  }
+  .provider-account-manager .account-form {
+    display: flex;
+    flex: 1 0 100%;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .provider-account-manager .account-form label {
+    flex: 1;
+    min-width: 140px;
+    font-size: 12px;
+  }
+  .provider-account-manager .account-form input {
+    margin-top: 4px;
+  }
+  .provider-account-manager .oauth-login {
+    padding: 0;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .provider-account-manager .oauth-login-status {
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 400;
+  }
+  .provider-account-manager .oauth-login-status:empty {
+    display: none;
+  }
+  .provider-account-manager .exa-admin-key {
+    margin: 0;
+    padding: 6px 14px 10px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .provider-account-manager .exa-admin-key > summary {
+    padding: 4px 0;
+    cursor: pointer;
   }
   .provider-dialog [data-account-tools] {
     margin-bottom: 10px;
   }
+  .credential-editor--compact .key-saved-list {
+    border: 0;
+    border-radius: 0;
+  }
+  .provider-dialog .key-saved-list:not(:empty) {
+    border-bottom: 1px solid var(--line);
+  }
   .provider-dialog .key-saved-list > .key-row {
-    grid-template-columns: 140px minmax(0, 1fr) auto;
-    gap: 10px;
-    min-height: 40px;
-    padding: 2px 6px 2px 12px;
+    grid-template-columns: 46px 92px minmax(140px, 1fr) auto;
+    gap: 6px 14px;
+    align-items: center;
+    min-height: 50px;
+    padding: 9px 0;
     border-bottom: 0;
   }
   .provider-dialog .key-saved-list > .key-row + .key-row {
     border-top: 1px solid var(--line);
   }
-  .provider-dialog .key-saved-list > .key-row .key-row-actions {
-    grid-column: auto;
+  .provider-dialog .key-row > .key-label {
+    grid-column: 1;
+    color: var(--ink);
+    font-weight: 600;
   }
-  .provider-dialog .key-saved-list > .key-row input {
-    height: 30px;
+  .provider-dialog .key-saved-list > .key-row > input {
+    grid-column: 2;
+    width: 100%;
+    height: 28px;
     padding: 0 8px;
-    border-color: transparent;
-    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--paper);
+    color: var(--muted);
     font-family: Consolas, monospace;
-    font-size: 13px;
+    font-size: 12px;
+    text-align: center;
   }
-  /* Inside the provider dialog the key editor is one column of key rows plus a single
-     line of actions; its explanations, store status and side result panel stay hidden
-     (the dialog's 连接 field already reports the test result). */
+  .provider-dialog .key-row > .key-quota-box {
+    grid-column: 3;
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+    padding: 0 4px;
+  }
+  .provider-dialog .account-meter .meter,
+  .provider-dialog .key-meter .meter {
+    grid-template-columns: minmax(80px, 1fr) auto;
+    gap: 8px;
+  }
+  .provider-dialog .account-meter .meter:has(.meter-relative),
+  .provider-dialog .key-meter .meter:has(.meter-relative) {
+    grid-template-columns: minmax(72px, 1fr) auto auto;
+  }
+  .provider-dialog .account-meter .meter-track,
+  .provider-dialog .key-meter .meter-track {
+    height: 6px;
+    border-radius: 999px;
+  }
+  .provider-dialog .account-meter .meter-value,
+  .provider-dialog .key-meter .meter-value {
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .provider-dialog .account-meter .meter[data-level=low] .meter-value,
+  .provider-dialog .key-meter .meter[data-level=low] .meter-value {
+    color: var(--amber);
+  }
+  .provider-dialog .account-meter .meter[data-level=critical] .meter-value,
+  .provider-dialog .key-meter .meter[data-level=critical] .meter-value {
+    color: var(--red);
+  }
+  .provider-dialog .account-meter .meter-state,
+  .provider-dialog .key-meter .meter-state {
+    display: none;
+  }
+  .provider-dialog .key-row .key-quota {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .provider-dialog .key-saved-list > .key-row > .key-row-actions {
+    grid-column: 4;
+    justify-self: end;
+    gap: 4px;
+  }
+  .provider-dialog .key-saved-list > .key-row > .key-row-actions > button {
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
+  }
+  .provider-dialog .key-saved-list > .key-row:has([data-saved-input][type=text]) {
+    grid-template-columns: 46px minmax(0, 1fr) auto;
+  }
+  .provider-dialog .key-saved-list > .key-row:has([data-saved-input][type=text]) > input {
+    border-color: var(--teal);
+    background: var(--scrape-tint);
+    color: var(--ink);
+    text-align: left;
+  }
+  .provider-dialog .key-saved-list > .key-row:has([data-saved-input][type=text]) > .key-row-actions {
+    grid-column: 3;
+  }
+  .provider-dialog .key-saved-list > .key-row:has([data-saved-input][type=text]) > .key-quota-box {
+    grid-column: 2 / -1;
+    padding: 2px 0 0;
+  }
+  .provider-dialog .key-row > [data-confirm-slot], .key-owner-control {
+    grid-column: 1 / -1;
+  }
+  .provider-dialog .key-row > [data-confirm-slot]:empty {
+    display: none;
+  }
+  .key-owner-control {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 0 4px 58px;
+  }
+  .key-owner-control select {
+    width: auto;
+    min-width: 120px;
+    max-width: 100%;
+    height: 30px;
+    padding: 0 28px 0 8px;
+  }
+  .key-owner-control button {
+    min-height: 30px;
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+  /* Account editors share one list; errors and environment precedence stay visible. */
   .provider-dialog .credential-editor {
     grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    gap: 6px;
   }
   .provider-dialog .credential-fields {
     padding-right: 0;
     border-right: 0;
   }
-  .provider-dialog .credential-intro, .provider-dialog .credential-footer,
-  .provider-dialog .config-details, .provider-dialog .credential-feedback,
-  .provider-dialog [data-info="application"], .provider-dialog [data-test-key-label] {
+  .credential-editor--compact .credential-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0 10px;
+  }
+  .credential-editor--compact .credential-fields > .key-saved-list,
+  .credential-editor--compact .credential-fields > .key-saved-empty,
+  .credential-editor--compact .credential-fields > .error-message,
+  .credential-editor--compact .credential-fields > .credential-footer {
+    grid-column: 1 / -1;
+  }
+  .credential-editor--compact .key-draft-form {
+    grid-column: 1;
+  }
+  .credential-editor--compact .key-draft-form:has([data-draft-index]) {
+    grid-column: 1 / -1;
+  }
+  .credential-editor--compact .credential-fields .draft-controls {
+    margin: 6px 0;
+  }
+  .credential-editor--compact .credential-tools-extra {
+    grid-column: 2;
+    margin: 6px 0;
+  }
+  .credential-editor--compact .credential-tools-extra[open] {
+    grid-column: 1 / -1;
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+  }
+  .credential-editor--compact .credential-feedback:has(.test-result[hidden]) {
     display: none;
+  }
+  .provider-dialog .draft-controls > .key-add {
+    height: 28px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    font-weight: 500;
+  }
+  .provider-dialog .draft-controls > .key-add:hover:not(:disabled) {
+    background: var(--scrape-tint);
+  }
+  .provider-dialog .credential-intro, .provider-dialog .config-details,
+  .provider-dialog [data-info="application"] {
+    display: none;
+  }
+  .credential-editor--compact .credential-footer {
+    margin: 0 0 8px;
+  }
+  .credential-editor--compact
+    .credential-footer:has([data-action="refresh"][hidden]):has([data-environment-key][hidden]) {
+    display: none;
+  }
+  .credential-editor--compact .credential-feedback .test-result {
+    margin: 2px 0 10px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .credential-editor--compact [data-test-key-label] {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .credential-editor--compact [data-test-key-label] select {
+    width: auto;
+    height: 28px;
+    padding: 0 24px 0 8px;
   }
   .provider-dialog .credential-actions {
     margin-top: 8px;
@@ -4065,9 +4514,6 @@
     min-height: 28px;
     padding: 3px 10px;
     font-size: 12px;
-  }
-  .provider-dialog .account-summary .provider-note {
-    color: var(--muted);
   }
   .provider-dialog .account-add {
     margin-top: 10px;
@@ -4087,7 +4533,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 16px;
+    padding: 12px 20px;
     border-top: 1px solid var(--line);
   }
   .provider-dialog-foot .provider-note {
@@ -4107,6 +4553,26 @@
     .dialog-field {
       grid-template-columns: minmax(0, 1fr);
       gap: 6px;
+    }
+    .provider-dialog .key-saved-list > .key-row {
+      grid-template-columns: 46px minmax(0, 1fr) auto;
+    }
+    .provider-dialog .key-saved-list > .key-row > .key-row-actions {
+      grid-column: 3;
+      flex-wrap: wrap;
+    }
+    .provider-dialog .key-row > .key-quota-box {
+      grid-column: 2 / -1;
+      padding: 2px 0 0;
+    }
+    .key-owner-control {
+      padding-left: 0;
+    }
+    .usage-page .account-summary, .usage-page .key-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .usage-page .account-summary > .meter, .usage-page .key-row > .meter {
+      max-width: 180px;
     }
   }
 }

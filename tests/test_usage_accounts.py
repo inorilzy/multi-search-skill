@@ -254,6 +254,13 @@ class UsageAccountTests(unittest.TestCase):
         self.cache(report(), report(key_fingerprint=FP2))
         self.assertEqual(self.view()["alert"], "needs_credential")
 
+    def test_manual_named_account_without_search_key_needs_credential(self):
+        self.data["accounts"]["fixture"].append(
+            {"id": "acc_empty", "name": "待绑", "source": "manual", "keys": [], "balance_credentials": {}})
+        self.save_keys()
+        self.cache(report(), report(key_fingerprint=FP2))
+        self.assertEqual(self.view()["alert"], "needs_credential")
+
     def test_missing_balance_credential_needs_credential(self):
         self.data["fixture"] = []
         self.save_keys()
