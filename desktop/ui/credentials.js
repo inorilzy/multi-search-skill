@@ -544,7 +544,7 @@ async function keyFingerprint(value) {
 }
 
 /** @param {any} holder @param {any} api @param {any} options */
-export async function mountProviderAccounts(holder, api, { source, onStatus, onTest, onLogin, onChange }) {
+export async function mountProviderAccounts(holder, api, { source, onStatus, onTest, onLogin, onChange, initialAccounts = null }) {
   const root = pageRoot(holder), doc = root.ownerDocument;
   const provider = providerIdForSource(source);
   // Accounts come from a browser login or from pasted keys (the unassigned "default" group);
@@ -612,7 +612,10 @@ export async function mountProviderAccounts(holder, api, { source, onStatus, onT
   }
   async function renderAccounts() {
     const ticket = ++generation;
-    const view = ready(await api.accountsView(provider));
+    // The first render reuses the account groups the providers page already read; later renders re-read.
+    const view = ticket === 1 && initialAccounts
+      ? { status: 'ready', accounts: { [provider]: initialAccounts } }
+      : ready(await api.accountsView(provider));
     if (disposed || ticket !== generation) return;
     for (const editor of editors) editor.dispose();
     editors = [];

@@ -347,6 +347,7 @@ export async function mountSources(root, api, { signal, number = '04', usageRefr
     const mount = /** @type {any} */ (typeof api.accountsView === 'function' ? mountProviderAccounts : mountCredentialBody);
     const mounted = await mount(body, api, {
       source,
+      initialAccounts: accountGroups?.[providerIdForSource(source)],
       onChange: loadCache,
       onStatus: view => { if (!disposed && ticket === activeTicket) updateRow(rec, view); },
       onTest: result => { if (!disposed && ticket === activeTicket) updateTest(rec, result); },

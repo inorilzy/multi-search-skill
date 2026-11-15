@@ -65,6 +65,17 @@ async function setup({ source = 'tavily', groups, keys = [], overrides = {} } = 
 
 const groupFor = (ctx, id) => ctx.row.querySelector(`[data-account-id="${id}"]`);
 
+test('opening a provider reuses the page account groups instead of re-reading the list first', async () => {
+  const ctx = await setup({ keys: ['synthetic-one', 'synthetic-two'],
+    groups: [account('default', '默认账号', ['synthetic-one']), account('acc_A', 'A', ['synthetic-two'])] });
+  const before = ctx.calls.filter(([kind]) => kind === 'accounts').length;
+  await ctx.open();
+  assert.ok(groupFor(ctx, 'default') && groupFor(ctx, 'acc_A'), 'both account groups rendered');
+  // Only each editor's own ownership check reads accounts; the list itself comes from the page cache.
+  assert.equal(ctx.calls.filter(([kind]) => kind === 'accounts').length - before, 2);
+  ctx.close();
+});
+
 test('T07 accounts: collapsed provider row uses T05 thin meter and alert, reads cache without secrets or refresh', async () => {
   const ctx = await setup({ keys: ['synthetic-default'] });
   assert.equal(ctx.root.querySelector('h1').textContent, '服务商');
