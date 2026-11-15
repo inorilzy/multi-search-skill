@@ -68,6 +68,8 @@ pub(crate) struct CliDiscovery<'a> {
     /// The verified managed install, when this tool installed one. Discovery never accepts a
     /// caller-supplied executable: the frontend cannot pick a program.
     pub(crate) managed: Option<PathBuf>,
+    /// Shared answer of `execution_path`, so each CLI run does not first re-probe `--version`.
+    pub(crate) execution_cache: Option<&'a crate::manager::ExecutionCache>,
 }
 
 impl<'a> CliDiscovery<'a> {
@@ -80,6 +82,7 @@ impl<'a> CliDiscovery<'a> {
             environment,
             user_path_store,
             managed,
+            execution_cache: None,
         }
     }
 
@@ -197,8 +200,30 @@ impl<'a> CliDiscovery<'a> {
     }
 
     /// The executable every UI-triggered CLI run uses. Never chosen by the frontend.
+    ///
+    /// A ready answer is reused while the same managed install is selected and the file is still
+    /// there; a failure is never reused, so a fixed CLI is picked up on the next call.
     pub(crate) fn execution_path(&self) -> Result<PathBuf, String> {
-        let selected = self.detect().execution;
+        let Some(cache) = self.execution_cache else {
+            return Self::selected_path(self.detect().execution);
+        };
+        cache
+            .get_checked_or(
+                || Self::selected_path(self.detect().execution).map(|path| (self.managed.clone(), path)),
+                Result::is_ok,
+                |cached| matches!(cached, Ok((managed, path)) if *managed == self.managed && path.is_file()),
+            )
+            .map(|(_, path)| path)
+    }
+
+    /// Remember the execution row of a fresh `detect`, so the next CLI run need not probe again.
+    pub(crate) fn remember_execution(&self, status: &CliStatus) {
+        if let (Some(cache), Ok(path)) = (self.execution_cache, Self::selected_path(status.execution.clone())) {
+            cache.put(Ok((self.managed.clone(), path)));
+        }
+    }
+
+    fn selected_path(selected: Discovery) -> Result<PathBuf, String> {
         if selected.status != "ready" {
             return Err(selected.reason);
         }

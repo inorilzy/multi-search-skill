@@ -34,19 +34,33 @@ pub struct DesktopManager {
     /// Core's `doctor` key-source report, shared briefly: a page asks for several
     /// providers at once and each answer comes from the same doctor run.
     key_sources_cache: ShortCache<KeySources>,
-    /// The verified managed CLI path. Verifying re-hashes every installed file (~90 MB),
-    /// and every CLI-running command asks for it; install/update/uninstall clear it.
-    managed_cli_cache: ShortCache<Option<PathBuf>>,
+    /// The last good doctor report, kept after the short cache expires so a status read never
+    /// waits on a cold CLI start (~0.4 s); a background refresh replaces it. Key writes clear it.
+    key_sources_last: Mutex<Option<KeySources>>,
+    key_sources_refreshing: AtomicBool,
+    /// Bumped by every key write, so a doctor run that started before the write is not kept.
+    key_sources_epoch: AtomicU64,
+    /// The verified managed CLI path with the install stamp it was verified against. Verifying
+    /// re-hashes every installed file (~90 MB) and every CLI-running command asks for it, so a
+    /// cached answer is reused while the cheap stamp is unchanged; install/update/uninstall clear it.
+    managed_cli_cache: ShortCache<(crate::install::InstallStamp, Option<PathBuf>)>,
+    /// The CLI `execution_cli` selected. Selecting it probes `--version` (~0.3 s per run).
+    execution_cache: ExecutionCache,
     oauth_logins: OAuthLogins,
 }
 
 type KeySources = std::collections::BTreeMap<String, crate::credential_commands::CoreKeySource>;
+/// The selected executable, with the managed install that was current when it was selected.
+pub(crate) type ExecutionCache = ShortCache<Result<(Option<PathBuf>, PathBuf), String>>;
 /// Long enough to cover one page's parallel status reads, short enough that a key
 /// edited in a terminal shows up on the next refresh.
 const KEY_SOURCES_TTL: std::time::Duration = std::time::Duration::from_secs(5);
-/// Covers one page load (several commands each resolve the CLI); a tampered or removed
-/// install is still caught within seconds, and install changes clear it at once.
-const MANAGED_CLI_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+/// A full re-hash at most this often. In between, every use re-checks the install stamp, so a
+/// rewritten, removed or non-executable file is caught at once; install changes clear it too.
+const MANAGED_CLI_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// Rarely changes outside this app (which clears it); a removed file or a different managed
+/// install is re-checked on every use, and a CLI that breaks in place is re-probed within minutes.
+const EXECUTION_TTL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 /// A value shared for a short time. Callers serialize on one lock, so concurrent
 /// readers that arrive while the value is being produced reuse that one result.
@@ -63,15 +77,39 @@ impl<T: Clone> ShortCache<T> {
     /// Return the fresh value, or produce one. `keep` decides whether a produced value
     /// may be cached (a failed answer must not be).
     pub(crate) fn get_or(&self, produce: impl FnOnce() -> T, keep: impl FnOnce(&T) -> bool) -> T {
+        self.get_checked_or(produce, keep, |_| true)
+    }
+
+    /// Like `get_or`, but a fresh value is reused only while `valid` still accepts it.
+    pub(crate) fn get_checked_or(
+        &self,
+        produce: impl FnOnce() -> T,
+        keep: impl FnOnce(&T) -> bool,
+        valid: impl FnOnce(&T) -> bool,
+    ) -> T {
         let mut slot = self.slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((at, value)) = slot.as_ref() {
-            if at.elapsed() < self.ttl {
+            if at.elapsed() < self.ttl && valid(value) {
                 return value.clone();
             }
         }
         let value = produce();
         *slot = keep(&value).then(|| (std::time::Instant::now(), value.clone()));
         value
+    }
+
+    /// Whether a value younger than the ttl is cached. A value being produced right now counts as
+    /// fresh, so callers do not start a second production.
+    pub(crate) fn is_fresh(&self) -> bool {
+        match self.slot.try_lock() {
+            Ok(slot) => slot.as_ref().is_some_and(|(at, _)| at.elapsed() < self.ttl),
+            Err(std::sync::TryLockError::WouldBlock) => true,
+            Err(std::sync::TryLockError::Poisoned(slot)) => slot.into_inner().as_ref().is_some_and(|(at, _)| at.elapsed() < self.ttl),
+        }
+    }
+
+    pub(crate) fn put(&self, value: T) {
+        *self.slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some((std::time::Instant::now(), value));
     }
 
     pub(crate) fn clear(&self) {
@@ -90,7 +128,11 @@ impl DesktopManager {
             mutation: Mutex::new(()),
             log_viewer: Default::default(),
             key_sources_cache: ShortCache::new(KEY_SOURCES_TTL),
+            key_sources_last: Mutex::new(None),
+            key_sources_refreshing: AtomicBool::new(false),
+            key_sources_epoch: AtomicU64::new(0),
             managed_cli_cache: ShortCache::new(MANAGED_CLI_TTL),
+            execution_cache: ShortCache::new(EXECUTION_TTL),
             oauth_logins: OAuthLogins::default(),
         }
     }
@@ -118,8 +160,17 @@ impl DesktopManager {
     fn discovery_view(&self) -> CliDiscovery<'_> {
         // Discovery prefers the verified managed install so a same-named file on PATH cannot
         // stand in for it. `managed_cli` never consults PATH itself.
-        let managed = self.managed_cli_cache.get_or(|| self.install_view().managed_cli(), |_| true);
-        CliDiscovery::new(&self.environment, self.user_path_store.as_ref(), managed)
+        let install = self.install_view();
+        let stamp = install.managed_stamp();
+        let (_, managed) = self.managed_cli_cache.get_checked_or(
+            // Stamp before verifying: a file rewritten during the hash changes the next stamp.
+            || (stamp.clone(), install.managed_cli()),
+            |_| true,
+            |(verified, _)| *verified == stamp,
+        );
+        let mut discovery = CliDiscovery::new(&self.environment, self.user_path_store.as_ref(), managed);
+        discovery.execution_cache = Some(&self.execution_cache);
+        discovery
     }
 
     fn install_view(&self) -> InstallManager<'_> {
@@ -159,7 +210,10 @@ impl DesktopManager {
     /// Discovery never takes a caller-supplied executable: the UI can only observe the managed
     /// install and what the app and user PATH resolve to.
     pub fn detect_cli(&self) -> CliStatus {
-        self.discovery_view().detect()
+        let discovery = self.discovery_view();
+        let status = discovery.detect();
+        discovery.remember_execution(&status);
+        status
     }
 
     /// Core's own per-provider credential-source report (`doctor --format json`).
@@ -168,13 +222,40 @@ impl DesktopManager {
     /// Concurrent callers wait on one lock, so N parallel status reads run doctor once.
     /// Writes that change keys call `invalidate_key_sources` first.
     pub(crate) fn key_sources(&self) -> KeySources {
+        use std::sync::atomic::Ordering;
+        let epoch = self.key_sources_epoch.load(Ordering::Acquire);
+        let current = || self.key_sources_epoch.load(Ordering::Acquire) == epoch;
         // An empty answer means doctor failed or timed out; never cache a failure.
-        self.key_sources_cache
-            .get_or(|| self.discovery_view().key_sources(), |sources| !sources.is_empty())
+        let sources = self
+            .key_sources_cache
+            .get_or(|| self.discovery_view().key_sources(), |sources| !sources.is_empty() && current());
+        if !sources.is_empty() && current() {
+            *self.key_sources_last.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sources.clone());
+        }
+        sources
+    }
+
+    /// The doctor report for a status display: the last good answer from memory at once, refreshed
+    /// in the background once it is older than the short cache. Only the very first read (or the
+    /// first after a key write) waits for doctor.
+    pub(crate) fn key_sources_now(self: &Arc<Self>) -> KeySources {
+        use std::sync::atomic::Ordering;
+        let last = self.key_sources_last.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        let Some(last) = last else { return self.key_sources() };
+        if !self.key_sources_cache.is_fresh() && !self.key_sources_refreshing.swap(true, Ordering::AcqRel) {
+            let manager = Arc::clone(self);
+            std::thread::spawn(move || {
+                manager.key_sources();
+                manager.key_sources_refreshing.store(false, Ordering::Release);
+            });
+        }
+        last
     }
 
     /// Drop the shared doctor report so the next read reflects a key change.
     pub(crate) fn invalidate_key_sources(&self) {
+        self.key_sources_epoch.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        *self.key_sources_last.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         self.key_sources_cache.clear();
     }
 
@@ -282,7 +363,8 @@ impl DesktopManager {
     /// The installed CLI changed: the cached path and doctor report may be stale.
     fn forget_install_state(&self) {
         self.managed_cli_cache.clear();
-        self.key_sources_cache.clear();
+        self.execution_cache.clear();
+        self.invalidate_key_sources();
     }
 
     pub fn install_plan(&self) -> InstallPlan {
@@ -423,6 +505,8 @@ impl DesktopManager {
 
     pub fn user_path_change(&self, remove: bool, confirmed: bool) -> Result<PathPlan, String> {
         let _guard = self.mutation_guard()?;
+        // The user PATH decides which CLI runs when no managed install is present.
+        self.execution_cache.clear();
         self.user_path_view().change(remove, confirmed)
     }
 }
@@ -439,6 +523,24 @@ mod tests {
         let _ = std::thread::spawn(move || { let _guard = other.execution_slot.lock().unwrap(); panic!("synthetic poison"); }).join();
         assert!(manager.execution(1).is_err());
         manager.shutdown();
+    }
+    #[test]
+    fn status_reads_answer_the_last_report_from_memory_until_a_key_write() {
+        use std::sync::atomic::Ordering;
+        let manager = Arc::new(DesktopManager::new(RuntimeEnvironment {
+            app_path: vec![], user_path: vec![], variables: Default::default(), cwd: std::env::temp_dir(),
+        }));
+        let report = KeySources::from([("tavily".to_string(), Default::default())]);
+        *manager.key_sources_last.lock().unwrap() = Some(report);
+        // The short cache is empty (expired), and there is no CLI: the answer still comes from memory.
+        assert_eq!(manager.key_sources_now().len(), 1);
+        // The background refresh fails without a CLI; a failed report must not replace the good one.
+        while manager.key_sources_refreshing.load(Ordering::Acquire) { std::thread::yield_now(); }
+        assert_eq!(manager.key_sources_now().len(), 1);
+        while manager.key_sources_refreshing.load(Ordering::Acquire) { std::thread::yield_now(); }
+        manager.invalidate_key_sources();
+        assert!(manager.key_sources_last.lock().unwrap().is_none(), "a key write drops the remembered report");
+        assert!(manager.key_sources_now().is_empty(), "after a write the next read asks doctor again");
     }
     #[test]
     fn management_mutations_fail_fast_while_busy() {
@@ -501,6 +603,16 @@ mod short_cache_tests {
         cache.clear();
         assert_eq!(read(3), 3);
         assert_eq!(runs.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn invalid_values_are_produced_again_and_put_seeds_the_cache() {
+        let cache = ShortCache::new(Duration::from_secs(5));
+        assert_eq!(cache.get_checked_or(|| 1, |_| true, |_| true), 1);
+        assert_eq!(cache.get_checked_or(|| 2, |_| true, |v| *v == 1), 1, "a still-valid value is reused");
+        assert_eq!(cache.get_checked_or(|| 3, |_| true, |v| *v != 1), 3, "an invalidated value is replaced");
+        cache.put(4);
+        assert_eq!(cache.get_or(|| 5, |_| true), 4);
     }
 
     #[test]

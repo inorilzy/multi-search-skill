@@ -110,6 +110,9 @@ pub(crate) fn app_info(environment: &RuntimeEnvironment, bundled: Option<&Path>)
     }
 }
 
+/// See [`InstallManager::managed_stamp`]; `None` entries are files that could not be read.
+pub(crate) type InstallStamp = Vec<Option<(u64, Option<std::time::SystemTime>, fs::Permissions)>>;
+
 struct Layout {
     root: PathBuf,
     source: Option<PathBuf>,
@@ -631,6 +634,28 @@ impl InstallManager<'_> {
         recorded(&lay.root)?;
         let artifact = lay.root.join("bin").join(ARTIFACT);
         artifact.is_file().then_some(artifact)
+    }
+
+    /// A cheap identity of the managed install: size, modification time and permissions of the
+    /// ownership marker, the active pointer, the manifest and every file it lists. Reading it
+    /// stats ~2,000 files instead of hashing ~90 MB, so a cached `managed_cli` answer can be
+    /// re-checked on every use: any rewrite, removal or lost execute bit changes the stamp.
+    pub(crate) fn managed_stamp(&self) -> InstallStamp {
+        let Ok(lay) = layout(self.environment, None) else { return Vec::new() };
+        let stat = |path: &Path| {
+            fs::metadata(path).ok().map(|meta| (meta.len(), meta.modified().ok(), meta.permissions()))
+        };
+        let mut stamp: InstallStamp = [MARKER, journal::ACTIVE, MANIFEST]
+            .iter()
+            .map(|name| stat(&lay.root.join(name)))
+            .collect();
+        let listed = fs::read(lay.root.join(MANIFEST))
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<Manifest>(&raw).ok());
+        for file in listed.iter().flat_map(|parsed| &parsed.files) {
+            stamp.push(manifest::resolve(&lay.root, &file.path).ok().and_then(|path| stat(&path)));
+        }
+        stamp
     }
 
     /// `bundled` is the app's own `cli-bundle` resource directory; `None` means the resource is absent.

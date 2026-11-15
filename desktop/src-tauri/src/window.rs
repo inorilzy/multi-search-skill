@@ -273,8 +273,9 @@ async fn credential_status(
     let manager = manager.inner().clone();
     offload_value(
         move || {
-            // Core decides the effective source; the desktop only displays it.
-            let key_sources = manager.key_sources();
+            // Core decides the effective source; the desktop only displays it. The last report is
+            // answered from memory and refreshed in the background, so opening a dialog never waits.
+            let key_sources = manager.key_sources_now();
             let mut overview = crate::credential_commands::overview(&manager.environment.variables, &entry);
             crate::credential_commands::apply_core_source(&mut overview, key_sources.get(entry.provider));
             overview

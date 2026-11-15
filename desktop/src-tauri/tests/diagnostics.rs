@@ -268,3 +268,42 @@ mod macos_path_integration {
         remove(&store);
     }
 }
+
+/// Every CLI-running command resolves the executable first; that must not re-run
+/// `--version` (a cold Python start) each time, yet a removed CLI must not be reused.
+#[cfg(unix)]
+#[test]
+fn execution_cli_probes_the_version_once_and_drops_a_removed_cli() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("multi-search-execution-cache-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let probes = dir.join("probes");
+    let cli = dir.join(multi_search_desktop::CLI_FILE_NAME);
+    std::fs::write(&cli, format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo x >> '{}'; echo \"multi-search 0.4.0\"; exit 0; fi\nexit 2\n",
+        probes.display()
+    )).unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let manager = DesktopManager::new(RuntimeEnvironment {
+        app_path: vec![dir.clone()],
+        user_path: vec![],
+        variables: BTreeMap::from([
+            ("PATH".into(), "/usr/bin:/bin".into()),
+            ("HOME".into(), dir.to_string_lossy().into_owned()),
+        ]),
+        cwd: dir.clone(),
+    });
+    let count = || std::fs::read_to_string(&probes).map(|text| text.lines().count()).unwrap_or(0);
+
+    assert_eq!(manager.detect_cli().execution.status, "ready");
+    let after_detect = count();
+    for _ in 0..3 {
+        assert_eq!(manager.execution_cli().unwrap(), cli);
+    }
+    assert_eq!(count(), after_detect, "detect seeds the selection; later runs reuse it");
+
+    std::fs::remove_file(&cli).unwrap();
+    assert!(manager.execution_cli().is_err(), "a removed CLI is never handed out from the cache");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
