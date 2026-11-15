@@ -330,10 +330,12 @@ def run_search_candidates(
 def query_provider_status(
     query_runs: list[tuple[str, list[dict]]],
 ) -> list[dict]:
+    # ``*_answer`` rows ride on their provider's own request, whose status is reported.
     sources = sorted({
         str(row.get("source") or "?")
         for _query, rows in query_runs
         for row in rows
+        if not str(row.get("source") or "").endswith("_answer")
     })
     output = []
     for source in sources:
@@ -363,7 +365,6 @@ def query_provider_status(
             "errors": errors,
         })
     return output
-
 
 
 def query_failures(query_runs: list[tuple[str, list[dict]]]) -> list[dict]:

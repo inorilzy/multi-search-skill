@@ -395,7 +395,9 @@ def _log_provider_results(
     timings = dict(timings)  # abandoned workers may still write late timings
     by_source: dict[str, list[dict]] = {}
     for row in as_dicts(results):
-        by_source.setdefault(str(row.get("source") or "?"), []).append(row)
+        # A ``*_answer`` row came from its provider's own request: report it under that provider.
+        source = str(row.get("source") or "?").removesuffix("_answer")
+        by_source.setdefault(source, []).append(row)
     for source, rows in by_source.items():
         errors = [row for row in rows if row.get("error")]
         hits = [row for row in rows if row.get("url") and not row.get("error")]
