@@ -176,7 +176,8 @@ class TwitterCredentialAndRateLimitTests(unittest.TestCase):
             rows = search_twitter("fixture")
 
         self.assertEqual(rows[0]["error_type"], "missing_key")
-        self.assertIn("~/.mcp-twikit/cookies.json", rows[0]["error"])
+        # The shortened path keeps the platform separator (``~\.mcp-twikit\...`` on Windows).
+        self.assertIn(os.path.join("~", ".mcp-twikit", "cookies.json"), rows[0]["error"])
         self.assertNotIn(home, rows[0]["error"])
 
     def test_429_with_insufficient_budget_is_rate_limit_not_timeout(self):

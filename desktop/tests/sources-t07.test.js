@@ -64,10 +64,10 @@ test('T07: visible row summaries count file and environment keys without reading
   });
   for (const [source, count] of [['tavily', 4], ['brave', 1], ['exa', 2], ['hackernews', 0], ['twitter', 0]]) {
     const summary = rowFor(root, source).querySelector('[data-key-count]');
-    assert.equal(summary.textContent, source === 'hackernews' || source === 'twitter' ? '0 个账号 · 0 个 Key' : `账号数未知 · ${count} 个 Key`);
+    assert.equal(summary.textContent, source === 'hackernews' || source === 'twitter' ? '' : `${count} 个 Key`);
     assert.equal(summary.closest('[aria-hidden="true"], .visually-hidden, .source-key'), null, 'count remains in the visible source column at narrow widths');
   }
-  assert.equal(rowFor(root, 'jina').querySelector('[data-key-count]').textContent, '账号数未知 · Key 数未知');
+  assert.equal(rowFor(root, 'jina').querySelector('[data-key-count]').textContent, 'Key 数未知');
   assert.equal(root.querySelectorAll('[data-login-status]').length, 2, 'only OAuth providers have login status');
   mounted.dispose(); window.close();
 });
@@ -88,10 +88,10 @@ test('T07: saving and removing keys updates the count in the same row', async ()
   row.querySelector('[data-action="add"]').click();
   row.querySelector('[data-draft-input]').value = 'synthetic-t07';
   row.querySelector('form').dispatchEvent(new window.Event('submit', { cancelable: true })); await flush();
-  assert.equal(row.querySelector('[data-key-count]').textContent, '账号数未知 · 1 个 Key');
+  assert.equal(row.querySelector('[data-key-count]').textContent, '1 个 Key');
   row.querySelector('[data-action="remove"]').click();
   row.querySelector('[data-action="confirm-remove"]').click(); await flush();
-  assert.equal(row.querySelector('[data-key-count]').textContent, '账号数未知 · 0 个 Key');
+  assert.equal(row.querySelector('[data-key-count]').textContent, '0 个 Key');
   mounted.dispose(); window.close();
 });
 

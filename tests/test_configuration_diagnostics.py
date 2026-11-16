@@ -38,9 +38,11 @@ class ConfigurationDiagnosticsTests(unittest.TestCase):
             config.load_config()
 
     def test_missing_implicit_default_uses_defaults(self):
-        with mock.patch.dict(os.environ, {}, clear=True), \
+        # Patch the lazy USER_CONFIG_PATH before clearing the environment: reading its
+        # original value resolves the home directory, which Windows cannot do without one.
+        with mock.patch.object(config, "USER_CONFIG_PATH", self.path), \
+                mock.patch.dict(os.environ, {}, clear=True), \
                 mock.patch.object(config, "resolve_config_path", return_value=self.path), \
-                mock.patch.object(config, "USER_CONFIG_PATH", self.path), \
                 mock.patch.object(config, "_sqlite_settings_state", return_value=(Path(self.temp.name) / "absent.sqlite", "absent")), \
                 mock.patch.object(config, "IS_SOURCE_CHECKOUT", False):
             self.assertEqual(config.load_config(), {})

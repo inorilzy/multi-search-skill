@@ -88,7 +88,7 @@ test('T07 accounts: collapsed provider row uses T05 thin meter and alert, reads 
   assert.equal(ctx.root.querySelector('h1').textContent, '服务商');
   assert.match(ctx.root.querySelector('.eyebrow').textContent, /PROVIDERS/);
   assert.ok(ctx.root.querySelector('.provider-list > .provider-row > .provider-summary'));
-  assert.equal(ctx.row.querySelector('.provider-counts').textContent, '0 个账号 · 1 个 Key');
+  assert.equal(ctx.row.querySelector('.provider-counts').textContent, '1 个 Key');
   assert.equal(ctx.row.querySelector('.meter--thin').dataset.level, 'critical');
   assert.equal(ctx.row.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '3');
   assert.equal(ctx.row.querySelector('.meter-alert').textContent, '余额即将用尽');
@@ -167,7 +167,7 @@ for (const deleteKeys of [false, true]) test(`T07 accounts: deleting an account 
   group.querySelector(`[data-account-action="${deleteKeys ? 'delete-keys' : 'keep-keys'}"]`).click(); await flush();
   assert.deepEqual(ctx.calls.find(call => call[0] === 'remove-account'), ['remove-account', 'tavily', 'acc_C', deleteKeys]);
   assert.equal(groupFor(ctx, 'acc_C'), null);
-  assert.equal(ctx.row.querySelector('.provider-counts').textContent, `0 个账号 · ${deleteKeys ? 1 : 2} 个 Key`);
+  assert.equal(ctx.row.querySelector('.provider-counts').textContent, `${deleteKeys ? 1 : 2} 个 Key`);
   ctx.close();
 });
 
@@ -270,7 +270,7 @@ test('T07 accounts: GitHub has one provider row and its switch updates both sear
   const row = root.querySelector('[data-source-row="github_repos"]');
   assert.equal(root.querySelector('[data-source-row="github_code"]'), null);
   assert.equal(row.querySelector('.provider-name').textContent, 'GitHub');
-  assert.equal(row.querySelector('.provider-counts').textContent, '0 个账号 · 1 个 Key');
+  assert.equal(row.querySelector('.provider-counts').textContent, '1 个 Key');
   const toggle = row.querySelector('[data-toggle]');
   assert.equal(toggle.checked, false);
   toggle.checked = true; toggle.dispatchEvent(new window.Event('change')); await flush();

@@ -74,7 +74,8 @@ class UsageStoreTests(unittest.TestCase):
         )
 
     def test_explicit_path_and_full_balance_shape_preserve_unknown_numbers(self):
-        path = self.home / "custom" / "usage?#.sqlite"
+        # URI-special characters must survive the sqlite file: URI; Windows forbids "?" in names.
+        path = self.home / "custom" / ("usage%#.sqlite" if os.name == "nt" else "usage?#.sqlite")
         self.append(report(remaining=None, limit=None, used=None), path=path)
         result = self.read(path=path)
         self.assertIsNone(result.usage_error)

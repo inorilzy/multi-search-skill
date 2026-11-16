@@ -1,6 +1,7 @@
 """Account metadata must not become credentials in diagnostics or redaction."""
 import json
 import os
+import contextlib
 import unittest
 from unittest import mock
 
@@ -19,10 +20,13 @@ from multi_search_mcp.src.support import debug_log
 
 class AccountsNotCredentialsTests(unittest.TestCase):
     def setUp(self):
-        self.env = self.enterContext(isolated_test_environment())
+        # TestCase.enterContext needs Python 3.11; the project supports 3.10.
+        stack = contextlib.ExitStack()
+        self.addCleanup(stack.close)
+        self.env = stack.enter_context(isolated_test_environment())
         self.addCleanup(self.env.assert_clean)
-        self.enterContext(mock.patch.dict(os.environ, {name: "" for name in KEY_ENV_NAMES}))
-        self.enterContext(mock.patch.object(state_store, "DEFAULT_STATE_PATH", self.env.state))
+        stack.enter_context(mock.patch.dict(os.environ, {name: "" for name in KEY_ENV_NAMES}))
+        stack.enter_context(mock.patch.object(state_store, "DEFAULT_STATE_PATH", self.env.state))
         self.addCleanup(debug_log.disable)
         self.search_key = "fixture-search-credential-12345"
         self.admin_key = "fixture-admin-credential-67890"

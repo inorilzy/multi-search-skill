@@ -1,4 +1,5 @@
 """Config and state paths resolve at call time and honour the shared state override."""
+import contextlib
 import os
 import re
 import sqlite3
@@ -124,7 +125,9 @@ class HomeResolutionTests(unittest.TestCase):
     def test_existing_state_database_with_provider_runs_still_opens(self):
         path = self.root / "legacy" / "state.sqlite"
         path.parent.mkdir(parents=True)
-        with sqlite3.connect(path) as conn:
+        # closing(): a sqlite3 connection used as a context manager only commits, and an open
+        # handle stops Windows from deleting the temporary directory.
+        with contextlib.closing(sqlite3.connect(path)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE provider_runs (

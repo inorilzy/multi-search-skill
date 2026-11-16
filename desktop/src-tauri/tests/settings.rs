@@ -1302,7 +1302,8 @@ fn malformed_stored_ranking_is_flagged_and_can_be_repaired() {
 }
 
 fn keys_file(s: &Sandbox) -> PathBuf {
-    s.0.join(".multi-search/keys.json")
+    // Joined per component: the reported path is compared as text, and Windows uses `\`.
+    s.0.join(".multi-search").join("keys.json")
 }
 fn seed_keys(s: &Sandbox, text: &str) {
     std::fs::create_dir_all(keys_file(s).parent().unwrap()).unwrap();
