@@ -8,6 +8,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [desktop-release-0.4.2.md](desktop-release-0.4.2.md) | 三平台桌面版 0.4.2 的账号与用量、搜索可视化、SerpApi 链接还原及验证边界。 |
 | [desktop-release-0.4.1.md](desktop-release-0.4.1.md) | 三平台桌面版 0.4.1 的安装、打包修复与验证边界。 |
 | [desktop-release-0.4.0.md](desktop-release-0.4.0.md) | 三平台桌面版 0.4.0 的安装包、签名状态与验证边界。 |
 | [glossary.md](glossary.md) | 搜索、来源、路由、正文、缓存、Key 状态的术语和接口约定；「代码出处」列由 `scripts/check_glossary_paths.py` 在 CI 中逐项校验。 |

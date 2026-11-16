@@ -1,6 +1,6 @@
 [project]
 name = "multi-search-mcp"
-version = "0.4.1"
+version = "0.4.2"
 description = "On-demand aggregated search CLI and shared Core for the multi-search skill."
 requires-python = ">=3.10"
 dependencies = [
